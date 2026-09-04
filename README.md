@@ -50,6 +50,21 @@ The adapter does not make network requests. Additional adapters (such as
 FootyStats or Sportmonks) can later produce the same `Match` objects without
 requiring changes to consumers.
 
+To inspect a downloaded season, run:
+
+```sh
+PYTHONPATH=src python -m modelfc.season_summary E0.csv
+```
+
+This prints the match and team counts, first and last match, result totals, and
+total goals. The full third-party CSV is intentionally not stored in this
+repository. To run the optional complete-season validation test against a local
+copy, provide its path:
+
+```sh
+MODELFC_2023_24_CSV=/path/to/E0.csv PYTHONPATH=src python -m unittest
+```
+
 ## Repository layout
 
 ```text

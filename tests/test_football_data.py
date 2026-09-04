@@ -1,10 +1,12 @@
 from datetime import date
+import os
 from pathlib import Path
 import tempfile
 import unittest
 
 from modelfc.matches import Match, MatchResult
 from modelfc.providers.football_data import FootballDataError, load_matches
+from modelfc.season_summary import summarize
 
 
 FIXTURE = Path(__file__).parent / "fixtures" / "football_data_pl_2023_24.csv"
@@ -55,6 +57,18 @@ class FootballDataAdapterTests(unittest.TestCase):
 
         self.assertIn("inconsistent with score 1-0", str(error))
 
+    def test_summarizes_matches(self) -> None:
+        summary = summarize(load_matches(FIXTURE))
+
+        self.assertIn("Matches: 3", summary)
+        self.assertIn("First match: 2023-08-11: Burnley 0-3 Manchester City", summary)
+        self.assertIn("Last match: 2023-08-12: Newcastle 5-1 Aston Villa", summary)
+        self.assertIn("Unique teams: 6", summary)
+        self.assertIn("Home wins: 1", summary)
+        self.assertIn("Draws: 1", summary)
+        self.assertIn("Away wins: 1", summary)
+        self.assertIn("Total goals: 11", summary)
+
     def _load_csv(self, contents: str) -> FootballDataError:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "matches.csv"
@@ -62,6 +76,30 @@ class FootballDataAdapterTests(unittest.TestCase):
             with self.assertRaises(FootballDataError) as context:
                 load_matches(path)
         return context.exception
+
+
+class CompleteSeasonValidationTests(unittest.TestCase):
+    @unittest.skipUnless(
+        os.environ.get("MODELFC_2023_24_CSV"),
+        "set MODELFC_2023_24_CSV to a local Football-Data E0.csv",
+    )
+    def test_complete_2023_24_premier_league(self) -> None:
+        matches = load_matches(os.environ["MODELFC_2023_24_CSV"])
+
+        self.assertEqual(len(matches), 380)
+        self.assertEqual(
+            summarize(matches).splitlines(),
+            [
+                "Matches: 380",
+                "First match: 2023-08-11: Burnley 0-3 Man City",
+                "Last match: 2024-05-19: Sheffield United 0-3 Tottenham",
+                "Unique teams: 20",
+                "Home wins: 175",
+                "Draws: 82",
+                "Away wins: 123",
+                "Total goals: 1246",
+            ],
+        )
 
 
 if __name__ == "__main__":
