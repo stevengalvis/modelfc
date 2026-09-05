@@ -129,6 +129,25 @@ and `--smoothing-matches N`. Both reports contain forecast count, average
 multiclass Brier score, average home/draw/away predictions, and actual
 home/draw/away frequencies over the same eligible matches.
 
+## Live plain-Poisson prediction
+
+`UpcomingFixture` represents a provider-independent fixture before it has a
+score or result. For live inference, the Football-Data adapter can combine
+multiple local completed-match CSVs into one chronologically sorted history.
+The prediction path filters that history to dates strictly before the fixture,
+then reuses the existing plain-Poisson expected-goals estimator and normalized
+1X2 score grid.
+
+```sh
+PYTHONPATH=src python3 -m modelfc.predict \
+  --history E0_2425.csv E0_2526.csv E0_2627.csv E0_2627_update.csv \
+  --date YYYY-MM-DD --home "TEAM" --away "TEAM"
+```
+
+The report includes the fixture, both expected-goal rates, home/draw/away
+probabilities, and the number of eligible completed historical matches used.
+This command is inference-only and does not alter the rolling evaluation path.
+
 ## Dixon-Coles extension
 
 The Dixon-Coles experiment deliberately reuses the Poisson expected-goals
