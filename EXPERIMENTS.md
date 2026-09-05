@@ -7,12 +7,12 @@ of squared errors over home win, draw, and away win). Lower is better.
 | --- | --- | ---: | ---: | ---: | --- |
 | League-frequency baseline | 2023/24 EPL | 100 completed earlier matches | 280 | 0.638102 | Rolling league-wide 1X2 frequencies; no smoothing; strictly earlier dates only. |
 | Poisson | 2023/24 EPL | 100 completed earlier matches | 280 | 0.581126 | Venue-specific attack/defence rates; five-match smoothing; independent goals; score grid through 10. |
-| Poisson + time decay | 2023/24 EPL | 100 completed earlier matches | 280 | **Pending** | Poisson team strengths exponentially weighted with a 180-day half-life; five-match smoothing; strictly earlier dates only. |
-| Dixon-Coles | 2023/24 EPL | 100 completed earlier matches | 280 | **Pending** | Same Poisson team strengths plus historically estimated low-score correlation; no time decay. |
+| Poisson + time decay | 2023/24 EPL | 100 completed earlier matches | 280 | 0.582752 | Poisson team strengths exponentially weighted with a 180-day half-life; five-match smoothing; strictly earlier dates only. |
+| Dixon-Coles | 2023/24 EPL | 100 completed earlier matches | 280 | 0.580267 | Same Poisson team strengths plus historically estimated low-score correlation; no time decay. |
 | League-frequency baseline | 2022/23 EPL | 100 completed earlier matches | 276 | 0.637829 | Rolling league-wide 1X2 frequencies; no smoothing; strictly earlier dates only. |
 | Poisson | 2022/23 EPL | 100 completed earlier matches | 276 | 0.587215 | Venue-specific attack/defence rates; five-match smoothing; independent goals; score grid through 10. |
-| Poisson + time decay | 2022/23 EPL | 100 completed earlier matches | 276 | **Pending** | Poisson team strengths exponentially weighted with a 180-day half-life; five-match smoothing; strictly earlier dates only. |
-| Dixon-Coles | 2022/23 EPL | 100 completed earlier matches | 276 | **Pending** | Same Poisson team strengths plus historically estimated low-score correlation; no time decay. |
+| Poisson + time decay | 2022/23 EPL | 100 completed earlier matches | 276 | 0.590856 | Poisson team strengths exponentially weighted with a 180-day half-life; five-match smoothing; strictly earlier dates only. |
+| Dixon-Coles | 2022/23 EPL | 100 completed earlier matches | 276 | 0.589464 | Same Poisson team strengths plus historically estimated low-score correlation; no time decay. |
 
 ## Evaluation assumptions
 
@@ -25,7 +25,12 @@ of squared errors over home win, draw, and away win). Lower is better.
   and a maximum of 10 goals per team in the score grid, followed by
   normalization to a valid 1X2 distribution.
 - Poisson + time decay uses the same smoothing and score grid, weighting a
-  match of age `d` days by `2^(-d / 180)`. Its results are intentionally
-  pending until both season files are run on the VPS.
-- Dixon-Coles results are intentionally pending until the model is run on the
-  VPS season files; no result has been inferred or invented here.
+  match of age `d` days by `2^(-d / 180)`.
+
+## Conclusion
+
+- Plain Poisson remains the best consistent model across both seasons.
+- Dixon-Coles slightly improved 2023/24 but worsened 2022/23.
+- The 180-day Poisson time-decay variant underperformed plain Poisson in both
+  seasons.
+- Do not claim any model is production-ready from only these two seasons.
