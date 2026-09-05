@@ -6,10 +6,9 @@ probabilistic forecasting.
 
 ## Project status
 
-The first data-ingestion layer is in place. It loads completed Premier League
-matches from a local Football-Data.co.uk CSV and converts them to ModelFC's
-provider-independent representation. No forecasting capability has been
-implemented yet.
+The data-ingestion layer and first probabilistic baseline are in place. The
+baseline is intentionally simple: it predicts 1X2 outcomes from the rolling
+league-wide frequency of results observed before each match.
 
 ## Internal match schema
 
@@ -50,6 +49,34 @@ The adapter does not make network requests. Additional adapters (such as
 FootyStats or Sportmonks) can later produce the same `Match` objects without
 requiring changes to consumers.
 
+## Rolling league-frequency baseline
+
+`modelfc.forecasts.Forecast` associates the provider-independent `Match` with
+home-win, draw, and away-win probabilities. The rolling baseline sorts matches
+by date and uses only prior result counts. It starts after 100 earlier matches
+by default; `min_history` is configurable. Because `Match` deliberately has no
+kickoff time, matches on the same date cannot safely be ordered and all use the
+history available before that date. Their results are added only after every
+forecast for the date has been made.
+
+This benchmark has no smoothing or team-strength adjustment. A result not yet
+seen in the history therefore receives probability zero. It is a league-level
+reference point rather than a competitive model.
+
+The evaluation uses the multiclass Brier score: the sum of the three squared
+errors against the one-hot observed outcome (range 0 for perfect forecasts to
+2 for a confidently wrong forecast). To evaluate a local season CSV:
+
+```sh
+PYTHONPATH=src python -m modelfc.evaluation E0.csv
+```
+
+Use `--min-history N` to change the warm-up period. The report includes the
+forecast count, average Brier score, average predicted probabilities, and
+actual result frequencies over exactly the evaluated matches. CSV field names
+remain isolated in the provider adapter; forecasting and scoring consume only
+normalized `Match` and `Forecast` objects.
+
 To inspect a downloaded season, run:
 
 ```sh
@@ -68,7 +95,7 @@ MODELFC_2023_24_CSV=/path/to/E0.csv PYTHONPATH=src python -m unittest
 ## Repository layout
 
 ```text
-src/modelfc/            Internal match model and provider adapters
+src/modelfc/            Internal models, forecasting, evaluation, and adapters
 tests/                  Offline tests and local CSV fixture
 requirements.txt        Runtime dependency declaration (currently empty)
 ```
