@@ -8,6 +8,7 @@ from typing import Iterable
 
 from modelfc.forecasts import (
     Forecast,
+    rolling_dixon_coles_forecasts,
     rolling_league_frequency_forecasts,
     rolling_poisson_forecasts,
 )
@@ -90,7 +91,7 @@ def main() -> None:
     parser.add_argument("csv", type=Path, help="path to a Football-Data season CSV")
     parser.add_argument(
         "--model",
-        choices=("baseline", "poisson"),
+        choices=("baseline", "poisson", "dixon-coles"),
         default="baseline",
         help="forecasting model to evaluate (default: baseline)",
     )
@@ -112,13 +113,27 @@ def main() -> None:
         default=5.0,
         help="Poisson team-rate pseudo-match weight (default: 5)",
     )
+    parser.add_argument(
+        "--rho-bound",
+        type=float,
+        default=0.2,
+        help="Dixon-Coles absolute rho search bound (default: 0.2)",
+    )
     args = parser.parse_args()
     matches = load_matches(args.csv)
     if args.model == "baseline":
         forecasts = rolling_league_frequency_forecasts(matches, args.min_history)
-    else:
+    elif args.model == "poisson":
         forecasts = rolling_poisson_forecasts(
             matches, args.min_history, args.max_goals, args.smoothing_matches
+        )
+    else:
+        forecasts = rolling_dixon_coles_forecasts(
+            matches,
+            args.min_history,
+            args.max_goals,
+            args.smoothing_matches,
+            args.rho_bound,
         )
     if not forecasts:
         parser.error("no forecasts generated; use a lower --min-history or a larger CSV")

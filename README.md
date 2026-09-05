@@ -6,10 +6,10 @@ probabilistic forecasting.
 
 ## Project status
 
-The data-ingestion layer, a probabilistic baseline, and the first team-strength
-model are in place. The baseline predicts 1X2 outcomes from rolling league-wide
-result frequencies; the Poisson model adds venue-specific team attack and
-defence performance.
+The data-ingestion layer and three rolling forecasting experiments are in
+place. The baseline predicts 1X2 outcomes from league-wide result frequencies;
+Poisson adds venue-specific team strengths; Dixon-Coles extends Poisson with a
+learned dependence correction for low scores.
 
 ## Internal match schema
 
@@ -128,6 +128,34 @@ Both accept `--min-history N`. Poisson additionally accepts `--max-goals N`
 and `--smoothing-matches N`. Both reports contain forecast count, average
 multiclass Brier score, average home/draw/away predictions, and actual
 home/draw/away frequencies over the same eligible matches.
+
+## Dixon-Coles extension
+
+The Dixon-Coles experiment deliberately reuses the Poisson expected-goals
+estimator and score grid. It multiplies the independent-Poisson probabilities
+of 0-0, 1-0, 0-1, and 1-1 by the standard Dixon-Coles correction; every other
+scoreline is unchanged. The correlation parameter (`rho`) is fitted by
+maximum likelihood from the history available for each forecast date and is
+bounded to keep corrected probabilities valid. The 1X2 totals are normalized
+after correction and grid truncation.
+
+There is no time decay in this experiment. This keeps the comparison focused
+on low-score dependence rather than combining two changes. `--rho-bound N`
+configures the absolute search bound (default `0.2`); `--max-goals` and
+`--smoothing-matches` have the same meaning as for Poisson.
+
+Dixon-Coles uses the same date-batched rolling loop as the other models. Team
+strengths and `rho` see strictly earlier dates only. Target results, other
+matches on the target date, and future matches are added to history only after
+all forecasts for that date have been produced.
+
+```sh
+# Poisson team strengths plus the Dixon-Coles low-score correction
+PYTHONPATH=src python -m modelfc.evaluation E0.csv --model dixon-coles
+```
+
+Measured experiment results and their assumptions are recorded in
+[`EXPERIMENTS.md`](EXPERIMENTS.md).
 
 ## Repository layout
 

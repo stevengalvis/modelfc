@@ -5,8 +5,12 @@ import unittest
 from modelfc.evaluation import evaluate, format_evaluation, multiclass_brier_score
 from modelfc.forecasts import (
     Forecast,
+    dixon_coles_1x2_probabilities,
+    dixon_coles_correction,
+    estimate_dixon_coles_rho,
     estimate_expected_goals,
     poisson_1x2_probabilities,
+    rolling_dixon_coles_forecasts,
     rolling_league_frequency_forecasts,
     rolling_poisson_forecasts,
 )
@@ -236,6 +240,100 @@ class RollingPoissonTests(unittest.TestCase):
             [history, home_rout], min_history=1
         )[0]
         away_forecast = rolling_poisson_forecasts(
+            [history, away_rout], min_history=1
+        )[0]
+
+        self.assertEqual(home_forecast.probabilities, away_forecast.probabilities)
+
+
+class DixonColesTests(unittest.TestCase):
+    match = staticmethod(RollingPoissonTests.match)
+
+    def test_low_score_correction_changes_only_four_cells(self) -> None:
+        expected_home, expected_away, rho = 1.5, 1.2, -0.1
+
+        self.assertAlmostEqual(
+            dixon_coles_correction(0, 0, expected_home, expected_away, rho), 1.18
+        )
+        self.assertAlmostEqual(
+            dixon_coles_correction(0, 1, expected_home, expected_away, rho), 0.85
+        )
+        self.assertAlmostEqual(
+            dixon_coles_correction(1, 0, expected_home, expected_away, rho), 0.88
+        )
+        self.assertAlmostEqual(
+            dixon_coles_correction(1, 1, expected_home, expected_away, rho), 1.1
+        )
+        self.assertEqual(
+            dixon_coles_correction(2, 1, expected_home, expected_away, rho), 1.0
+        )
+
+    def test_zero_rho_is_exactly_the_existing_poisson_model(self) -> None:
+        self.assertEqual(
+            dixon_coles_1x2_probabilities(1.7, 0.8, 0.0, max_goals=7),
+            poisson_1x2_probabilities(1.7, 0.8, max_goals=7),
+        )
+
+    def test_forecasts_have_valid_normalized_probabilities(self) -> None:
+        matches = [
+            self.match(0, "A", "B", 0, 0),
+            self.match(1, "B", "A", 1, 0),
+            self.match(2, "A", "B", 1, 1),
+        ]
+
+        forecasts = rolling_dixon_coles_forecasts(
+            matches, min_history=1, max_goals=4
+        )
+
+        self.assertEqual(len(forecasts), 2)
+        for forecast in forecasts:
+            self.assertTrue(all(0 <= value <= 1 for value in forecast.probabilities))
+            self.assertAlmostEqual(sum(forecast.probabilities), 1.0)
+
+    def test_rho_is_estimated_from_low_scoring_history(self) -> None:
+        draws = [self.match(day, "A", "B", 0, 0) for day in range(4)]
+
+        rho = estimate_dixon_coles_rho(draws)
+
+        self.assertLess(rho, 0)
+
+    def test_matches_on_same_date_use_identical_prior_history(self) -> None:
+        history = self.match(0, "A", "B", 0, 0)
+        first = self.match(1, "A", "B", 10, 0)
+        second = self.match(1, "A", "B", 0, 10)
+
+        forecasts = rolling_dixon_coles_forecasts(
+            [second, history, first], min_history=1
+        )
+
+        self.assertEqual(len(forecasts), 2)
+        self.assertEqual(forecasts[0].probabilities, forecasts[1].probabilities)
+
+    def test_future_results_cannot_change_an_earlier_forecast(self) -> None:
+        history = [
+            self.match(0, "A", "B", 0, 0),
+            self.match(1, "B", "A", 1, 1),
+        ]
+        target = self.match(2, "A", "B", 1, 0)
+        original = rolling_dixon_coles_forecasts(history + [target], min_history=2)[0]
+        future = [self.match(day, "A", "B", 20, 0) for day in range(3, 10)]
+
+        with_future = rolling_dixon_coles_forecasts(
+            history + [target] + future, min_history=2
+        )[0]
+
+        self.assertEqual(with_future.match, target)
+        self.assertEqual(with_future.probabilities, original.probabilities)
+
+    def test_target_result_is_not_used_in_its_own_forecast(self) -> None:
+        history = self.match(0, "A", "B", 1, 1)
+        home_rout = self.match(1, "A", "B", 20, 0)
+        away_rout = self.match(1, "A", "B", 0, 20)
+
+        home_forecast = rolling_dixon_coles_forecasts(
+            [history, home_rout], min_history=1
+        )[0]
+        away_forecast = rolling_dixon_coles_forecasts(
             [history, away_rout], min_history=1
         )[0]
 
