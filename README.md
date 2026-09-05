@@ -157,6 +157,30 @@ PYTHONPATH=src python -m modelfc.evaluation E0.csv --model dixon-coles
 Measured experiment results and their assumptions are recorded in
 [`EXPERIMENTS.md`](EXPERIMENTS.md).
 
+## Poisson time-decay experiment
+
+The time-decay variant asks whether recent form is more informative than old
+form without changing Poisson's scoreline assumptions. For a target date, a
+historical match `d` days old receives weight `2^(-d / half_life_days)` in all
+league and venue-specific attack and defence totals. Thus a match one half-life
+old has half the influence of a recent match. The default half-life is 180 days.
+The existing five-pseudo-match smoothing remains in place for limited weighted
+history, and expected goals pass through the existing normalized Poisson 1X2
+score grid.
+
+As in every rolling model, eligibility is based on the unweighted count of
+completed prior matches. Each target date uses only matches from strictly
+earlier dates; its complete batch enters history afterward, preventing target,
+same-day, and future leakage.
+
+```sh
+PYTHONPATH=src python3 -m modelfc.evaluation E0.csv \
+  --model poisson-decay --half-life-days 180
+```
+
+Use a shorter half-life to emphasize recent results more strongly or a longer
+half-life to approach the existing unweighted Poisson model.
+
 ## Repository layout
 
 ```text

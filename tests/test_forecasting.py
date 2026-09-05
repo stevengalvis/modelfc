@@ -9,10 +9,13 @@ from modelfc.forecasts import (
     dixon_coles_1x2_probabilities,
     dixon_coles_correction,
     estimate_dixon_coles_rho,
+    estimate_decay_expected_goals,
     estimate_expected_goals,
+    exponential_time_weight,
     poisson_1x2_probabilities,
     rolling_dixon_coles_forecasts,
     rolling_league_frequency_forecasts,
+    rolling_poisson_decay_forecasts,
     rolling_poisson_forecasts,
 )
 from modelfc.matches import Match, MatchResult
@@ -245,6 +248,106 @@ class RollingPoissonTests(unittest.TestCase):
         )[0]
 
         self.assertEqual(home_forecast.probabilities, away_forecast.probabilities)
+
+
+class RollingPoissonDecayTests(unittest.TestCase):
+    match = staticmethod(RollingPoissonTests.match)
+
+    def test_recent_matches_receive_greater_weight(self) -> None:
+        reference = date(2024, 7, 1)
+
+        recent = exponential_time_weight(reference - timedelta(days=30), reference, 180)
+        older = exponential_time_weight(reference - timedelta(days=360), reference, 180)
+
+        self.assertGreater(recent, older)
+        self.assertAlmostEqual(
+            exponential_time_weight(reference - timedelta(days=180), reference, 180),
+            0.5,
+        )
+
+    def test_extremely_long_half_life_approaches_existing_poisson(self) -> None:
+        history = [
+            self.match(0, "A", "B", 4, 1),
+            self.match(20, "C", "D", 2, 3),
+            self.match(40, "A", "D", 1, 2),
+        ]
+        target_date = date(2024, 1, 1) + timedelta(days=41)
+
+        existing = estimate_expected_goals(history, "A", "D", 5)
+        decayed = estimate_decay_expected_goals(
+            history, "A", "D", target_date, 1e15, 5
+        )
+
+        for existing_rate, decayed_rate in zip(existing, decayed):
+            self.assertAlmostEqual(existing_rate, decayed_rate, places=12)
+
+    def test_future_results_cannot_change_an_earlier_forecast(self) -> None:
+        history = [
+            self.match(0, "A", "B", 1, 0),
+            self.match(1, "B", "A", 0, 1),
+        ]
+        target = self.match(2, "A", "B", 0, 0)
+        original = rolling_poisson_decay_forecasts(
+            history + [target], min_history=2
+        )[0]
+        future = [self.match(day, "A", "B", 20, 0) for day in range(3, 20)]
+
+        with_future = rolling_poisson_decay_forecasts(
+            history + [target] + future, min_history=2
+        )[0]
+
+        self.assertEqual(with_future.match, target)
+        self.assertEqual(with_future.probabilities, original.probabilities)
+
+    def test_target_result_is_not_used_in_its_own_forecast(self) -> None:
+        history = self.match(0, "A", "B", 1, 1)
+        home_rout = self.match(1, "A", "B", 20, 0)
+        away_rout = self.match(1, "A", "B", 0, 20)
+
+        home_forecast = rolling_poisson_decay_forecasts(
+            [history, home_rout], min_history=1
+        )[0]
+        away_forecast = rolling_poisson_decay_forecasts(
+            [history, away_rout], min_history=1
+        )[0]
+
+        self.assertEqual(home_forecast.probabilities, away_forecast.probabilities)
+
+    def test_matches_on_same_date_use_identical_prior_history(self) -> None:
+        history = self.match(0, "A", "B", 1, 1)
+        first = self.match(1, "A", "B", 10, 0)
+        second = self.match(1, "A", "B", 0, 10)
+
+        forecasts = rolling_poisson_decay_forecasts(
+            [second, history, first], min_history=1
+        )
+
+        self.assertEqual(len(forecasts), 2)
+        self.assertEqual(forecasts[0].probabilities, forecasts[1].probabilities)
+
+    def test_forecasts_have_valid_normalized_probabilities(self) -> None:
+        matches = [
+            self.match(0, "A", "B", 2, 0),
+            self.match(30, "B", "A", 1, 1),
+            self.match(300, "A", "B", 0, 3),
+        ]
+
+        forecasts = rolling_poisson_decay_forecasts(
+            matches, min_history=1, max_goals=3, half_life_days=30
+        )
+
+        self.assertEqual(len(forecasts), 2)
+        for forecast in forecasts:
+            self.assertTrue(all(0 <= value <= 1 for value in forecast.probabilities))
+            self.assertAlmostEqual(sum(forecast.probabilities), 1.0)
+
+    def test_rejects_invalid_half_life_and_non_prior_history(self) -> None:
+        for invalid in (0, -1, math.inf, math.nan, True):
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                rolling_poisson_decay_forecasts([], half_life_days=invalid)
+        reference = date(2024, 1, 1)
+        with self.assertRaisesRegex(ValueError, "strictly earlier"):
+            exponential_time_weight(reference, reference)
 
 
 class DixonColesTests(unittest.TestCase):

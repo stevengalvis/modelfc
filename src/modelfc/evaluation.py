@@ -10,6 +10,7 @@ from modelfc.forecasts import (
     Forecast,
     rolling_dixon_coles_forecasts,
     rolling_league_frequency_forecasts,
+    rolling_poisson_decay_forecasts,
     rolling_poisson_forecasts,
 )
 from modelfc.matches import MatchResult
@@ -91,7 +92,7 @@ def main() -> None:
     parser.add_argument("csv", type=Path, help="path to a Football-Data season CSV")
     parser.add_argument(
         "--model",
-        choices=("baseline", "poisson", "dixon-coles"),
+        choices=("baseline", "poisson", "poisson-decay", "dixon-coles"),
         default="baseline",
         help="forecasting model to evaluate (default: baseline)",
     )
@@ -114,6 +115,12 @@ def main() -> None:
         help="Poisson team-rate pseudo-match weight (default: 5)",
     )
     parser.add_argument(
+        "--half-life-days",
+        type=float,
+        default=180.0,
+        help="Poisson-decay weight half-life in days (default: 180)",
+    )
+    parser.add_argument(
         "--rho-bound",
         type=float,
         default=0.2,
@@ -126,6 +133,14 @@ def main() -> None:
     elif args.model == "poisson":
         forecasts = rolling_poisson_forecasts(
             matches, args.min_history, args.max_goals, args.smoothing_matches
+        )
+    elif args.model == "poisson-decay":
+        forecasts = rolling_poisson_decay_forecasts(
+            matches,
+            args.min_history,
+            args.max_goals,
+            args.smoothing_matches,
+            args.half_life_days,
         )
     else:
         forecasts = rolling_dixon_coles_forecasts(
