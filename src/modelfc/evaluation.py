@@ -6,7 +6,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
-from modelfc.forecasts import Forecast, rolling_league_frequency_forecasts
+from modelfc.forecasts import (
+    Forecast,
+    rolling_league_frequency_forecasts,
+    rolling_poisson_forecasts,
+)
 from modelfc.matches import MatchResult
 from modelfc.providers.football_data import load_matches
 
@@ -80,20 +84,42 @@ def format_evaluation(evaluation: Evaluation) -> str:
 
 
 def main() -> None:
-    """Evaluate the rolling league-frequency baseline on a local season CSV."""
+    """Evaluate a rolling forecasting model on a local season CSV."""
 
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("csv", type=Path, help="path to a Football-Data season CSV")
+    parser.add_argument(
+        "--model",
+        choices=("baseline", "poisson"),
+        default="baseline",
+        help="forecasting model to evaluate (default: baseline)",
+    )
     parser.add_argument(
         "--min-history",
         type=int,
         default=100,
         help="completed earlier matches required before forecasting (default: 100)",
     )
-    args = parser.parse_args()
-    forecasts = rolling_league_frequency_forecasts(
-        load_matches(args.csv), min_history=args.min_history
+    parser.add_argument(
+        "--max-goals",
+        type=int,
+        default=10,
+        help="Poisson scoreline grid maximum for each team (default: 10)",
     )
+    parser.add_argument(
+        "--smoothing-matches",
+        type=float,
+        default=5.0,
+        help="Poisson team-rate pseudo-match weight (default: 5)",
+    )
+    args = parser.parse_args()
+    matches = load_matches(args.csv)
+    if args.model == "baseline":
+        forecasts = rolling_league_frequency_forecasts(matches, args.min_history)
+    else:
+        forecasts = rolling_poisson_forecasts(
+            matches, args.min_history, args.max_goals, args.smoothing_matches
+        )
     if not forecasts:
         parser.error("no forecasts generated; use a lower --min-history or a larger CSV")
     print(format_evaluation(evaluate(forecasts)))

@@ -6,9 +6,10 @@ probabilistic forecasting.
 
 ## Project status
 
-The data-ingestion layer and first probabilistic baseline are in place. The
-baseline is intentionally simple: it predicts 1X2 outcomes from the rolling
-league-wide frequency of results observed before each match.
+The data-ingestion layer, a probabilistic baseline, and the first team-strength
+model are in place. The baseline predicts 1X2 outcomes from rolling league-wide
+result frequencies; the Poisson model adds venue-specific team attack and
+defence performance.
 
 ## Internal match schema
 
@@ -91,6 +92,42 @@ copy, provide its path:
 ```sh
 MODELFC_2023_24_CSV=/path/to/E0.csv PYTHONPATH=src python -m unittest
 ```
+
+## Rolling Poisson team-strength model
+
+The Poisson model estimates separate league-average home and away scoring
+rates. A home team's home attack and goals-conceded rates, and an away team's
+corresponding away rates, are each smoothed toward the relevant league average
+with five pseudo-matches by default. Expected home goals combine home attack
+and away defence strengths relative to the league home rate; expected away
+goals analogously combine away attack and home defence.
+
+Home and away goals are assumed to be independent Poisson variables. ModelFC
+calculates every scoreline through 10 goals per team by default, sums cells into
+home/draw/away outcomes, and renormalizes the retained probability mass. This
+keeps output valid despite truncating the infinite score grid. The deliberately
+simple model does not account for score dependence, players, or changing form.
+
+Like the baseline, the model waits for 100 completed league matches by default.
+It sorts normalized matches by date, forecasts every match on a date from one
+snapshot containing only strictly earlier dates, and only then adds that day's
+results. Thus neither a target result, another same-day result, nor a future
+result can enter its team-strength estimates.
+
+The same evaluation command and report support both models:
+
+```sh
+# Existing league-frequency baseline (also remains the default model)
+PYTHONPATH=src python -m modelfc.evaluation E0.csv --model baseline
+
+# Team-strength Poisson model
+PYTHONPATH=src python -m modelfc.evaluation E0.csv --model poisson
+```
+
+Both accept `--min-history N`. Poisson additionally accepts `--max-goals N`
+and `--smoothing-matches N`. Both reports contain forecast count, average
+multiclass Brier score, average home/draw/away predictions, and actual
+home/draw/away frequencies over the same eligible matches.
 
 ## Repository layout
 

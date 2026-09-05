@@ -76,3 +76,161 @@ def rolling_league_frequency_forecasts(
         index = end
 
     return forecasts
+
+
+def poisson_1x2_probabilities(
+    expected_home_goals: float,
+    expected_away_goals: float,
+    max_goals: int = 10,
+) -> tuple[float, float, float]:
+    """Convert independent Poisson goal rates to normalized 1X2 probabilities.
+
+    The finite score grid omits scorelines above ``max_goals``.  Normalizing
+    the three outcome totals assigns that truncated mass proportionally and
+    guarantees a valid probability distribution.
+    """
+
+    for name, value in (
+        ("expected_home_goals", expected_home_goals),
+        ("expected_away_goals", expected_away_goals),
+    ):
+        if not isinstance(value, (int, float)) or isinstance(value, bool):
+            raise ValueError(f"{name} must be a finite non-negative number")
+        if not math.isfinite(value) or value < 0:
+            raise ValueError(f"{name} must be a finite non-negative number")
+    if isinstance(max_goals, bool) or not isinstance(max_goals, int) or max_goals < 0:
+        raise ValueError("max_goals must be a non-negative integer")
+
+    def probabilities(rate: float) -> list[float]:
+        if rate == 0:
+            return [1.0] + [0.0] * max_goals
+        # The common exp(-rate) factor cancels during truncation
+        # normalization. Shifting log weights avoids under/overflow.
+        log_weights = [
+            goals * math.log(rate) - math.lgamma(goals + 1)
+            for goals in range(max_goals + 1)
+        ]
+        largest = max(log_weights)
+        weights = [math.exp(weight - largest) for weight in log_weights]
+        total = sum(weights)
+        return [weight / total for weight in weights]
+
+    home_scores = probabilities(expected_home_goals)
+    away_scores = probabilities(expected_away_goals)
+    outcomes = [0.0, 0.0, 0.0]
+    for home_goals, home_probability in enumerate(home_scores):
+        for away_goals, away_probability in enumerate(away_scores):
+            index = (
+                0
+                if home_goals > away_goals
+                else 1
+                if home_goals == away_goals
+                else 2
+            )
+            outcomes[index] += home_probability * away_probability
+
+    retained_mass = sum(outcomes)
+    # Each marginal was conditioned on the retained range; normalize once more
+    # to absorb floating-point summation error in the outcome aggregation.
+    return tuple(probability / retained_mass for probability in outcomes)
+
+
+def estimate_expected_goals(
+    history: Iterable[Match],
+    home_team: str,
+    away_team: str,
+    smoothing_matches: float = 5.0,
+) -> tuple[float, float]:
+    """Estimate goal rates from venue-specific attack and defence records.
+
+    Team rates are shrunk toward the corresponding league scoring rate using
+    ``smoothing_matches`` pseudo-matches.  League rates themselves use the
+    same number of one-goal pseudo-matches, keeping estimates positive even in
+    an unusually scoreless or very small history.
+    """
+
+    if (
+        not isinstance(smoothing_matches, (int, float))
+        or isinstance(smoothing_matches, bool)
+        or not math.isfinite(smoothing_matches)
+        or smoothing_matches <= 0
+    ):
+        raise ValueError("smoothing_matches must be a finite positive number")
+
+    matches = list(history)
+    match_count = len(matches)
+    league_home_rate = (
+        sum(match.home_goals for match in matches) + smoothing_matches
+    ) / (match_count + smoothing_matches)
+    league_away_rate = (
+        sum(match.away_goals for match in matches) + smoothing_matches
+    ) / (match_count + smoothing_matches)
+
+    home_games = home_scored = home_conceded = 0
+    away_games = away_scored = away_conceded = 0
+    for match in matches:
+        if match.home_team == home_team:
+            home_games += 1
+            home_scored += match.home_goals
+            home_conceded += match.away_goals
+        if match.away_team == away_team:
+            away_games += 1
+            away_scored += match.away_goals
+            away_conceded += match.home_goals
+
+    home_attack_rate = (home_scored + smoothing_matches * league_home_rate) / (
+        home_games + smoothing_matches
+    )
+    home_defence_rate = (home_conceded + smoothing_matches * league_away_rate) / (
+        home_games + smoothing_matches
+    )
+    away_attack_rate = (away_scored + smoothing_matches * league_away_rate) / (
+        away_games + smoothing_matches
+    )
+    away_defence_rate = (away_conceded + smoothing_matches * league_home_rate) / (
+        away_games + smoothing_matches
+    )
+
+    expected_home = home_attack_rate * away_defence_rate / league_home_rate
+    expected_away = away_attack_rate * home_defence_rate / league_away_rate
+    return expected_home, expected_away
+
+
+def rolling_poisson_forecasts(
+    matches: Iterable[Match],
+    min_history: int = 100,
+    max_goals: int = 10,
+    smoothing_matches: float = 5.0,
+) -> list[Forecast]:
+    """Forecast matches with venue-specific team strengths from prior dates."""
+
+    if isinstance(min_history, bool) or not isinstance(min_history, int) or min_history < 1:
+        raise ValueError("min_history must be a positive integer")
+    # Validate model parameters even when there are no eligible matches.
+    poisson_1x2_probabilities(1.0, 1.0, max_goals)
+    estimate_expected_goals([], "home", "away", smoothing_matches)
+
+    ordered_matches = sorted(matches, key=lambda match: match.match_date)
+    history: list[Match] = []
+    forecasts: list[Forecast] = []
+    index = 0
+    while index < len(ordered_matches):
+        match_date = ordered_matches[index].match_date
+        end = index
+        while end < len(ordered_matches) and ordered_matches[end].match_date == match_date:
+            end += 1
+
+        if len(history) >= min_history:
+            for match in ordered_matches[index:end]:
+                rates = estimate_expected_goals(
+                    history, match.home_team, match.away_team, smoothing_matches
+                )
+                forecasts.append(
+                    Forecast(match, *poisson_1x2_probabilities(*rates, max_goals))
+                )
+
+        # Updating only after the complete date is forecast preserves isolation.
+        history.extend(ordered_matches[index:end])
+        index = end
+
+    return forecasts
