@@ -3,7 +3,7 @@
 import csv
 from datetime import datetime
 from pathlib import Path
-from typing import TextIO
+from typing import Iterable, TextIO
 
 from modelfc.matches import Match, MatchResult
 
@@ -30,6 +30,13 @@ def load_matches(path: str | Path) -> list[Match]:
             return _read_matches(csv_file)
     except OSError as error:
         raise FootballDataError(f"could not read Football-Data CSV: {error}") from error
+
+
+def load_match_history(paths: Iterable[str | Path]) -> list[Match]:
+    """Load and chronologically combine completed matches from multiple CSVs."""
+
+    matches = [match for path in paths for match in load_matches(path)]
+    return sorted(matches, key=lambda match: match.match_date)
 
 
 def _read_matches(csv_file: TextIO) -> list[Match]:

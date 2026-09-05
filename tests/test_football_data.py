@@ -5,7 +5,11 @@ import tempfile
 import unittest
 
 from modelfc.matches import Match, MatchResult
-from modelfc.providers.football_data import FootballDataError, load_matches
+from modelfc.providers.football_data import (
+    FootballDataError,
+    load_match_history,
+    load_matches,
+)
 from modelfc.season_summary import summarize
 
 
@@ -68,6 +72,32 @@ class FootballDataAdapterTests(unittest.TestCase):
         self.assertIn("Draws: 1", summary)
         self.assertIn("Away wins: 1", summary)
         self.assertIn("Total goals: 11", summary)
+
+    def test_multiple_files_are_combined_and_sorted_chronologically(self) -> None:
+        header = "Date,HomeTeam,AwayTeam,FTHG,FTAG,FTR\n"
+        with tempfile.TemporaryDirectory() as directory:
+            later = Path(directory) / "later.csv"
+            earlier = Path(directory) / "earlier.csv"
+            later.write_text(header + "03/01/2024,C,D,2,0,H\n", encoding="utf-8")
+            earlier.write_text(
+                header
+                + "02/01/2024,E,F,1,1,D\n"
+                + "01/01/2024,A,B,0,1,A\n",
+                encoding="utf-8",
+            )
+
+            matches = load_match_history([later, earlier])
+
+        self.assertEqual(len(matches), 3)
+        self.assertEqual(
+            [match.match_date for match in matches],
+            [date(2024, 1, 1), date(2024, 1, 2), date(2024, 1, 3)],
+        )
+
+    def test_single_file_loader_behavior_is_unchanged(self) -> None:
+        self.assertEqual(load_match_history([FIXTURE]), sorted(
+            load_matches(FIXTURE), key=lambda match: match.match_date
+        ))
 
     def _load_csv(self, contents: str) -> FootballDataError:
         with tempfile.TemporaryDirectory() as directory:

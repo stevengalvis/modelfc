@@ -6,7 +6,7 @@ from datetime import date
 import math
 from typing import Iterable
 
-from modelfc.matches import Match, MatchResult
+from modelfc.matches import Match, MatchResult, UpcomingFixture
 
 
 @dataclass(frozen=True)
@@ -24,6 +24,29 @@ class Forecast:
             raise ValueError("forecast probabilities must be finite values between 0 and 1")
         if not math.isclose(sum(probabilities), 1.0, rel_tol=0.0, abs_tol=1e-12):
             raise ValueError("forecast probabilities must sum to 1")
+
+    @property
+    def probabilities(self) -> tuple[float, float, float]:
+        """Return probabilities in home-win, draw, away-win order."""
+
+        return (
+            self.home_win_probability,
+            self.draw_probability,
+            self.away_win_probability,
+        )
+
+
+@dataclass(frozen=True)
+class FixturePrediction:
+    """Plain-Poisson prediction for an upcoming fixture."""
+
+    fixture: UpcomingFixture
+    expected_home_goals: float
+    expected_away_goals: float
+    home_win_probability: float
+    draw_probability: float
+    away_win_probability: float
+    historical_match_count: int
 
     @property
     def probabilities(self) -> tuple[float, float, float]:
@@ -276,6 +299,35 @@ def estimate_expected_goals(
     expected_home = home_attack_rate * away_defence_rate / league_home_rate
     expected_away = away_attack_rate * home_defence_rate / league_away_rate
     return expected_home, expected_away
+
+
+def predict_upcoming_fixture(
+    history: Iterable[Match],
+    fixture: UpcomingFixture,
+    max_goals: int = 10,
+    smoothing_matches: float = 5.0,
+) -> FixturePrediction:
+    """Predict a fixture using completed matches from strictly earlier dates."""
+
+    eligible_history = [
+        match for match in history if match.match_date < fixture.match_date
+    ]
+    expected_home, expected_away = estimate_expected_goals(
+        eligible_history,
+        fixture.home_team,
+        fixture.away_team,
+        smoothing_matches,
+    )
+    probabilities = poisson_1x2_probabilities(
+        expected_home, expected_away, max_goals
+    )
+    return FixturePrediction(
+        fixture,
+        expected_home,
+        expected_away,
+        *probabilities,
+        len(eligible_history),
+    )
 
 
 def exponential_time_weight(
