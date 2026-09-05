@@ -3,7 +3,13 @@ import math
 import unittest
 
 from modelfc.evaluation import evaluate, format_evaluation, multiclass_brier_score
-from modelfc.forecasts import Forecast, rolling_league_frequency_forecasts
+from modelfc.forecasts import (
+    Forecast,
+    estimate_expected_goals,
+    poisson_1x2_probabilities,
+    rolling_league_frequency_forecasts,
+    rolling_poisson_forecasts,
+)
 from modelfc.matches import Match, MatchResult
 
 
@@ -119,6 +125,121 @@ class ForecastAndEvaluationTests(unittest.TestCase):
     def test_cannot_evaluate_no_forecasts(self) -> None:
         with self.assertRaisesRegex(ValueError, "empty"):
             evaluate([])
+
+
+class RollingPoissonTests(unittest.TestCase):
+    @staticmethod
+    def match(day, home, away, home_goals, away_goals):
+        result = (
+            MatchResult.HOME_WIN
+            if home_goals > away_goals
+            else MatchResult.AWAY_WIN
+            if home_goals < away_goals
+            else MatchResult.DRAW
+        )
+        return Match(
+            date(2024, 1, 1) + timedelta(days=day),
+            home,
+            away,
+            home_goals,
+            away_goals,
+            result,
+        )
+
+    def test_expected_goals_use_smoothed_venue_attack_and_defence(self) -> None:
+        history = [
+            self.match(0, "A", "B", 4, 1),
+            self.match(1, "C", "D", 2, 3),
+        ]
+
+        expected_home, expected_away = estimate_expected_goals(
+            history, "A", "D", smoothing_matches=2
+        )
+
+        # League rates are (6 + 2) / 4 = 2 and (4 + 2) / 4 = 1.5.
+        # A's home attack is (4 + 2*2) / 3; D's away defence is
+        # (2 + 2*2) / 3. D's away attack is (3 + 2*1.5) / 3; A's home defence is
+        # (1 + 2*1.5) / 3.
+        self.assertAlmostEqual(expected_home, (8 / 3) * 2 / 2)
+        self.assertAlmostEqual(expected_away, 2 * (4 / 3) / 1.5)
+
+    def test_scoreline_conversion_sums_cells_and_normalizes_truncation(self) -> None:
+        probabilities = poisson_1x2_probabilities(0, 1, max_goals=2)
+
+        # With no possible home goals: draw is away=0, away win is away=1/2.
+        self.assertEqual(probabilities[0], 0)
+        self.assertAlmostEqual(probabilities[1], 1 / 2.5)
+        self.assertAlmostEqual(probabilities[2], 1.5 / 2.5)
+        self.assertAlmostEqual(sum(probabilities), 1.0)
+
+    def test_forecasts_have_valid_normalized_probabilities(self) -> None:
+        matches = [
+            self.match(0, "A", "B", 2, 0),
+            self.match(1, "B", "A", 1, 1),
+            self.match(2, "A", "B", 0, 3),
+        ]
+
+        forecasts = rolling_poisson_forecasts(matches, min_history=1, max_goals=3)
+
+        self.assertEqual(len(forecasts), 2)
+        for forecast in forecasts:
+            self.assertTrue(
+                all(0 <= probability <= 1 for probability in forecast.probabilities)
+            )
+            self.assertAlmostEqual(sum(forecast.probabilities), 1.0)
+
+    def test_default_requires_one_hundred_earlier_matches(self) -> None:
+        matches = [
+            self.match(day, "A" if day % 2 else "B", "B" if day % 2 else "A", 1, 0)
+            for day in range(101)
+        ]
+
+        forecasts = rolling_poisson_forecasts(matches)
+
+        self.assertEqual(len(forecasts), 1)
+        self.assertEqual(forecasts[0].match, matches[100])
+
+    def test_matches_on_same_date_use_identical_prior_history(self) -> None:
+        history = self.match(0, "A", "B", 1, 1)
+        first = self.match(1, "A", "B", 10, 0)
+        second = self.match(1, "A", "B", 0, 10)
+
+        forecasts = rolling_poisson_forecasts(
+            [second, history, first], min_history=1
+        )
+
+        self.assertEqual(len(forecasts), 2)
+        self.assertEqual(forecasts[0].probabilities, forecasts[1].probabilities)
+
+    def test_future_results_cannot_change_an_earlier_forecast(self) -> None:
+        history = [
+            self.match(0, "A", "B", 1, 0),
+            self.match(1, "B", "A", 0, 1),
+        ]
+        target = self.match(2, "A", "B", 0, 0)
+        original = rolling_poisson_forecasts(history + [target], min_history=2)[0]
+        future = [self.match(day, "A", "B", 20, 0) for day in range(3, 20)]
+
+        with_future = rolling_poisson_forecasts(
+            history + [target] + future, min_history=2
+        )[0]
+
+        self.assertEqual(with_future.match, target)
+        self.assertEqual(with_future.probabilities, original.probabilities)
+
+    def test_target_result_is_not_used_in_its_own_forecast(self) -> None:
+        history = self.match(0, "A", "B", 1, 1)
+        home_rout = self.match(1, "A", "B", 20, 0)
+        away_rout = self.match(1, "A", "B", 0, 20)
+
+        home_forecast = rolling_poisson_forecasts(
+            [history, home_rout], min_history=1
+        )[0]
+        away_forecast = rolling_poisson_forecasts(
+            [history, away_rout], min_history=1
+        )[0]
+
+        self.assertEqual(home_forecast.probabilities, away_forecast.probabilities)
 
 
 if __name__ == "__main__":
