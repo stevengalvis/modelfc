@@ -2,6 +2,7 @@ from datetime import date, timedelta
 import math
 import unittest
 
+import modelfc
 from modelfc.evaluation import evaluate, format_evaluation, multiclass_brier_score
 from modelfc.forecasts import (
     Forecast,
@@ -248,6 +249,17 @@ class RollingPoissonTests(unittest.TestCase):
 
 class DixonColesTests(unittest.TestCase):
     match = staticmethod(RollingPoissonTests.match)
+
+    def test_public_api_exports_dixon_coles_functions(self) -> None:
+        self.assertIs(
+            modelfc.dixon_coles_1x2_probabilities,
+            dixon_coles_1x2_probabilities,
+        )
+        self.assertIs(modelfc.estimate_dixon_coles_rho, estimate_dixon_coles_rho)
+        self.assertIs(
+            modelfc.rolling_dixon_coles_forecasts,
+            rolling_dixon_coles_forecasts,
+        )
 
     def test_low_score_correction_changes_only_four_cells(self) -> None:
         expected_home, expected_away, rho = 1.5, 1.2, -0.1
