@@ -2,6 +2,7 @@
 
 from collections import Counter
 from dataclasses import dataclass
+from datetime import date
 import math
 from typing import Iterable
 
@@ -277,6 +278,92 @@ def estimate_expected_goals(
     return expected_home, expected_away
 
 
+def exponential_time_weight(
+    match_date: date,
+    reference_date: date,
+    half_life_days: float = 180.0,
+) -> float:
+    """Return a match's exponential weight relative to a later date.
+
+    A match exactly one half-life old receives weight 0.5.  Callers must pass
+    a strictly earlier match date so this helper cannot silently enable
+    target-date or future leakage.
+    """
+
+    if (
+        not isinstance(half_life_days, (int, float))
+        or isinstance(half_life_days, bool)
+        or not math.isfinite(half_life_days)
+        or half_life_days <= 0
+    ):
+        raise ValueError("half_life_days must be a finite positive number")
+    age_days = (reference_date - match_date).days
+    if age_days <= 0:
+        raise ValueError("match_date must be strictly earlier than reference_date")
+    return math.exp2(-age_days / half_life_days)
+
+
+def estimate_decay_expected_goals(
+    history: Iterable[Match],
+    home_team: str,
+    away_team: str,
+    reference_date: date,
+    half_life_days: float = 180.0,
+    smoothing_matches: float = 5.0,
+) -> tuple[float, float]:
+    """Estimate venue-specific rates with exponential recency weighting."""
+
+    # Reuse the established smoothing validation without changing that model.
+    estimate_expected_goals([], "home", "away", smoothing_matches)
+    weighted_matches = [
+        (
+            match,
+            exponential_time_weight(
+                match.match_date, reference_date, half_life_days
+            ),
+        )
+        for match in history
+    ]
+    total_weight = sum(weight for _, weight in weighted_matches)
+    league_home_rate = (
+        sum(weight * match.home_goals for match, weight in weighted_matches)
+        + smoothing_matches
+    ) / (total_weight + smoothing_matches)
+    league_away_rate = (
+        sum(weight * match.away_goals for match, weight in weighted_matches)
+        + smoothing_matches
+    ) / (total_weight + smoothing_matches)
+
+    home_weight = home_scored = home_conceded = 0.0
+    away_weight = away_scored = away_conceded = 0.0
+    for match, weight in weighted_matches:
+        if match.home_team == home_team:
+            home_weight += weight
+            home_scored += weight * match.home_goals
+            home_conceded += weight * match.away_goals
+        if match.away_team == away_team:
+            away_weight += weight
+            away_scored += weight * match.away_goals
+            away_conceded += weight * match.home_goals
+
+    home_attack_rate = (home_scored + smoothing_matches * league_home_rate) / (
+        home_weight + smoothing_matches
+    )
+    home_defence_rate = (home_conceded + smoothing_matches * league_away_rate) / (
+        home_weight + smoothing_matches
+    )
+    away_attack_rate = (away_scored + smoothing_matches * league_away_rate) / (
+        away_weight + smoothing_matches
+    )
+    away_defence_rate = (away_conceded + smoothing_matches * league_home_rate) / (
+        away_weight + smoothing_matches
+    )
+    return (
+        home_attack_rate * away_defence_rate / league_home_rate,
+        away_attack_rate * home_defence_rate / league_away_rate,
+    )
+
+
 def _rho_interval(
     rate_pairs: Iterable[tuple[float, float]], rho_bound: float
 ) -> tuple[float, float]:
@@ -408,6 +495,55 @@ def rolling_poisson_forecasts(
         history.extend(ordered_matches[index:end])
         index = end
 
+    return forecasts
+
+
+def rolling_poisson_decay_forecasts(
+    matches: Iterable[Match],
+    min_history: int = 100,
+    max_goals: int = 10,
+    smoothing_matches: float = 5.0,
+    half_life_days: float = 180.0,
+) -> list[Forecast]:
+    """Forecast with Poisson team strengths weighted by match recency."""
+
+    if (
+        isinstance(min_history, bool)
+        or not isinstance(min_history, int)
+        or min_history < 1
+    ):
+        raise ValueError("min_history must be a positive integer")
+    poisson_1x2_probabilities(1.0, 1.0, max_goals)
+    estimate_expected_goals([], "home", "away", smoothing_matches)
+    # Validate the half-life even if no match becomes eligible.
+    exponential_time_weight(date.min, date.min.replace(day=2), half_life_days)
+
+    ordered_matches = sorted(matches, key=lambda match: match.match_date)
+    history: list[Match] = []
+    forecasts: list[Forecast] = []
+    index = 0
+    while index < len(ordered_matches):
+        match_date = ordered_matches[index].match_date
+        end = index
+        while end < len(ordered_matches) and ordered_matches[end].match_date == match_date:
+            end += 1
+
+        if len(history) >= min_history:
+            for match in ordered_matches[index:end]:
+                rates = estimate_decay_expected_goals(
+                    history,
+                    match.home_team,
+                    match.away_team,
+                    match_date,
+                    half_life_days,
+                    smoothing_matches,
+                )
+                probabilities = poisson_1x2_probabilities(*rates, max_goals)
+                forecasts.append(Forecast(match, *probabilities))
+
+        # The whole date remains invisible until every fixture on it is forecast.
+        history.extend(ordered_matches[index:end])
+        index = end
     return forecasts
 
 
