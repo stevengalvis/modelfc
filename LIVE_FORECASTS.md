@@ -26,3 +26,39 @@
 - Expected away goals: 0.957685
 - Completed historical matches used: 788
 - Status: Pending
+
+## Results: 2026-09-06
+
+Scores below are approximate and calculated directly from the stored six-decimal
+probabilities. The archived Everton probabilities sum to 1.000001 and have not
+been renormalized.
+
+### Everton vs Man United
+
+- Final score: 2-2
+- Actual 1X2 outcome: Draw
+- Outcome vector (home/draw/away): [0, 1, 0]
+- Match Brier score (approximate): 0.808656
+- Running live Brier after this match (approximate): 0.808656
+- Completed forecasts scored: 1
+- Result status: Completed
+
+### Arsenal vs Chelsea
+
+- Final score: 2-1
+- Actual 1X2 outcome: Home win
+- Outcome vector (home/draw/away): [1, 0, 0]
+- Match Brier score (approximate): 0.271318
+- Running live Brier after this match (approximate): 0.539987
+- Completed forecasts scored: 2
+- Result status: Completed
+
+### Matchday summary
+
+- Two completed live forecasts.
+- Average live 1X2 Brier score: 0.539987 (approximate, calculated from stored
+  six-decimal probabilities).
+- Lower Brier scores are better.
+- These scores evaluate home/draw/away probabilities, not exact scores or goal
+  totals.
+- Two matches are not enough to establish overall model quality.
