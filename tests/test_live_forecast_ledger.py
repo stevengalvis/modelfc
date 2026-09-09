@@ -1,8 +1,12 @@
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date
 import json
 from pathlib import Path
+import shutil
 import tempfile
+import threading
 import unittest
+from unittest import mock
 
 from modelfc.forecasts import FixturePrediction
 from modelfc.live_forecasts import (
@@ -84,6 +88,76 @@ class LiveForecastLedgerTests(unittest.TestCase):
             loaded["prediction"]["probabilities"]["home"], 0.12345678901234566
         )
 
+    def test_overlapping_saves_create_only_one_original_forecast(self) -> None:
+        worker_count = 8
+        start = threading.Barrier(worker_count)
+
+        def attempt_save(_: int):
+            start.wait()
+            try:
+                return self.save()[0]["forecast_id"]
+            except LedgerError as error:
+                return error
+
+        with ThreadPoolExecutor(max_workers=worker_count) as executor:
+            outcomes = list(executor.map(attempt_save, range(worker_count)))
+
+        successes = [outcome for outcome in outcomes if isinstance(outcome, str)]
+        failures = [outcome for outcome in outcomes if isinstance(outcome, LedgerError)]
+        self.assertEqual(len(successes), 1)
+        self.assertEqual(len(failures), worker_count - 1)
+        self.assertTrue(all("already exists" in str(error) for error in failures))
+        self.assertEqual(ledger_summary(self.ledger)["saved"], 1)
+
+    def test_invalid_new_records_are_rejected_before_writing(self) -> None:
+        invalid_attempts = (
+            (self.prediction(probabilities=(0.6, 0.6, -0.2)), 10, 5.0, None),
+            (
+                FixturePrediction(
+                    self.prediction().fixture,
+                    -1.0,
+                    1.0,
+                    *self.prediction().probabilities,
+                    2,
+                ),
+                10,
+                5.0,
+                None,
+            ),
+            (self.prediction(), -1, 5.0, None),
+            (self.prediction(), 10, 0.0, None),
+            (self.prediction(), 10, 5.0, [date(2024, 1, 1)]),
+            (self.prediction(), 10, 5.0, [date(2024, 1, 1), date(2024, 1, 10)]),
+        )
+        for prediction, max_goals, smoothing, dates in invalid_attempts:
+            with self.subTest(max_goals=max_goals, smoothing=smoothing, dates=dates):
+                with self.assertRaisesRegex(LedgerError, "invalid forecast"):
+                    save_forecast(
+                        self.ledger,
+                        prediction,
+                        dates if dates is not None else [date(2024, 1, 1), date(2024, 1, 3)],
+                        [self.source],
+                        max_goals,
+                        smoothing,
+                    )
+                self.assertEqual(list((self.ledger / "forecasts").glob("*.json")), [])
+
+        self.save()
+        self.assertEqual(ledger_summary(self.ledger)["saved"], 1)
+
+    def test_serialization_failure_leaves_ledger_usable(self) -> None:
+        with mock.patch(
+            "modelfc.live_forecasts.json.dumps",
+            side_effect=TypeError("synthetic serialization failure"),
+        ):
+            with self.assertRaisesRegex(LedgerError, "could not serialize"):
+                self.save()
+
+        self.assertEqual(list((self.ledger / "forecasts").glob("*.json")), [])
+        self.assertEqual(list((self.ledger / "forecasts").glob("*.tmp")), [])
+        self.save()
+        self.assertEqual(ledger_summary(self.ledger)["saved"], 1)
+
     def test_recording_result_leaves_forecast_unchanged_and_scores_it(self) -> None:
         record, path = self.save(self.prediction(probabilities=(0.5, 0.25, 0.25)))
         original = path.read_bytes()
@@ -163,6 +237,41 @@ class LiveForecastLedgerTests(unittest.TestCase):
 
         with self.assertRaisesRegex(LedgerError, "invalid forecast record"):
             load_forecast(self.ledger, record["forecast_id"])
+
+    def test_copied_forecast_filename_is_an_integrity_error(self) -> None:
+        record, path = self.save(self.prediction(probabilities=(0.5, 0.25, 0.25)))
+        record_result(self.ledger, record["forecast_id"], 2, 1)
+        original_summary = ledger_summary(self.ledger)
+        copied_path = path.with_name("copied.json")
+        shutil.copyfile(path, copied_path)
+
+        with self.assertRaisesRegex(LedgerError, "filename must be"):
+            ledger_summary(self.ledger)
+
+        copied_path.unlink()
+        restored_summary = ledger_summary(self.ledger)
+        self.assertEqual(restored_summary["completed"], original_summary["completed"])
+        self.assertEqual(
+            restored_summary["average_brier_score"],
+            original_summary["average_brier_score"],
+        )
+
+    def test_null_timestamps_raise_clear_ledger_errors(self) -> None:
+        record, forecast_path = self.save()
+        forecast = json.loads(forecast_path.read_text())
+        forecast["created_at"] = None
+        forecast_path.write_text(json.dumps(forecast), encoding="utf-8")
+        with self.assertRaisesRegex(LedgerError, "invalid forecast record"):
+            load_forecast(self.ledger, record["forecast_id"])
+
+        forecast["created_at"] = "2024-01-01T00:00:00Z"
+        forecast_path.write_text(json.dumps(forecast), encoding="utf-8")
+        result, _ = record_result(self.ledger, record["forecast_id"], 1, 0)
+        result_path = self.ledger / "results" / f"{record['forecast_id']}.json"
+        result["recorded_at"] = None
+        result_path.write_text(json.dumps(result), encoding="utf-8")
+        with self.assertRaisesRegex(LedgerError, "invalid result record"):
+            ledger_summary(self.ledger)
 
 
 if __name__ == "__main__":

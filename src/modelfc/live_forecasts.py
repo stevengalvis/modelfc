@@ -1,13 +1,17 @@
 """Local JSON ledger storage and scoring for live fixture forecasts."""
 
 import argparse
+from contextlib import contextmanager
 from datetime import date, datetime, timezone
+import fcntl
 import hashlib
 import json
 import math
+import os
 from pathlib import Path
 import subprocess
-from typing import Any, Iterable
+import tempfile
+from typing import Any, Iterable, Iterator
 import uuid
 
 from modelfc.evaluation import multiclass_brier_score
@@ -52,14 +56,51 @@ def _source_records(paths: Iterable[Path]) -> list[dict[str, str]]:
 
 
 def _write_new(path: Path, record: dict[str, Any]) -> None:
+    """Atomically create a complete JSON record without replacing a file."""
+
     try:
-        with path.open("x", encoding="utf-8") as output:
-            json.dump(record, output, indent=2, sort_keys=True, allow_nan=False)
-            output.write("\n")
+        serialized = json.dumps(record, indent=2, sort_keys=True, allow_nan=False) + "\n"
+    except (TypeError, ValueError) as error:
+        raise LedgerError(f"could not serialize ledger record {path}: {error}") from error
+
+    temporary_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=".record-",
+            suffix=".tmp",
+            delete=False,
+        ) as output:
+            temporary_path = Path(output.name)
+            output.write(serialized)
+            output.flush()
+            os.fsync(output.fileno())
+        os.link(temporary_path, path)
     except FileExistsError as error:
         raise LedgerError(f"refusing to overwrite existing record: {path}") from error
-    except (OSError, ValueError) as error:
+    except OSError as error:
         raise LedgerError(f"could not write ledger record {path}: {error}") from error
+    finally:
+        if temporary_path is not None:
+            try:
+                temporary_path.unlink()
+            except FileNotFoundError:
+                pass
+
+
+@contextmanager
+def _ledger_lock(ledger: Path) -> Iterator[None]:
+    """Serialize operations whose correctness depends on the ledger contents."""
+
+    lock_path = ledger / ".lock"
+    try:
+        with lock_path.open("a", encoding="utf-8") as lock_file:
+            fcntl.flock(lock_file, fcntl.LOCK_EX)
+            yield
+    except OSError as error:
+        raise LedgerError(f"could not lock ledger {ledger}: {error}") from error
 
 
 def _read_json(path: Path, kind: str) -> dict[str, Any]:
@@ -81,8 +122,8 @@ def _validate_forecast(record: dict[str, Any], path: Path) -> None:
         forecast_id = record["forecast_id"]
         uuid.UUID(hex=forecast_id)
         created_at = datetime.fromisoformat(record["created_at"].replace("Z", "+00:00"))
-        if created_at.tzinfo is None:
-            raise ValueError("creation timestamp must include a UTC offset")
+        if created_at.tzinfo is None or created_at.utcoffset() != timezone.utc.utcoffset(None):
+            raise ValueError("creation timestamp must be in UTC")
         date.fromisoformat(record["fixture"]["date"])
         if not all(
             isinstance(record["fixture"][key], str) and record["fixture"][key]
@@ -138,8 +179,55 @@ def _validate_forecast(record: dict[str, Any], path: Path) -> None:
                 or any(character not in "0123456789abcdef" for character in source["sha256"])
             ):
                 raise ValueError("source SHA-256 must be a lowercase hexadecimal digest")
-    except (KeyError, TypeError, ValueError) as error:
+        git_commit_sha = record["git_commit_sha"]
+        if not isinstance(git_commit_sha, str) or not git_commit_sha:
+            raise ValueError("git commit SHA must be a non-empty string")
+        earliest = record["history"]["earliest_date"]
+        latest = record["history"]["latest_date"]
+        if match_count == 0:
+            if earliest is not None or latest is not None:
+                raise ValueError("empty history must have null earliest/latest dates")
+        else:
+            if not isinstance(earliest, str) or not isinstance(latest, str):
+                raise ValueError("non-empty history must have earliest/latest dates")
+            if date.fromisoformat(earliest) > date.fromisoformat(latest):
+                raise ValueError("history earliest date must not follow latest date")
+    except (AttributeError, KeyError, TypeError, ValueError) as error:
         raise LedgerError(f"invalid forecast record {path}: {error}") from error
+
+
+def _load_forecast_path(path: Path) -> dict[str, Any]:
+    record = _read_json(path, "forecast")
+    _validate_forecast(record, path)
+    expected_name = f"{record['forecast_id']}.json"
+    if path.name != expected_name:
+        raise LedgerError(
+            f"invalid forecast record {path}: filename must be {expected_name}"
+        )
+    return record
+
+
+def _load_all_forecasts(forecast_dir: Path) -> list[dict[str, Any]]:
+    forecasts = []
+    seen_ids: set[str] = set()
+    seen_fixtures: set[tuple[str, str, str]] = set()
+    paths = sorted(forecast_dir.glob("*.json")) if forecast_dir.exists() else ()
+    for path in paths:
+        record = _load_forecast_path(path)
+        forecast_id = record["forecast_id"]
+        fixture = record["fixture"]
+        fixture_key = (fixture["date"], fixture["home_team"], fixture["away_team"])
+        if forecast_id in seen_ids:
+            raise LedgerError(f"duplicate forecast ID in ledger: {forecast_id}")
+        if fixture_key in seen_fixtures:
+            raise LedgerError(
+                "duplicate fixture records in ledger: "
+                f"{fixture['date']} {fixture['home_team']} vs {fixture['away_team']}"
+            )
+        seen_ids.add(forecast_id)
+        seen_fixtures.add(fixture_key)
+        forecasts.append(record)
+    return forecasts
 
 
 def load_forecast(ledger_dir: str | Path, forecast_id: str) -> dict[str, Any]:
@@ -150,17 +238,16 @@ def load_forecast(ledger_dir: str | Path, forecast_id: str) -> dict[str, Any]:
     except (ValueError, AttributeError) as error:
         raise LedgerError(f"unknown forecast ID: {forecast_id}") from error
     path = Path(ledger_dir) / "forecasts" / f"{normalized_id}.json"
-    record = _read_json(path, "forecast")
-    _validate_forecast(record, path)
+    record = _load_forecast_path(path)
     if record["forecast_id"] != normalized_id:
-        raise LedgerError(f"invalid forecast record {path}: forecast ID does not match filename")
+        raise LedgerError(f"invalid forecast record {path}: forecast ID mismatch")
     return record
 
 
 def save_forecast(
     ledger_dir: str | Path,
     prediction: FixturePrediction,
-    history_dates: Iterable[Any],
+    history_dates: Iterable[date],
     source_paths: Iterable[str | Path],
     max_goals: int,
     smoothing_matches: float,
@@ -173,18 +260,21 @@ def save_forecast(
     forecast_dir.mkdir(parents=True, exist_ok=True)
     result_dir.mkdir(parents=True, exist_ok=True)
     fixture = prediction.fixture
-    fixture_key = (fixture.match_date.isoformat(), fixture.home_team, fixture.away_team)
-    for path in forecast_dir.glob("*.json"):
-        existing = _read_json(path, "forecast")
-        _validate_forecast(existing, path)
-        other = existing["fixture"]
-        if (other["date"], other["home_team"], other["away_team"]) == fixture_key:
-            raise LedgerError(
-                "a forecast for this fixture already exists "
-                f"(forecast ID {existing['forecast_id']}); original was not overwritten"
+    try:
+        dates = sorted(history_dates)
+        if any(
+            not isinstance(history_date, date)
+            or isinstance(history_date, datetime)
+            or history_date >= fixture.match_date
+            for history_date in dates
+        ):
+            raise ValueError(
+                "history dates must be dates strictly before the fixture date"
             )
-
-    dates = sorted(history_dates)
+        earliest_date = dates[0].isoformat() if dates else None
+        latest_date = dates[-1].isoformat() if dates else None
+    except (AttributeError, TypeError, ValueError) as error:
+        raise LedgerError(f"invalid forecast history metadata: {error}") from error
     forecast_id = uuid.uuid4().hex
     record = {
         "schema_version": SCHEMA_VERSION,
@@ -214,13 +304,27 @@ def save_forecast(
         },
         "history": {
             "match_count": prediction.historical_match_count,
-            "earliest_date": dates[0].isoformat() if dates else None,
-            "latest_date": dates[-1].isoformat() if dates else None,
+            "earliest_date": earliest_date,
+            "latest_date": latest_date,
         },
         "sources": _source_records(Path(path) for path in source_paths),
     }
     path = forecast_dir / f"{forecast_id}.json"
-    _write_new(path, record)
+    _validate_forecast(record, path)
+    if prediction.historical_match_count != len(dates):
+        raise LedgerError(
+            "invalid forecast history metadata: match count does not match supplied dates"
+        )
+    fixture_key = (fixture.match_date.isoformat(), fixture.home_team, fixture.away_team)
+    with _ledger_lock(ledger):
+        for existing in _load_all_forecasts(forecast_dir):
+            other = existing["fixture"]
+            if (other["date"], other["home_team"], other["away_team"]) == fixture_key:
+                raise LedgerError(
+                    "a forecast for this fixture already exists "
+                    f"(forecast ID {existing['forecast_id']}); original was not overwritten"
+                )
+        _write_new(path, record)
     return record, path
 
 
@@ -267,8 +371,8 @@ def _validate_result(record: dict[str, Any], forecast: dict[str, Any], path: Pat
         if record["forecast_id"] != forecast["forecast_id"]:
             raise ValueError("forecast ID mismatch")
         recorded_at = datetime.fromisoformat(record["recorded_at"].replace("Z", "+00:00"))
-        if recorded_at.tzinfo is None:
-            raise ValueError("recording timestamp must include a UTC offset")
+        if recorded_at.tzinfo is None or recorded_at.utcoffset() != timezone.utc.utcoffset(None):
+            raise ValueError("recording timestamp must be in UTC")
         score = record["final_score"]
         _validate_goals(score["home_goals"], "final home goals")
         _validate_goals(score["away_goals"], "final away goals")
@@ -279,7 +383,7 @@ def _validate_result(record: dict[str, Any], forecast: dict[str, Any], path: Pat
             raise ValueError("outcome does not agree with final score")
         if record["brier_score"] != brier:
             raise ValueError("Brier score does not agree with saved forecast and result")
-    except (KeyError, TypeError, ValueError, LedgerError) as error:
+    except (AttributeError, KeyError, TypeError, ValueError, LedgerError) as error:
         raise LedgerError(f"invalid result record {path}: {error}") from error
 
 
@@ -324,12 +428,8 @@ def ledger_summary(ledger_dir: str | Path) -> dict[str, Any]:
     """Return validated forecast/result counts and completed fixture details."""
 
     ledger = Path(ledger_dir)
-    forecasts = []
     forecast_dir = ledger / "forecasts"
-    for path in sorted(forecast_dir.glob("*.json")) if forecast_dir.exists() else ():
-        record = _read_json(path, "forecast")
-        _validate_forecast(record, path)
-        forecasts.append(record)
+    forecasts = _load_all_forecasts(forecast_dir)
 
     completed = []
     for forecast in forecasts:
