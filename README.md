@@ -148,6 +148,43 @@ The report includes the fixture, both expected-goal rates, home/draw/away
 probabilities, and the number of eligible completed historical matches used.
 This command is inference-only and does not alter the rolling evaluation path.
 
+To keep the exact, unrounded prediction in a local JSON ledger, add
+`--save-dir`. The model and its defaults are unchanged:
+
+```sh
+PYTHONPATH=src python3 -m modelfc.predict \
+  --history E0_2425.csv E0_2526.csv E0_2627.csv E0_2627_update.csv \
+  --date YYYY-MM-DD --home "TEAM" --away "TEAM" \
+  --save-dir live-forecast-ledger
+```
+
+The command prints the new forecast ID and JSON location. A ledger permits one
+original forecast for each date/home/away fixture and never overwrites it.
+Forecast JSON and result JSON are kept in separate directories. After the
+match, record its final score using the printed ID; ModelFC scores the saved
+probabilities and does not rerun the model or reload history:
+
+```sh
+PYTHONPATH=src python3 -m modelfc.live_forecasts record-result \
+  --ledger-dir live-forecast-ledger --forecast-id FORECAST_ID \
+  --home-goals 2 --away-goals 1
+```
+
+View saved, completed, and pending counts, completed fixture scores, individual
+Brier scores, and the completed-only average with:
+
+```sh
+PYTHONPATH=src python3 -m modelfc.live_forecasts summary \
+  --ledger-dir live-forecast-ledger
+```
+
+These records remain local; none of these commands publishes or commits them
+to GitHub, modifies source CSVs, fetches results, or runs on a schedule. The
+existing records in `LIVE_FORECASTS.md` remain a separate legacy archive and
+are not imported into the JSON ledger. A recorded creation timestamp documents
+what the local clock reported, but by itself does **not** verify that a forecast
+was created before kickoff.
+
 ## Dixon-Coles extension
 
 The Dixon-Coles experiment deliberately reuses the Poisson expected-goals

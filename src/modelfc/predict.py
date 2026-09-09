@@ -5,6 +5,7 @@ from datetime import date
 from pathlib import Path
 
 from modelfc.forecasts import FixturePrediction, predict_upcoming_fixture
+from modelfc.live_forecasts import LedgerError, save_forecast
 from modelfc.matches import UpcomingFixture
 from modelfc.providers.football_data import load_match_history
 
@@ -51,16 +52,41 @@ def main() -> None:
     parser.add_argument("--away", required=True, help="away team")
     parser.add_argument("--max-goals", type=int, default=10)
     parser.add_argument("--smoothing-matches", type=float, default=5.0)
+    parser.add_argument(
+        "--save-dir",
+        type=Path,
+        help="optional local ledger directory in which to save this prediction",
+    )
     args = parser.parse_args()
 
     fixture = UpcomingFixture(args.date, args.home, args.away)
+    history = load_match_history(args.history)
     prediction = predict_upcoming_fixture(
-        load_match_history(args.history),
+        history,
         fixture,
         args.max_goals,
         args.smoothing_matches,
     )
     print(format_prediction(prediction))
+    if args.save_dir is not None:
+        eligible_dates = [
+            match.match_date
+            for match in history
+            if match.match_date < fixture.match_date
+        ]
+        try:
+            record, path = save_forecast(
+                args.save_dir,
+                prediction,
+                eligible_dates,
+                args.history,
+                args.max_goals,
+                args.smoothing_matches,
+            )
+        except LedgerError as error:
+            parser.error(str(error))
+        print(f"Saved forecast ID: {record['forecast_id']}")
+        print(f"Saved forecast location: {path}")
 
 
 if __name__ == "__main__":
