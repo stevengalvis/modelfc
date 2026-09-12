@@ -13,6 +13,13 @@ class MatchResult(str, Enum):
     AWAY_WIN = "away_win"
 
 
+class Venue(str, Enum):
+    """A team's venue for one match."""
+
+    HOME = "home"
+    AWAY = "away"
+
+
 def _validate_fixture(match_date: date, home_team: str, away_team: str) -> None:
     if not isinstance(match_date, date):
         raise ValueError("match_date must be a datetime.date")
@@ -71,3 +78,31 @@ class Match:
                 f"result {self.result.value!r} is inconsistent with score "
                 f"{self.home_goals}-{self.away_goals}"
             )
+
+
+@dataclass(frozen=True)
+class TeamCornerObservation:
+    """Provider-independent corner counts for one team in one match."""
+
+    match_date: date
+    team: str
+    opponent: str
+    venue: Venue
+    corners_for: int
+    corners_against: int
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.match_date, date):
+            raise ValueError("match_date must be a datetime.date")
+        for field_name in ("team", "opponent"):
+            value = getattr(self, field_name)
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(f"{field_name} must be a non-empty string")
+        if self.team.strip() == self.opponent.strip():
+            raise ValueError("team and opponent must be different")
+        if not isinstance(self.venue, Venue):
+            raise ValueError("venue must be a Venue")
+        for field_name in ("corners_for", "corners_against"):
+            value = getattr(self, field_name)
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                raise ValueError(f"{field_name} must be a non-negative integer")
