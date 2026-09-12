@@ -87,11 +87,36 @@ class CornerMetricTests(unittest.TestCase):
         self.assertTrue(math.isclose(evaluation.rmse, math.sqrt(2.5)))
         self.assertIsNone(evaluation.average_negative_log_likelihood)
 
-    def test_negative_log_likelihood(self) -> None:
-        prediction = CornerPrediction(observation(1, "A", 1), 1.0, (0.25, 0.75))
-        self.assertTrue(math.isclose(negative_log_likelihood(prediction), -math.log(0.75)))
+    def test_nll_matches_true_poisson_log_probability(self) -> None:
+        rate = 2.5
+        observed = 3
+        prediction = CornerPrediction(
+            observation(1, "A", observed),
+            rate,
+            poisson_probabilities(rate, max_corners=5),
+        )
+        expected_nll = rate - observed * math.log(rate) + math.lgamma(observed + 1)
+
+        self.assertTrue(math.isclose(negative_log_likelihood(prediction), expected_nll))
         evaluation = evaluate_corner_predictions([prediction])
-        self.assertTrue(math.isclose(evaluation.average_negative_log_likelihood, -math.log(0.75)))
+        self.assertTrue(math.isclose(evaluation.average_negative_log_likelihood, expected_nll))
+
+    def test_nll_is_finite_above_display_distribution_maximum(self) -> None:
+        prediction = CornerPrediction(
+            observation(1, "A", 8),
+            2.0,
+            poisson_probabilities(2.0, max_corners=3),
+        )
+
+        self.assertTrue(math.isfinite(negative_log_likelihood(prediction)))
+
+    def test_zero_lambda_nll_handles_zero_and_positive_counts(self) -> None:
+        probabilities = poisson_probabilities(0.0, max_corners=3)
+        zero = CornerPrediction(observation(1, "A", 0), 0.0, probabilities)
+        positive = CornerPrediction(observation(2, "B", 1), 0.0, probabilities)
+
+        self.assertEqual(negative_log_likelihood(zero), 0.0)
+        self.assertEqual(negative_log_likelihood(positive), math.inf)
 
 
 if __name__ == "__main__":

@@ -19,13 +19,15 @@ class CornerEvaluation:
 
 
 def negative_log_likelihood(prediction: CornerPrediction) -> float:
-    """Return negative log likelihood for a probabilistic count prediction."""
+    """Return the true Poisson NLL, independent of display truncation."""
 
     if prediction.probabilities is None:
         raise ValueError("prediction has no probability distribution")
     observed = prediction.observation.corners_for
-    probability = prediction.probabilities[observed] if observed < len(prediction.probabilities) else 0.0
-    return -math.log(probability) if probability > 0 else math.inf
+    rate = prediction.expected_corners
+    if rate == 0:
+        return 0.0 if observed == 0 else math.inf
+    return rate - observed * math.log(rate) + math.lgamma(observed + 1)
 
 
 def evaluate_corner_predictions(predictions: Iterable[CornerPrediction]) -> CornerEvaluation:

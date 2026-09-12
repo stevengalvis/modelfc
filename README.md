@@ -291,8 +291,10 @@ Add `--min-history N` to change the warm-up. For the Poisson baseline,
 MAE is the average absolute difference between predicted and observed corners,
 in corners; lower is better. RMSE is the square root of the average squared
 error, also in corners, and penalizes large misses more heavily. Poisson average
-negative log likelihood measures the probability assigned to the observed
-counts; lower is better, and confident misses receive a larger penalty.
+negative log likelihood uses the true, untruncated Poisson probability assigned
+to the observed counts; lower is better, and confident misses receive a larger
+penalty. It remains valid when an observed count exceeds the finite distribution
+used for display.
 
 Poisson is only a baseline. Initial EPL exploration found a mean near 5.05 and
 variance near 9.02 team corners (median near 5), indicating more dispersion
