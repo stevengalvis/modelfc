@@ -270,6 +270,9 @@ baseline, while avoiding a more flexible modeling system:
   normalized around the league's corresponding home or away corner rate.
 * `venue-opponent-poisson` uses the same venue-and-opponent expected value as
   the rate for the existing Poisson distribution.
+* `venue-opponent-negative-binomial` keeps that expected value unchanged but
+  uses a Negative Binomial uncertainty distribution. Its dispersion is
+  estimated by method of moments from strictly earlier corner observations.
 
 The venue-and-opponent model exists to represent two basic effects hidden by a
 single team average: teams can attack differently home and away, and opponents
@@ -306,25 +309,39 @@ PYTHONPATH=src python3 -m modelfc.corner_evaluation \
 PYTHONPATH=src python3 -m modelfc.corner_evaluation \
   E0_2223.csv E0.csv E0_2425.csv E0_2526.csv \
   --model venue-opponent-poisson
+
+PYTHONPATH=src python3 -m modelfc.corner_evaluation \
+  E0_2223.csv E0.csv E0_2425.csv E0_2526.csv \
+  --model venue-opponent-negative-binomial
 ```
 
 Add `--min-history N` to change the warm-up. For the Poisson baseline,
 `--max-corners N` changes the upper end of the normalized count distribution.
-For either venue-and-opponent model, `--smoothing-matches N` changes the
+For any venue-and-opponent model, `--smoothing-matches N` changes the
 positive pseudo-match weight from its default of `5.0`.
 
 MAE is the average absolute difference between predicted and observed corners,
 in corners; lower is better. RMSE is the square root of the average squared
-error, also in corners, and penalizes large misses more heavily. Poisson average
-negative log likelihood uses the true, untruncated Poisson probability assigned
-to the observed counts; lower is better, and confident misses receive a larger
-penalty. It remains valid when an observed count exceeds the finite distribution
-used for display.
+error, also in corners, and penalizes large misses more heavily. Average
+negative log likelihood uses the true, untruncated Poisson or Negative Binomial
+probability assigned to the observed counts; lower is better, and confident
+misses receive a larger penalty. It remains valid when an observed count
+exceeds the finite distribution used for display.
 
-Poisson is only a baseline. Initial EPL exploration found a mean near 5.05 and
-variance near 9.02 team corners (median near 5), indicating more dispersion
-than a single league-wide Poisson would imply. More flexible count models may
-therefore be evaluated later, after these simple chronological benchmarks.
+Poisson gives an expected count of `mu` and constrains its variance to
+approximately the same value, `mu`. The Negative Binomial experiment also has
+expected count `mu`, but permits variance greater than `mu`. Specifically, it
+uses the standard size parameter `r`, for which variance is `mu + mu²/r`; a
+very large `r` is Poisson-like. Initial EPL exploration found a mean near 5.05
+and variance near 9.02 team corners (median near 5), motivating this test.
+
+This experiment changes only the uncertainty distribution—not the existing
+venue-and-opponent expected-corners estimator—so its MAE and RMSE should match
+`venue-opponent`. The main comparison metric for Poisson versus Negative
+Binomial is average negative log likelihood, calculated from the true,
+untruncated probability of the observed count. The four-season evaluation must
+be run before concluding that Negative Binomial is better.
+
 The venue-and-opponent approach is also still a simple baseline: it does not
 include recency weighting, lineup or tactical context, or current-season
 external data.

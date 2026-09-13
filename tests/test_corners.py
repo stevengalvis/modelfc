@@ -8,6 +8,9 @@ from modelfc.corner_evaluation import evaluate_corner_predictions, negative_log_
 from modelfc.corners import (
     CornerPrediction,
     estimate_expected_corners,
+    estimate_negative_binomial_size,
+    negative_binomial_log_probability,
+    negative_binomial_probabilities,
     poisson_probabilities,
     rolling_corner_predictions,
 )
@@ -89,6 +92,55 @@ class CornerBaselineTests(unittest.TestCase):
         probabilities = poisson_probabilities(5.05, max_corners=20)
         self.assertEqual(len(probabilities), 21)
         self.assertTrue(math.isclose(sum(probabilities), 1.0, abs_tol=1e-12))
+
+
+class NegativeBinomialTests(unittest.TestCase):
+    def test_display_probabilities_are_valid_and_sum_to_one(self) -> None:
+        probabilities = negative_binomial_probabilities(5.05, 3.2, max_corners=20)
+        self.assertEqual(len(probabilities), 21)
+        self.assertTrue(all(0 <= probability <= 1 for probability in probabilities))
+        self.assertTrue(math.isclose(sum(probabilities), 1.0, abs_tol=1e-12))
+
+    def test_untruncated_distribution_has_requested_mean_and_variance(self) -> None:
+        mu, size = 5.05, 3.2
+        probabilities = [
+            math.exp(negative_binomial_log_probability(count, mu, size))
+            for count in range(200)
+        ]
+        mean = sum(count * probability for count, probability in enumerate(probabilities))
+        variance = sum(
+            (count - mean) ** 2 * probability
+            for count, probability in enumerate(probabilities)
+        )
+        self.assertTrue(math.isclose(sum(probabilities), 1.0, abs_tol=1e-12))
+        self.assertTrue(math.isclose(mean, mu, abs_tol=1e-10))
+        self.assertTrue(math.isclose(variance, mu + mu * mu / size, abs_tol=1e-9))
+        self.assertGreater(variance, mean)
+
+    def test_large_size_approaches_poisson(self) -> None:
+        mu = 5.05
+        nb = negative_binomial_probabilities(mu, 1_000_000_000.0, 20)
+        poisson = poisson_probabilities(mu, 20)
+        self.assertLess(max(abs(a - b) for a, b in zip(nb, poisson)), 1e-8)
+
+    def test_moment_estimator_uses_supplied_history(self) -> None:
+        history = [observation(1, "A", 1), observation(2, "A", 9)]
+        # mean=5 and unbiased sample variance=32: r=25/(32-5).
+        self.assertTrue(math.isclose(
+            estimate_negative_binomial_size(history), 25 / 27,
+        ))
+
+    def test_underdispersion_falls_back_to_poisson_like_size(self) -> None:
+        self.assertGreater(estimate_negative_binomial_size([
+            observation(1, "A", 5), observation(2, "A", 5),
+        ]), 1_000_000)
+
+    def test_true_log_probability_is_finite_beyond_display_maximum(self) -> None:
+        prediction = CornerPrediction(
+            observation(1, "A", 30), 5.0,
+            negative_binomial_probabilities(5.0, 2.0, max_corners=3), 2.0,
+        )
+        self.assertTrue(math.isfinite(negative_log_likelihood(prediction)))
 
 
 class VenueOpponentCornerTests(unittest.TestCase):
@@ -195,6 +247,45 @@ class VenueOpponentCornerTests(unittest.TestCase):
             evaluate_corner_predictions(point).rmse,
             evaluate_corner_predictions(poisson).rmse,
         )
+
+    def test_negative_binomial_wrapper_preserves_point_metrics(self) -> None:
+        items = [
+            venue_observation(1, "Seed1", "X", Venue.HOME, 1, 2),
+            venue_observation(1, "Seed2", "X", Venue.AWAY, 9, 2),
+            venue_observation(2, "A", "B", Venue.HOME, 30, 1),
+        ]
+        point = rolling_corner_predictions(items, "venue-opponent", min_history=2)
+        negative_binomial = rolling_corner_predictions(
+            items, "venue-opponent-negative-binomial", min_history=2,
+            max_corners=3,
+        )
+        self.assertEqual(point[0].expected_corners, negative_binomial[0].expected_corners)
+        self.assertEqual(evaluate_corner_predictions(point).mae,
+                         evaluate_corner_predictions(negative_binomial).mae)
+        self.assertEqual(evaluate_corner_predictions(point).rmse,
+                         evaluate_corner_predictions(negative_binomial).rmse)
+        self.assertTrue(math.isfinite(negative_log_likelihood(negative_binomial[0])))
+
+    def test_negative_binomial_dispersion_has_chronological_isolation(self) -> None:
+        history = [
+            venue_observation(1, "Seed1", "X", Venue.HOME, 1, 2),
+            venue_observation(1, "Seed2", "X", Venue.AWAY, 9, 2),
+        ]
+        targets = [
+            venue_observation(2, "A", "B", Venue.HOME, 0, 1),
+            venue_observation(2, "C", "D", Venue.AWAY, 100, 1),
+        ]
+        initial = rolling_corner_predictions(
+            history + targets, "venue-opponent-negative-binomial", min_history=2,
+        )
+        with_future = rolling_corner_predictions(
+            history + targets + [venue_observation(3, "E", "F", Venue.HOME, 500, 1)],
+            "venue-opponent-negative-binomial", min_history=2,
+        )
+        expected_size = estimate_negative_binomial_size(history)
+        self.assertEqual([item.dispersion_size for item in initial],
+                         [expected_size, expected_size])
+        self.assertEqual(initial, with_future[:2])
 
 
 class CornerMetricTests(unittest.TestCase):

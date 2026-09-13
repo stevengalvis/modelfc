@@ -15,6 +15,85 @@ class CornerPrediction:
     observation: TeamCornerObservation
     expected_corners: float
     probabilities: tuple[float, ...] | None = None
+    dispersion_size: float | None = None
+
+
+POISSON_LIKE_SIZE = 1_000_000_000.0
+
+
+def _validate_mean_and_size(mu: float, size: float) -> None:
+    if (
+        isinstance(mu, bool) or not isinstance(mu, (int, float))
+        or not math.isfinite(mu) or mu < 0
+    ):
+        raise ValueError("mu must be a finite non-negative number")
+    if (
+        isinstance(size, bool) or not isinstance(size, (int, float))
+        or not math.isfinite(size) or size <= 0
+    ):
+        raise ValueError("size must be a finite positive number")
+
+
+def negative_binomial_log_probability(count: int, mu: float, size: float) -> float:
+    """Return log P(X=count) for NB2 mean ``mu`` and size ``size``.
+
+    This conventional parameterization has ``E[X] = mu`` and
+    ``Var[X] = mu + mu**2 / size``.  It approaches Poisson(mu) as size grows.
+    The finite sum avoids cancellation between two large ``lgamma`` values.
+    """
+
+    _validate_mean_and_size(mu, size)
+    if isinstance(count, bool) or not isinstance(count, int) or count < 0:
+        raise ValueError("count must be a non-negative integer")
+    if mu == 0:
+        return 0.0 if count == 0 else -math.inf
+    rising_factorial = sum(math.log1p(index / size) for index in range(count))
+    return (
+        rising_factorial - math.lgamma(count + 1)
+        + count * math.log(size * mu / (size + mu))
+        - size * math.log1p(mu / size)
+    )
+
+
+def negative_binomial_probabilities(
+    mu: float, size: float, max_corners: int = 20,
+) -> tuple[float, ...]:
+    """Return the NB2 distribution conditioned on counts 0..max_corners."""
+
+    _validate_mean_and_size(mu, size)
+    if (
+        isinstance(max_corners, bool) or not isinstance(max_corners, int)
+        or max_corners < 0
+    ):
+        raise ValueError("max_corners must be a non-negative integer")
+    log_weights = [
+        negative_binomial_log_probability(count, mu, size)
+        for count in range(max_corners + 1)
+    ]
+    largest = max(log_weights)
+    weights = [math.exp(weight - largest) for weight in log_weights]
+    total = sum(weights)
+    return tuple(weight / total for weight in weights)
+
+
+def estimate_negative_binomial_size(
+    history: Iterable[TeamCornerObservation],
+) -> float:
+    """Estimate NB2 size by moments from the supplied prior observations.
+
+    The unbiased sample variance ``s2`` gives ``size = mean**2/(s2-mean)``.
+    With fewer than two values, a zero mean, or no observed overdispersion, a
+    large size supplies a safe Poisson-like fallback.
+    """
+
+    values = [item.corners_for for item in history]
+    if len(values) < 2:
+        return POISSON_LIKE_SIZE
+    mean = sum(values) / len(values)
+    variance = sum((value - mean) ** 2 for value in values) / (len(values) - 1)
+    if mean == 0 or variance <= mean:
+        return POISSON_LIKE_SIZE
+    return mean * mean / (variance - mean)
 
 
 def poisson_probabilities(rate: float, max_corners: int = 20) -> tuple[float, ...]:
@@ -100,6 +179,7 @@ def rolling_corner_predictions(
     if model not in {
         "league-average", "team-average", "poisson", "venue-opponent",
         "venue-opponent-poisson",
+        "venue-opponent-negative-binomial",
     }:
         raise ValueError("unknown corner model")
     if isinstance(min_history, bool) or not isinstance(min_history, int) or min_history < 1:
@@ -126,7 +206,10 @@ def rolling_corner_predictions(
             for observation in ordered[index:end]:
                 if model == "league-average":
                     expected = league_mean
-                elif model in {"venue-opponent", "venue-opponent-poisson"}:
+                elif model in {
+                    "venue-opponent", "venue-opponent-poisson",
+                    "venue-opponent-negative-binomial",
+                }:
                     expected = estimate_expected_corners(
                         ordered[:index], observation.team,
                         observation.opponent, observation.venue,
@@ -138,11 +221,21 @@ def rolling_corner_predictions(
                         team_totals[observation.team] / count
                         if count else league_mean
                     )
-                distribution = (
-                    poisson_probabilities(expected, max_corners)
-                    if model in {"poisson", "venue-opponent-poisson"} else None
+                size = (
+                    estimate_negative_binomial_size(ordered[:index])
+                    if model == "venue-opponent-negative-binomial" else None
                 )
-                predictions.append(CornerPrediction(observation, expected, distribution))
+                if model in {"poisson", "venue-opponent-poisson"}:
+                    distribution = poisson_probabilities(expected, max_corners)
+                elif size is not None:
+                    distribution = negative_binomial_probabilities(
+                        expected, size, max_corners,
+                    )
+                else:
+                    distribution = None
+                predictions.append(CornerPrediction(
+                    observation, expected, distribution, size,
+                ))
 
         # The entire date is added only after every prediction has been made.
         for observation in ordered[index:end]:
