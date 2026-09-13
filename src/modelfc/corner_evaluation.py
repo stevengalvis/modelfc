@@ -65,12 +65,24 @@ def format_corner_evaluation(evaluation: CornerEvaluation) -> str:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("csv", type=Path, nargs="+", help="Football-Data season CSV(s)")
-    parser.add_argument("--model", choices=("league-average", "team-average", "poisson"), default="league-average")
+    parser.add_argument(
+        "--model",
+        choices=(
+            "league-average", "team-average", "poisson", "venue-opponent",
+            "venue-opponent-poisson",
+        ),
+        default="league-average",
+    )
     parser.add_argument("--min-history", type=int, default=100, help="earlier team observations required (default: 100)")
     parser.add_argument("--max-corners", type=int, default=20, help="Poisson distribution maximum (default: 20)")
+    parser.add_argument(
+        "--smoothing-matches", type=float, default=5.0,
+        help="venue-rate pseudo-observations (default: 5.0)",
+    )
     args = parser.parse_args()
     predictions = rolling_corner_predictions(
-        load_corner_history(args.csv), args.model, args.min_history, args.max_corners
+        load_corner_history(args.csv), args.model, args.min_history,
+        args.max_corners, args.smoothing_matches,
     )
     if not predictions:
         parser.error("no predictions generated; use a lower --min-history or more data")
