@@ -247,3 +247,56 @@ requirements.txt        Runtime dependency declaration (currently empty)
 
 Future work may explore and evaluate alternative forecasting approaches while
 keeping their assumptions, methodology, and probabilistic results comparable.
+
+## Premier League team-corners baseline experiment
+
+The first corners experiment uses Football-Data's completed-match home and away
+corner counts to create two provider-independent observations per match. Each
+observation records the date, team, opponent, venue, corners won, and corners
+conceded. This schema is separate from the goal/result `Match` model, so the
+existing forecasting path is unchanged.
+
+We deliberately begin with three small reference models rather than opponent
+strength, recency weighting, or a more flexible count distribution:
+
+* `league-average` predicts the mean corners won across all earlier team
+  observations.
+* `team-average` predicts the team's mean from earlier observations and falls
+  back to the earlier league mean for a previously unseen team.
+* `poisson` uses that same team rolling mean as its rate and produces a
+  normalized count distribution from 0 through 20 corners by default.
+
+Evaluation is chronological across one or more season files. Every observation
+on a date is predicted using only strictly earlier dates; the complete day's
+observations enter history afterward. The default warm-up is **100 earlier
+team observations**, configurable with `--min-history`.
+
+Run each comparison on local season CSVs (the files are not downloaded by the
+command):
+
+```sh
+PYTHONPATH=src python3 -m modelfc.corner_evaluation \
+  E0_2223.csv E0.csv E0_2425.csv E0_2526.csv --model league-average
+
+PYTHONPATH=src python3 -m modelfc.corner_evaluation \
+  E0_2223.csv E0.csv E0_2425.csv E0_2526.csv --model team-average
+
+PYTHONPATH=src python3 -m modelfc.corner_evaluation \
+  E0_2223.csv E0.csv E0_2425.csv E0_2526.csv --model poisson
+```
+
+Add `--min-history N` to change the warm-up. For the Poisson baseline,
+`--max-corners N` changes the upper end of the normalized count distribution.
+
+MAE is the average absolute difference between predicted and observed corners,
+in corners; lower is better. RMSE is the square root of the average squared
+error, also in corners, and penalizes large misses more heavily. Poisson average
+negative log likelihood uses the true, untruncated Poisson probability assigned
+to the observed counts; lower is better, and confident misses receive a larger
+penalty. It remains valid when an observed count exceeds the finite distribution
+used for display.
+
+Poisson is only a baseline. Initial EPL exploration found a mean near 5.05 and
+variance near 9.02 team corners (median near 5), indicating more dispersion
+than a single league-wide Poisson would imply. More flexible count models may
+therefore be evaluated later, after these simple chronological benchmarks.
