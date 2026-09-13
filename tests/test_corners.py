@@ -5,13 +5,28 @@ import tempfile
 import unittest
 
 from modelfc.corner_evaluation import evaluate_corner_predictions, negative_log_likelihood
-from modelfc.corners import CornerPrediction, poisson_probabilities, rolling_corner_predictions
+from modelfc.corners import (
+    CornerPrediction,
+    estimate_expected_corners,
+    poisson_probabilities,
+    rolling_corner_predictions,
+)
 from modelfc.matches import TeamCornerObservation, Venue
 from modelfc.providers.football_data import FootballDataError, load_corner_observations
 
 
 def observation(day: int, team: str, corners: int) -> TeamCornerObservation:
     return TeamCornerObservation(date(2025, 1, day), team, "Opponent", Venue.HOME, corners, 2)
+
+
+def venue_observation(
+    day: int, team: str, opponent: str, venue: Venue,
+    corners_for: int, corners_against: int,
+) -> TeamCornerObservation:
+    return TeamCornerObservation(
+        date(2025, 1, day), team, opponent, venue,
+        corners_for, corners_against,
+    )
 
 
 class FootballDataCornerTests(unittest.TestCase):
@@ -74,6 +89,112 @@ class CornerBaselineTests(unittest.TestCase):
         probabilities = poisson_probabilities(5.05, max_corners=20)
         self.assertEqual(len(probabilities), 21)
         self.assertTrue(math.isclose(sum(probabilities), 1.0, abs_tol=1e-12))
+
+
+class VenueOpponentCornerTests(unittest.TestCase):
+    def test_home_uses_team_home_attack_and_opponent_away_concession(self) -> None:
+        history = [
+            venue_observation(1, "Target", "X", Venue.HOME, 8, 1),
+            venue_observation(1, "Target", "X", Venue.AWAY, 80, 1),
+            venue_observation(2, "Opponent", "X", Venue.AWAY, 1, 7),
+            venue_observation(2, "Opponent", "X", Venue.HOME, 1, 70),
+            venue_observation(3, "Other", "X", Venue.HOME, 4, 1),
+        ]
+        expected = estimate_expected_corners(
+            history, "Target", "Opponent", Venue.HOME, 5.0
+        )
+        league_rate = (8 + 1 + 4 + 5) / (3 + 5)
+        attack = (8 + 5 * league_rate) / 6
+        concession = (7 + 5 * league_rate) / 6
+        self.assertTrue(math.isclose(expected, attack * concession / league_rate))
+
+    def test_away_uses_team_away_attack_and_opponent_home_concession(self) -> None:
+        history = [
+            venue_observation(1, "Target", "X", Venue.AWAY, 7, 1),
+            venue_observation(1, "Target", "X", Venue.HOME, 70, 1),
+            venue_observation(2, "Opponent", "X", Venue.HOME, 1, 6),
+            venue_observation(2, "Opponent", "X", Venue.AWAY, 1, 60),
+            venue_observation(3, "Other", "X", Venue.AWAY, 3, 1),
+        ]
+        expected = estimate_expected_corners(
+            history, "Target", "Opponent", Venue.AWAY, 5.0
+        )
+        league_rate = (7 + 1 + 3 + 5) / (3 + 5)
+        attack = (7 + 5 * league_rate) / 6
+        concession = (6 + 5 * league_rate) / 6
+        self.assertTrue(math.isclose(expected, attack * concession / league_rate))
+
+    def test_smoothing_pulls_small_sample_toward_league_venue_rate(self) -> None:
+        history = [venue_observation(1, "Target", "X", Venue.HOME, 9, 0)]
+        history.extend(
+            venue_observation(1, f"Other{i}", "X", Venue.HOME, 0, 0)
+            for i in range(8)
+        )
+        lightly_smoothed = estimate_expected_corners(
+            history, "Target", "NewOpponent", Venue.HOME, 1.0
+        )
+        heavily_smoothed = estimate_expected_corners(
+            history, "Target", "NewOpponent", Venue.HOME, 9.0
+        )
+        self.assertEqual(lightly_smoothed, 5.0)
+        self.assertEqual(heavily_smoothed, 1.8)
+
+    def test_same_date_and_target_observation_do_not_leak(self) -> None:
+        items = [
+            venue_observation(1, "Seed", "X", Venue.HOME, 4, 2),
+            venue_observation(2, "A", "B", Venue.HOME, 10, 3),
+            venue_observation(2, "A", "B", Venue.HOME, 100, 30),
+        ]
+        predictions = rolling_corner_predictions(
+            items, "venue-opponent", min_history=1
+        )
+        self.assertEqual(len(predictions), 2)
+        self.assertEqual(predictions[0].expected_corners, predictions[1].expected_corners)
+        self.assertEqual(predictions[0].expected_corners, 1.5)
+
+    def test_future_observations_cannot_change_earlier_prediction(self) -> None:
+        initial = [
+            venue_observation(1, "Seed", "X", Venue.HOME, 4, 2),
+            venue_observation(2, "A", "B", Venue.HOME, 10, 3),
+        ]
+        earlier = rolling_corner_predictions(initial, "venue-opponent", min_history=1)
+        later = rolling_corner_predictions(
+            initial + [venue_observation(3, "A", "B", Venue.HOME, 100, 30)],
+            "venue-opponent", min_history=1,
+        )
+        self.assertEqual(earlier[0], later[0])
+
+    def test_invalid_smoothing_is_rejected(self) -> None:
+        for value in (True, 0, -1, math.inf, math.nan, "5"):
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(ValueError, "finite positive"):
+                    estimate_expected_corners([], "A", "B", Venue.HOME, value)
+
+    def test_expected_values_are_finite_and_non_negative(self) -> None:
+        for venue in Venue:
+            expected = estimate_expected_corners([], "A", "B", venue)
+            self.assertTrue(math.isfinite(expected))
+            self.assertGreaterEqual(expected, 0)
+
+    def test_poisson_wrapper_shares_expected_values_and_probabilities(self) -> None:
+        items = [
+            venue_observation(1, "Seed", "X", Venue.HOME, 4, 2),
+            venue_observation(2, "A", "B", Venue.HOME, 3, 1),
+        ]
+        point = rolling_corner_predictions(items, "venue-opponent", min_history=1)
+        poisson = rolling_corner_predictions(
+            items, "venue-opponent-poisson", min_history=1
+        )
+        self.assertEqual(point[0].expected_corners, poisson[0].expected_corners)
+        self.assertTrue(math.isclose(sum(poisson[0].probabilities), 1.0))
+        self.assertEqual(
+            evaluate_corner_predictions(point).mae,
+            evaluate_corner_predictions(poisson).mae,
+        )
+        self.assertEqual(
+            evaluate_corner_predictions(point).rmse,
+            evaluate_corner_predictions(poisson).rmse,
+        )
 
 
 class CornerMetricTests(unittest.TestCase):

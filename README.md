@@ -256,8 +256,8 @@ observation records the date, team, opponent, venue, corners won, and corners
 conceded. This schema is separate from the goal/result `Match` model, so the
 existing forecasting path is unchanged.
 
-We deliberately begin with three small reference models rather than opponent
-strength, recency weighting, or a more flexible count distribution:
+These deliberately small reference models now include a venue-and-opponent
+baseline, while avoiding a more flexible modeling system:
 
 * `league-average` predicts the mean corners won across all earlier team
   observations.
@@ -265,6 +265,21 @@ strength, recency weighting, or a more flexible count distribution:
   back to the earlier league mean for a previously unseen team.
 * `poisson` uses that same team rolling mean as its rate and produces a
   normalized count distribution from 0 through 20 corners by default.
+* `venue-opponent` combines the target team's attacking corner rate at the
+  match venue with the opponent's corner-conceding rate at the opposite venue,
+  normalized around the league's corresponding home or away corner rate.
+* `venue-opponent-poisson` uses the same venue-and-opponent expected value as
+  the rate for the existing Poisson distribution.
+
+The venue-and-opponent model exists to represent two basic effects hidden by a
+single team average: teams can attack differently home and away, and opponents
+allow corners at different rates. In shorthand its intuition is **team venue
+attack + opponent venue concession + league baseline**; mathematically it
+multiplies the two team rates and divides by the league venue rate. Both team
+rates are smoothed toward that league rate using pseudo-observations. Smoothing
+is necessary because a handful of matches—or no matches for a newly seen
+team—would otherwise create unstable or extreme estimates. The default is five
+pseudo-matches and can be changed with `--smoothing-matches`.
 
 Evaluation is chronological across one or more season files. Every observation
 on a date is predicted using only strictly earlier dates; the complete day's
@@ -283,10 +298,20 @@ PYTHONPATH=src python3 -m modelfc.corner_evaluation \
 
 PYTHONPATH=src python3 -m modelfc.corner_evaluation \
   E0_2223.csv E0.csv E0_2425.csv E0_2526.csv --model poisson
+
+PYTHONPATH=src python3 -m modelfc.corner_evaluation \
+  E0_2223.csv E0.csv E0_2425.csv E0_2526.csv \
+  --model venue-opponent
+
+PYTHONPATH=src python3 -m modelfc.corner_evaluation \
+  E0_2223.csv E0.csv E0_2425.csv E0_2526.csv \
+  --model venue-opponent-poisson
 ```
 
 Add `--min-history N` to change the warm-up. For the Poisson baseline,
 `--max-corners N` changes the upper end of the normalized count distribution.
+For either venue-and-opponent model, `--smoothing-matches N` changes the
+positive pseudo-match weight from its default of `5.0`.
 
 MAE is the average absolute difference between predicted and observed corners,
 in corners; lower is better. RMSE is the square root of the average squared
@@ -300,3 +325,6 @@ Poisson is only a baseline. Initial EPL exploration found a mean near 5.05 and
 variance near 9.02 team corners (median near 5), indicating more dispersion
 than a single league-wide Poisson would imply. More flexible count models may
 therefore be evaluated later, after these simple chronological benchmarks.
+The venue-and-opponent approach is also still a simple baseline: it does not
+include recency weighting, lineup or tactical context, or current-season
+external data.
