@@ -54,6 +54,16 @@ def load_br_corner_observations(
     observations: list[TeamCornerObservation] = []
     for match in sorted(matches.values(), key=lambda item: item.match_date):
         match_statistics = statistics.get(match.match_id, {})
+        home_row_present = match.home_team in match_statistics
+        away_row_present = match.away_team in match_statistics
+        if not home_row_present and not away_row_present:
+            continue
+        if not home_row_present or not away_row_present:
+            missing_team = match.home_team if not home_row_present else match.away_team
+            raise BrasileiraoError(
+                f"match {match.match_id!r} has a statistics row for only one team; "
+                f"missing {missing_team!r}"
+            )
         home_corners = match_statistics.get(match.home_team)
         away_corners = match_statistics.get(match.away_team)
         if home_corners is None and away_corners is None:
@@ -61,8 +71,8 @@ def load_br_corner_observations(
         if home_corners is None or away_corners is None:
             missing_team = match.home_team if home_corners is None else match.away_team
             raise BrasileiraoError(
-                f"match {match.match_id!r} has a corner statistic for only one team; "
-                f"missing {missing_team!r}"
+                f"match {match.match_id!r} has a blank corner statistic for "
+                f"{missing_team!r}"
             )
         observations.extend((
             TeamCornerObservation(

@@ -57,9 +57,15 @@ class BrasileiraoCornerTests(unittest.TestCase):
         ), [])
 
     def test_only_one_team_statistic_is_an_error(self) -> None:
-        with self.assertRaisesRegex(BrasileiraoError, "only one team"):
+        with self.assertRaisesRegex(BrasileiraoError, "row for only one team"):
             self._load(
                 MATCH_HEADER + "1,01/04/2025,A,B\n", STAT_HEADER + "1,A,4\n",
+            )
+
+    def test_one_blank_team_row_and_other_row_absent_is_an_error(self) -> None:
+        with self.assertRaisesRegex(BrasileiraoError, "row for only one team"):
+            self._load(
+                MATCH_HEADER + "1,01/04/2025,A,B\n", STAT_HEADER + "1,A,\n",
             )
 
     def test_duplicate_same_team_statistics_are_an_error(self) -> None:
