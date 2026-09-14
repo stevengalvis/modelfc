@@ -357,6 +357,25 @@ instead stores match metadata and per-team statistics in separate tables; its
 their source into the same `TeamCornerObservation` objects, so the corner
 modeling and evaluation code remains provider-independent.
 
+Select the input adapter with `--provider`. Football-Data remains the default,
+so existing evaluation commands continue to work unchanged:
+
+```sh
+PYTHONPATH=src python3 -m modelfc.corner_evaluation \
+  E0_2223.csv E0_2324.csv E0_2425.csv E0_2526.csv \
+  --provider football-data --model venue-opponent-negative-binomial
+
+PYTHONPATH=src python3 -m modelfc.corner_evaluation \
+  campeonato-brasileiro-full.csv \
+  campeonato-brasileiro-estatisticas-full.csv \
+  --provider brasileirao --model venue-opponent-negative-binomial
+```
+
+The Football-Data provider accepts one or more season files. The Brasileirão
+provider requires exactly two files in order: the matches CSV and statistics
+CSV. After that provider-specific loading step, both commands use the same
+chronological prediction and evaluation pipeline described above.
+
 The Brazil source files are UTF-8 CSVs and use `DD/MM/YYYY` dates. The adapter
 structurally filters matches where both teams' activity statistics are all zero
 or blank, while rejecting a placeholder row paired with real data. After
