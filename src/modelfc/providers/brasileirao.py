@@ -159,6 +159,9 @@ def _read_statistics(
     csv_file: TextIO, matches: dict[str, _MatchMetadata],
 ) -> dict[str, dict[str, _TeamStatistics]]:
     reader = _reader(csv_file, _STAT_FIELDS, "statistics")
+    detect_placeholders = all(
+        field in reader.fieldnames for field in _ACTIVITY_FIELDS
+    )
     statistics: dict[str, dict[str, _TeamStatistics]] = {}
     for row_number, row in enumerate(reader, start=2):
         try:
@@ -190,8 +193,8 @@ def _read_statistics(
                     ) from error
                 if corners < 0:
                     raise ValueError("escanteios must be a non-negative integer")
-            is_placeholder = all(
-                row.get(field) is None or row[field].strip() in ("", "0")
+            is_placeholder = detect_placeholders and all(
+                row[field] is None or row[field].strip() in ("", "0")
                 for field in _ACTIVITY_FIELDS
             )
             match_statistics[club] = _TeamStatistics(corners, is_placeholder)

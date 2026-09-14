@@ -60,6 +60,20 @@ class BrasileiraoCornerTests(unittest.TestCase):
             STAT_HEADER + "1,A,\n1,B,\n",
         ), [])
 
+    def test_minimal_schema_zero_corner_match_is_accepted(self) -> None:
+        observations = self._load(
+            MATCH_HEADER + "1,01/04/2025,A,B\n",
+            STAT_HEADER + "1,A,0\n1,B,0\n",
+        )
+        self.assertEqual([item.corners_for for item in observations], [0, 0])
+
+    def test_minimal_schema_zero_and_positive_corners_are_accepted(self) -> None:
+        observations = self._load(
+            MATCH_HEADER + "1,01/04/2025,A,B\n",
+            STAT_HEADER + "1,A,0\n1,B,4\n",
+        )
+        self.assertEqual([item.corners_for for item in observations], [0, 4])
+
     def test_match_with_two_placeholder_statistics_rows_is_skipped(self) -> None:
         self.assertEqual(self._load(
             MATCH_HEADER + "1,01/04/2025,A,B\n",
