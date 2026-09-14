@@ -47,6 +47,30 @@ class FootballDataCornerTests(unittest.TestCase):
         with self.assertRaisesRegex(FootballDataError, "corners_for must be a non-negative integer"):
             self._load("Date,HomeTeam,AwayTeam,HC,AC\n11/08/2023,A,B,-1,2\n")
 
+    def test_skips_match_when_both_corner_counts_are_blank(self) -> None:
+        observations = self._load(
+            "Date,HomeTeam,AwayTeam,HC,AC\n"
+            "14/12/2024,Union Berlin,Bochum,,\n"
+            "15/12/2024,A,B,3,4\n"
+        )
+
+        self.assertEqual(observations, [
+            TeamCornerObservation(date(2024, 12, 15), "A", "B", Venue.HOME, 3, 4),
+            TeamCornerObservation(date(2024, 12, 15), "B", "A", Venue.AWAY, 4, 3),
+        ])
+
+    def test_rejects_blank_home_corners_when_away_corners_are_present(self) -> None:
+        with self.assertRaisesRegex(FootballDataError, "HC is required"):
+            self._load("Date,HomeTeam,AwayTeam,HC,AC\n11/08/2023,A,B,,2\n")
+
+    def test_rejects_blank_away_corners_when_home_corners_are_present(self) -> None:
+        with self.assertRaisesRegex(FootballDataError, "AC is required"):
+            self._load("Date,HomeTeam,AwayTeam,HC,AC\n11/08/2023,A,B,2,\n")
+
+    def test_rejects_malformed_corner_counts(self) -> None:
+        with self.assertRaisesRegex(FootballDataError, "HC and AC must be integers"):
+            self._load("Date,HomeTeam,AwayTeam,HC,AC\n11/08/2023,A,B,not-a-number,2\n")
+
     def test_rejects_missing_corner_columns_clearly(self) -> None:
         with self.assertRaisesRegex(FootballDataError, "missing required corner columns: HC, AC"):
             self._load("Date,HomeTeam,AwayTeam\n11/08/2023,A,B\n")

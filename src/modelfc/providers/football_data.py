@@ -138,7 +138,14 @@ def _read_corner_observations(csv_file: TextIO) -> list[TeamCornerObservation]:
 
 def _normalize_corner_row(
     row: dict[str, str | None],
-) -> tuple[TeamCornerObservation, TeamCornerObservation]:
+) -> tuple[TeamCornerObservation, ...]:
+    home_corners_value = row["HC"]
+    away_corners_value = row["AC"]
+    home_corners_missing = home_corners_value is None or not home_corners_value.strip()
+    away_corners_missing = away_corners_value is None or not away_corners_value.strip()
+    if home_corners_missing and away_corners_missing:
+        return ()
+
     values: dict[str, str] = {}
     for field in _CORNER_FIELDS:
         value = row[field]

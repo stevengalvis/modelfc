@@ -254,7 +254,8 @@ The first corners experiment uses Football-Data's completed-match home and away
 corner counts to create two provider-independent observations per match. Each
 observation records the date, team, opponent, venue, corners won, and corners
 conceded. This schema is separate from the goal/result `Match` model, so the
-existing forecasting path is unchanged.
+existing forecasting path is unchanged. Matches for which Football-Data has no
+home or away corner statistics are skipped during corner-model ingestion.
 
 These deliberately small reference models now include a venue-and-opponent
 baseline, while avoiding a more flexible modeling system:
