@@ -37,9 +37,10 @@ of squared errors over home win, draw, and away win). Lower is better.
 
 ## Team Corners Experiments
 
-The same chronological corner-model evaluation was run on four seasons of
-Premier League and La Liga data. After the chronological warm-up, each league
-had 2,940 team observations available for evaluation.
+The same chronological corner-model evaluation was run on four seasons of data
+from each of the five major European leagues. The number of team observations
+available after the chronological warm-up varied by league, as summarized
+below.
 
 The models progress as follows:
 
@@ -84,24 +85,79 @@ chronological warm-up.
 | Venue + opponent + Poisson | 2.099246 | 2.690232 | 2.377845 |
 | Venue + opponent + Negative Binomial | 2.099246 | 2.690232 | 2.335780 |
 
+### Serie A
+
+The evaluation used four seasons: `I1_2223.csv`, `I1_2324.csv`,
+`I1_2425.csv`, and `I1_2526.csv`. It evaluated 2,940 team observations after
+chronological warm-up.
+
+| Model | MAE | RMSE | Average negative log likelihood |
+| --- | ---: | ---: | ---: |
+| League average | 2.220122 | 2.768663 | — |
+| Team average | 2.193412 | 2.746924 | — |
+| Venue + opponent | 2.090459 | 2.633512 | — |
+| Venue + opponent + Poisson | 2.090459 | 2.633512 | 2.367739 |
+| Venue + opponent + Negative Binomial | 2.090459 | 2.633512 | 2.325109 |
+
+### Ligue 1
+
+The evaluation used four seasons: `F1_2223.csv`, `F1_2324.csv`,
+`F1_2425.csv`, and `F1_2526.csv`. It evaluated 2,492 team observations after
+chronological warm-up.
+
+| Model | MAE | RMSE | Average negative log likelihood |
+| --- | ---: | ---: | ---: |
+| League average | 2.155731 | 2.749872 | — |
+| Team average | 2.127665 | 2.720209 | — |
+| Venue + opponent | 2.076538 | 2.671916 | — |
+| Venue + opponent + Poisson | 2.076538 | 2.671916 | 2.379582 |
+| Venue + opponent + Negative Binomial | 2.076538 | 2.671916 | 2.333207 |
+
+### Bundesliga
+
+The evaluation used four seasons: `D1_2223.csv`, `D1_2324.csv`,
+`D1_2425.csv`, and `D1_2526.csv`. It evaluated 2,342 team observations after
+chronological warm-up. The evaluation skipped one match with missing corner
+statistics after the ingestion fix rather than inventing zero values.
+
+| Model | MAE | RMSE | Average negative log likelihood |
+| --- | ---: | ---: | ---: |
+| League average | 2.201419 | 2.803526 | — |
+| Team average | 2.168316 | 2.764532 | — |
+| Venue + opponent | 2.077343 | 2.659213 | — |
+| Venue + opponent + Poisson | 2.077343 | 2.659213 | 2.370630 |
+| Venue + opponent + Negative Binomial | 2.077343 | 2.659213 | 2.335568 |
+
+### Five-league summary
+
+Each league's best results come from the
+`venue-opponent-negative-binomial` model.
+
+| League | Evaluated observations | MAE | RMSE | Average negative log likelihood |
+| --- | ---: | ---: | ---: | ---: |
+| Premier League | 2,940 | 2.233704 | 2.828483 | 2.400589 |
+| La Liga | 2,940 | 2.099246 | 2.690232 | 2.335780 |
+| Serie A | 2,940 | 2.090459 | 2.633512 | 2.325109 |
+| Ligue 1 | 2,492 | 2.076538 | 2.671916 | 2.333207 |
+| Bundesliga | 2,342 | 2.077343 | 2.659213 | 2.335568 |
+
 ### Corner-model conclusions
 
+- The same qualitative model progression held across all five leagues.
 - Team identity improved point predictions over the league-average baseline in
-  both competitions.
+  all five competitions.
 - Adding venue-specific team attacking strength and opponent corner-conceding
-  strength improved MAE and RMSE in both competitions.
-- Negative Binomial improved probability quality over Poisson in both
-  competitions while leaving MAE and RMSE unchanged because both distributions
-  use the same expected-corners estimate.
-- These results are early evidence that the ModelFC corner architecture
-  generalizes beyond the Premier League without league-specific modeling code.
-- La Liga's lower absolute metrics do not establish that it is inherently
+  strength improved MAE and RMSE in all five competitions.
+- Negative Binomial improved average negative log likelihood versus Poisson in
+  all five leagues while leaving MAE and RMSE unchanged because both
+  distributions use the same expected-corners estimate.
+- This is stronger cross-league evidence that the current ModelFC corner
+  architecture generalizes beyond a single competition, but it does not prove
+  production readiness or a betting-market edge.
+- Lower absolute errors in one league do not establish that it is inherently
   easier to predict. Cross-league metric differences may reflect differences in
   league behavior, data distribution, or sample characteristics.
-- The current champion model for both leagues is
+- The current champion model remains
   `venue-opponent-negative-binomial`: venue-opponent modeling improves the
   expected value, while Negative Binomial improves the uncertainty
   distribution.
-- The next planned experiment is MLS ingestion, testing whether the data-adapter
-  architecture can support a competition with a potentially different provider
-  or schema.
