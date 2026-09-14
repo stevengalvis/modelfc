@@ -43,6 +43,12 @@ class ArgentinaProviderTests(unittest.TestCase):
         )
         self.assertEqual([item.corners_for for item in observations], [0, 3])
 
+    def test_whole_decimal_corners_and_surrounding_whitespace_are_accepted(self) -> None:
+        observations = self._load(
+            HEADER + "2021-01-02 18:00:00,A,B, 4.0 , 0.0 ,Cup,1,2\n"
+        )
+        self.assertEqual([item.corners_for for item in observations], [4, 0])
+
     def test_both_blank_corner_fields_are_skipped(self) -> None:
         self.assertEqual(self._load(
             HEADER + "2017-01-02 18:00:00,A,B,,,League,1,2\n"
@@ -55,6 +61,15 @@ class ArgentinaProviderTests(unittest.TestCase):
     def test_malformed_corner_value_is_an_error(self) -> None:
         with self.assertRaisesRegex(ArgentinaProviderError, "must be an integer"):
             self._load(HEADER + "2020-01-02 18:00:00,A,B,1.5,2,League,1,2\n")
+
+    def test_scientific_notation_corner_value_is_an_error(self) -> None:
+        for value in ("1e3", "1E3", "1e1000000"):
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(ArgentinaProviderError, "must be an integer"):
+                    self._load(
+                        HEADER
+                        + f"2020-01-02 18:00:00,A,B,{value},2,League,1,2\n"
+                    )
 
     def test_negative_corner_value_is_an_error(self) -> None:
         with self.assertRaisesRegex(ArgentinaProviderError, "non-negative integer"):

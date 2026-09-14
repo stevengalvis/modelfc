@@ -3,6 +3,7 @@
 import csv
 from datetime import datetime
 from pathlib import Path
+import re
 from typing import TextIO
 
 from modelfc.matches import TeamCornerObservation, Venue
@@ -15,6 +16,7 @@ _REQUIRED_FIELDS = (
     "corner_kicks_home",
     "corner_kicks_away",
 )
+_WHOLE_DECIMAL = re.compile(r"[0-9]+(?:\.0+)?")
 
 
 class ArgentinaProviderError(ValueError):
@@ -104,10 +106,8 @@ def _required(row: dict[str, str | None], field: str) -> str:
 
 def _parse_corners(value: str, field: str) -> int:
     stripped = value.strip()
-    try:
-        corners = int(stripped)
-    except ValueError as error:
-        raise ValueError(f"{field} must be an integer: {stripped!r}") from error
-    if corners < 0:
+    if stripped.startswith("-"):
         raise ValueError(f"{field} must be a non-negative integer")
-    return corners
+    if _WHOLE_DECIMAL.fullmatch(stripped) is None:
+        raise ValueError(f"{field} must be an integer: {stripped!r}")
+    return int(stripped.split(".", 1)[0])
