@@ -70,7 +70,9 @@ def _normalize_row(
     game_datetime_missing = (
         game_datetime_value is None or not game_datetime_value.strip()
     )
-    if game_datetime_missing and home_missing and away_missing:
+    # Blank-date source rows can represent suspended or incomplete matches, so
+    # they are intentionally excluded even when corner totals are present.
+    if game_datetime_missing:
         return ()
 
     game_datetime = _required(row, "game_datetime")
