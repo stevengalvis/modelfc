@@ -54,6 +54,34 @@ class CornerProviderDispatchTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "requires at least one CSV file"):
             load_provider_observations("football-data", [])
 
+    @patch("modelfc.corner_evaluation.load_kaggle_match_stats_corner_observations")
+    def test_kaggle_match_stats_dispatches_selection(self, loader) -> None:
+        loader.return_value = []
+
+        self.assertEqual(load_provider_observations(
+            "kaggle-match-stats", [Path("Football.csv")], "Italy", "Serie-b",
+        ), [])
+
+        loader.assert_called_once_with(Path("Football.csv"), "Italy", "Serie-b")
+
+    def test_kaggle_match_stats_requires_exactly_one_file(self) -> None:
+        for files in ([], [Path("one.csv"), Path("two.csv")]):
+            with self.subTest(files=files), self.assertRaisesRegex(
+                ValueError, "requires exactly one CSV file",
+            ):
+                load_provider_observations(
+                    "kaggle-match-stats", files, "Italy", "Serie-b",
+                )
+
+    def test_kaggle_match_stats_requires_country_and_league(self) -> None:
+        for country, league in ((None, "Serie-b"), ("Italy", None), (None, None)):
+            with self.subTest(country=country, league=league), self.assertRaisesRegex(
+                ValueError, "requires both --country and --league",
+            ):
+                load_provider_observations(
+                    "kaggle-match-stats", [Path("Football.csv")], country, league,
+                )
+
     def test_unsupported_provider_is_rejected(self) -> None:
         with self.assertRaisesRegex(ValueError, "unsupported provider: unknown"):
             load_provider_observations("unknown", [Path("data.csv")])
@@ -110,6 +138,34 @@ class CornerEvaluationCliTests(unittest.TestCase):
 
         self.assertEqual(raised.exception.code, 2)
         self.assertIn("argentina requires exactly one CSV file", stderr.getvalue())
+
+    def test_kaggle_cli_requires_country_and_league(self) -> None:
+        for arguments in (
+            ["--league", "Serie-b"],
+            ["--country", "Italy"],
+            [],
+        ):
+            stderr = StringIO()
+            with self.subTest(arguments=arguments), patch.object(sys, "argv", [
+                "corner_evaluation", "Football.csv", "--provider",
+                "kaggle-match-stats", *arguments,
+            ]), redirect_stderr(stderr), self.assertRaises(SystemExit) as raised:
+                main()
+
+            self.assertEqual(raised.exception.code, 2)
+            self.assertIn("requires both --country and --league", stderr.getvalue())
+
+    def test_kaggle_cli_requires_exactly_one_csv(self) -> None:
+        for files in ([], ["one.csv", "two.csv"]):
+            stderr = StringIO()
+            with self.subTest(files=files), patch.object(sys, "argv", [
+                "corner_evaluation", *files, "--provider", "kaggle-match-stats",
+                "--country", "Italy", "--league", "Serie-b",
+            ]), redirect_stderr(stderr), self.assertRaises(SystemExit) as raised:
+                main()
+
+            self.assertEqual(raised.exception.code, 2)
+            self.assertIn("requires exactly one CSV file", stderr.getvalue())
 
 
 if __name__ == "__main__":

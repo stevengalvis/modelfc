@@ -349,7 +349,7 @@ external data.
 
 ### Corner-data providers
 
-ModelFC supports three local-file providers for corner history. Football-Data
+ModelFC supports reusable local-file providers for corner history. Football-Data
 stores both teams' counts in the match-level `HC` and `AC` columns. The public
 [`brasileirao-dataset`](https://github.com/adaoduque/Brasileirao_Dataset)
 instead stores match metadata and per-team statistics in separate tables; its
@@ -376,11 +376,18 @@ PYTHONPATH=src python3 -m modelfc.corner_evaluation \
 PYTHONPATH=src python3 -m modelfc.corner_evaluation \
   afa_2015_2022_eng.csv \
   --provider argentina --model venue-opponent-negative-binomial
+
+PYTHONPATH=src python3 -m modelfc.corner_evaluation \
+  Football.csv --provider kaggle-match-stats \
+  --country Italy --league Serie-b \
+  --model venue-opponent-negative-binomial
 ```
 
 The Football-Data provider accepts one or more season files. The Brasileirão
 provider requires exactly two files in order: the matches CSV and statistics
-CSV. The Argentina provider requires exactly one CSV. After that
+CSV. The Argentina provider requires exactly one CSV. The reusable Kaggle
+match-stat provider requires one `Football.csv` plus exact `--country` and
+`--league` selectors. After that
 provider-specific loading step, all commands use the same
 chronological prediction and evaluation pipeline described above.
 
