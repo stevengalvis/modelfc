@@ -2,6 +2,7 @@
 
 import csv
 from datetime import datetime
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import TextIO
 
@@ -105,9 +106,16 @@ def _required(row: dict[str, str | None], field: str) -> str:
 def _parse_corners(value: str, field: str) -> int:
     stripped = value.strip()
     try:
-        corners = int(stripped)
-    except ValueError as error:
+        numeric_corners = Decimal(stripped)
+    except InvalidOperation as error:
         raise ValueError(f"{field} must be an integer: {stripped!r}") from error
+    if (
+        not numeric_corners.is_finite()
+        or numeric_corners != numeric_corners.to_integral_value()
+    ):
+        raise ValueError(f"{field} must be an integer: {stripped!r}")
+
+    corners = int(numeric_corners)
     if corners < 0:
         raise ValueError(f"{field} must be a non-negative integer")
     return corners

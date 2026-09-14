@@ -37,6 +37,21 @@ class ArgentinaProviderTests(unittest.TestCase):
             ),
         ])
 
+    def test_decimal_whole_number_corners_are_accepted(self) -> None:
+        observations = self._load(
+            HEADER + "2022-10-25 20:30:00,A,B, 4.0 ,2.0,League,1,1\n"
+        )
+        self.assertEqual(
+            [(item.corners_for, item.corners_against) for item in observations],
+            [(4, 2), (2, 4)],
+        )
+
+    def test_decimal_zero_corners_are_accepted(self) -> None:
+        observations = self._load(
+            HEADER + "2021-01-02 18:00:00,A,B,0.0,3,Cup,1,2\n"
+        )
+        self.assertEqual([item.corners_for for item in observations], [0, 3])
+
     def test_legitimate_zero_corners_are_accepted(self) -> None:
         observations = self._load(
             HEADER + "2021-01-02 18:00:00,A,B,0,3,Cup,1,2\n"
@@ -52,13 +67,24 @@ class ArgentinaProviderTests(unittest.TestCase):
         with self.assertRaisesRegex(ArgentinaProviderError, "blank while the other"):
             self._load(HEADER + "2020-01-02 18:00:00,A,B,,2,League,1,2\n")
 
-    def test_malformed_corner_value_is_an_error(self) -> None:
+    def test_fractional_corner_value_is_an_error(self) -> None:
         with self.assertRaisesRegex(ArgentinaProviderError, "must be an integer"):
-            self._load(HEADER + "2020-01-02 18:00:00,A,B,1.5,2,League,1,2\n")
+            self._load(HEADER + "2020-01-02 18:00:00,A,B,4.5,2,League,1,2\n")
 
-    def test_negative_corner_value_is_an_error(self) -> None:
+    def test_negative_decimal_corner_value_is_an_error(self) -> None:
         with self.assertRaisesRegex(ArgentinaProviderError, "non-negative integer"):
-            self._load(HEADER + "2020-01-02 18:00:00,A,B,-1,2,League,1,2\n")
+            self._load(HEADER + "2020-01-02 18:00:00,A,B,-1.0,2,League,1,2\n")
+
+    def test_non_finite_and_malformed_corner_values_are_errors(self) -> None:
+        for value in ("NaN", "inf", "not-a-number"):
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(
+                    ArgentinaProviderError, "must be an integer"
+                ):
+                    self._load(
+                        HEADER
+                        + f"2020-01-02 18:00:00,A,B,{value},2,League,1,2\n"
+                    )
 
     def test_missing_required_column_is_an_error(self) -> None:
         with self.assertRaisesRegex(ArgentinaProviderError, "corner_kicks_away"):
