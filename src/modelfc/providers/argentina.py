@@ -65,6 +65,22 @@ def _normalize_row(
     away_value = row["corner_kicks_away"]
     home_missing = home_value is None or not home_value.strip()
     away_missing = away_value is None or not away_value.strip()
+
+    game_datetime_value = row["game_datetime"]
+    game_datetime_missing = (
+        game_datetime_value is None or not game_datetime_value.strip()
+    )
+    if game_datetime_missing and home_missing and away_missing:
+        return ()
+
+    game_datetime = _required(row, "game_datetime")
+    try:
+        match_date = datetime.fromisoformat(game_datetime).date()
+    except ValueError as error:
+        raise ValueError(
+            f"game_datetime must be a valid ISO date or datetime: {game_datetime!r}"
+        ) from error
+
     if home_missing and away_missing:
         return ()
     if home_missing or away_missing:
@@ -73,15 +89,8 @@ def _normalize_row(
             f"{missing_field} is blank while the other corner value is present"
         )
 
-    game_datetime = _required(row, "game_datetime")
     home_team = _required(row, "team_home")
     away_team = _required(row, "team_away")
-    try:
-        match_date = datetime.fromisoformat(game_datetime).date()
-    except ValueError as error:
-        raise ValueError(
-            f"game_datetime must be a valid ISO date or datetime: {game_datetime!r}"
-        ) from error
 
     home_corners = _parse_corners(home_value, "corner_kicks_home")
     away_corners = _parse_corners(away_value, "corner_kicks_away")
