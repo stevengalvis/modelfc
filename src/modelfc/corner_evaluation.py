@@ -10,6 +10,8 @@ from modelfc.corners import (
     CornerPrediction, negative_binomial_log_probability,
     rolling_corner_predictions,
 )
+from modelfc.matches import TeamCornerObservation
+from modelfc.providers.brasileirao import load_br_corner_observations
 from modelfc.providers.football_data import load_corner_history
 
 
@@ -19,6 +21,28 @@ class CornerEvaluation:
     mae: float
     rmse: float
     average_negative_log_likelihood: float | None
+
+
+class CornerProviderError(ValueError):
+    """Raised when corner-evaluation provider arguments are invalid."""
+
+
+def load_provider_observations(
+    provider: str, csv_paths: list[Path],
+) -> list[TeamCornerObservation]:
+    """Normalize provider files into the shared corner-observation model."""
+
+    if provider == "football-data":
+        if not csv_paths:
+            raise CornerProviderError("football-data requires at least one CSV file")
+        return load_corner_history(csv_paths)
+    if provider == "brasileirao":
+        if len(csv_paths) != 2:
+            raise CornerProviderError(
+                "brasileirao requires exactly two CSV files: matches and statistics"
+            )
+        return load_br_corner_observations(csv_paths[0], csv_paths[1])
+    raise CornerProviderError(f"unsupported provider: {provider}")
 
 
 def negative_log_likelihood(prediction: CornerPrediction) -> float:
@@ -76,7 +100,15 @@ def format_corner_evaluation(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("csv", type=Path, nargs="+", help="Football-Data season CSV(s)")
+    parser.add_argument(
+        "csv", type=Path, nargs="*", help="provider CSV file(s)",
+    )
+    parser.add_argument(
+        "--provider",
+        choices=("football-data", "brasileirao"),
+        default="football-data",
+        help="input CSV provider (default: football-data)",
+    )
     parser.add_argument(
         "--model",
         choices=(
@@ -96,8 +128,12 @@ def main() -> None:
         help="venue-rate pseudo-observations (default: 5.0)",
     )
     args = parser.parse_args()
+    try:
+        observations = load_provider_observations(args.provider, args.csv)
+    except CornerProviderError as error:
+        parser.error(str(error))
     predictions = rolling_corner_predictions(
-        load_corner_history(args.csv), args.model, args.min_history,
+        observations, args.model, args.min_history,
         args.max_corners, args.smoothing_matches,
     )
     if not predictions:
