@@ -59,9 +59,12 @@ class ArgentinaProviderTests(unittest.TestCase):
             HEADER + ",A,B,,,League,1,2\n"
         ), [])
 
-    def test_blank_datetime_with_real_corners_is_an_error(self) -> None:
-        with self.assertRaisesRegex(ArgentinaProviderError, "game_datetime"):
-            self._load(HEADER + ",A,B,1,2,League,1,2\n")
+    def test_blank_datetime_with_real_corners_is_skipped(self) -> None:
+        self.assertEqual(self._load(
+            HEADER
+            + ",Defensa y Justicia,Estudiantes LP,8.0,1.0,"
+            "Campeonato 2018/19,6,1\n"
+        ), [])
 
     def test_one_blank_corner_field_is_an_error(self) -> None:
         with self.assertRaisesRegex(ArgentinaProviderError, "blank while the other"):
