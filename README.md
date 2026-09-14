@@ -346,3 +346,32 @@ be run before concluding that Negative Binomial is better.
 The venue-and-opponent approach is also still a simple baseline: it does not
 include recency weighting, lineup or tactical context, or current-season
 external data.
+
+### Corner-data providers
+
+ModelFC supports two local-file providers for corner history. Football-Data
+stores both teams' counts in the match-level `HC` and `AC` columns. The public
+[`brasileirao-dataset`](https://github.com/adaoduque/Brasileirao_Dataset)
+instead stores match metadata and per-team statistics in separate tables; its
+`escanteios` rows are joined to matches by `partida_id`. Both adapters normalize
+their source into the same `TeamCornerObservation` objects, so the corner
+modeling and evaluation code remains provider-independent.
+
+The Brazil source files are UTF-8 CSVs and use `DD/MM/YYYY` dates. After
+downloading both files, load them locally (the adapter does not make network
+requests) and pass the observations to the existing rolling model:
+
+```python
+from modelfc.corners import rolling_corner_predictions
+from modelfc.providers.brasileirao import load_br_corner_observations
+
+observations = load_br_corner_observations(
+    "campeonato-brasileiro-full.csv",
+    "campeonato-brasileiro-estatisticas-full.csv",
+)
+predictions = rolling_corner_predictions(
+    observations, "venue-opponent-negative-binomial"
+)
+```
+
+This adapter adds ingestion only; no Brazil benchmark result is claimed yet.
