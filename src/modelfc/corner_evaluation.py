@@ -14,6 +14,9 @@ from modelfc.matches import TeamCornerObservation
 from modelfc.providers.argentina import load_argentina_corner_observations
 from modelfc.providers.brasileirao import load_br_corner_observations
 from modelfc.providers.football_data import load_corner_history
+from modelfc.providers.kaggle_match_stats import (
+    load_kaggle_match_stats_corner_observations,
+)
 
 
 @dataclass(frozen=True)
@@ -30,6 +33,7 @@ class CornerProviderError(ValueError):
 
 def load_provider_observations(
     provider: str, csv_paths: list[Path],
+    country: str | None = None, league: str | None = None,
 ) -> list[TeamCornerObservation]:
     """Normalize provider files into the shared corner-observation model."""
 
@@ -47,6 +51,18 @@ def load_provider_observations(
         if len(csv_paths) != 1:
             raise CornerProviderError("argentina requires exactly one CSV file")
         return load_argentina_corner_observations(csv_paths[0])
+    if provider == "kaggle-match-stats":
+        if len(csv_paths) != 1:
+            raise CornerProviderError(
+                "kaggle-match-stats requires exactly one CSV file"
+            )
+        if not country or not league:
+            raise CornerProviderError(
+                "kaggle-match-stats requires both --country and --league"
+            )
+        return load_kaggle_match_stats_corner_observations(
+            csv_paths[0], country, league,
+        )
     raise CornerProviderError(f"unsupported provider: {provider}")
 
 
@@ -110,10 +126,14 @@ def main() -> None:
     )
     parser.add_argument(
         "--provider",
-        choices=("football-data", "brasileirao", "argentina"),
+        choices=(
+            "football-data", "brasileirao", "argentina", "kaggle-match-stats",
+        ),
         default="football-data",
         help="input CSV provider (default: football-data)",
     )
+    parser.add_argument("--country", help="exact Kaggle Country value")
+    parser.add_argument("--league", help="exact Kaggle League value")
     parser.add_argument(
         "--model",
         choices=(
@@ -134,7 +154,12 @@ def main() -> None:
     )
     args = parser.parse_args()
     try:
-        observations = load_provider_observations(args.provider, args.csv)
+        if args.provider == "kaggle-match-stats":
+            observations = load_provider_observations(
+                args.provider, args.csv, args.country, args.league,
+            )
+        else:
+            observations = load_provider_observations(args.provider, args.csv)
     except CornerProviderError as error:
         parser.error(str(error))
     predictions = rolling_corner_predictions(
