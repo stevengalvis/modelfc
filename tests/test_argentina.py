@@ -54,6 +54,15 @@ class ArgentinaProviderTests(unittest.TestCase):
             HEADER + "2017-01-02 18:00:00,A,B,,,League,1,2\n"
         ), [])
 
+    def test_blank_datetime_and_both_blank_corner_fields_are_skipped(self) -> None:
+        self.assertEqual(self._load(
+            HEADER + ",A,B,,,League,1,2\n"
+        ), [])
+
+    def test_blank_datetime_with_real_corners_is_an_error(self) -> None:
+        with self.assertRaisesRegex(ArgentinaProviderError, "game_datetime"):
+            self._load(HEADER + ",A,B,1,2,League,1,2\n")
+
     def test_one_blank_corner_field_is_an_error(self) -> None:
         with self.assertRaisesRegex(ArgentinaProviderError, "blank while the other"):
             self._load(HEADER + "2020-01-02 18:00:00,A,B,,2,League,1,2\n")
@@ -82,11 +91,9 @@ class ArgentinaProviderTests(unittest.TestCase):
                 "2020-01-02,A,B,1\n"
             )
 
-    def test_blank_or_invalid_datetime_is_an_error(self) -> None:
-        for value in ("", "not-a-date"):
-            with self.subTest(value=value):
-                with self.assertRaisesRegex(ArgentinaProviderError, "game_datetime"):
-                    self._load(HEADER + f"{value},A,B,1,2,League,1,2\n")
+    def test_malformed_nonblank_datetime_is_an_error(self) -> None:
+        with self.assertRaisesRegex(ArgentinaProviderError, "game_datetime"):
+            self._load(HEADER + "not-a-date,A,B,,,League,1,2\n")
 
     def test_blank_team_name_is_an_error(self) -> None:
         with self.assertRaisesRegex(ArgentinaProviderError, "team_home is required"):
