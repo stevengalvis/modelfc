@@ -9,6 +9,10 @@ from modelfc.providers.brasileirao import BrasileiraoError, load_br_corner_obser
 
 MATCH_HEADER = "ID,data,mandante,visitante\n"
 STAT_HEADER = "partida_id,clube,escanteios\n"
+FULL_STAT_HEADER = (
+    "partida_id,clube,escanteios,chutes,chutes_no_alvo,passes,faltas,"
+    "cartao_amarelo,cartao_vermelho,impedimentos\n"
+)
 
 
 class BrasileiraoCornerTests(unittest.TestCase):
@@ -55,6 +59,43 @@ class BrasileiraoCornerTests(unittest.TestCase):
             MATCH_HEADER + "1,01/04/2025,A,B\n",
             STAT_HEADER + "1,A,\n1,B,\n",
         ), [])
+
+    def test_minimal_schema_zero_corner_match_is_accepted(self) -> None:
+        observations = self._load(
+            MATCH_HEADER + "1,01/04/2025,A,B\n",
+            STAT_HEADER + "1,A,0\n1,B,0\n",
+        )
+        self.assertEqual([item.corners_for for item in observations], [0, 0])
+
+    def test_minimal_schema_zero_and_positive_corners_are_accepted(self) -> None:
+        observations = self._load(
+            MATCH_HEADER + "1,01/04/2025,A,B\n",
+            STAT_HEADER + "1,A,0\n1,B,4\n",
+        )
+        self.assertEqual([item.corners_for for item in observations], [0, 4])
+
+    def test_match_with_two_placeholder_statistics_rows_is_skipped(self) -> None:
+        self.assertEqual(self._load(
+            MATCH_HEADER + "1,01/04/2025,A,B\n",
+            FULL_STAT_HEADER + "1,A,0,0,0,0,0,0,0,0\n"
+            "1,B,0,0,,0,0,0,0,0\n",
+        ), [])
+
+    def test_one_placeholder_and_one_real_statistics_row_is_an_error(self) -> None:
+        with self.assertRaisesRegex(BrasileiraoError, "placeholder statistics row"):
+            self._load(
+                MATCH_HEADER + "1,01/04/2025,A,B\n",
+                FULL_STAT_HEADER + "1,A,0,0,0,0,0,0,0,0\n"
+                "1,B,4,9,3,300,12,2,0,1\n",
+            )
+
+    def test_zero_corners_with_other_activity_is_accepted(self) -> None:
+        observations = self._load(
+            MATCH_HEADER + "1,01/04/2025,A,B\n",
+            FULL_STAT_HEADER + "1,A,0,8,2,250,11,1,0,2\n"
+            "1,B,4,9,3,300,12,2,0,1\n",
+        )
+        self.assertEqual([item.corners_for for item in observations], [0, 4])
 
     def test_only_one_team_statistic_is_an_error(self) -> None:
         with self.assertRaisesRegex(BrasileiraoError, "row for only one team"):
