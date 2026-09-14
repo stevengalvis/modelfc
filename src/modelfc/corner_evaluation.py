@@ -11,6 +11,7 @@ from modelfc.corners import (
     rolling_corner_predictions,
 )
 from modelfc.matches import TeamCornerObservation
+from modelfc.providers.argentina import load_argentina_corner_observations
 from modelfc.providers.brasileirao import load_br_corner_observations
 from modelfc.providers.football_data import load_corner_history
 
@@ -42,6 +43,10 @@ def load_provider_observations(
                 "brasileirao requires exactly two CSV files: matches and statistics"
             )
         return load_br_corner_observations(csv_paths[0], csv_paths[1])
+    if provider == "argentina":
+        if len(csv_paths) != 1:
+            raise CornerProviderError("argentina requires exactly one CSV file")
+        return load_argentina_corner_observations(csv_paths[0])
     raise CornerProviderError(f"unsupported provider: {provider}")
 
 
@@ -105,7 +110,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--provider",
-        choices=("football-data", "brasileirao"),
+        choices=("football-data", "brasileirao", "argentina"),
         default="football-data",
         help="input CSV provider (default: football-data)",
     )

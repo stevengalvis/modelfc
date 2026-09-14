@@ -349,13 +349,16 @@ external data.
 
 ### Corner-data providers
 
-ModelFC supports two local-file providers for corner history. Football-Data
+ModelFC supports three local-file providers for corner history. Football-Data
 stores both teams' counts in the match-level `HC` and `AC` columns. The public
 [`brasileirao-dataset`](https://github.com/adaoduque/Brasileirao_Dataset)
 instead stores match metadata and per-team statistics in separate tables; its
 `escanteios` rows are joined to matches by `partida_id`. Both adapters normalize
 their source into the same `TeamCornerObservation` objects, so the corner
-modeling and evaluation code remains provider-independent.
+modeling and evaluation code remains provider-independent. The Argentina
+provider reads the match-level corner fields in the downloaded Kaggle
+`afa_2015_2022_eng.csv` file, skipping matches where both corner fields are
+blank because those statistics are unavailable rather than zero.
 
 Select the input adapter with `--provider`. Football-Data remains the default,
 so existing evaluation commands continue to work unchanged:
@@ -369,11 +372,16 @@ PYTHONPATH=src python3 -m modelfc.corner_evaluation \
   campeonato-brasileiro-full.csv \
   campeonato-brasileiro-estatisticas-full.csv \
   --provider brasileirao --model venue-opponent-negative-binomial
+
+PYTHONPATH=src python3 -m modelfc.corner_evaluation \
+  afa_2015_2022_eng.csv \
+  --provider argentina --model venue-opponent-negative-binomial
 ```
 
 The Football-Data provider accepts one or more season files. The Brasileirão
 provider requires exactly two files in order: the matches CSV and statistics
-CSV. After that provider-specific loading step, both commands use the same
+CSV. The Argentina provider requires exactly one CSV. After that
+provider-specific loading step, all commands use the same
 chronological prediction and evaluation pipeline described above.
 
 The Brazil source files are UTF-8 CSVs and use `DD/MM/YYYY` dates. The adapter

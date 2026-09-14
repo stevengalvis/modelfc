@@ -34,6 +34,22 @@ class CornerProviderDispatchTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "requires exactly two CSV files"):
                     load_provider_observations("brasileirao", files)
 
+    @patch("modelfc.corner_evaluation.load_argentina_corner_observations")
+    def test_argentina_dispatches_one_file(self, loader) -> None:
+        loader.return_value = []
+
+        self.assertEqual(load_provider_observations(
+            "argentina", [Path("afa_2015_2022_eng.csv")],
+        ), [])
+
+        loader.assert_called_once_with(Path("afa_2015_2022_eng.csv"))
+
+    def test_argentina_requires_exactly_one_file(self) -> None:
+        for files in ([], [Path("a.csv"), Path("b.csv")]):
+            with self.subTest(files=files):
+                with self.assertRaisesRegex(ValueError, "requires exactly one CSV file"):
+                    load_provider_observations("argentina", files)
+
     def test_football_data_requires_at_least_one_file(self) -> None:
         with self.assertRaisesRegex(ValueError, "requires at least one CSV file"):
             load_provider_observations("football-data", [])
@@ -84,6 +100,16 @@ class CornerEvaluationCliTests(unittest.TestCase):
 
         self.assertEqual(raised.exception.code, 2)
         self.assertIn("brasileirao requires exactly two CSV files", stderr.getvalue())
+
+    def test_argentina_file_count_is_a_clear_cli_error(self) -> None:
+        stderr = StringIO()
+        with patch.object(sys, "argv", [
+            "corner_evaluation", "--provider", "argentina",
+        ]), redirect_stderr(stderr), self.assertRaises(SystemExit) as raised:
+            main()
+
+        self.assertEqual(raised.exception.code, 2)
+        self.assertIn("argentina requires exactly one CSV file", stderr.getvalue())
 
 
 if __name__ == "__main__":
