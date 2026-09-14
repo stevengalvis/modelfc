@@ -16,6 +16,10 @@ from modelfc.matches import TeamCornerObservation, Venue
 
 _MATCH_FIELDS = ("ID", "data", "mandante", "visitante")
 _STAT_FIELDS = ("partida_id", "clube", "escanteios")
+_ACTIVITY_FIELDS = (
+    "escanteios", "chutes", "chutes_no_alvo", "passes", "faltas",
+    "cartao_amarelo", "cartao_vermelho", "impedimentos",
+)
 
 
 class BrasileiraoError(ValueError):
@@ -28,6 +32,12 @@ class _MatchMetadata:
     match_date: date
     home_team: str
     away_team: str
+
+
+@dataclass(frozen=True)
+class _TeamStatistics:
+    corners: int | None
+    is_placeholder: bool
 
 
 def load_br_corner_observations(
@@ -64,8 +74,20 @@ def load_br_corner_observations(
                 f"match {match.match_id!r} has a statistics row for only one team; "
                 f"missing {missing_team!r}"
             )
-        home_corners = match_statistics.get(match.home_team)
-        away_corners = match_statistics.get(match.away_team)
+        home_statistics = match_statistics[match.home_team]
+        away_statistics = match_statistics[match.away_team]
+        if home_statistics.is_placeholder and away_statistics.is_placeholder:
+            continue
+        if home_statistics.is_placeholder or away_statistics.is_placeholder:
+            placeholder_team = (
+                match.home_team if home_statistics.is_placeholder else match.away_team
+            )
+            raise BrasileiraoError(
+                f"match {match.match_id!r} has a placeholder statistics row for "
+                f"only one team: {placeholder_team!r}"
+            )
+        home_corners = home_statistics.corners
+        away_corners = away_statistics.corners
         if home_corners is None and away_corners is None:
             continue
         if home_corners is None or away_corners is None:
@@ -135,9 +157,9 @@ def _read_matches(csv_file: TextIO) -> dict[str, _MatchMetadata]:
 
 def _read_statistics(
     csv_file: TextIO, matches: dict[str, _MatchMetadata],
-) -> dict[str, dict[str, int | None]]:
+) -> dict[str, dict[str, _TeamStatistics]]:
     reader = _reader(csv_file, _STAT_FIELDS, "statistics")
-    statistics: dict[str, dict[str, int | None]] = {}
+    statistics: dict[str, dict[str, _TeamStatistics]] = {}
     for row_number, row in enumerate(reader, start=2):
         try:
             match_id = _required(row, "partida_id")
@@ -168,7 +190,11 @@ def _read_statistics(
                     ) from error
                 if corners < 0:
                     raise ValueError("escanteios must be a non-negative integer")
-            match_statistics[club] = corners
+            is_placeholder = all(
+                row.get(field) is None or row[field].strip() in ("", "0")
+                for field in _ACTIVITY_FIELDS
+            )
+            match_statistics[club] = _TeamStatistics(corners, is_placeholder)
         except (KeyError, TypeError, ValueError) as error:
             raise BrasileiraoError(
                 f"invalid Brasileirão statistics row {row_number}: {error}"

@@ -357,7 +357,9 @@ instead stores match metadata and per-team statistics in separate tables; its
 their source into the same `TeamCornerObservation` objects, so the corner
 modeling and evaluation code remains provider-independent.
 
-The Brazil source files are UTF-8 CSVs and use `DD/MM/YYYY` dates. After
+The Brazil source files are UTF-8 CSVs and use `DD/MM/YYYY` dates. The adapter
+structurally filters matches where both teams' activity statistics are all zero
+or blank, while rejecting a placeholder row paired with real data. After
 downloading both files, load them locally (the adapter does not make network
 requests) and pass the observations to the existing rolling model:
 
