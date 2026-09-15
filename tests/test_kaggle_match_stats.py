@@ -152,6 +152,12 @@ class KaggleMatchStatsProviderTests(unittest.TestCase):
                     expected,
                 )
 
+    def test_full_date_preserves_legacy_single_year_season(self):
+        observations = self.load([self.row(
+            Date_day="02/01/2023", season_year="2023",
+        )])
+        self.assertEqual(observations[0].match_date, date(2023, 1, 2))
+
     def test_trailing_numeric_team_footnotes_are_removed(self):
         for value, expected in (
             ("Bastia\n2", "Bastia"),

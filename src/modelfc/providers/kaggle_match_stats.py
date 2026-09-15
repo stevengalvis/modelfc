@@ -125,8 +125,7 @@ def _normalize_row(
 
     home_team = _normalize_team(row["home_team"], "home_team")
     away_team = _normalize_team(row["away_team"], "away_team")
-    season = _parse_season(_required(row, "season_year"))
-    match_date = _parse_date(_required(row, "Date_day"), season)
+    match_date = _parse_date(_required(row, "Date_day"), row["season_year"])
     return (
         TeamCornerObservation(
             match_date, home_team, away_team, Venue.HOME,
@@ -160,8 +159,8 @@ def _normalize_team(value: str | None, field: str) -> str:
     return normalized
 
 
-def _parse_season(value: str) -> tuple[int, int]:
-    match = _SEASON.fullmatch(value)
+def _parse_season(value: str | None) -> tuple[int, int]:
+    match = _SEASON.fullmatch(value) if value is not None else None
     if match is None:
         raise ValueError(
             f"season_year must use consecutive YYYY/YYYY years: {value!r}"
@@ -174,9 +173,10 @@ def _parse_season(value: str) -> tuple[int, int]:
     return first_year, second_year
 
 
-def _parse_date(value: str, season: tuple[int, int]) -> date:
+def _parse_date(value: str, season_year: str | None) -> date:
     season_day = _SEASON_DAY.fullmatch(value)
     if season_day is not None:
+        season = _parse_season(season_year)
         day, month = (int(part) for part in season_day.groups())
         year = season[0] if month >= 7 else season[1]
         try:
