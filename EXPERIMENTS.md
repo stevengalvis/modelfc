@@ -208,3 +208,35 @@ current-season performance, calibration, or statistical significance.
   `venue-opponent-negative-binomial`: venue-opponent modeling improves the
   expected value, while Negative Binomial improves the uncertainty
   distribution.
+
+## Liga MX historical corner benchmark
+
+Source: Omar Ameen's Soccerway-format `scraped_dataset.csv`, repository commit
+`edefc091629a587271b911a08f88c1523502ff11` (download instructions in README).
+CSV SHA-256: `9aa5413ddbb41f0fbf52d61fb8a683fadf2fb41c09bac879da1db203a4576adf`.
+
+Of 627 Liga MX rows, the adapter accepts 576 Apertura/Clausura regular-season
+matches and excludes 51 knockout entries. All 576 have complete corner pairs.
+Coverage is 2024-07-06 through 2026-04-08, with 18 teams and 1,152 team
+observations. This is an incomplete historical sample, not current-season data.
+
+Using the default 100-observation warm-up, five-pseudo-match smoothing, and
+date-batched chronological evaluation gives 1,050 evaluated team observations
+for every model. Only strictly earlier dates enter each prediction. All
+comparisons use the same accepted matches; no hyperparameters were selected
+using this benchmark.
+
+| Model | MAE | RMSE | Average NLL |
+| --- | ---: | ---: | ---: |
+| League average | 2.169838 | 2.768897 | n/a |
+| Team average | 2.185479 | 2.780247 | n/a |
+| Venue-opponent Poisson | 2.173058 | 2.766046 | 2.432129 |
+| Venue-opponent Negative Binomial | 2.173058 | 2.766046 | 2.377308 |
+
+Negative Binomial improves likelihood relative to Poisson with identical
+expected values, hence identical MAE/RMSE. Venue-opponent has slightly better
+RMSE but slightly worse MAE than league average in this sample. This does not
+establish a Liga MX point-prediction improvement, calibrated probabilities,
+or a market edge. The export lacks explicit match-status and timezone fields;
+the adapter uses regular-season round labels, consistent completed scores,
+and the supplied calendar dates rather than inferring either field.

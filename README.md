@@ -347,6 +347,46 @@ The venue-and-opponent approach is also still a simple baseline: it does not
 include recency weighting, lineup or tactical context, or current-season
 external data.
 
+### Liga MX corner history
+
+The `liga-mx` provider reads the Soccerway-format `scraped_dataset.csv` published
+by [Omar Ameen](https://github.com/omarmohamed456/Football-Match-Outcome-Predictor)
+and also listed on
+[Kaggle](https://www.kaggle.com/datasets/omarameen99/football-matches-data-from-soccerway).
+Download the inspected snapshot to a local data directory, then evaluate it:
+
+```sh
+mkdir -p data/liga-mx
+curl --fail --location \
+  https://raw.githubusercontent.com/omarmohamed456/Football-Match-Outcome-Predictor/edefc091629a587271b911a08f88c1523502ff11/scraped_dataset.csv \
+  --output data/liga-mx/scraped_dataset.csv
+PYTHONPATH=src python3 -m modelfc.corner_evaluation \
+  data/liga-mx/scraped_dataset.csv --provider liga-mx \
+  --model venue-opponent-negative-binomial
+```
+
+The adapter selects only `Liga MX - Apertura` and `Liga MX - Clausura` with
+regular-season rounds `1` through `17`. It excludes the generic `Liga MX`
+knockout entries and all other competitions. The export has no explicit match
+status, so accepted rows must have complete scores and a consistent `H`, `D`,
+or `A` result. This cannot independently verify whether a match was abandoned.
+Dates are the calendar dates printed by the source; no kickoff timezone is
+inferred. Season labels are not used to guess calendar years.
+
+Both blank corner fields mean missing data and are skipped. Partial pairs,
+invalid counts, invalid identities or dates, and duplicate accepted IDs or
+dated fixtures raise errors. Whole decimals such as `5.0` and genuine zero
+counts are supported. Team names remain as supplied apart from surrounding
+whitespace. Each match produces the existing home/away corner observations.
+
+The inspected snapshot contains 576 accepted matches across 18 teams from
+2024-07-06 through 2026-04-08. It is historical, incomplete for 2025/26, and
+does not provide current 2026/27 coverage or automatic updates. Its benchmark
+is recorded in `EXPERIMENTS.md`. The data stays local; CI uses synthetic rows
+and needs no downloads, Kaggle login, or additional dependencies. The upstream
+repository includes an AGPLv3 license; check upstream data terms before
+redistribution or commercial reuse.
+
 ### Corner-data providers
 
 ModelFC supports reusable local-file providers for corner history. Football-Data

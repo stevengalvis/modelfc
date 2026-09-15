@@ -29,6 +29,9 @@ ENV/
 htmlcov/
 coverage.xml
 
+# Local Liga MX source export
+/data/liga-mx/
+
 # Editor and operating-system metadata
 .idea/
 .vscode/
