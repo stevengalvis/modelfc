@@ -360,6 +360,17 @@ provider reads the match-level corner fields in the downloaded Kaggle
 `afa_2015_2022_eng.csv` file, skipping matches where both corner fields are
 blank because those statistics are unavailable rather than zero.
 
+The MLS provider reads `matches.csv` from Joseph V.M.'s Kaggle
+[`major-league-soccer-dataset`](https://www.kaggle.com/datasets/josephvm/major-league-soccer-dataset).
+It deliberately does not use `events.csv`. This first MLS benchmark scope is
+regular-season matches whose status is exactly full time (`FT`); playoffs,
+preseason, abandoned matches, extra-time results, and shootouts are excluded.
+The source's available corner pairs span 2008 through a partial 2022 season,
+but this is a historical dataset rather than a source of current MLS data.
+Rows with both corner values blank are skipped as missing statistics, while a
+row with only one value is rejected. Non-negative whole counts are retained,
+including legitimate 0-0 corner pairs.
+
 Select the input adapter with `--provider`. Football-Data remains the default,
 so existing evaluation commands continue to work unchanged:
 
@@ -381,13 +392,18 @@ PYTHONPATH=src python3 -m modelfc.corner_evaluation \
   Football.csv --provider kaggle-match-stats \
   --country Italy --league Serie-b \
   --model venue-opponent-negative-binomial
+
+PYTHONPATH=src python3 -m modelfc.corner_evaluation \
+  matches.csv --provider mls \
+  --model venue-opponent-negative-binomial
 ```
 
 The Football-Data provider accepts one or more season files. The Brasileirão
 provider requires exactly two files in order: the matches CSV and statistics
 CSV. The Argentina provider requires exactly one CSV. The reusable Kaggle
 match-stat provider requires one `Football.csv` plus exact `--country` and
-`--league` selectors. After that
+`--league` selectors. The MLS provider requires exactly one `matches.csv`.
+After that
 provider-specific loading step, all commands use the same
 chronological prediction and evaluation pipeline described above.
 
