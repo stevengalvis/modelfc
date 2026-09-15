@@ -36,7 +36,7 @@ class KaggleMatchStatsProviderTests(unittest.TestCase):
     def row(self, **changes):
         row = {
             "Country": "Italy", "League": "Serie-b", "home_team": "Bari",
-            "away_team": "Pisa", "season_year": "2023", "Date_day": "02/01/2023",
+            "away_team": "Pisa", "season_year": "2022/2023", "Date_day": "02.01",
             "Corner_Kicks_Home": "4", "Corner_Kicks_Host": "2",
             "Goal_Attempts_Home": "10", "Goal_Attempts_Host": "8",
         }
@@ -105,8 +105,74 @@ class KaggleMatchStatsProviderTests(unittest.TestCase):
             self.load([self.row(home_team=" ")])
 
     def test_malformed_date_is_rejected(self):
-        with self.assertRaisesRegex(KaggleMatchStatsProviderError, "valid DD/MM/YYYY"):
-            self.load([self.row(Date_day="31/02/2023")])
+        with self.assertRaisesRegex(KaggleMatchStatsProviderError, "valid DD.MM"):
+            self.load([self.row(Date_day="31.02")])
+
+    def test_dd_mm_dates_use_the_correct_season_year(self):
+        cases = (
+            ("15.12", "2024/2025", date(2024, 12, 15)),
+            ("3.11", "2024/2025", date(2024, 11, 3)),
+            ("23.06", "2023/2024", date(2024, 6, 23)),
+            ("03.01", "2023/2024", date(2024, 1, 3)),
+            ("15.07", "2023/2024", date(2023, 7, 15)),
+        )
+        for date_day, season_year, expected in cases:
+            with self.subTest(date_day=date_day, season_year=season_year):
+                observations = self.load([self.row(
+                    Date_day=date_day, season_year=season_year,
+                )])
+                self.assertEqual(observations[0].match_date, expected)
+
+    def test_malformed_dd_mm_is_rejected(self):
+        for value in ("3", "3/11", "03.011", "1.2.3", "abc"):
+            with self.subTest(value=value), self.assertRaisesRegex(
+                KaggleMatchStatsProviderError, "Date_day",
+            ):
+                self.load([self.row(Date_day=value)])
+
+    def test_impossible_dd_mm_calendar_date_is_rejected(self):
+        with self.assertRaisesRegex(KaggleMatchStatsProviderError, "valid DD.MM"):
+            self.load([self.row(Date_day="31.04")])
+
+    def test_malformed_and_nonconsecutive_seasons_are_rejected(self):
+        for value in ("2023", "23/24", "2023-2024", "2023/2025", "2024/2023"):
+            with self.subTest(value=value), self.assertRaisesRegex(
+                KaggleMatchStatsProviderError, "season_year",
+            ):
+                self.load([self.row(season_year=value)])
+
+    def test_unambiguous_full_dates_remain_supported(self):
+        for value, expected in (
+            ("02/01/2023", date(2023, 1, 2)),
+            ("2023-01-02", date(2023, 1, 2)),
+        ):
+            with self.subTest(value=value):
+                self.assertEqual(
+                    self.load([self.row(Date_day=value)])[0].match_date,
+                    expected,
+                )
+
+    def test_trailing_numeric_team_footnotes_are_removed(self):
+        for value, expected in (
+            ("Bastia\n2", "Bastia"),
+            ("Metz\n3", "Metz"),
+            ("Fenerbahce\n4", "Fenerbahce"),
+        ):
+            with self.subTest(value=value):
+                observations = self.load([self.row(home_team=value)])
+                self.assertEqual(observations[0].team, expected)
+                self.assertEqual(observations[1].opponent, expected)
+
+    def test_normal_and_numeric_team_names_are_unchanged(self):
+        for value in ("Bastia", "Schalke 04", "1860 Munich", "Team 2"):
+            with self.subTest(value=value):
+                self.assertEqual(self.load([self.row(home_team=value)])[0].team, value)
+
+    def test_blank_team_after_footnote_removal_is_rejected(self):
+        with self.assertRaisesRegex(
+            KaggleMatchStatsProviderError, "home_team is required",
+        ):
+            self.load([self.row(home_team="\n2")])
 
     def test_missing_required_columns_are_rejected(self):
         with self.assertRaisesRegex(KaggleMatchStatsProviderError, "season_year"):
@@ -124,8 +190,8 @@ class KaggleMatchStatsProviderTests(unittest.TestCase):
 
     def test_sorts_matches_chronologically_and_preserves_pair_order(self):
         observations = self.load([
-            self.row(Date_day="03/01/2023", home_team="Later"),
-            self.row(Date_day="01/01/2023", home_team="Earlier"),
+            self.row(Date_day="03.01", home_team="Later"),
+            self.row(Date_day="01.01", home_team="Earlier"),
         ])
         self.assertEqual(
             [item.team for item in observations],
