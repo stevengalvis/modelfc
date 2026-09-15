@@ -141,6 +141,53 @@ Each league's best results come from the
 | Ligue 1 | 2,492 | 2.076538 | 2.671916 | 2.333207 |
 | Bundesliga | 2,342 | 2.077343 | 2.659213 | 2.335568 |
 
+### Major League Soccer
+
+The MLS evaluation used the local `matches.csv` from the Kaggle dataset
+`josephvm/major-league-soccer-dataset`, loaded with the `mls` provider. It
+covered regular-season, full-time matches with historical corner data from
+2008 through the partial 2022 season. With the default evaluation settings,
+each model evaluated 9,558 team observations.
+
+| Model | MAE | RMSE | Average negative log likelihood |
+| --- | ---: | ---: | ---: |
+| League average | 2.155854 | 2.753104 | — |
+| Team average | 2.161650 | 2.760668 | — |
+| Venue + opponent | 2.108492 | 2.682425 | — |
+| Venue + opponent + Poisson | 2.108492 | 2.682425 | 2.398653 |
+| Venue + opponent + Negative Binomial | 2.108492 | 2.682425 | 2.357814 |
+
+The supplied results can be reproduced from the dataset file with these
+commands (one command per model):
+
+```bash
+PYTHONPATH=src python3 -m modelfc.corner_evaluation \
+  matches.csv --provider mls --model league-average
+
+PYTHONPATH=src python3 -m modelfc.corner_evaluation \
+  matches.csv --provider mls --model team-average
+
+PYTHONPATH=src python3 -m modelfc.corner_evaluation \
+  matches.csv --provider mls --model venue-opponent
+
+PYTHONPATH=src python3 -m modelfc.corner_evaluation \
+  matches.csv --provider mls --model venue-opponent-poisson
+
+PYTHONPATH=src python3 -m modelfc.corner_evaluation \
+  matches.csv --provider mls --model venue-opponent-negative-binomial
+```
+
+The venue-and-opponent expected-corners estimate improves MAE by 2.20% and
+RMSE by 2.57% versus the league-average baseline. The team-average baseline
+does not improve on the league-average baseline. Negative Binomial improves
+average negative log likelihood by 0.040839 over Poisson. The identical MAE
+and RMSE for all three venue-and-opponent variants are expected: their
+predicted means are unchanged, while the distribution models differ.
+
+These results were run on a VPS and supplied by the user; the full dataset was
+not rerun in Cloud for this documentation update. They do not establish
+current-season performance, calibration, or statistical significance.
+
 ### Corner-model conclusions
 
 - The same qualitative model progression held across all five leagues.
