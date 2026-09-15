@@ -17,6 +17,7 @@ from modelfc.providers.football_data import load_corner_history
 from modelfc.providers.kaggle_match_stats import (
     load_kaggle_match_stats_corner_observations,
 )
+from modelfc.providers.mls import load_mls_corner_observations
 
 
 @dataclass(frozen=True)
@@ -51,6 +52,10 @@ def load_provider_observations(
         if len(csv_paths) != 1:
             raise CornerProviderError("argentina requires exactly one CSV file")
         return load_argentina_corner_observations(csv_paths[0])
+    if provider == "mls":
+        if len(csv_paths) != 1:
+            raise CornerProviderError("mls requires exactly one CSV file")
+        return load_mls_corner_observations(csv_paths[0])
     if provider == "kaggle-match-stats":
         if len(csv_paths) != 1:
             raise CornerProviderError(
@@ -128,6 +133,7 @@ def main() -> None:
         "--provider",
         choices=(
             "football-data", "brasileirao", "argentina", "kaggle-match-stats",
+            "mls",
         ),
         default="football-data",
         help="input CSV provider (default: football-data)",

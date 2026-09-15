@@ -39,3 +39,7 @@ coverage.xml
 # Local environment variables
 .env
 .env.*
+
+# Local root-level datasets and exploratory scripts
+/*.csv
+/explore_corners.py

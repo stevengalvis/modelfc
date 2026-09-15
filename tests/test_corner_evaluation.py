@@ -50,6 +50,23 @@ class CornerProviderDispatchTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "requires exactly one CSV file"):
                     load_provider_observations("argentina", files)
 
+    @patch("modelfc.corner_evaluation.load_mls_corner_observations")
+    def test_mls_dispatches_one_file(self, loader) -> None:
+        loader.return_value = []
+
+        self.assertEqual(load_provider_observations(
+            "mls", [Path("matches.csv")],
+        ), [])
+
+        loader.assert_called_once_with(Path("matches.csv"))
+
+    def test_mls_requires_exactly_one_file(self) -> None:
+        for files in ([], [Path("one.csv"), Path("two.csv")]):
+            with self.subTest(files=files), self.assertRaisesRegex(
+                ValueError, "mls requires exactly one CSV file",
+            ):
+                load_provider_observations("mls", files)
+
     def test_football_data_requires_at_least_one_file(self) -> None:
         with self.assertRaisesRegex(ValueError, "requires at least one CSV file"):
             load_provider_observations("football-data", [])
@@ -138,6 +155,16 @@ class CornerEvaluationCliTests(unittest.TestCase):
 
         self.assertEqual(raised.exception.code, 2)
         self.assertIn("argentina requires exactly one CSV file", stderr.getvalue())
+
+    def test_mls_file_count_is_a_clear_cli_error(self) -> None:
+        stderr = StringIO()
+        with patch.object(sys, "argv", [
+            "corner_evaluation", "--provider", "mls",
+        ]), redirect_stderr(stderr), self.assertRaises(SystemExit) as raised:
+            main()
+
+        self.assertEqual(raised.exception.code, 2)
+        self.assertIn("mls requires exactly one CSV file", stderr.getvalue())
 
     def test_kaggle_cli_requires_country_and_league(self) -> None:
         for arguments in (
