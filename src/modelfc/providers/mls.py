@@ -1,7 +1,7 @@
 """Adapter for the Kaggle Major League Soccer ``matches.csv`` dataset."""
 
 import csv
-from datetime import date, datetime
+from datetime import date
 from pathlib import Path
 import re
 from typing import TextIO
@@ -24,6 +24,20 @@ _REQUIRED_FIELDS = (
 _WHOLE_NUMBER = re.compile(r"[0-9]+(?:\.0+)?")
 _YEAR = re.compile(r"[0-9]{4}")
 _NAMED_DATE = re.compile(r"([A-Za-z]+), ([A-Za-z]+) ([0-9]{1,2})")
+_REGULAR_SEASON = re.compile(r"Regular Season(?: ([0-9]{4}))?")
+_MLS_LEAGUE = re.compile(
+    r"([0-9]{4}) (?:MLS|USA Major League Soccer|Major League Soccer)"
+)
+_ENGLISH_MONTHS = {
+    name: number for number, name in enumerate((
+        "", "January", "February", "March", "April", "May", "June",
+        "July", "August", "September", "October", "November", "December",
+    )) if name
+}
+_ENGLISH_WEEKDAYS = (
+    "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday",
+    "Sunday",
+)
 
 
 class MLSProviderError(ValueError):
@@ -55,7 +69,7 @@ def _read_corner_observations(csv_file: TextIO) -> list[TeamCornerObservation]:
     matches: list[tuple[date, int, tuple[TeamCornerObservation, ...]]] = []
     accepted_ids: set[str] = set()
     for row_number, row in enumerate(reader, start=2):
-        if not _is_eligible(row):
+        if not _is_scope_candidate(row):
             continue
         try:
             normalized = _normalize_row(row, accepted_ids)
@@ -70,23 +84,14 @@ def _read_corner_observations(csv_file: TextIO) -> list[TeamCornerObservation]:
     return observations
 
 
-def _is_eligible(row: dict[str, str | None]) -> bool:
-    """Apply exact, whitespace-trimmed MLS competition selection."""
+def _is_scope_candidate(row: dict[str, str | None]) -> bool:
+    """Select structurally in-scope rows before validating their source year."""
 
     if _trim(row["game_status"]) != "FT":
         return False
-    year = _trim(row["year"])
-    if _YEAR.fullmatch(year) is None:
-        return False
-    if _trim(row["part_of_competition"]) not in (
-        "Regular Season",
-        f"Regular Season {year}",
-    ):
-        return False
-    return _trim(row["league"]) in (
-        f"{year} MLS",
-        f"{year} USA Major League Soccer",
-        f"{year} Major League Soccer",
+    return (
+        _REGULAR_SEASON.fullmatch(_trim(row["part_of_competition"])) is not None
+        and _MLS_LEAGUE.fullmatch(_trim(row["league"])) is not None
     )
 
 
@@ -99,6 +104,18 @@ def _normalize_row(
     away_missing = not _trim(away_value)
     if home_missing and away_missing:
         return ()
+
+    year = _parse_year(row["year"])
+    competition = _REGULAR_SEASON.fullmatch(_trim(row["part_of_competition"]))
+    league = _MLS_LEAGUE.fullmatch(_trim(row["league"]))
+    assert competition is not None and league is not None
+    competition_year = competition.group(1)
+    if (
+        (competition_year is not None and int(competition_year) != year)
+        or int(league.group(1)) != year
+    ):
+        return ()
+
     if home_missing or away_missing:
         missing = "home_wonCorners" if home_missing else "away_wonCorners"
         raise ValueError(f"{missing} is blank while the other corner value is present")
@@ -109,7 +126,6 @@ def _normalize_row(
     away_team = _required(row, "away")
     if home_team == away_team:
         raise ValueError("home and away teams must be distinct")
-    year = int(_required(row, "year"))
     match_date = _parse_named_date(_required(row, "date"), year)
     match_id = _normalize_id(row["id"])
     if match_id in accepted_ids:
@@ -155,6 +171,16 @@ def _normalize_id(value: str | None) -> str:
     return str(int(stripped.split(".", 1)[0]))
 
 
+def _parse_year(value: str | None) -> int:
+    stripped = _trim(value)
+    if _YEAR.fullmatch(stripped) is None:
+        raise ValueError(f"year must be a four-digit calendar year: {stripped!r}")
+    year = int(stripped)
+    if not 1 <= year <= 9999:
+        raise ValueError(f"year must be a valid calendar year: {stripped!r}")
+    return year
+
+
 def _parse_named_date(value: str, year: int) -> date:
     match = _NAMED_DATE.fullmatch(value)
     if match is None:
@@ -162,12 +188,14 @@ def _parse_named_date(value: str, year: int) -> date:
             f"date must use 'Weekday, Month D' format: {value!r}"
         )
     weekday, month_name, day_value = match.groups()
+    month = _ENGLISH_MONTHS.get(month_name)
+    if month is None:
+        raise ValueError(f"date must contain a valid English month: {value!r}")
     try:
-        month = datetime.strptime(month_name, "%B").month
         parsed = date(year, month, int(day_value))
     except ValueError as error:
         raise ValueError(f"date must be a valid calendar date: {value!r}") from error
-    if parsed.strftime("%A") != weekday:
+    if _ENGLISH_WEEKDAYS[parsed.weekday()] != weekday:
         raise ValueError(
             f"date weekday does not match {parsed.isoformat()}: {weekday!r}"
         )

@@ -2,6 +2,7 @@ from datetime import date
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
+from unittest.mock import patch
 
 from modelfc.matches import TeamCornerObservation, Venue
 from modelfc.providers.mls import MLSProviderError, load_mls_corner_observations
@@ -121,11 +122,29 @@ class MLSProviderTests(unittest.TestCase):
             self._load(HEADER + row(named_date=""))
 
     def test_year_must_support_an_actual_calendar_date(self) -> None:
-        with self.assertRaisesRegex(MLSProviderError, "valid calendar date"):
+        with self.assertRaisesRegex(MLSProviderError, "valid calendar year"):
             self._load(HEADER + row(
                 year="0000", league="0000 MLS",
                 competition="Regular Season 0000",
             ))
+
+    def test_candidate_rows_reject_blank_and_malformed_years(self) -> None:
+        for year in ("", "2008.0", "twenty08"):
+            with self.subTest(year=year), self.assertRaisesRegex(
+                MLSProviderError, "four-digit calendar year",
+            ):
+                self._load(HEADER + row(year=year))
+
+    def test_cornerless_candidate_with_malformed_year_is_still_skipped(self) -> None:
+        self.assertEqual(self._load(HEADER + row(
+            year="2008.0", home_corners="", away_corners="",
+        )), [])
+
+    def test_english_date_parsing_does_not_consult_process_locale(self) -> None:
+        with patch("locale.getlocale", side_effect=AssertionError("locale used")):
+            observations = self._load(HEADER + row())
+
+        self.assertEqual(observations[0].match_date, date(2008, 3, 29))
 
     def test_duplicate_normalized_accepted_ids_are_rejected(self) -> None:
         with self.assertRaisesRegex(MLSProviderError, "duplicate normalized id"):
