@@ -32,6 +32,9 @@ _ACTIVITY_FIELDS = (
     "Fouls_Host",
 )
 _WHOLE_NUMBER = re.compile(r"[0-9]+(?:\.0+)?")
+_SEASON = re.compile(r"([0-9]{4})/([0-9]{4})")
+_SEASON_DAY = re.compile(r"([0-9]{1,2})\.([0-9]{1,2})")
+_TEAM_FOOTNOTE = re.compile(r"\r?\n[0-9]+$")
 
 
 class KaggleMatchStatsProviderError(ValueError):
@@ -120,9 +123,9 @@ def _normalize_row(
     ):
         return ()
 
-    home_team = _required(row, "home_team")
-    away_team = _required(row, "away_team")
-    match_date = _parse_date(_required(row, "Date_day"))
+    home_team = _normalize_team(row["home_team"], "home_team")
+    away_team = _normalize_team(row["away_team"], "away_team")
+    match_date = _parse_date(_required(row, "Date_day"), row["season_year"])
     return (
         TeamCornerObservation(
             match_date, home_team, away_team, Venue.HOME,
@@ -147,16 +150,51 @@ def _required(row: dict[str, str | None], field: str) -> str:
     return value.strip()
 
 
-def _parse_date(value: str) -> date:
-    # Football.csv stores Date_day as a calendar date rather than a timestamp.
-    # ISO is also accepted to make exported/re-saved copies interoperable.
+def _normalize_team(value: str | None, field: str) -> str:
+    if value is None:
+        raise ValueError(f"{field} is required")
+    normalized = _TEAM_FOOTNOTE.sub("", value.rstrip()).strip()
+    if not normalized:
+        raise ValueError(f"{field} is required")
+    return normalized
+
+
+def _parse_season(value: str | None) -> tuple[int, int]:
+    match = _SEASON.fullmatch(value) if value is not None else None
+    if match is None:
+        raise ValueError(
+            f"season_year must use consecutive YYYY/YYYY years: {value!r}"
+        )
+    first_year, second_year = (int(part) for part in match.groups())
+    if second_year != first_year + 1:
+        raise ValueError(
+            f"season_year must use consecutive YYYY/YYYY years: {value!r}"
+        )
+    return first_year, second_year
+
+
+def _parse_date(value: str, season_year: str | None) -> date:
+    season_day = _SEASON_DAY.fullmatch(value)
+    if season_day is not None:
+        season = _parse_season(season_year)
+        day, month = (int(part) for part in season_day.groups())
+        year = season[0] if month >= 7 else season[1]
+        try:
+            return date(year, month, day)
+        except ValueError as error:
+            raise ValueError(
+                f"Date_day must be a valid DD.MM date: {value!r}"
+            ) from error
+
+    # Retain the two unambiguous full-date formats supported by earlier exports.
     for date_format in ("%d/%m/%Y", "%Y-%m-%d"):
         try:
             return datetime.strptime(value, date_format).date()
         except ValueError:
             pass
     raise ValueError(
-        f"Date_day must be a valid DD/MM/YYYY or YYYY-MM-DD date: {value!r}"
+        "Date_day must be a valid DD.MM, DD/MM/YYYY, or YYYY-MM-DD date: "
+        f"{value!r}"
     )
 
 
