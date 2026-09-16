@@ -44,7 +44,8 @@ def load_data_config(path: Path) -> CornerDataConfig:
     return CornerDataConfig((path.resolve().parent / directory).resolve(), tuple(leagues), age)
 
 
-def configured_history(config: CornerDataConfig, league: str) -> list[TeamCornerObservation]:
+def configured_history_paths(config: CornerDataConfig, league: str) -> list[Path]:
+    """Return canonical season files for one configured competition."""
     if league not in config.leagues:
         raise ValueError(f"competition {league!r} is not enabled in the data config")
     # Only canonical season names; never include *_update.csv or backups.
@@ -52,6 +53,11 @@ def configured_history(config: CornerDataConfig, league: str) -> list[TeamCorner
     paths = sorted(path for path in config.directory.glob(f"{league}_*.csv") if pattern.fullmatch(path.name))
     if not paths:
         raise ValueError(f"no {league}_NNNN.csv history files in {config.directory}")
+    return paths
+
+
+def configured_history(config: CornerDataConfig, league: str) -> list[TeamCornerObservation]:
+    paths = configured_history_paths(config, league)
     observations = load_corner_history(paths)
     seen = set()
     for item in observations:

@@ -47,3 +47,7 @@ coverage.xml
 # Local root-level datasets and exploratory scripts
 /*.csv
 /explore_corners.py
+
+# Local append-only forecast ledgers
+/live-forecast-ledger/
+/corner-ledger/

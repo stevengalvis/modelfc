@@ -430,8 +430,61 @@ evaluation's display grid, which is conditioned on `0..max_corners`.
 Small upper tails are summed directly to avoid rounding possible outcomes
 to zero through subtraction. A convergence limit reports a numerical error
 for exceptionally slow tails rather than returning an incomplete sum.
-This first command handles individual team lines. Match-total distributions,
-odds comparisons, and a saved corner-prediction ledger are separate work.
+This command handles individual team lines. Match-total distributions and
+automatic sportsbook collection remain separate work.
+
+### Saved corner forecasts and flat-$1 pick record
+
+Add `--save-dir` to preserve the exact unrounded forecast, model settings,
+history coverage, Git commit and SHA-256 hashes of the local source CSVs. The
+forecast is append-only and separate from picks, so generating a probability
+does not count as a bet in your record. Include every line you may want to
+track when creating the forecast; later picks must reference a saved line.
+
+```bash
+PYTHONPATH=src python3 -m modelfc.corner_predict \
+  --data-config corner_data.json --competition SP1 \
+  --date YYYY-MM-DD --home "HOME" --away "AWAY" \
+  --home-lines 4.5 5.5 --away-lines 3.5 4.5 \
+  --save-dir corner-ledger
+```
+
+The command prints a forecast ID. Record only a pick you actually made, using
+the offered American price. Every pick uses an immutable $1 stake:
+
+```bash
+PYTHONPATH=src python3 -m modelfc.corner_ledger record-pick \
+  --ledger-dir corner-ledger --forecast-id FORECAST_ID \
+  --team home --line 5.5 --side over --american-odds -132
+```
+
+For half-lines, win and loss probabilities are complements. For whole lines,
+ModelFC retains the push probability and calculates value from
+`P(win) * win-profit - P(loss)`, with a push returning the $1 stake. It also
+records the model's win probability conditional on a decisive result, the
+book price's implied probability, and their difference. These are model-based
+value estimates, not evidence that the market is beatable.
+
+After the match, record both teams' final corners. This settles every saved
+pick for that forecast without rerunning the model or changing the original
+forecast or price:
+
+```bash
+PYTHONPATH=src python3 -m modelfc.corner_ledger record-result \
+  --ledger-dir corner-ledger --forecast-id FORECAST_ID \
+  --home-corners 6 --away-corners 4
+
+PYTHONPATH=src python3 -m modelfc.corner_ledger summary \
+  --ledger-dir corner-ledger
+```
+
+The summary reports forecasts, open and settled picks, W-L-P, settled stake,
+realized profit, ROI, and recorded model expected profit. At negative American
+odds, a $1 win earns `100 / abs(odds)`; at positive odds it earns `odds / 100`.
+A loss is `-$1` and a push is `$0`. ROI is realized profit divided by settled
+stake. Records stay local and the standard `corner-ledger/` directory is
+gitignored. A UTC creation timestamp documents the local clock but does not by
+itself prove the forecast preceded kickoff.
 
 ### Liga MX corner history
 

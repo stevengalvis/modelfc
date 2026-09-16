@@ -1,118 +1,26 @@
 """Local JSON ledger storage and scoring for live fixture forecasts."""
 
 import argparse
-from contextlib import contextmanager
 from datetime import date, datetime, timezone
-import fcntl
-import hashlib
-import json
 import math
-import os
 from pathlib import Path
-import subprocess
-import tempfile
-from typing import Any, Iterable, Iterator
+from typing import Any, Iterable
 import uuid
 
 from modelfc.evaluation import multiclass_brier_score
 from modelfc.forecasts import FixturePrediction, Forecast
+from modelfc.ledger_storage import (
+    LedgerError, git_commit_sha, ledger_lock, read_json_record,
+    source_records, utc_timestamp, write_new_record,
+)
 from modelfc.matches import Match, MatchResult
 
 
 SCHEMA_VERSION = 1
 
 
-class LedgerError(ValueError):
-    """Raised when a ledger operation or record is invalid."""
-
-
-def _timestamp() -> str:
-    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-
-
-def _git_commit_sha() -> str:
-    try:
-        result = subprocess.run(
-            ("git", "rev-parse", "HEAD"),
-            check=True,
-            capture_output=True,
-            text=True,
-        )
-    except (OSError, subprocess.CalledProcessError):
-        return "unknown"
-    sha = result.stdout.strip()
-    return sha if sha else "unknown"
-
-
-def _source_records(paths: Iterable[Path]) -> list[dict[str, str]]:
-    records = []
-    for path in paths:
-        try:
-            digest = hashlib.sha256(path.read_bytes()).hexdigest()
-        except OSError as error:
-            raise LedgerError(f"could not hash source CSV {path}: {error}") from error
-        records.append({"filename": path.name, "sha256": digest})
-    return records
-
-
-def _write_new(path: Path, record: dict[str, Any]) -> None:
-    """Atomically create a complete JSON record without replacing a file."""
-
-    try:
-        serialized = json.dumps(record, indent=2, sort_keys=True, allow_nan=False) + "\n"
-    except (TypeError, ValueError) as error:
-        raise LedgerError(f"could not serialize ledger record {path}: {error}") from error
-
-    temporary_path: Path | None = None
-    try:
-        with tempfile.NamedTemporaryFile(
-            "w",
-            encoding="utf-8",
-            dir=path.parent,
-            prefix=".record-",
-            suffix=".tmp",
-            delete=False,
-        ) as output:
-            temporary_path = Path(output.name)
-            output.write(serialized)
-            output.flush()
-            os.fsync(output.fileno())
-        os.link(temporary_path, path)
-    except FileExistsError as error:
-        raise LedgerError(f"refusing to overwrite existing record: {path}") from error
-    except OSError as error:
-        raise LedgerError(f"could not write ledger record {path}: {error}") from error
-    finally:
-        if temporary_path is not None:
-            try:
-                temporary_path.unlink()
-            except FileNotFoundError:
-                pass
-
-
-@contextmanager
-def _ledger_lock(ledger: Path) -> Iterator[None]:
-    """Serialize operations whose correctness depends on the ledger contents."""
-
-    lock_path = ledger / ".lock"
-    try:
-        with lock_path.open("a", encoding="utf-8") as lock_file:
-            fcntl.flock(lock_file, fcntl.LOCK_EX)
-            yield
-    except OSError as error:
-        raise LedgerError(f"could not lock ledger {ledger}: {error}") from error
-
-
 def _read_json(path: Path, kind: str) -> dict[str, Any]:
-    try:
-        record = json.loads(path.read_text(encoding="utf-8"))
-    except FileNotFoundError as error:
-        raise LedgerError(f"unknown forecast ID: {path.stem}") from error
-    except (OSError, json.JSONDecodeError) as error:
-        raise LedgerError(f"invalid {kind} record {path}: {error}") from error
-    if not isinstance(record, dict):
-        raise LedgerError(f"invalid {kind} record {path}: expected a JSON object")
-    return record
+    return read_json_record(path, kind, f"unknown forecast ID: {path.stem}")
 
 
 def _validate_forecast(record: dict[str, Any], path: Path) -> None:
@@ -279,7 +187,7 @@ def save_forecast(
     record = {
         "schema_version": SCHEMA_VERSION,
         "forecast_id": forecast_id,
-        "created_at": _timestamp(),
+        "created_at": utc_timestamp(),
         "fixture": {
             "date": fixture.match_date.isoformat(),
             "home_team": fixture.home_team,
@@ -292,7 +200,7 @@ def save_forecast(
                 "maximum_goals": max_goals,
             },
         },
-        "git_commit_sha": _git_commit_sha(),
+        "git_commit_sha": git_commit_sha(),
         "prediction": {
             "expected_home_goals": prediction.expected_home_goals,
             "expected_away_goals": prediction.expected_away_goals,
@@ -307,7 +215,7 @@ def save_forecast(
             "earliest_date": earliest_date,
             "latest_date": latest_date,
         },
-        "sources": _source_records(Path(path) for path in source_paths),
+        "sources": source_records(Path(path) for path in source_paths),
     }
     path = forecast_dir / f"{forecast_id}.json"
     _validate_forecast(record, path)
@@ -316,7 +224,7 @@ def save_forecast(
             "invalid forecast history metadata: match count does not match supplied dates"
         )
     fixture_key = (fixture.match_date.isoformat(), fixture.home_team, fixture.away_team)
-    with _ledger_lock(ledger):
+    with ledger_lock(ledger):
         for existing in _load_all_forecasts(forecast_dir):
             other = existing["fixture"]
             if (other["date"], other["home_team"], other["away_team"]) == fixture_key:
@@ -324,7 +232,7 @@ def save_forecast(
                     "a forecast for this fixture already exists "
                     f"(forecast ID {existing['forecast_id']}); original was not overwritten"
                 )
-        _write_new(path, record)
+        write_new_record(path, record)
     return record, path
 
 
@@ -414,13 +322,13 @@ def record_result(
     result = {
         "schema_version": SCHEMA_VERSION,
         "forecast_id": forecast_id,
-        "recorded_at": _timestamp(),
+        "recorded_at": utc_timestamp(),
         "final_score": {"home_goals": home_goals, "away_goals": away_goals},
         "outcome": outcome.value,
         "brier_score": brier,
     }
     result_path.parent.mkdir(parents=True, exist_ok=True)
-    _write_new(result_path, result)
+    write_new_record(result_path, result)
     return result, True
 
 

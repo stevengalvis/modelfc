@@ -147,7 +147,7 @@ class LiveForecastLedgerTests(unittest.TestCase):
 
     def test_serialization_failure_leaves_ledger_usable(self) -> None:
         with mock.patch(
-            "modelfc.live_forecasts.json.dumps",
+            "modelfc.ledger_storage.json.dumps",
             side_effect=TypeError("synthetic serialization failure"),
         ):
             with self.assertRaisesRegex(LedgerError, "could not serialize"):
