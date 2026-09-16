@@ -133,6 +133,16 @@ class CornerPredictCliTests(unittest.TestCase):
         self.assertEqual(saved["history"]["observation_count"], 6)
         self.assertEqual(saved["prediction"]["home"]["lines"][0]["line"], 3.5)
 
+    def test_invalid_save_dir_is_a_cli_error_without_traceback(self):
+        blocked = self.path.parent / "not-a-directory"
+        blocked.write_text("file", encoding="utf-8")
+        code, stdout, stderr = self.run_cli([
+            "--home-lines", "3.5", "--save-dir", str(blocked),
+        ])
+        self.assertEqual((code, stdout), (2, ""))
+        self.assertIn("could not create corner ledger", stderr)
+        self.assertNotIn("Traceback", stderr)
+
     def test_managed_history_stays_locked_through_forecast_save(self):
         config = self.path.parent / "corner_data.json"
         config.write_text(json.dumps({

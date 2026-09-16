@@ -197,8 +197,11 @@ def save_corner_forecast(
 ) -> tuple[dict[str, Any], Path]:
     """Save the exact model output without recording a bet."""
     ledger = Path(ledger_dir)
-    for name in ("forecasts", "picks", "results"):
-        (ledger / name).mkdir(parents=True, exist_ok=True)
+    try:
+        for name in ("forecasts", "picks", "results"):
+            (ledger / name).mkdir(parents=True, exist_ok=True)
+    except OSError as error:
+        raise LedgerError(f"could not create corner ledger {ledger}: {error}") from error
     dates = sorted(history_dates)
     fixture = prediction.fixture
     if (len(dates) != prediction.historical_observation_count
