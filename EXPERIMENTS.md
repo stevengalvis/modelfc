@@ -279,3 +279,54 @@ justify a blanket probability adjustment or establish statistical significance.
 The diagnostic uses existing corner observations, so the Championship shot
 inconsistency rejected by the richer stats loader does not affect this report.
 No shot features are used. Commands and metric interpretation are in README.
+
+## Shot-informed corner experiment (2026-09-16)
+
+This experiment used the five local Football-Data files from `2223` through
+`2627` for each competition. The development period contains eligible rolling
+predictions before July 1, 2025. July 1, 2025 and later is the holdout period.
+The default 100-observation warm-up, five-match venue gate, five-match
+smoothing and team lines 3.5, 4.5, 5.5 and 6.5 were fixed in advance.
+
+For each competition, feature weights were selected only on development count
+NLL from a `-0.50` to `0.50` grid in `0.05` steps, then frozen. The model is
+multiplicative: the existing corner mean is adjusted by expected-shots and
+expected-shots-on-target ratios raised to their fitted weights. Every variant
+uses identical fixtures, and each prediction sees strictly earlier calendar
+dates only.
+
+The table compares the combined shots plus shots-on-target variant with the
+corner-only baseline on the holdout. Negative deltas favor the feature model.
+
+| Competition | Holdout observations | Shot weight | SOT weight | Baseline NLL | Feature NLL | NLL delta | Baseline line Brier | Feature line Brier | Brier delta |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| EPL | 806 | -0.10 | 0.15 | 2.351537 | 2.351845 | +0.000308 | 0.212542 | 0.212377 | -0.000165 |
+| La Liga | 796 | -0.30 | 0.10 | 2.344222 | 2.344401 | +0.000179 | 0.209607 | 0.210001 | +0.000394 |
+| Serie A | 820 | -0.35 | 0.35 | 2.293031 | 2.291074 | -0.001957 | 0.203425 | 0.202785 | -0.000640 |
+| Bundesliga | 634 | 0.05 | 0.05 | 2.349286 | 2.350378 | +0.001092 | 0.206941 | 0.206940 | -0.000001 |
+| Ligue 1 | 656 | -0.30 | 0.30 | 2.364403 | 2.367291 | +0.002888 | 0.209758 | 0.210425 | +0.000667 |
+| Primeira Liga | 668 | -0.10 | 0.20 | 2.340170 | 2.339044 | -0.001126 | 0.197685 | 0.197208 | -0.000477 |
+
+The combined variant improved holdout count NLL in only two of six
+competitions, with small changes throughout. The shots-only variant was also
+inconsistent: it improved count NLL slightly in Spain and Portugal, selected a
+zero weight in Italy, and worsened England, Germany and France. These results
+do not justify adding either feature variant to live prediction. The useful
+result is negative: the current corner-only model remains the production
+candidate while later work can test different feature definitions without
+silently increasing live-model complexity.
+
+This period had already been inspected in the team-line probability diagnostic,
+and the feature grid was finalized during this experiment. “Holdout” means the
+development-selected weights were frozen before these rows were scored; it is
+not an untouched final test. Any later feature candidate needs a predeclared
+specification and genuinely unseen future matches before promotion.
+
+The Championship was excluded. Its November 10, 2024 Burnley vs Swansea row
+contains the impossible combination `HS=2` and `HST=7`.
+[FOX](https://www.foxsports.com/soccer/english-championship-burnley-vs-swansea-city-nov-10-2024-game-boxscore-147690?tab=boxscore)
+reports 15-8 total shots and 3-2 shots on goal, while
+[OddsCalendar](https://www.oddscalendar.com/football/england/championship/burnley-vs-swansea/1216011/stats)
+reports 7-4 shots on target. Because the candidate corrections disagree,
+ModelFC does not pick a replacement. The Bundesliga run excluded one incomplete
+fixture before building history; every variant used the resulting common cohort.
