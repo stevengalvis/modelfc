@@ -15,7 +15,7 @@ these values but must not recalculate them.
 - Dates are ISO `YYYY-MM-DD`; timestamps are UTC ISO 8601 strings.
 - Probabilities are numbers from `0` through `1`.
 - Expected profit and realized profit use a fixed `$1.00` stake in V1.
-- Corner lines are non-negative whole or half numbers.
+- Corner lines are whole or half numbers from `0` through `1000`, inclusive.
 - American odds are integers at least `+100` or at most `-100`.
 - Clients send an `idempotency_key` on every mutating request. Repeating the
   same key and identical body returns the original response. Reusing a key with
@@ -585,6 +585,17 @@ the exact `candidate_id` returned by the review item, plus one of:
 - `KEEP_ORIGINAL`: append a review decision that retains the effective result
   that was active immediately before this pending candidate.
 
+```json
+{
+  "idempotency_key": "result-resolution-uuid",
+  "candidate_id": "sha256-digest",
+  "action": "ACCEPT_CORRECTION",
+  "reason": "Confirmed against the provider correction notice."
+}
+```
+
+`action` is required and accepts only `ACCEPT_CORRECTION` or `KEEP_ORIGINAL`.
+
 Neither choice edits or deletes the original result. The accepted effective
 result determines pick outcomes and aggregate performance, and the API returns
 both the original result and amendment/review decision for audit. Replaying the
@@ -626,13 +637,79 @@ resolve it; its normal resolution rules still apply.
 ### `POST /api/v1/admin/forecasts/{forecast_id}/reschedule-alias`
 
 Auditable fallback for a postponed fixture when the source has no stable fixture
-ID. The request requires an idempotency key, admin reason, and the identity of
-one current server-owned trusted fixture record. It appends a settlement alias
+ID. The request requires an idempotency key, admin reason, and
+`target_fixture_record_id` for one current server-owned trusted fixture record.
+It appends a settlement alias
 from the immutable forecast fixture to that record without modifying the saved
 forecast date or kickoff. The target must have the same provider, competition,
 and normalized teams and must resolve uniquely; otherwise the request returns
 `409 AMBIGUOUS_FIXTURE`. An alias never changes the original pick cutoff or any
 forecast/market value.
+
+```json
+{
+  "idempotency_key": "reschedule-alias-uuid",
+  "target_fixture_record_id": "fixture-record-uuid",
+  "reason": "Match postponed from September 20 to October 8."
+}
+```
+
+Administrators obtain the ID from
+`GET /api/v1/admin/fixture-records?competition=SP1&date_from=2026-10-08&date_to=2026-10-08`.
+Optional `home_team` and `away_team` filters use normalized exact matching. The
+response is `{ "items": [...] }`; every item contains `fixture_record_id`,
+provider, competition, date, UTC `kickoff_at`, normalized home/away teams,
+`provider_fixture_id` when available, trust source, and trust status. Only a
+uniquely resolved item with trusted status may be used as the alias target.
+
+### `GET /api/v1/forecasts/{forecast_id}/result-audit`
+
+Returns the full append-only result history in ascending creation order. This
+is the authoritative audit view for repeated corrections and review decisions:
+
+```json
+{
+  "forecast_id": "uuid",
+  "effective_result_id": "result-c",
+  "items": [
+    {
+      "entry_type": "ORIGINAL_RESULT",
+      "entry_id": "result-a",
+      "created_at": "2026-09-21T06:04:00Z",
+      "home_corners": 6,
+      "away_corners": 4,
+      "source": "football-data",
+      "candidate_id": null,
+      "reason": null
+    },
+    {
+      "entry_type": "ACCEPT_CORRECTION",
+      "entry_id": "result-b",
+      "created_at": "2026-09-22T10:00:00Z",
+      "home_corners": 7,
+      "away_corners": 4,
+      "source": "football-data",
+      "candidate_id": "candidate-b",
+      "reason": "Confirmed provider correction."
+    },
+    {
+      "entry_type": "KEEP_ORIGINAL",
+      "entry_id": "decision-c",
+      "created_at": "2026-09-23T10:00:00Z",
+      "home_corners": null,
+      "away_corners": null,
+      "source": "football-data",
+      "candidate_id": "candidate-c",
+      "reason": "Provider notice was withdrawn."
+    }
+  ]
+}
+```
+
+`entry_type` is `ORIGINAL_RESULT`, `ACCEPT_CORRECTION`, or `KEEP_ORIGINAL`.
+Accepted entries contain the result counts that became effective; keep decisions
+have null counts. Every entry preserves its source audit metadata and admin
+reason where applicable. No audit entry is updated or deleted.
 
 ## Result matching and settlement rules
 
