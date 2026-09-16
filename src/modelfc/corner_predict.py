@@ -4,6 +4,7 @@ import argparse
 from datetime import date
 from pathlib import Path
 
+from modelfc.corner_data import configured_history, load_data_config
 from modelfc.corner_forecasts import (
     CORNER_FIXTURE_MODELS, CornerFixturePrediction, predict_corner_fixture,
 )
@@ -11,7 +12,7 @@ from modelfc.corner_sources import PROVIDERS, load_provider_observations
 from modelfc.matches import UpcomingFixture
 
 
-def format_corner_prediction(prediction: CornerFixturePrediction) -> str:
+def format_corner_prediction(prediction: CornerFixturePrediction, max_age_days: int = 14) -> str:
     """Report predictions alongside their history coverage and age."""
     fixture = prediction.fixture
 
@@ -29,6 +30,8 @@ def format_corner_prediction(prediction: CornerFixturePrediction) -> str:
     ]
     if prediction.dispersion_size is not None:
         lines.append(f"Negative Binomial size: {prediction.dispersion_size:.6f}")
+    if (fixture.match_date - prediction.latest_history_date).days > max_age_days:
+        lines.append(f"WARNING: latest usable history is more than {max_age_days} days before the fixture.")
     for team in (prediction.home, prediction.away):
         lines.extend((
             "",
@@ -57,8 +60,11 @@ def format_corner_prediction(prediction: CornerFixturePrediction) -> str:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--history", type=Path, nargs="+", required=True,
+    history_group = parser.add_mutually_exclusive_group(required=True)
+    history_group.add_argument("--history", type=Path, nargs="+",
                         help="non-overlapping provider CSVs for one competition")
+    history_group.add_argument("--data-config", type=Path, help="managed Football-Data history configuration")
+    parser.add_argument("--competition", help="configured Football-Data code, e.g. SP1")
     parser.add_argument("--provider", choices=PROVIDERS, default="football-data")
     parser.add_argument("--country", help="exact Kaggle Country value")
     parser.add_argument("--league", help="exact Kaggle League value")
@@ -79,9 +85,19 @@ def main() -> None:
     args = parser.parse_args()
     try:
         fixture = UpcomingFixture(args.date, args.home, args.away)
-        observations = load_provider_observations(
-            args.provider, args.history, args.country, args.league,
-        )
+        max_age_days = 14
+        if args.data_config:
+            if not args.competition or args.provider != "football-data" or args.country or args.league:
+                raise ValueError("--data-config requires --competition and uses only football-data")
+            config = load_data_config(args.data_config)
+            observations = configured_history(config, args.competition)
+            max_age_days = config.max_age_days
+        else:
+            if args.competition:
+                raise ValueError("--competition requires --data-config")
+            observations = load_provider_observations(
+                args.provider, args.history, args.country, args.league,
+            )
         prediction = predict_corner_fixture(
             observations, fixture, args.home_lines, args.away_lines,
             model=args.model, min_history=args.min_history,
@@ -91,9 +107,11 @@ def main() -> None:
     except ValueError as error:
         parser.error(str(error))
     print(f"Provider: {args.provider}")
+    if args.data_config:
+        print(f"Competition: {args.competition}")
     if args.provider == "kaggle-match-stats":
         print(f"Country / league: {args.country} / {args.league}")
-    print(format_corner_prediction(prediction))
+    print(format_corner_prediction(prediction, max_age_days))
 
 
 if __name__ == "__main__":

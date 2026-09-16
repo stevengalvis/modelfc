@@ -435,6 +435,9 @@ odds comparisons, and a saved corner-prediction ledger are separate work.
 
 ### Liga MX corner history
 
+For configured European history, validated refreshes, backups, and the Ubuntu
+VPS timer setup, see [Keeping corner history current](DATA_REFRESH.md).
+
 The `liga-mx` provider reads the Soccerway-format `scraped_dataset.csv` published
 by [Omar Ameen](https://github.com/omarmohamed456/Football-Match-Outcome-Predictor)
 and also listed on

@@ -31,6 +31,7 @@ coverage.xml
 
 # Local Liga MX source export
 /data/liga-mx/
+/data/corner-refresh/
 
 # Editor and operating-system metadata
 .idea/
