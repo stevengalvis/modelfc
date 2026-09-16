@@ -301,16 +301,18 @@ corner-only baseline on the holdout. Negative deltas favor the feature model.
 | Competition | Holdout observations | Shot weight | SOT weight | Baseline NLL | Feature NLL | NLL delta | Baseline line Brier | Feature line Brier | Brier delta |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | EPL | 806 | -0.10 | 0.15 | 2.351537 | 2.351845 | +0.000308 | 0.212542 | 0.212377 | -0.000165 |
+| Championship | 1,180 | -0.30 | 0.25 | 2.381373 | 2.383747 | +0.002374 | 0.217020 | 0.217431 | +0.000411 |
 | La Liga | 796 | -0.30 | 0.10 | 2.344222 | 2.344401 | +0.000179 | 0.209607 | 0.210001 | +0.000394 |
 | Serie A | 820 | -0.35 | 0.35 | 2.293031 | 2.291074 | -0.001957 | 0.203425 | 0.202785 | -0.000640 |
 | Bundesliga | 634 | 0.05 | 0.05 | 2.349286 | 2.350378 | +0.001092 | 0.206941 | 0.206940 | -0.000001 |
 | Ligue 1 | 656 | -0.30 | 0.30 | 2.364403 | 2.367291 | +0.002888 | 0.209758 | 0.210425 | +0.000667 |
 | Primeira Liga | 668 | -0.10 | 0.20 | 2.340170 | 2.339044 | -0.001126 | 0.197685 | 0.197208 | -0.000477 |
 
-The combined variant improved holdout count NLL in only two of six
+The combined variant improved holdout count NLL in only two of seven
 competitions, with small changes throughout. The shots-only variant was also
 inconsistent: it improved count NLL slightly in Spain and Portugal, selected a
-zero weight in Italy, and worsened England, Germany and France. These results
+zero weight in Italy and the Championship, and worsened England, Germany and
+France. These results
 do not justify adding either feature variant to live prediction. The useful
 result is negative: the current corner-only model remains the production
 candidate while later work can test different feature definitions without
@@ -322,11 +324,60 @@ development-selected weights were frozen before these rows were scored; it is
 not an untouched final test. Any later feature candidate needs a predeclared
 specification and genuinely unseen future matches before promotion.
 
-The Championship was excluded. Its November 10, 2024 Burnley vs Swansea row
-contains the impossible combination `HS=2` and `HST=7`.
+The Championship run explicitly quarantined only the November 10, 2024 Burnley
+vs Swansea fixture, which contains the impossible combination `HS=2` and
+`HST=7`.
 [FOX](https://www.foxsports.com/soccer/english-championship-burnley-vs-swansea-city-nov-10-2024-game-boxscore-147690?tab=boxscore)
 reports 15-8 total shots and 3-2 shots on goal, while
 [OddsCalendar](https://www.oddscalendar.com/football/england/championship/burnley-vs-swansea/1216011/stats)
 reports 7-4 shots on target. Because the candidate corrections disagree,
-ModelFC does not pick a replacement. The Bundesliga run excluded one incomplete
+ModelFC does not pick a replacement. The exact quarantine removed two mirrored
+team observations out of the 4,416 raw Championship team observations, about
+0.05%, while retaining the league. The Bundesliga run excluded one incomplete
 fixture before building history; every variant used the resulting common cohort.
+
+### Why shots did not add stable pre-match signal
+
+The intuitive relationship is real but mostly contemporaneous. In the holdout,
+corners and shots recorded in the same match correlate from `+0.494` to
+`+0.577` across the seven competitions. Those shots are not known before
+kickoff. The experiment instead uses rolling venue/opponent shot strengths
+calculated from earlier matches.
+
+The table below separates that raw association from incremental forecast
+information. `Residual` is actual corners minus the corner-only prediction.
+For a shot feature to improve that model consistently, its pre-match ratio
+must explain this remaining error.
+
+| Competition | Corner vs same-match shots | Baseline vs predicted shot ratio | Residual vs predicted shot ratio | Residual vs predicted SOT ratio | Predicted shot vs SOT ratio |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| EPL | +0.494 | +0.830 | -0.093 | -0.051 | +0.925 |
+| Championship | +0.541 | +0.551 | +0.014 | -0.014 | +0.854 |
+| La Liga | +0.553 | +0.620 | -0.030 | -0.021 | +0.920 |
+| Serie A | +0.572 | +0.752 | +0.058 | +0.073 | +0.899 |
+| Bundesliga | +0.538 | +0.692 | -0.013 | -0.001 | +0.924 |
+| Ligue 1 | +0.559 | +0.782 | +0.001 | -0.014 | +0.909 |
+| Primeira Liga | +0.577 | +0.866 | +0.021 | +0.035 | +0.946 |
+
+Three effects explain the negative result:
+
+1. The venue/opponent corner baseline already captures much of the persistent
+   team and opponent style that also drives shot volume. Its correlation with
+   predicted shot strength is `+0.551` to `+0.866` in the holdout.
+2. After removing that baseline, predicted shot strength has little stable
+   relationship with the remaining corner error: correlations are only
+   `-0.093` to `+0.058` for shots and `-0.051` to `+0.073` for shots on target.
+3. Predicted shots and shots on target are highly redundant (`+0.854` to
+   `+0.946`). This lets development fitting assign offsetting weights that are
+   unstable later. In the Championship, for example, the selected combined
+   weights were `-0.30/+0.25`; weights chosen retrospectively on the holdout
+   would reverse to `+0.25/-0.20`. Retrospective weights are diagnostic only
+   and are not reported as valid model performance.
+
+This does not mean shots are unrelated to corners. It means expanding-history
+shot volume, represented with the same venue/opponent structure, does not add
+reliable information beyond expanding-history corners. A defensible next
+feature experiment should test a distinct predeclared hypothesis, such as
+recent-form windows, exponentially decayed strengths, blocked shots, crosses,
+or possession, against future untouched data rather than adding more correlated
+volume features to the live model.
