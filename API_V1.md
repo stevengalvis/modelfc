@@ -275,6 +275,12 @@ server-enforced selection cutoff. The entire batch is rejected with
 result already exists. V1 never accepts a retroactive pick. A client-supplied
 timestamp is never used to extend the selection window.
 
+Idempotency lookup occurs before cutoff and result-state validation. Therefore,
+an identical replay of a selection that originally succeeded before kickoff
+returns its original success response even when retried after kickoff or after
+settlement. A new or conflicting request is evaluated against the current
+cutoff normally.
+
 ```json
 {
   "idempotency_key": "selection-session-uuid",
@@ -431,6 +437,13 @@ updated idempotently. A correction conflict against an existing effective
 result is never auto-resolved and still requires the explicit resolution
 endpoint.
 
+A forecast that already has an effective result is not demoted from `SETTLED`
+because a later validated source is stale, temporarily omits its row, or has a
+partial row. Reconciliation changes such a forecast only when one complete,
+unambiguous provider row supplies corner counts that conflict with the effective
+result. Matching counts are an idempotent no-op; conflicting counts create
+`NEEDS_REVIEW` for explicit correction resolution.
+
 ```json
 {
   "idempotency_key": "refresh-run-id",
@@ -516,12 +529,14 @@ one normalized record using:
 
 Both corner counts must be present and non-negative. Before `kickoff_at` plus
 an eight-hour V1 completion grace period, zero result matches always leave the
-forecast `OPEN`, even if the source is stale. After that threshold, a missing
-row or stale source may require review. Multiple matches, ambiguous identities,
-partial corner data, conflicting existing results, or ledger integrity failures
-produce `NEEDS_REVIEW` with a reason code. A failed source validation aborts the
-settlement run before fixture reconciliation and leaves every forecast and pick
-status unchanged. No fuzzy or guessed settlement is allowed.
+forecast `OPEN`, even if the source is stale. After that threshold, an unsettled
+forecast with a missing row, stale source, multiple matches, ambiguous identity,
+or partial corner data becomes `NEEDS_REVIEW` with a reason code. Forecasts that
+already have an effective result follow the narrower reconciliation rule above.
+Ledger integrity failures always produce `NEEDS_REVIEW`. A failed source
+validation aborts the settlement run before fixture reconciliation and leaves
+every forecast and pick status unchanged. No fuzzy or guessed settlement is
+allowed.
 
 Result recording is idempotent. Repeating an identical result does nothing.
 When a validated provider correction conflicts with the effective saved result,
