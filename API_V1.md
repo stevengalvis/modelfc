@@ -370,6 +370,8 @@ fixture-date filter so history counts and ROI reconcile.
         "line": 4.5,
         "american_odds": -145,
         "model_probability": 0.642,
+        "push_probability": 0.0,
+        "decisive_model_probability": 0.642,
         "implied_probability": 0.5918367347,
         "probability_edge": 0.0501632653,
         "expected_profit": 0.0847586207,
@@ -387,6 +389,7 @@ fixture-date filter so history counts and ROI reconcile.
         "recorded_at": "2026-09-21T06:04:00Z",
         "is_amendment": false
       },
+      "original_result": null,
       "settlement": {
         "outcome": "WIN",
         "realized_profit": 0.689655,
@@ -399,17 +402,20 @@ fixture-date filter so history counts and ROI reconcile.
 }
 ```
 
-For an `OPEN` item, `result`, `settlement`, and `review` are null. For a
+For an `OPEN` item, `result`, `original_result`, `settlement`, and `review` are
+null. For a
 `NEEDS_REVIEW` item, `settlement` is null and `review` contains
 `type`, `reason_code`, `message`, and source audit metadata. Review types are
 `DATA_AVAILABILITY`, `RESULT_CORRECTION`, and `LEDGER_INTEGRITY`.
 `candidate_id` and candidate home/away corner counts are required only for
 `RESULT_CORRECTION`; they are null for review states without one complete result
 candidate. For a `SETTLED` item, `review` is null and `result` is the effective
-result; when a correction was accepted, `is_amendment` is true and the response
-also identifies the preserved original result. Immutable source hashes and full
-model configuration remain available through the referenced forecast/analysis
-response rather than being duplicated in every history row.
+result; when a correction was accepted, `is_amendment` is true and
+`original_result` contains the preserved first result using the same result
+object shape. For a result that has never been amended, `original_result` is
+null. Immutable source hashes and full model configuration remain available
+through the referenced forecast/analysis response rather than being duplicated
+in every history row.
 
 `next_cursor` is null on the final page. Otherwise, pass it unchanged as the
 next request's `cursor`. Cursors are opaque and stable only for the original
@@ -447,13 +453,14 @@ Administrative/internal endpoint used after a successful validated data
 refresh. It is also safe to invoke manually. It scans `OPEN`, `SETTLED`, and
 `NEEDS_REVIEW` forecasts and does not rerun predictions.
 
-A `NEEDS_REVIEW` forecast with no saved result is automatically recovered when
-a later validated refresh supplies exactly one unambiguous fixture with complete
-corner counts: the result is appended, its picks are settled, and the forecast
-becomes `SETTLED`. If the transient condition remains, its status and reason are
-updated idempotently. A correction conflict against an existing effective
-result is never auto-resolved and still requires the explicit resolution
-endpoint.
+A `NEEDS_REVIEW` forecast with no saved result is automatically recovered only
+when its review type is `DATA_AVAILABILITY`, all ledger integrity checks now
+pass, and a later validated refresh supplies exactly one unambiguous fixture
+with complete corner counts. The result is appended, its picks are settled, and
+the forecast becomes `SETTLED`. If the transient condition remains, its status
+and reason are updated idempotently. `LEDGER_INTEGRITY` reviews are never
+auto-recovered. A correction conflict against an existing effective result is
+never auto-resolved and still requires the explicit resolution endpoint.
 
 A forecast that already has an effective result is not demoted from `SETTLED`
 because a later validated source is stale, temporarily omits its row, or has a
