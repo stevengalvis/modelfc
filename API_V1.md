@@ -46,7 +46,7 @@ V1 error codes:
 `STALE_DATA`, `MISSING_RESULT_DATA`, `AMBIGUOUS_FIXTURE`,
 `DUPLICATE_PICK`, `IDEMPOTENCY_CONFLICT`, `FORECAST_NOT_FOUND`,
 `ANALYSIS_NOT_FOUND`, `LEDGER_INTEGRITY_FAILURE`, and
-`AUTOMATIC_SETTLEMENT_UNAVAILABLE`.
+`AUTOMATIC_SETTLEMENT_UNAVAILABLE`, `PICKING_CLOSED`.
 
 Validation errors use HTTP 422, missing resources 404, integrity/idempotency
 conflicts 409, stale or unavailable dependencies 503, and unexpected failures
@@ -115,6 +115,7 @@ used by the frontend when selecting markets later.
   "fixture": {
     "competition": "SP1",
     "date": "2026-09-20",
+    "kickoff_at": "2026-09-20T19:00:00Z",
     "home_team": "Athletic Club",
     "away_team": "Valencia"
   },
@@ -151,6 +152,7 @@ returns the original status, headers, and body:
   "fixture": {
     "competition": "SP1",
     "date": "2026-09-20",
+    "kickoff_at": "2026-09-20T19:00:00Z",
     "home_team": "Athletic Club",
     "away_team": "Valencia"
   },
@@ -243,7 +245,15 @@ new odds/history.
 Records zero or more explicitly selected markets from the saved analysis.
 Passing an empty `selections` array is a valid no-op. One forecast may have
 multiple picks. A selection must match the immutable saved market probability,
-line, side, and price.
+line, side, and price, and its saved analysis entry must have
+`status: SUPPORTED`. Selecting an unsupported entry returns
+`422 UNSUPPORTED_MARKET` without creating any picks.
+
+`kickoff_at` is required when an analysis is created, is stored immutably in
+UTC, and is the server-enforced selection cutoff. The entire batch is rejected
+with `409 PICKING_CLOSED` when server time is at or after kickoff, or when a
+fixture result already exists. V1 never accepts a retroactive pick. Kickoff is
+manual fixture metadata until a validated fixture schedule source is added.
 
 ```json
 {
@@ -394,6 +404,9 @@ Neither choice edits or deletes the original result. The accepted effective
 result determines pick outcomes and aggregate performance, and the API returns
 both the original result and amendment/review decision for audit. Replaying the
 same resolution is idempotent; a conflicting later resolution returns 409.
+`KEEP_ORIGINAL` also freezes the rejected candidate counts and source hash.
+Later settlement runs treat that exact correction as reviewed, while a new
+count pair or source revision reopens `NEEDS_REVIEW`.
 
 ## Result matching and settlement rules
 
