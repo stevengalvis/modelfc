@@ -1,14 +1,19 @@
 """Predict one fixture's team corners from local historical CSV files."""
 
 import argparse
+from contextlib import nullcontext
 from datetime import date
 from pathlib import Path
 
-from modelfc.corner_data import configured_history, load_data_config
+from modelfc.corner_data import (
+    configured_history, configured_history_lock, configured_history_paths,
+    load_data_config,
+)
 from modelfc.corner_forecasts import (
     CORNER_FIXTURE_MODELS, CornerFixturePrediction, predict_corner_fixture,
 )
 from modelfc.corner_sources import PROVIDERS, load_provider_observations
+from modelfc.corner_ledger import save_corner_forecast
 from modelfc.matches import UpcomingFixture
 
 
@@ -82,6 +87,8 @@ def main() -> None:
     parser.add_argument("--min-venue-history", type=int, default=5,
                         help="minimum prior matches at each team's fixture venue (default: 5)")
     parser.add_argument("--smoothing-matches", type=float, default=5.0)
+    parser.add_argument("--save-dir", type=Path,
+                        help="append the exact forecast to a local corner ledger")
     args = parser.parse_args()
     try:
         fixture = UpcomingFixture(args.date, args.home, args.away)
@@ -90,20 +97,39 @@ def main() -> None:
             if not args.competition or args.provider != "football-data" or args.country or args.league:
                 raise ValueError("--data-config requires --competition and uses only football-data")
             config = load_data_config(args.data_config)
-            observations = configured_history(config, args.competition)
             max_age_days = config.max_age_days
+            history_context = configured_history_lock(config)
         else:
             if args.competition:
                 raise ValueError("--competition requires --data-config")
-            observations = load_provider_observations(
-                args.provider, args.history, args.country, args.league,
+            history_context = nullcontext()
+        with history_context:
+            if args.data_config:
+                source_paths = configured_history_paths(config, args.competition)
+                observations = configured_history(config, args.competition)
+            else:
+                observations = load_provider_observations(
+                    args.provider, args.history, args.country, args.league,
+                )
+                source_paths = args.history
+            prediction = predict_corner_fixture(
+                observations, fixture, args.home_lines, args.away_lines,
+                model=args.model, min_history=args.min_history,
+                min_venue_history=args.min_venue_history,
+                smoothing_matches=args.smoothing_matches,
             )
-        prediction = predict_corner_fixture(
-            observations, fixture, args.home_lines, args.away_lines,
-            model=args.model, min_history=args.min_history,
-            min_venue_history=args.min_venue_history,
-            smoothing_matches=args.smoothing_matches,
-        )
+            saved = None
+            if args.save_dir:
+                saved = save_corner_forecast(
+                    args.save_dir, prediction,
+                    [item.match_date for item in observations
+                     if item.match_date < fixture.match_date],
+                    source_paths, provider=args.provider,
+                    country=args.country, league=args.league,
+                    competition=args.competition,
+                    min_history=args.min_history,
+                    min_venue_history=args.min_venue_history,
+                )
     except ValueError as error:
         parser.error(str(error))
     print(f"Provider: {args.provider}")
@@ -112,6 +138,10 @@ def main() -> None:
     if args.provider == "kaggle-match-stats":
         print(f"Country / league: {args.country} / {args.league}")
     print(format_corner_prediction(prediction, max_age_days))
+    if saved:
+        record, path = saved
+        print(f"\nSaved corner forecast ID: {record['forecast_id']}")
+        print(f"Forecast record: {path}")
 
 
 if __name__ == "__main__":

@@ -1,5 +1,6 @@
 """Offline checks for source failures, corrections, rollback and data selection."""
 
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import redirect_stdout
 from datetime import date, datetime, timezone
 from io import StringIO
@@ -7,10 +8,14 @@ import json
 from pathlib import Path
 import sys
 from tempfile import TemporaryDirectory
+import threading
 import unittest
 from unittest.mock import patch
 
-from modelfc.corner_data import CornerDataConfig, configured_history, load_data_config
+from modelfc.corner_data import (
+    CornerDataConfig, configured_history, configured_history_lock,
+    load_data_config,
+)
 from modelfc import corner_refresh
 
 
@@ -113,6 +118,27 @@ class CornerRefreshTests(unittest.TestCase):
         with corner_refresh.refresh_lock(self.state):
             with self.assertRaisesRegex(ValueError, "already running"):
                 self.refresh(NEW)
+
+    def test_refresh_waits_for_forecast_reader_then_runs(self):
+        reader_ready = threading.Event()
+        release_reader = threading.Event()
+
+        def reader():
+            with configured_history_lock(self.config):
+                reader_ready.set()
+                release_reader.wait(timeout=2)
+
+        thread = threading.Thread(target=reader)
+        thread.start()
+        self.addCleanup(thread.join, 2)
+        self.assertTrue(reader_ready.wait(timeout=1))
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            waiting = executor.submit(self.refresh, NEW)
+            with self.assertRaises(TimeoutError):
+                waiting.result(timeout=.05)
+            release_reader.set()
+            self.assertEqual(waiting.result(timeout=2)["results"][0]["status"],
+                             "updated")
 
     def test_successful_download_can_still_be_stale(self):
         report = self.refresh(OLD)

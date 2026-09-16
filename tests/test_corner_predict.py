@@ -1,5 +1,6 @@
 from contextlib import redirect_stderr, redirect_stdout
 from io import StringIO
+import json
 from pathlib import Path
 import sys
 from tempfile import TemporaryDirectory
@@ -116,6 +117,69 @@ class CornerPredictCliTests(unittest.TestCase):
         code, stdout, stderr = self.run_cli()
         self.assertEqual((code, stdout), (2, ""))
         self.assertIn("could not read Football-Data CSV", stderr)
+
+    def test_save_dir_writes_forecast_for_later_pick_tracking(self):
+        ledger = self.path.parent / "corner-ledger"
+        code, stdout, stderr = self.run_cli([
+            "--home-lines", "3.5", "4.5", "--away-lines", "2.5",
+            "--save-dir", str(ledger),
+        ])
+        self.assertEqual((code, stderr), (0, ""))
+        self.assertIn("Saved corner forecast ID:", stdout)
+        records = list((ledger / "forecasts").glob("*.json"))
+        self.assertEqual(len(records), 1)
+        saved = json.loads(records[0].read_text())
+        self.assertEqual(saved["provider"]["name"], "football-data")
+        self.assertEqual(saved["history"]["observation_count"], 6)
+        self.assertEqual(saved["prediction"]["home"]["lines"][0]["line"], 3.5)
+
+    def test_invalid_save_dir_is_a_cli_error_without_traceback(self):
+        blocked = self.path.parent / "not-a-directory"
+        blocked.write_text("file", encoding="utf-8")
+        code, stdout, stderr = self.run_cli([
+            "--home-lines", "3.5", "--save-dir", str(blocked),
+        ])
+        self.assertEqual((code, stdout), (2, ""))
+        self.assertIn("could not create corner ledger", stderr)
+        self.assertNotIn("Traceback", stderr)
+
+    def test_managed_history_stays_locked_through_forecast_save(self):
+        config = self.path.parent / "corner_data.json"
+        config.write_text(json.dumps({
+            "data_directory": ".", "leagues": ["SP1"], "max_age_days": 14,
+        }), encoding="utf-8")
+        managed = self.path.with_name("SP1_2526.csv")
+        self.path.replace(managed)
+        self.arguments = [
+            "corner_predict", "--data-config", str(config),
+            "--competition", "SP1", "--date", "2026-01-10",
+            "--home", "A", "--away", "B", "--min-history", "4",
+            "--min-venue-history", "2", "--home-lines", "3.5",
+            "--save-dir", str(self.path.parent / "corner-ledger"),
+        ]
+        lock_held = False
+
+        class CheckedLock:
+            def __enter__(inner):
+                nonlocal lock_held
+                lock_held = True
+
+            def __exit__(inner, *_):
+                nonlocal lock_held
+                lock_held = False
+
+        def checked_save(*args, **kwargs):
+            self.assertTrue(lock_held)
+            from modelfc.corner_ledger import save_corner_forecast
+            return save_corner_forecast(*args, **kwargs)
+
+        with patch("modelfc.corner_predict.configured_history_lock",
+                   return_value=CheckedLock()), \
+                patch("modelfc.corner_predict.save_corner_forecast",
+                      side_effect=checked_save):
+            code, _, stderr = self.run_cli()
+        self.assertEqual((code, stderr), (0, ""))
+        self.assertFalse(lock_held)
 
 
 if __name__ == "__main__":
