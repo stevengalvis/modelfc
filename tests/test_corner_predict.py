@@ -1,0 +1,122 @@
+from contextlib import redirect_stderr, redirect_stdout
+from io import StringIO
+from pathlib import Path
+import sys
+from tempfile import TemporaryDirectory
+import unittest
+from unittest.mock import patch
+
+from modelfc.corner_predict import main
+
+
+class CornerPredictCliTests(unittest.TestCase):
+    def setUp(self):
+        directory = TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.path = Path(directory.name) / "history.csv"
+        self.path.write_text(
+            "Date,HomeTeam,AwayTeam,HC,AC\n"
+            "01/01/2026,A,B,0,0\n"
+            "02/01/2026,A,B,10,3\n"
+            "03/01/2026,A,B,2,8\n"
+            "10/01/2026,A,B,99,99\n",
+            encoding="utf-8",
+        )
+        self.arguments = [
+            "corner_predict", "--history", str(self.path),
+            "--date", "2026-01-10", "--home", "A", "--away", "B",
+            "--min-history", "4", "--min-venue-history", "2",
+        ]
+
+    def run_cli(self, extra=()):
+        stdout, stderr = StringIO(), StringIO()
+        with patch.object(sys, "argv", self.arguments + list(extra)), redirect_stdout(stdout), redirect_stderr(stderr):
+            try:
+                main()
+            except SystemExit as error:
+                return error.code, stdout.getvalue(), stderr.getvalue()
+        return 0, stdout.getvalue(), stderr.getvalue()
+
+    def test_real_csv_to_report_with_cutoff_and_integer_line(self):
+        code, stdout, stderr = self.run_cli(["--home-lines", "4", "4.5", "--away-lines", "3.5"])
+        self.assertEqual((code, stderr), (0, ""))
+        for expected in (
+            "Provider: football-data", "Fixture: 2026-01-10 | A vs B",
+            "Model: venue-opponent-negative-binomial", "Negative Binomial size:",
+            "Historical team observations used: 6",
+            "Latest historical match: 2026-01-03 (7 days before fixture)",
+            "Observations excluded on/after fixture date: 2",
+            "Team history: 3 matches; 3 at this venue", "A (home)", "B (away)",
+            "Line 4: OVER=", "EXACT=", "Line 4.5: OVER=", "Line 3.5: OVER=",
+        ):
+            self.assertIn(expected, stdout)
+
+    def test_poisson_and_multiple_files(self):
+        second = self.path.with_name("second.csv")
+        second.write_text("Date,HomeTeam,AwayTeam,HC,AC\n04/01/2026,A,B,5,2\n", encoding="utf-8")
+        self.arguments.insert(3, str(second))
+        code, stdout, stderr = self.run_cli(["--model", "venue-opponent-poisson", "--home-lines", "4.5"])
+        self.assertEqual((code, stderr), (0, ""))
+        self.assertIn("Historical team observations used: 8", stdout)
+        self.assertIn("Model: venue-opponent-poisson", stdout)
+        self.assertNotIn("Negative Binomial size:", stdout)
+
+    def test_kaggle_selection_and_liga_mx_use_the_shared_loader(self):
+        cases = (
+            (
+                ["--provider", "kaggle-match-stats", "--country", "Italy", "--league", "Serie-b"],
+                "Country,League,home_team,away_team,season_year,Date_day,Corner_Kicks_Home,Corner_Kicks_Host\n"
+                "Italy,Serie-b,A,B,2025/2026,01.01,4.0,2\n"
+                "Italy,Serie-b,A,B,2025/2026,02.01,5,3\n"
+                "France,Ligue-2,A,B,2025/2026,03.01,99,99\n",
+                "Country / league: Italy / Serie-b",
+            ),
+            (
+                ["--provider", "liga-mx"],
+                "match_id,league_division,round,date,home_team,away_team,home_goals,away_goals,result,home_corners,away_corners\n"
+                'one,Liga MX - Clausura,1,"January 01, 2026",A,B,1,0,H,4.0,2\n'
+                'two,Liga MX - Clausura,2,"January 02, 2026",A,B,0,0,D,5,3\n',
+                "Provider: liga-mx",
+            ),
+        )
+        for options, contents, expected in cases:
+            with self.subTest(provider=options[1]):
+                self.path.write_text(contents, encoding="utf-8")
+                code, stdout, stderr = self.run_cli(options + ["--home-lines", "4.5"])
+                self.assertEqual((code, stderr), (0, ""))
+                self.assertIn(expected, stdout)
+                self.assertIn("Historical team observations used: 4", stdout)
+                self.assertIn("Line 4.5: OVER=", stdout)
+
+    def test_bad_inputs_report_actionable_errors_without_predictions(self):
+        for options, expected in (
+            (["--home", "Missing"], "no history for team 'Missing'"),
+            (["--away", "A"], "home_team and away_team must be different"),
+            (["--min-history", "100"], "insufficient history"),
+            (["--min-venue-history", "5"], "insufficient home history"),
+            (["--home-lines", "4.25"], "line must be a whole or half number"),
+            (["--away-lines", "nan"], "line must be a whole or half number"),
+            (["--provider", "brasileirao"], "requires exactly two CSV files"),
+            (["--provider", "kaggle-match-stats"], "requires both --country and --league"),
+            (["--date", "tomorrow"], "invalid fromisoformat value"),
+        ):
+            with self.subTest(options=options):
+                code, stdout, stderr = self.run_cli(options)
+                self.assertEqual((code, stdout), (2, ""))
+                self.assertIn(expected, stderr)
+                self.assertNotIn("Traceback", stderr)
+
+    def test_provider_errors_are_reported_without_traceback(self):
+        self.path.write_text("Date,HomeTeam,AwayTeam,HC,AC\n01/01/2026,A,B,bad,2\n", encoding="utf-8")
+        code, stdout, stderr = self.run_cli()
+        self.assertEqual((code, stdout), (2, ""))
+        self.assertIn("invalid Football-Data row 2", stderr)
+        self.assertNotIn("Traceback", stderr)
+        self.path.unlink()
+        code, stdout, stderr = self.run_cli()
+        self.assertEqual((code, stdout), (2, ""))
+        self.assertIn("could not read Football-Data CSV", stderr)
+
+
+if __name__ == "__main__":
+    unittest.main()

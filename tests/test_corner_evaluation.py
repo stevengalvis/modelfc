@@ -9,7 +9,7 @@ from modelfc.corner_evaluation import load_provider_observations, main
 
 
 class CornerProviderDispatchTests(unittest.TestCase):
-    @patch("modelfc.corner_evaluation.load_corner_history")
+    @patch("modelfc.corner_sources.load_corner_history")
     def test_football_data_dispatches_all_files(self, loader) -> None:
         files = [Path("first.csv"), Path("second.csv")]
         loader.return_value = []
@@ -18,7 +18,7 @@ class CornerProviderDispatchTests(unittest.TestCase):
 
         loader.assert_called_once_with(files)
 
-    @patch("modelfc.corner_evaluation.load_br_corner_observations")
+    @patch("modelfc.corner_sources.load_br_corner_observations")
     def test_brasileirao_dispatches_matches_and_statistics(self, loader) -> None:
         loader.return_value = []
 
@@ -34,7 +34,7 @@ class CornerProviderDispatchTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "requires exactly two CSV files"):
                     load_provider_observations("brasileirao", files)
 
-    @patch("modelfc.corner_evaluation.load_argentina_corner_observations")
+    @patch("modelfc.corner_sources.load_argentina_corner_observations")
     def test_argentina_dispatches_one_file(self, loader) -> None:
         loader.return_value = []
 
@@ -50,7 +50,7 @@ class CornerProviderDispatchTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "requires exactly one CSV file"):
                     load_provider_observations("argentina", files)
 
-    @patch("modelfc.corner_evaluation.load_mls_corner_observations")
+    @patch("modelfc.corner_sources.load_mls_corner_observations")
     def test_mls_dispatches_one_file(self, loader) -> None:
         loader.return_value = []
 
@@ -71,7 +71,7 @@ class CornerProviderDispatchTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "requires at least one CSV file"):
             load_provider_observations("football-data", [])
 
-    @patch("modelfc.corner_evaluation.load_kaggle_match_stats_corner_observations")
+    @patch("modelfc.corner_sources.load_kaggle_match_stats_corner_observations")
     def test_kaggle_match_stats_dispatches_selection(self, loader) -> None:
         loader.return_value = []
 

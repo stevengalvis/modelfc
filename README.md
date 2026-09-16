@@ -372,6 +372,64 @@ These timings exclude file loading, depend on the machine and date grouping,
 and compare against commit `575a7eb`. They demonstrate faster evaluation,
 not improved predictive accuracy. No model settings or provider rules changed.
 
+### Fixture corner predictions
+
+`modelfc.corner_predict` turns a local history and a fixture into expected
+team corners and probabilities for requested team lines. It defaults to the
+existing `venue-opponent-negative-binomial` model; use
+`--model venue-opponent-poisson` to compare the same means with Poisson counts.
+The mean estimator and Negative Binomial dispersion estimator are shared with
+the rolling evaluation. This command does not fit a new model or refresh data.
+
+For example, to examine a **hypothetical** Puebla home fixture against Toluca
+on September 16, 2026, using the downloaded Liga MX export:
+
+```sh
+PYTHONPATH=src python3 -m modelfc.corner_predict \
+  --history scraped_dataset.csv --provider liga-mx \
+  --date 2026-09-16 --home Puebla --away Toluca \
+  --home-lines 3.5 4.5 --away-lines 5.5 6.5
+```
+
+`--history` uses the same six providers as corner evaluation. Football-Data
+accepts multiple season files from **one competition**; Brasileirão requires
+its matches file followed by its statistics file. Other providers take one
+file. Kaggle match stats also requires exact `--country` and `--league` values.
+Use the team names found in the selected dataset. Surrounding fixture-name
+whitespace is trimmed, but aliases are not guessed.
+
+The report includes the model, smoothing setting, Negative Binomial size when
+applicable, and the number of eligible team observations. It also shows the
+latest eligible league-history date, each team's last match, its last match
+at the fixture venue, and their ages in days relative to the fixture. Team
+history counts are shown separately for all venues and the fixture venue.
+These dates expose stale history; they do not establish that the source is
+current or that the model's probabilities are calibrated.
+
+Only observations **strictly before** the fixture date are used, including
+when estimating dispersion or checking team coverage. Same-day and future
+observations are excluded and counted in the report. Prediction requires at
+least 100 earlier team observations and five earlier matches at each team's
+fixture venue by default. `--min-history` and `--min-venue-history` can change
+those positive minimums; they are operational coverage gates, not confidence
+guarantees. `--smoothing-matches` retains the existing default of 5. Missing
+teams, insufficient coverage, malformed inputs, and duplicate eligible
+date/team/opponent/venue observations produce errors. Use non-overlapping
+files; this check does not resolve team aliases or mixed competitions.
+
+Team lines must be whole or half numbers between 0 and 1000. `OVER` means
+strictly greater than the line and `UNDER` means strictly less. An integer
+line additionally reports `EXACT`; for example, line 4 separates 5+, 0–3,
+and exactly 4 corners. For **4 or more**, use OVER at 3.5. The three
+probabilities sum to one, apart from floating-point rounding. Equality is
+reported without assuming any bookmaker's settlement rules.
+
+Line probabilities use the full Poisson or Negative Binomial count model,
+including the tail above 20. They are not calculated from the rolling
+evaluation's display grid, which is conditioned on `0..max_corners`.
+This first command handles individual team lines. Match-total distributions,
+odds comparisons, and a saved corner-prediction ledger are separate work.
+
 ### Liga MX corner history
 
 The `liga-mx` provider reads the Soccerway-format `scraped_dataset.csv` published
