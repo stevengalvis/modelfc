@@ -331,6 +331,9 @@ price. Within one forecast, the canonical key is
 for match totals and the line is stored as its validated numeric value. A later
 analysis cannot log that same wager again at different odds. The opposite side
 or a different line is a distinct market and may be logged explicitly.
+Canonical keys must also be unique within one selection request. The backend
+validates the complete batch before writing anything; any within-batch or
+already-persisted collision returns `409 DUPLICATE_PICK` and creates zero picks.
 
 ## History and performance
 
@@ -398,12 +401,15 @@ fixture-date filter so history counts and ROI reconcile.
 
 For an `OPEN` item, `result`, `settlement`, and `review` are null. For a
 `NEEDS_REVIEW` item, `settlement` is null and `review` contains
-`reason_code`, `message`, `candidate_id`, candidate corner counts, and source
-audit metadata. For a `SETTLED` item, `review` is null and `result` is the
-effective result; when a correction was accepted, `is_amendment` is true and
-the response also identifies the preserved original result. Immutable source
-hashes and full model configuration remain available through the referenced
-forecast/analysis response rather than being duplicated in every history row.
+`type`, `reason_code`, `message`, and source audit metadata. Review types are
+`DATA_AVAILABILITY`, `RESULT_CORRECTION`, and `LEDGER_INTEGRITY`.
+`candidate_id` and candidate home/away corner counts are required only for
+`RESULT_CORRECTION`; they are null for review states without one complete result
+candidate. For a `SETTLED` item, `review` is null and `result` is the effective
+result; when a correction was accepted, `is_amendment` is true and the response
+also identifies the preserved original result. Immutable source hashes and full
+model configuration remain available through the referenced forecast/analysis
+response rather than being duplicated in every history row.
 
 `next_cursor` is null on the final page. Otherwise, pass it unchanged as the
 next request's `cursor`. Cursors are opaque and stable only for the original
@@ -497,9 +503,17 @@ Manual fallback only. Requires an idempotency key, non-negative integer home
 and away corner counts, and an admin-supplied reason. It uses the same immutable
 result and settlement path as automation.
 
+The first valid manual result is appended and settles the picks. Replaying the
+same counts is idempotent. Submitting different counts against an existing
+effective result does not overwrite it: the backend creates a
+`RESULT_CORRECTION` review candidate with source `manual`, moves the forecast to
+`NEEDS_REVIEW`, and returns its `candidate_id`. The administrator then uses the
+same result-resolution endpoint to accept or reject that candidate. This repair
+path is available to `MANUAL_ONLY` competitions and remains append-only.
+
 ### `POST /api/v1/admin/forecasts/{forecast_id}/result-resolution`
 
-Resolves a provider correction that placed a settled forecast in
+Resolves a provider or manual correction that placed a settled forecast in
 `NEEDS_REVIEW`. The request requires an idempotency key, an admin reason, and
 the exact `candidate_id` returned by the review item, plus one of:
 
@@ -516,8 +530,9 @@ loaded it, the request returns `409 STALE_REVIEW_CANDIDATE` without resolving a
 different correction.
 
 `candidate_id` is a deterministic digest of fixture-specific canonical data:
-provider, competition, fixture date, normalized home and away identities, and
-the candidate home and away corner counts. The whole-file source hash is kept
+result source identifier, competition, fixture date, normalized home and away
+identities, and the candidate home and away corner counts. A provider
+whole-file source hash is kept
 for audit but is not part of candidate identity because routine additions to a
 season CSV change that hash. `KEEP_ORIGINAL` never reverts an earlier accepted
 amendment: it freezes the rejected candidate ID and retains the immediately
