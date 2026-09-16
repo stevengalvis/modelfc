@@ -16,11 +16,11 @@ class CornerPredictCliTests(unittest.TestCase):
         self.addCleanup(directory.cleanup)
         self.path = Path(directory.name) / "history.csv"
         self.path.write_text(
-            "Date,HomeTeam,AwayTeam,HC,AC\n"
-            "01/01/2026,A,B,0,0\n"
-            "02/01/2026,A,B,10,3\n"
-            "03/01/2026,A,B,2,8\n"
-            "10/01/2026,A,B,99,99\n",
+            "Div,Date,HomeTeam,AwayTeam,HC,AC\n"
+            "SP1,01/01/2026,A,B,0,0\n"
+            "SP1,02/01/2026,A,B,10,3\n"
+            "SP1,03/01/2026,A,B,2,8\n"
+            "SP1,10/01/2026,A,B,99,99\n",
             encoding="utf-8",
         )
         self.arguments = [
@@ -54,7 +54,10 @@ class CornerPredictCliTests(unittest.TestCase):
 
     def test_poisson_and_multiple_files(self):
         second = self.path.with_name("second.csv")
-        second.write_text("Date,HomeTeam,AwayTeam,HC,AC\n04/01/2026,A,B,5,2\n", encoding="utf-8")
+        second.write_text(
+            "Div,Date,HomeTeam,AwayTeam,HC,AC\n"
+            "SP1,04/01/2026,A,B,5,2\n", encoding="utf-8",
+        )
         self.arguments.insert(3, str(second))
         code, stdout, stderr = self.run_cli(["--model", "venue-opponent-poisson", "--home-lines", "4.5"])
         self.assertEqual((code, stderr), (0, ""))

@@ -77,7 +77,7 @@ def configured_history_paths(config: CornerDataConfig, league: str) -> list[Path
 
 def configured_history(config: CornerDataConfig, league: str) -> list[TeamCornerObservation]:
     paths = configured_history_paths(config, league)
-    observations = load_corner_history(paths)
+    observations = load_corner_history(paths, competition=league)
     seen = set()
     for item in observations:
         identity = (item.match_date, item.team, item.opponent, item.venue)

@@ -487,6 +487,7 @@ def main() -> None:
         else:
             observations = load_provider_observations(
                 args.provider, args.csv, args.country, args.league,
+                competition=args.competition,
             )
         experiment = run_recency_experiment(
             observations, competition=args.competition,

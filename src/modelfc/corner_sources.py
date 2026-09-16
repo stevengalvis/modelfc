@@ -26,13 +26,14 @@ class CornerProviderError(ValueError):
 def load_provider_observations(
     provider: str, csv_paths: list[Path],
     country: str | None = None, league: str | None = None,
+    competition: str | None = None,
 ) -> list[TeamCornerObservation]:
     """Normalize provider files into the shared corner-observation model."""
 
     if provider == "football-data":
         if not csv_paths:
             raise CornerProviderError("football-data requires at least one CSV file")
-        return load_corner_history(csv_paths)
+        return load_corner_history(csv_paths, competition=competition)
     if provider == "brasileirao":
         if len(csv_paths) != 2:
             raise CornerProviderError(

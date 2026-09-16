@@ -16,7 +16,7 @@ class CornerProviderDispatchTests(unittest.TestCase):
 
         self.assertEqual(load_provider_observations("football-data", files), [])
 
-        loader.assert_called_once_with(files)
+        loader.assert_called_once_with(files, competition=None)
 
     @patch("modelfc.corner_sources.load_br_corner_observations")
     def test_brasileirao_dispatches_matches_and_statistics(self, loader) -> None:

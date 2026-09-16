@@ -19,11 +19,11 @@ class ConfiguredCornerCliTests(unittest.TestCase):
         self.root = Path(directory.name)
         self.history = self.root / "SP1_2627.csv"
         self.history.write_text(
-            "Date,HomeTeam,AwayTeam,HC,AC\n"
-            "01/09/2026,A,B,2,3\n"
-            "02/09/2026,A,B,5,1\n"
-            "03/09/2026,A,B,3,5\n"
-            "04/09/2026,A,B,6,2\n"
+            "Div,Date,HomeTeam,AwayTeam,HC,AC\n"
+            "SP1,01/09/2026,A,B,2,3\n"
+            "SP1,02/09/2026,A,B,5,1\n"
+            "SP1,03/09/2026,A,B,3,5\n"
+            "SP1,04/09/2026,A,B,6,2\n"
         )
         self.config = self.root / "corner_data.json"
         self.config.write_text(json.dumps({"data_directory": ".", "leagues": ["SP1"], "max_age_days": 14}))

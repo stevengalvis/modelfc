@@ -45,23 +45,27 @@ def load_match_history(paths: Iterable[str | Path]) -> list[Match]:
     return sorted(matches, key=lambda match: match.match_date)
 
 
-def load_corner_observations(path: str | Path) -> list[TeamCornerObservation]:
+def load_corner_observations(
+    path: str | Path, *, competition: str | None = None,
+) -> list[TeamCornerObservation]:
     """Load completed matches as home and away team-corner observations."""
 
     try:
         with Path(path).open(encoding="utf-8-sig", newline="") as csv_file:
-            return _read_corner_observations(csv_file)
+            return _read_corner_observations(csv_file, competition)
     except OSError as error:
         raise FootballDataError(f"could not read Football-Data CSV: {error}") from error
 
 
-def load_corner_history(paths: Iterable[str | Path]) -> list[TeamCornerObservation]:
+def load_corner_history(
+    paths: Iterable[str | Path], *, competition: str | None = None,
+) -> list[TeamCornerObservation]:
     """Load and chronologically combine corner observations from CSVs."""
 
     observations = [
         observation
         for path in paths
-        for observation in load_corner_observations(path)
+        for observation in load_corner_observations(path, competition=competition)
     ]
     return sorted(observations, key=lambda observation: observation.match_date)
 
@@ -116,7 +120,9 @@ def _normalize_row(row: dict[str, str | None]) -> Match:
     )
 
 
-def _read_corner_observations(csv_file: TextIO) -> list[TeamCornerObservation]:
+def _read_corner_observations(
+    csv_file: TextIO, competition: str | None = None,
+) -> list[TeamCornerObservation]:
     reader = csv.DictReader(csv_file)
     if reader.fieldnames is None:
         raise FootballDataError("Football-Data CSV is empty or has no header")
@@ -126,10 +132,25 @@ def _read_corner_observations(csv_file: TextIO) -> list[TeamCornerObservation]:
             "Football-Data CSV is missing required corner columns: "
             + ", ".join(missing_columns)
         )
+    if competition is not None and (
+        not isinstance(competition, str) or not competition.strip()
+    ):
+        raise FootballDataError("competition must be non-empty text")
+    if competition is not None and "Div" not in reader.fieldnames:
+        raise FootballDataError(
+            "Football-Data CSV is missing competition column: Div"
+        )
 
     observations = []
     for row_number, row in enumerate(reader, start=2):
         try:
+            if competition is not None:
+                actual = required_text(row, "Div")
+                if actual != competition:
+                    raise ValueError(
+                        f"Div {actual!r} does not match competition "
+                        f"{competition!r}"
+                    )
             observations.extend(_normalize_corner_row(row))
         except (KeyError, TypeError, ValueError) as error:
             raise FootballDataError(f"invalid Football-Data row {row_number}: {error}") from error

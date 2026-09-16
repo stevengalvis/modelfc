@@ -172,6 +172,14 @@ class CornerRecencyExperimentTests(unittest.TestCase):
                 main()
             self.assertIn("half_life_days", error.getvalue())
 
+            wrong = StringIO()
+            wrong_arguments = arguments.copy()
+            wrong_arguments[wrong_arguments.index("SP1")] = "E0"
+            with patch("sys.argv", wrong_arguments), redirect_stderr(wrong), \
+                    self.assertRaises(SystemExit):
+                main()
+            self.assertIn("does not match competition", wrong.getvalue())
+
 
 if __name__ == "__main__":
     unittest.main()
