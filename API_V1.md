@@ -46,7 +46,8 @@ V1 error codes:
 `STALE_DATA`, `MISSING_RESULT_DATA`, `AMBIGUOUS_FIXTURE`,
 `DUPLICATE_PICK`, `IDEMPOTENCY_CONFLICT`, `FORECAST_NOT_FOUND`,
 `ANALYSIS_NOT_FOUND`, `LEDGER_INTEGRITY_FAILURE`, and
-`AUTOMATIC_SETTLEMENT_UNAVAILABLE`, `PICKING_CLOSED`.
+`AUTOMATIC_SETTLEMENT_UNAVAILABLE`, `PICKING_CLOSED`,
+`STALE_REVIEW_CANDIDATE`.
 
 Validation errors use HTTP 422, missing resources 404, integrity/idempotency
 conflicts 409, stale or unavailable dependencies 503, and unexpected failures
@@ -394,7 +395,7 @@ result and settlement path as automation.
 
 Resolves a provider correction that placed a settled forecast in
 `NEEDS_REVIEW`. The request requires an idempotency key, an admin reason, and
-one of:
+the exact `candidate_id` returned by the review item, plus one of:
 
 - `ACCEPT_CORRECTION`: append an immutable result-amendment record containing
   the corrected counts and a reference to the original result;
@@ -403,10 +404,17 @@ one of:
 Neither choice edits or deletes the original result. The accepted effective
 result determines pick outcomes and aggregate performance, and the API returns
 both the original result and amendment/review decision for audit. Replaying the
-same resolution is idempotent; a conflicting later resolution returns 409.
-`KEEP_ORIGINAL` also freezes the rejected candidate counts and source hash.
-Later settlement runs treat that exact correction as reviewed, while a new
-count pair or source revision reopens `NEEDS_REVIEW`.
+same resolution is idempotent. If the pending candidate changed after the admin
+loaded it, the request returns `409 STALE_REVIEW_CANDIDATE` without resolving a
+different correction.
+
+`candidate_id` is a deterministic digest of fixture-specific canonical data:
+provider, competition, fixture date, normalized home and away identities, and
+the candidate home and away corner counts. The whole-file source hash is kept
+for audit but is not part of candidate identity because routine additions to a
+season CSV change that hash. `KEEP_ORIGINAL` freezes the rejected candidate ID.
+Later runs treat that exact correction as reviewed, while different candidate
+counts reopen `NEEDS_REVIEW`.
 
 ## Result matching and settlement rules
 
@@ -419,9 +427,11 @@ one normalized record using:
 3. normalized home-team identity;
 4. normalized away-team identity.
 
-Both corner counts must be present and non-negative. Zero matches leave the
-forecast `OPEN` unless the data is stale or the fixture is old enough to require
-review. Multiple matches, ambiguous identities, partial corner data, failed
+Both corner counts must be present and non-negative. Before `kickoff_at` plus
+an eight-hour V1 completion grace period, zero result matches always leave the
+forecast `OPEN`, even if the source is stale. After that threshold, a missing
+row or stale source may require review. Multiple matches, ambiguous identities,
+partial corner data, failed
 source validation, conflicting existing results, or ledger integrity failures
 produce `NEEDS_REVIEW` with a reason code. No fuzzy or guessed settlement is
 allowed.
