@@ -781,3 +781,29 @@ limitations are recorded in `EXPERIMENTS.md`. This period had already been
 inspected in the probability diagnostic, and the feature grid was finalized
 during this experiment. “Holdout” therefore means that weights were frozen
 before those rows were scored; it is not claimed as an untouched final test.
+
+### Corner recency experiment
+
+`corner_recency_experiment` tests whether recent corner form adds useful
+pre-match information without changing `corner_predict`. It compares the
+current expanding venue/opponent model with two alternatives on an identical
+rolling cohort:
+
+1. fixed windows over each team's recent matches at the relevant venue;
+2. exponential time decay over league, team and opponent venue records.
+
+Candidate windows and half-lives are selected by development-period Negative
+Binomial NLL, then frozen before the later holdout is scored. Every fixture on
+one date sees the same strictly earlier history.
+
+```bash
+PYTHONPATH=src python3 -m modelfc.corner_recency_experiment \
+  SP1_2223.csv SP1_2324.csv SP1_2425.csv SP1_2526.csv SP1_2627.csv \
+  --competition SP1 --holdout-from 2025-07-01
+```
+
+The default recent windows are 5, 10, 20 and 40 venue matches. Default decay
+half-lives are 30, 60, 90, 180 and 365 days. The report includes MAE, RMSE,
+count NLL, line Brier and line log loss. Results and limitations are recorded
+in `EXPERIMENTS.md`; no recency variant is available in live prediction unless
+it earns promotion through a separate reviewed change.

@@ -76,11 +76,27 @@ class FootballDataCornerTests(unittest.TestCase):
         with self.assertRaisesRegex(FootballDataError, "missing required corner columns: HC, AC"):
             self._load("Date,HomeTeam,AwayTeam\n11/08/2023,A,B\n")
 
-    def _load(self, contents: str) -> list[TeamCornerObservation]:
+    def test_optional_competition_validation_is_exact(self) -> None:
+        contents = (
+            "Div,Date,HomeTeam,AwayTeam,HC,AC\n"
+            "SP1,11/08/2023,A,B,2,3\n"
+        )
+        self.assertEqual(len(self._load(contents, competition="SP1")), 2)
+        with self.assertRaisesRegex(FootballDataError, "does not match"):
+            self._load(contents, competition="E0")
+        with self.assertRaisesRegex(FootballDataError, "competition column"):
+            self._load(
+                "Date,HomeTeam,AwayTeam,HC,AC\n11/08/2023,A,B,2,3\n",
+                competition="SP1",
+            )
+
+    def _load(
+        self, contents: str, competition: str | None = None,
+    ) -> list[TeamCornerObservation]:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "corners.csv"
             path.write_text(contents, encoding="utf-8")
-            return load_corner_observations(path)
+            return load_corner_observations(path, competition=competition)
 
 
 class CornerBaselineTests(unittest.TestCase):
