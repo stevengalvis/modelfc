@@ -556,3 +556,48 @@ predictions = rolling_corner_predictions(
 ```
 
 This adapter adds ingestion only; no Brazil benchmark result is claimed yet.
+
+### Shared team-match statistics (Python API)
+
+`TeamMatchStats` in `modelfc.team_match_stats` is an immutable record for one
+team in a completed match. It includes date, competition, season, source,
+opponent, venue, goals, and optional corners, shots, shots on target and xG,
+with both `for` and `against` values. Home and away records share a
+`fixture_key` of competition, date, home team and away team. This is a natural
+key, not a provider-issued ID; aliases and changed fixture dates require
+explicit reconciliation.
+
+```python
+from modelfc.providers.football_data import load_team_match_stats_history
+
+history = load_team_match_stats_history(
+    ["SP1_2526.csv", "SP1_2627.csv"], competition="SP1",
+)
+```
+
+The new loader reads local Football-Data CSVs. It reuses completed-score and
+result validation, checks `Div` against the explicit competition if supplied,
+and requires an explicit competition when `Div` is absent or blank. The history
+API rejects mixed competitions and overlapping fixtures. Dates determine the
+European season using a July 1 boundary; this API is not intended to infer
+seasons for calendar-year competitions or exceptional rescheduled matches.
+
+Optional columns and blank optional cells remain `None` independently, including
+one-sided missing values. Missingness does not discard a completed match or
+invent zeros. Populated counts must be non-negative whole numbers. xG must be
+finite and non-negative, using unsigned ASCII decimal notation (no signs,
+exponents or underscores). Overflow and nonzero values that underflow to zero
+are rejected. Shots on target cannot exceed total shots when both
+are known. Contradictions, malformed rows and duplicate fixtures raise
+`FootballDataError` with row context. No values are corrected silently. A known
+Championship source row (Burnley vs Swansea, November 10, 2024) has more shots
+on target than total shots and therefore needs source reconciliation before
+that file can be used through this stricter API.
+
+This is a data foundation only. Existing prediction, evaluation, refresh and
+provider APIs retain their behavior; no model consumes the new records yet.
+Only Football-Data has this richer loader in this PR. xG column availability
+does not establish consistent provider methodology across seasons or sources.
+Historical feature generation must filter out target-date and future matches
+before aggregating these records. Player statistics, odds, JSON persistence,
+and new shot or corner models are outside this change.
