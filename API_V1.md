@@ -47,7 +47,8 @@ V1 error codes:
 `DUPLICATE_PICK`, `IDEMPOTENCY_CONFLICT`, `FORECAST_NOT_FOUND`,
 `ANALYSIS_NOT_FOUND`, `LEDGER_INTEGRITY_FAILURE`, and
 `AUTOMATIC_SETTLEMENT_UNAVAILABLE`, `PICKING_CLOSED`,
-`STALE_REVIEW_CANDIDATE`.
+`STALE_REVIEW_CANDIDATE`, `FIXTURE_NOT_FOUND`, `UNTRUSTED_KICKOFF`, and
+`ANALYSIS_FORECAST_MISMATCH`.
 
 Validation errors use HTTP 422, missing resources 404, integrity/idempotency
 conflicts 409, stale or unavailable dependencies 503, and unexpected failures
@@ -65,7 +66,8 @@ available for the selected model or competition remains a per-market
 | `team_side` | `HOME`, `AWAY`, or `null` for match totals |
 | `side` | `OVER`, `UNDER` |
 | market `status` | `SUPPORTED`, `UNSUPPORTED` |
-| pick `status` | `OPEN`, `WIN`, `LOSS`, `PUSH`, `NEEDS_REVIEW` |
+| pick `status` | `OPEN`, `SETTLED`, `NEEDS_REVIEW` |
+| settlement `outcome` | `WIN`, `LOSS`, `PUSH` |
 | forecast result status | `OPEN`, `SETTLED`, `NEEDS_REVIEW` |
 | automatic settlement capability | `SUPPORTED`, `MANUAL_ONLY` |
 
@@ -89,6 +91,7 @@ Returns model and data-source capabilities needed to populate the UI.
       "analysis": true,
       "automatic_refresh": true,
       "automatic_settlement": "SUPPORTED",
+      "trusted_kickoff_source": "ADMIN_REGISTRY",
       "latest_result_date": "2026-09-14",
       "last_refresh_at": "2026-09-16T03:17:39Z",
       "stale": false,
@@ -116,7 +119,6 @@ used by the frontend when selecting markets later.
   "fixture": {
     "competition": "SP1",
     "date": "2026-09-20",
-    "kickoff_at": "2026-09-20T19:00:00Z",
     "home_team": "Athletic Club",
     "away_team": "Valencia"
   },
@@ -150,6 +152,7 @@ returns the original status, headers, and body:
   "analysis_id": "uuid",
   "forecast_id": "uuid",
   "created_at": "2026-09-16T21:00:00Z",
+  "pick_logging": {"status": "SUPPORTED", "reason": null},
   "fixture": {
     "competition": "SP1",
     "date": "2026-09-20",
@@ -234,6 +237,16 @@ An individually unsupported market remains in the successful batch response
 with `status: UNSUPPORTED`, null calculated values, and a machine-readable
 `unsupported_reason`. Fixture-level failures reject the whole request.
 
+The request supplies fixture identity, not an authoritative selection cutoff.
+The backend must resolve exactly one server-owned fixture record and copy its
+UTC `kickoff_at` into the immutable forecast. A fixture record may come from a
+validated schedule provider or an auditable admin registration, but never from
+this analysis request. An unknown, ambiguous, or untrusted fixture is rejected
+with `FIXTURE_NOT_FOUND`, `AMBIGUOUS_FIXTURE`, or `UNTRUSTED_KICKOFF`. When a
+competition has no trusted kickoff source or registered fixture, analysis may
+be returned for inspection but logging is disabled and surfaced through the
+analysis capability and warnings.
+
 ### `GET /api/v1/analyses/{analysis_id}`
 
 Returns the exact saved analysis response. It does not rerun the model or read
@@ -250,11 +263,15 @@ line, side, and price, and its saved analysis entry must have
 `status: SUPPORTED`. Selecting an unsupported entry returns
 `422 UNSUPPORTED_MARKET` without creating any picks.
 
-`kickoff_at` is required when an analysis is created, is stored immutably in
-UTC, and is the server-enforced selection cutoff. The entire batch is rejected
-with `409 PICKING_CLOSED` when server time is at or after kickoff, or when a
-fixture result already exists. V1 never accepts a retroactive pick. Kickoff is
-manual fixture metadata until a validated fixture schedule source is added.
+The supplied `analysis_id` must identify an analysis whose saved
+`forecast_id` equals the path `forecast_id`. A mismatch rejects the entire
+batch with `409 ANALYSIS_FORECAST_MISMATCH` and creates no picks.
+
+The server-resolved `kickoff_at` is stored immutably in UTC and is the
+server-enforced selection cutoff. The entire batch is rejected with
+`409 PICKING_CLOSED` when server time is at or after kickoff, or when a fixture
+result already exists. V1 never accepts a retroactive pick. A client-supplied
+timestamp is never used to extend the selection window.
 
 ```json
 {
@@ -308,10 +325,65 @@ fixture-date filter so history counts and ROI reconcile.
 
 ```json
 {
-  "items": [{"pick_id": "uuid", "status": "OPEN"}],
+  "items": [
+    {
+      "pick_id": "uuid",
+      "forecast_id": "uuid",
+      "analysis_id": "uuid",
+      "client_market_id": "athletic-o4.5",
+      "created_at": "2026-09-16T21:02:00Z",
+      "status": "SETTLED",
+      "fixture": {
+        "competition": "SP1",
+        "date": "2026-09-20",
+        "kickoff_at": "2026-09-20T19:00:00Z",
+        "home_team": "Athletic Club",
+        "away_team": "Valencia"
+      },
+      "market": {
+        "market_type": "TEAM_TOTAL",
+        "team_side": "HOME",
+        "side": "OVER",
+        "line": 4.5,
+        "american_odds": -145,
+        "model_probability": 0.6412,
+        "implied_probability": 0.591837,
+        "probability_edge": 0.049363,
+        "expected_profit": 0.0834,
+        "expected_corners": 5.85
+      },
+      "model": {
+        "identifier": "venue-opponent-negative-binomial",
+        "version": "git-commit-sha"
+      },
+      "stake": 1.0,
+      "result": {
+        "home_corners": 6,
+        "away_corners": 4,
+        "source": "football-data",
+        "recorded_at": "2026-09-21T06:04:00Z",
+        "is_amendment": false
+      },
+      "settlement": {
+        "outcome": "WIN",
+        "realized_profit": 0.689655,
+        "settled_at": "2026-09-21T06:04:00Z"
+      },
+      "review": null
+    }
+  ],
   "next_cursor": "opaque-token-or-null"
 }
 ```
+
+For an `OPEN` item, `result`, `settlement`, and `review` are null. For a
+`NEEDS_REVIEW` item, `settlement` is null and `review` contains
+`reason_code`, `message`, `candidate_id`, candidate corner counts, and source
+audit metadata. For a `SETTLED` item, `review` is null and `result` is the
+effective result; when a correction was accepted, `is_amendment` is true and
+the response also identifies the preserved original result. Immutable source
+hashes and full model configuration remain available through the referenced
+forecast/analysis response rather than being duplicated in every history row.
 
 `next_cursor` is null on the final page. Otherwise, pass it unchanged as the
 next request's `cursor`. Cursors are opaque and stable only for the original
@@ -416,6 +488,12 @@ season CSV change that hash. `KEEP_ORIGINAL` freezes the rejected candidate ID.
 Later runs treat that exact correction as reviewed, while different candidate
 counts reopen `NEEDS_REVIEW`.
 
+`ACCEPT_CORRECTION` makes the appended amendment the effective result. Later
+reconciliation compares provider counts with that effective result, not only
+with the preserved original record. The same accepted correction therefore
+remains settled; different counts create a new candidate and reopen
+`NEEDS_REVIEW`.
+
 ## Result matching and settlement rules
 
 Automatic settlement is attempted only after the configured provider refresh
@@ -437,10 +515,11 @@ produce `NEEDS_REVIEW` with a reason code. No fuzzy or guessed settlement is
 allowed.
 
 Result recording is idempotent. Repeating an identical result does nothing.
-When a validated provider correction conflicts with an immutable saved result,
-the result is not overwritten and the forecast becomes `NEEDS_REVIEW` with the
-old and new counts surfaced for explicit admin resolution. Until resolved, its
-picks are excluded from settled performance and reported as `NEEDS_REVIEW`.
+When a validated provider correction conflicts with the effective saved result,
+the original result is not overwritten and the forecast becomes `NEEDS_REVIEW`
+with the effective and new counts surfaced for explicit admin resolution.
+Until resolved, its picks are excluded from settled performance and reported as
+`NEEDS_REVIEW`.
 Settlement never
 changes forecast probability, model settings/version, source hashes, creation
 time, market line, odds, or expected value.
