@@ -239,7 +239,10 @@ and null decisive probability, edge, and expected profit. It cannot be logged.
 
 An individually unsupported market remains in the successful batch response
 with `status: UNSUPPORTED`, null calculated values, and a machine-readable
-`unsupported_reason`. Fixture-level failures reject the whole request.
+`unsupported_reason`. `NO_DECISIVE_OUTCOMES` is the exception: its
+`model_probability` and `push_probability` retain their raw numeric values,
+while `decisive_model_probability`, `probability_edge`, and `expected_profit`
+are null. Fixture-level failures reject the whole request.
 
 The request supplies fixture identity, not an authoritative selection cutoff.
 For pick-enabled analysis, the backend must resolve exactly one server-owned
@@ -411,15 +414,56 @@ null. For a
 `NEEDS_REVIEW` item, `settlement` is null and `review` contains
 `type`, `reason_code`, `message`, and source audit metadata. Review types are
 `DATA_AVAILABILITY`, `RESULT_CORRECTION`, and `LEDGER_INTEGRITY`.
-`candidate_id` and candidate home/away corner counts are required only for
-`RESULT_CORRECTION`; they are null for review states without one complete result
-candidate. For a `SETTLED` item, `review` is null and `result` is the effective
+The nested `candidate` object with `candidate_id` and home/away corner counts is
+required only for `RESULT_CORRECTION`; it is null for review states without one
+complete result candidate. For a `SETTLED` item, `review` is null and `result`
+is the effective
 result; when a correction was accepted, `is_amendment` is true and
 `original_result` contains the preserved first result using the same result
 object shape. For a result that has never been amended, `original_result` is
 null. Immutable source hashes and full model configuration remain available
 through the referenced forecast/analysis response rather than being duplicated
 in every history row.
+
+Concrete `review` variants:
+
+```json
+{
+  "type": "DATA_AVAILABILITY",
+  "reason_code": "MISSING_RESULT_DATA",
+  "message": "No completed fixture row is available after the grace period.",
+  "candidate": null,
+  "source": {"provider": "football-data", "filename": "SP1_2627.csv", "sha256": "..."}
+}
+```
+
+```json
+{
+  "type": "RESULT_CORRECTION",
+  "reason_code": "CONFLICTING_RESULT",
+  "message": "Provider counts differ from the effective saved result.",
+  "candidate": {
+    "candidate_id": "sha256-digest",
+    "home_corners": 7,
+    "away_corners": 4
+  },
+  "source": {"provider": "football-data", "filename": "SP1_2627.csv", "sha256": "..."}
+}
+```
+
+```json
+{
+  "type": "LEDGER_INTEGRITY",
+  "reason_code": "LEDGER_INTEGRITY_FAILURE",
+  "message": "Saved pick does not match its immutable analysis market.",
+  "candidate": null,
+  "source": null
+}
+```
+
+`candidate` is either the complete object shown for `RESULT_CORRECTION` or
+null. `source` contains available audit metadata and may be null only when no
+external source participated in the failure.
 
 `next_cursor` is null on the final page. Otherwise, pass it unchanged as the
 next request's `cursor`. Cursors are opaque and stable only for the original
@@ -521,6 +565,9 @@ effective result does not overwrite it: the backend creates a
 `NEEDS_REVIEW`, and returns its `candidate_id`. The administrator then uses the
 same result-resolution endpoint to accept or reject that candidate. This repair
 path is available to `MANUAL_ONLY` competitions and remains append-only.
+While a `LEDGER_INTEGRITY` review is active, manual result submission returns
+`409 LEDGER_INTEGRITY_FAILURE` and writes nothing; successful integrity
+resolution is required first.
 
 ### `POST /api/v1/admin/forecasts/{forecast_id}/result-resolution`
 
