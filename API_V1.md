@@ -50,7 +50,11 @@ V1 error codes:
 
 Validation errors use HTTP 422, missing resources 404, integrity/idempotency
 conflicts 409, stale or unavailable dependencies 503, and unexpected failures
-500. Unsupported markets or competitions use 422.
+500. Unsupported competitions use 422. An unknown market enum or internally
+inconsistent market shape, such as `MATCH_TOTAL` with a `team_side`, rejects the
+request with `422 UNSUPPORTED_MARKET`. A well-formed known market that is not
+available for the selected model or competition remains a per-market
+`UNSUPPORTED` result so the rest of the batch succeeds.
 
 ## Domain enums
 
@@ -186,6 +190,25 @@ Success is `201` for a new analysis or `200` for an idempotent replay:
       "expected_profit": 0.0847586207,
       "expected_corners": 5.85,
       "warnings": []
+    },
+    {
+      "client_market_id": "total-u10.5",
+      "market_type": "MATCH_TOTAL",
+      "team_side": null,
+      "team": null,
+      "side": "UNDER",
+      "line": 10.5,
+      "american_odds": -125,
+      "status": "SUPPORTED",
+      "unsupported_reason": null,
+      "model_probability": 0.58,
+      "push_probability": 0.0,
+      "decisive_model_probability": 0.58,
+      "implied_probability": 0.5555555556,
+      "probability_edge": 0.0244444444,
+      "expected_profit": 0.044,
+      "expected_corners": 9.87,
+      "warnings": []
     }
   ],
   "warnings": [
@@ -249,9 +272,10 @@ Response:
 }
 ```
 
-The same market cannot be logged twice for one forecast. An idempotent replay
-returns it under `unchanged`; a genuinely different duplicate request returns
-`409 DUPLICATE_PICK`.
+The same market cannot be logged twice for one forecast. An identical
+idempotent replay returns the original response unchanged, including its
+`created` entries. A genuinely different request with a new idempotency key
+that attempts to log an existing market returns `409 DUPLICATE_PICK`.
 
 ## History and performance
 
@@ -261,6 +285,18 @@ Optional query parameters: `status`, `competition`, `from_date`, `to_date`,
 `limit`, and `cursor`. Returns newest first with fixture, immutable market/value
 data, result if present, settlement outcome/profit, and `review_reason` when
 applicable.
+
+```json
+{
+  "items": [{"pick_id": "uuid", "status": "OPEN"}],
+  "next_cursor": "opaque-token-or-null"
+}
+```
+
+`next_cursor` is null on the final page. Otherwise, pass it unchanged as the
+next request's `cursor`. Cursors are opaque and stable only for the original
+filter and sort combination; clients must restart pagination after changing a
+filter.
 
 ### `GET /api/v1/performance`
 
@@ -290,8 +326,9 @@ logged. ROI is null when no stake is settled.
 ### `POST /api/v1/settlement-runs`
 
 Administrative/internal endpoint used after a successful validated data
-refresh. It is also safe to invoke manually. It scans open forecasts only and
-does not rerun predictions.
+refresh. It is also safe to invoke manually. It scans open forecasts and
+reconciles already-settled forecasts when the provider refresh reports corrected
+fixture data. It does not rerun predictions.
 
 ```json
 {
@@ -352,8 +389,10 @@ source validation, conflicting existing results, or ledger integrity failures
 produce `NEEDS_REVIEW` with a reason code. No fuzzy or guessed settlement is
 allowed.
 
-Result recording is idempotent. Repeating an identical result does nothing;
-conflicting counts fail without overwriting the original. Settlement never
+Result recording is idempotent. Repeating an identical result does nothing.
+When a validated provider correction conflicts with an immutable saved result,
+the result is not overwritten and the forecast becomes `NEEDS_REVIEW` with the
+old and new counts surfaced for admin resolution. Settlement never
 changes forecast probability, model settings/version, source hashes, creation
 time, market line, odds, or expected value.
 
