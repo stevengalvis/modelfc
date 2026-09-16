@@ -140,7 +140,8 @@ used by the frontend when selecting markets later.
 }
 ```
 
-Success is `201` for a new analysis or `200` for an idempotent replay:
+Success is `201` for both a new analysis and an idempotent replay. A replay
+returns the original status, headers, and body:
 
 ```json
 {
@@ -266,6 +267,12 @@ Response:
       "client_market_id": "athletic-o4.5",
       "status": "OPEN",
       "stake": 1.0
+    },
+    {
+      "pick_id": "uuid",
+      "client_market_id": "total-u10.5",
+      "status": "OPEN",
+      "stake": 1.0
     }
   ],
   "unchanged": []
@@ -284,7 +291,9 @@ that attempts to log an existing market returns `409 DUPLICATE_PICK`.
 Optional query parameters: `status`, `competition`, `from_date`, `to_date`,
 `limit`, and `cursor`. Returns newest first with fixture, immutable market/value
 data, result if present, settlement outcome/profit, and `review_reason` when
-applicable.
+applicable. `from_date` and `to_date` filter the fixture date inclusively, not
+the pick creation or settlement timestamp. Performance uses the identical
+fixture-date filter so history counts and ROI reconcile.
 
 ```json
 {
@@ -371,6 +380,21 @@ Manual fallback only. Requires an idempotency key, non-negative integer home
 and away corner counts, and an admin-supplied reason. It uses the same immutable
 result and settlement path as automation.
 
+### `POST /api/v1/admin/forecasts/{forecast_id}/result-resolution`
+
+Resolves a provider correction that placed a settled forecast in
+`NEEDS_REVIEW`. The request requires an idempotency key, an admin reason, and
+one of:
+
+- `ACCEPT_CORRECTION`: append an immutable result-amendment record containing
+  the corrected counts and a reference to the original result;
+- `KEEP_ORIGINAL`: append a review decision that retains the original counts.
+
+Neither choice edits or deletes the original result. The accepted effective
+result determines pick outcomes and aggregate performance, and the API returns
+both the original result and amendment/review decision for audit. Replaying the
+same resolution is idempotent; a conflicting later resolution returns 409.
+
 ## Result matching and settlement rules
 
 Automatic settlement is attempted only after the configured provider refresh
@@ -392,7 +416,9 @@ allowed.
 Result recording is idempotent. Repeating an identical result does nothing.
 When a validated provider correction conflicts with an immutable saved result,
 the result is not overwritten and the forecast becomes `NEEDS_REVIEW` with the
-old and new counts surfaced for admin resolution. Settlement never
+old and new counts surfaced for explicit admin resolution. Until resolved, its
+picks are excluded from settled performance and reported as `NEEDS_REVIEW`.
+Settlement never
 changes forecast probability, model settings/version, source hashes, creation
 time, market line, odds, or expected value.
 
