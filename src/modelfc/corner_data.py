@@ -1,9 +1,12 @@
 """Configuration and history selection for locally managed European CSVs."""
 
+from contextlib import contextmanager
 from dataclasses import dataclass
+import fcntl
 import json
 from pathlib import Path
 import re
+from typing import Iterator
 
 from modelfc.matches import TeamCornerObservation
 from modelfc.providers.football_data import load_corner_history
@@ -20,6 +23,22 @@ class CornerDataConfig:
     directory: Path
     leagues: tuple[str, ...]
     max_age_days: int
+
+
+@contextmanager
+def configured_history_lock(config: CornerDataConfig) -> Iterator[None]:
+    """Keep managed CSVs stable while a reader loads and fingerprints them."""
+    state = config.directory / "data" / "corner-refresh"
+    try:
+        state.mkdir(parents=True, exist_ok=True)
+        with (state / "refresh.lock").open("a") as lock:
+            fcntl.flock(lock, fcntl.LOCK_SH)
+            try:
+                yield
+            finally:
+                fcntl.flock(lock, fcntl.LOCK_UN)
+    except OSError as error:
+        raise ValueError(f"could not lock configured corner history: {error}") from error
 
 
 def load_data_config(path: Path) -> CornerDataConfig:

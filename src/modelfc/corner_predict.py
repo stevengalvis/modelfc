@@ -1,11 +1,13 @@
 """Predict one fixture's team corners from local historical CSV files."""
 
 import argparse
+from contextlib import nullcontext
 from datetime import date
 from pathlib import Path
 
 from modelfc.corner_data import (
-    configured_history, configured_history_paths, load_data_config,
+    configured_history, configured_history_lock, configured_history_paths,
+    load_data_config,
 )
 from modelfc.corner_forecasts import (
     CORNER_FIXTURE_MODELS, CornerFixturePrediction, predict_corner_fixture,
@@ -95,34 +97,39 @@ def main() -> None:
             if not args.competition or args.provider != "football-data" or args.country or args.league:
                 raise ValueError("--data-config requires --competition and uses only football-data")
             config = load_data_config(args.data_config)
-            source_paths = configured_history_paths(config, args.competition)
-            observations = configured_history(config, args.competition)
             max_age_days = config.max_age_days
+            history_context = configured_history_lock(config)
         else:
             if args.competition:
                 raise ValueError("--competition requires --data-config")
-            observations = load_provider_observations(
-                args.provider, args.history, args.country, args.league,
-            )
-            source_paths = args.history
-        prediction = predict_corner_fixture(
-            observations, fixture, args.home_lines, args.away_lines,
-            model=args.model, min_history=args.min_history,
-            min_venue_history=args.min_venue_history,
-            smoothing_matches=args.smoothing_matches,
-        )
-        saved = None
-        if args.save_dir:
-            saved = save_corner_forecast(
-                args.save_dir, prediction,
-                [item.match_date for item in observations
-                 if item.match_date < fixture.match_date],
-                source_paths, provider=args.provider,
-                country=args.country, league=args.league,
-                competition=args.competition,
-                min_history=args.min_history,
+            history_context = nullcontext()
+        with history_context:
+            if args.data_config:
+                source_paths = configured_history_paths(config, args.competition)
+                observations = configured_history(config, args.competition)
+            else:
+                observations = load_provider_observations(
+                    args.provider, args.history, args.country, args.league,
+                )
+                source_paths = args.history
+            prediction = predict_corner_fixture(
+                observations, fixture, args.home_lines, args.away_lines,
+                model=args.model, min_history=args.min_history,
                 min_venue_history=args.min_venue_history,
+                smoothing_matches=args.smoothing_matches,
             )
+            saved = None
+            if args.save_dir:
+                saved = save_corner_forecast(
+                    args.save_dir, prediction,
+                    [item.match_date for item in observations
+                     if item.match_date < fixture.match_date],
+                    source_paths, provider=args.provider,
+                    country=args.country, league=args.league,
+                    competition=args.competition,
+                    min_history=args.min_history,
+                    min_venue_history=args.min_venue_history,
+                )
     except ValueError as error:
         parser.error(str(error))
     print(f"Provider: {args.provider}")
