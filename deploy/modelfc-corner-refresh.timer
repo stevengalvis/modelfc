@@ -1,0 +1,10 @@
+[Unit]
+Description=Refresh ModelFC after weekend and midweek fixtures
+
+[Timer]
+OnCalendar=Mon,Thu *-*-* 06:00:00 UTC
+Persistent=true
+Unit=modelfc-corner-refresh.service
+
+[Install]
+WantedBy=timers.target

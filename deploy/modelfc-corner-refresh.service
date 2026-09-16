@@ -1,0 +1,12 @@
+[Unit]
+Description=Refresh ModelFC European corner CSVs
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/root/dev/modelfc
+Environment=PYTHONPATH=src
+ExecStart=/usr/bin/python3 -m modelfc.corner_refresh --config /root/dev/modelfc/corner_data.json
+TimeoutStartSec=10min

@@ -4,6 +4,8 @@ import argparse
 from dataclasses import dataclass
 import math
 from pathlib import Path
+
+from modelfc.corner_data import configured_history, load_data_config
 from typing import Iterable
 
 from modelfc.corners import (
@@ -81,6 +83,8 @@ def main() -> None:
     parser.add_argument(
         "csv", type=Path, nargs="*", help="provider CSV file(s)",
     )
+    parser.add_argument("--data-config", type=Path, help="managed Football-Data history configuration")
+    parser.add_argument("--competition", help="configured Football-Data code, e.g. SP1")
     parser.add_argument(
         "--provider",
         choices=PROVIDERS,
@@ -109,13 +113,19 @@ def main() -> None:
     )
     args = parser.parse_args()
     try:
-        if args.provider == "kaggle-match-stats":
+        if args.data_config:
+            if args.csv or not args.competition or args.provider != "football-data" or args.country or args.league:
+                raise ValueError("--data-config requires --competition and no CSV/provider selectors")
+            observations = configured_history(load_data_config(args.data_config), args.competition)
+        elif args.competition:
+            raise ValueError("--competition requires --data-config")
+        elif args.provider == "kaggle-match-stats":
             observations = load_provider_observations(
                 args.provider, args.csv, args.country, args.league,
             )
         else:
             observations = load_provider_observations(args.provider, args.csv)
-    except CornerProviderError as error:
+    except ValueError as error:
         parser.error(str(error))
     predictions = rolling_corner_predictions(
         observations, args.model, args.min_history,
