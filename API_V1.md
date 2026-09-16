@@ -241,11 +241,12 @@ The request supplies fixture identity, not an authoritative selection cutoff.
 The backend must resolve exactly one server-owned fixture record and copy its
 UTC `kickoff_at` into the immutable forecast. A fixture record may come from a
 validated schedule provider or an auditable admin registration, but never from
-this analysis request. An unknown, ambiguous, or untrusted fixture is rejected
-with `FIXTURE_NOT_FOUND`, `AMBIGUOUS_FIXTURE`, or `UNTRUSTED_KICKOFF`. When a
-competition has no trusted kickoff source or registered fixture, analysis may
-be returned for inspection but logging is disabled and surfaced through the
-analysis capability and warnings.
+this analysis request. An unknown or ambiguous fixture is rejected with
+`FIXTURE_NOT_FOUND` or `AMBIGUOUS_FIXTURE`. When a competition has no trusted
+kickoff source or registered fixture, analysis returns `201` for inspection,
+with `pick_logging.status: DISABLED`, reason `UNTRUSTED_KICKOFF`, and a warning.
+Any attempt to select picks from that analysis returns
+`409 UNTRUSTED_KICKOFF` and creates no picks.
 
 ### `GET /api/v1/analyses/{analysis_id}`
 
@@ -346,10 +347,10 @@ fixture-date filter so history counts and ROI reconcile.
         "side": "OVER",
         "line": 4.5,
         "american_odds": -145,
-        "model_probability": 0.6412,
-        "implied_probability": 0.591837,
-        "probability_edge": 0.049363,
-        "expected_profit": 0.0834,
+        "model_probability": 0.642,
+        "implied_probability": 0.5918367347,
+        "probability_edge": 0.0501632653,
+        "expected_profit": 0.0847586207,
         "expected_corners": 5.85
       },
       "model": {
@@ -509,10 +510,10 @@ Both corner counts must be present and non-negative. Before `kickoff_at` plus
 an eight-hour V1 completion grace period, zero result matches always leave the
 forecast `OPEN`, even if the source is stale. After that threshold, a missing
 row or stale source may require review. Multiple matches, ambiguous identities,
-partial corner data, failed
-source validation, conflicting existing results, or ledger integrity failures
-produce `NEEDS_REVIEW` with a reason code. No fuzzy or guessed settlement is
-allowed.
+partial corner data, conflicting existing results, or ledger integrity failures
+produce `NEEDS_REVIEW` with a reason code. A failed source validation aborts the
+settlement run before fixture reconciliation and leaves every forecast and pick
+status unchanged. No fuzzy or guessed settlement is allowed.
 
 Result recording is idempotent. Repeating an identical result does nothing.
 When a validated provider correction conflicts with the effective saved result,
