@@ -238,15 +238,16 @@ with `status: UNSUPPORTED`, null calculated values, and a machine-readable
 `unsupported_reason`. Fixture-level failures reject the whole request.
 
 The request supplies fixture identity, not an authoritative selection cutoff.
-The backend must resolve exactly one server-owned fixture record and copy its
-UTC `kickoff_at` into the immutable forecast. A fixture record may come from a
-validated schedule provider or an auditable admin registration, but never from
-this analysis request. An unknown or ambiguous fixture is rejected with
-`FIXTURE_NOT_FOUND` or `AMBIGUOUS_FIXTURE`. When a competition has no trusted
-kickoff source or registered fixture, analysis returns `201` for inspection,
-with `pick_logging.status: DISABLED`, reason `UNTRUSTED_KICKOFF`, and a warning.
-Any attempt to select picks from that analysis returns
-`409 UNTRUSTED_KICKOFF` and creates no picks.
+For pick-enabled analysis, the backend must resolve exactly one server-owned
+fixture record and copy its UTC `kickoff_at` into the immutable forecast. A
+fixture record may come from a validated schedule provider or an auditable
+admin registration, but never from this analysis request. An ambiguous fixture
+is rejected with `AMBIGUOUS_FIXTURE`. When identity is valid but no trusted
+fixture record exists, analysis returns `201` for inspection with
+`fixture.kickoff_at: null`, `pick_logging.status: DISABLED`, reason
+`UNTRUSTED_KICKOFF`, and a warning. Any attempt to select picks from that
+analysis returns `409 UNTRUSTED_KICKOFF` and creates no picks. `kickoff_at` is
+non-null whenever `pick_logging.status` is `SUPPORTED`.
 
 ### `GET /api/v1/analyses/{analysis_id}`
 
@@ -319,7 +320,7 @@ that attempts to log an existing market returns `409 DUPLICATE_PICK`.
 
 Optional query parameters: `status`, `competition`, `from_date`, `to_date`,
 `limit`, and `cursor`. Returns newest first with fixture, immutable market/value
-data, result if present, settlement outcome/profit, and `review_reason` when
+data, result if present, settlement outcome/profit, and a `review` object when
 applicable. `from_date` and `to_date` filter the fixture date inclusively, not
 the pick creation or settlement timestamp. Performance uses the identical
 fixture-date filter so history counts and ROI reconcile.
@@ -419,9 +420,16 @@ logged. ROI is null when no stake is settled.
 ### `POST /api/v1/settlement-runs`
 
 Administrative/internal endpoint used after a successful validated data
-refresh. It is also safe to invoke manually. It scans open forecasts and
-reconciles already-settled forecasts when the provider refresh reports corrected
-fixture data. It does not rerun predictions.
+refresh. It is also safe to invoke manually. It scans `OPEN`, `SETTLED`, and
+`NEEDS_REVIEW` forecasts and does not rerun predictions.
+
+A `NEEDS_REVIEW` forecast with no saved result is automatically recovered when
+a later validated refresh supplies exactly one unambiguous fixture with complete
+corner counts: the result is appended, its picks are settled, and the forecast
+becomes `SETTLED`. If the transient condition remains, its status and reason are
+updated idempotently. A correction conflict against an existing effective
+result is never auto-resolved and still requires the explicit resolution
+endpoint.
 
 ```json
 {
