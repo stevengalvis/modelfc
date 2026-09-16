@@ -50,15 +50,21 @@ def atomic_write(path: Path, payload: bytes) -> None:
 @contextmanager
 def refresh_lock(state: Path):
     state.mkdir(parents=True, exist_ok=True)
-    with (state / "refresh.lock").open("a") as lock:
+    with (state / "refresh-run.lock").open("a") as run_lock:
         try:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            fcntl.flock(run_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError as error:
             raise ValueError("another refresh is already running for this data directory") from error
-        try:
-            yield
-        finally:
-            fcntl.flock(lock, fcntl.LOCK_UN)
+        with (state / "refresh.lock").open("a") as data_lock:
+            try:
+                # Forecast readers hold a shared lock here until their source
+                # hashes are saved. Wait for them instead of dropping a
+                # scheduled refresh; the separate run lock still rejects a
+                # second refresh process immediately.
+                fcntl.flock(data_lock, fcntl.LOCK_EX)
+                yield
+            finally:
+                fcntl.flock(data_lock, fcntl.LOCK_UN)
 
 
 def snapshot(path: Path, league: str, season: str, today: date) -> dict:
