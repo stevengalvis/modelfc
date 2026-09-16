@@ -506,12 +506,14 @@ refresh. It is also safe to invoke manually. It scans `OPEN`, `SETTLED`, and
 
 A `NEEDS_REVIEW` forecast with no saved result is automatically recovered only
 when its review type is `DATA_AVAILABILITY`, all ledger integrity checks now
-pass, and a later validated refresh supplies exactly one unambiguous fixture
-with complete corner counts. The result is appended, its picks are settled, and
-the forecast becomes `SETTLED`. If the transient condition remains, its status
-and reason are updated idempotently. `LEDGER_INTEGRITY` reviews are never
-auto-recovered. A correction conflict against an existing effective result is
-never auto-resolved and still requires the explicit resolution endpoint.
+pass, the configured source is fresh, and a later validated refresh supplies
+exactly one unambiguous fixture with complete corner counts. Every availability
+condition that caused review must have cleared. The result is appended, its
+picks are settled, and the forecast becomes `SETTLED`. If the transient
+condition remains, its status and reason are updated idempotently.
+`LEDGER_INTEGRITY` reviews are never auto-recovered. A correction conflict
+against an existing effective result is never auto-resolved and still requires
+the explicit resolution endpoint.
 
 A forecast that already has an effective result is not demoted from `SETTLED`
 because a later validated source is stale, temporarily omits its row, or has a
@@ -592,13 +594,15 @@ different correction.
 
 `candidate_id` is a deterministic digest of fixture-specific canonical data:
 result source identifier, competition, fixture date, normalized home and away
-identities, and the candidate home and away corner counts. A provider
+identities, candidate home and away corner counts, and the immutable ID/version
+of the effective result against which the candidate is being compared. A provider
 whole-file source hash is kept
 for audit but is not part of candidate identity because routine additions to a
 season CSV change that hash. `KEEP_ORIGINAL` never reverts an earlier accepted
 amendment: it freezes the rejected candidate ID and retains the immediately
 preceding effective result. Later runs treat that exact correction as reviewed,
-while different candidate counts reopen `NEEDS_REVIEW`.
+only while the same effective-result version remains active. Different candidate
+counts or a different effective-result version reopen `NEEDS_REVIEW`.
 
 `ACCEPT_CORRECTION` makes the appended amendment the effective result. Later
 reconciliation compares provider counts with that effective result, not only
@@ -645,12 +649,15 @@ Provider IDs and aliases must still agree with provider, competition, and
 normalized team identities. Conflicts or multiple matches require review; the
 backend never guesses a reschedule.
 
-Both corner counts must be present and non-negative. Before `kickoff_at` plus
-an eight-hour V1 completion grace period, zero result matches always leave the
-forecast `OPEN`, even if the source is stale. After that threshold, an unsettled
-forecast with a missing row, stale source, multiple matches, ambiguous identity,
-or partial corner data becomes `NEEDS_REVIEW` with a reason code. Forecasts that
-already have an effective result follow the narrower reconciliation rule above.
+Both corner counts must be present and non-negative. Result-availability timing
+uses the latest trusted kickoff associated with the stable provider ID or
+reschedule alias, while the immutable original kickoff remains the pick cutoff
+and audit value. Before the current trusted kickoff plus an eight-hour V1
+completion grace period, zero result matches always leave the forecast `OPEN`,
+even if the source is stale. After that threshold, an unsettled forecast with a
+missing row, stale source, multiple matches, ambiguous identity, or partial
+corner data becomes `NEEDS_REVIEW` with a reason code. Forecasts that already
+have an effective result follow the narrower reconciliation rule above.
 Ledger integrity failures always produce `NEEDS_REVIEW`. A failed source
 validation aborts the settlement run before fixture reconciliation and leaves
 every forecast and pick status unchanged. No fuzzy or guessed settlement is
