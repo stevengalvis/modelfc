@@ -10,7 +10,7 @@ import uuid
 from modelfc.evaluation import multiclass_brier_score
 from modelfc.forecasts import FixturePrediction, Forecast
 from modelfc.ledger_storage import (
-    LedgerError, git_commit_sha, ledger_lock, read_json_record,
+    LedgerError, ensure_directory, git_commit_sha, ledger_lock, read_json_record,
     source_records, utc_timestamp, write_new_record,
 )
 from modelfc.matches import Match, MatchResult
@@ -165,8 +165,8 @@ def save_forecast(
     ledger = Path(ledger_dir)
     forecast_dir = ledger / "forecasts"
     result_dir = ledger / "results"
-    forecast_dir.mkdir(parents=True, exist_ok=True)
-    result_dir.mkdir(parents=True, exist_ok=True)
+    ensure_directory(forecast_dir, "forecast ledger directory")
+    ensure_directory(result_dir, "result ledger directory")
     fixture = prediction.fixture
     try:
         dates = sorted(history_dates)
@@ -327,7 +327,7 @@ def record_result(
         "outcome": outcome.value,
         "brier_score": brier,
     }
-    result_path.parent.mkdir(parents=True, exist_ok=True)
+    ensure_directory(result_path.parent, "result ledger directory")
     write_new_record(result_path, result)
     return result, True
 

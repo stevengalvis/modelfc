@@ -9,7 +9,7 @@ import uuid
 
 from modelfc.corner_forecasts import CornerFixturePrediction
 from modelfc.ledger_storage import (
-    LedgerError, git_commit_sha, ledger_lock, read_json_record,
+    LedgerError, ensure_directory, git_commit_sha, ledger_lock, read_json_record,
     source_records, utc_timestamp, write_new_record,
 )
 
@@ -197,11 +197,8 @@ def save_corner_forecast(
 ) -> tuple[dict[str, Any], Path]:
     """Save the exact model output without recording a bet."""
     ledger = Path(ledger_dir)
-    try:
-        for name in ("forecasts", "picks", "results"):
-            (ledger / name).mkdir(parents=True, exist_ok=True)
-    except OSError as error:
-        raise LedgerError(f"could not create corner ledger {ledger}: {error}") from error
+    for name in ("forecasts", "picks", "results"):
+        ensure_directory(ledger / name, "corner ledger")
     dates = sorted(history_dates)
     fixture = prediction.fixture
     if (len(dates) != prediction.historical_observation_count
@@ -343,7 +340,7 @@ def record_corner_pick(
         "american_odds": american_odds, "stake": STAKE, "value": values,
     }
     directory = ledger / "picks"
-    directory.mkdir(parents=True, exist_ok=True)
+    ensure_directory(directory, "corner pick directory")
     path = directory / f"{pick_id}.json"
     _validate_pick(record, forecast, path)
     with ledger_lock(ledger):
@@ -388,7 +385,7 @@ def record_corner_result(
               "forecast_id": forecast["forecast_id"],
               "recorded_at": utc_timestamp(), "home_corners": home_corners,
               "away_corners": away_corners}
-    path.parent.mkdir(parents=True, exist_ok=True)
+    ensure_directory(path.parent, "corner result directory")
     _validate_result(result, forecast, path)
     with ledger_lock(ledger):
         if path.exists():

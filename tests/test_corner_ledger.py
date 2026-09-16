@@ -17,6 +17,8 @@ from modelfc.corner_ledger import (
     format_corner_ledger_summary, load_corner_forecast, record_corner_pick,
     record_corner_result, save_corner_forecast, main,
 )
+from modelfc import ledger_storage
+from modelfc.ledger_storage import git_commit_sha
 from modelfc.matches import UpcomingFixture, Venue
 
 
@@ -135,6 +137,33 @@ class CornerLedgerTests(unittest.TestCase):
         record_corner_pick(self.ledger, forecast_id, "home", 3.5, "over", -110)
         with self.assertRaisesRegex(LedgerError, "already exists"):
             record_corner_pick(self.ledger, forecast_id, "home", 3.5, "under", 110)
+
+    def test_damaged_pick_and_result_directories_are_clean_errors(self):
+        forecast, _ = self.save()
+        forecast_id = forecast["forecast_id"]
+        picks = self.ledger / "picks"
+        picks.rmdir()
+        picks.write_text("not a directory", encoding="utf-8")
+        with self.assertRaisesRegex(LedgerError, "corner pick directory"):
+            record_corner_pick(self.ledger, forecast_id, "home", 3.5, "over", -110)
+        picks.unlink()
+        picks.mkdir()
+        results = self.ledger / "results"
+        results.rmdir()
+        results.write_text("not a directory", encoding="utf-8")
+        with self.assertRaisesRegex(LedgerError, "corner result directory"):
+            record_corner_result(self.ledger, forecast_id, 4, 2)
+
+    def test_git_revision_is_resolved_from_modelfc_repository(self):
+        expected_root = Path(ledger_storage.__file__).resolve().parents[2]
+        completed = type("Completed", (), {"stdout": "abc123\n"})()
+        with patch("modelfc.ledger_storage.subprocess.run",
+                   return_value=completed) as run:
+            self.assertEqual(git_commit_sha(), "abc123")
+        run.assert_called_once_with(
+            ("git", "-C", str(expected_root), "rev-parse", "HEAD"),
+            check=True, capture_output=True, text=True,
+        )
 
     def test_concurrent_duplicate_pick_creates_one_record(self):
         forecast, _ = self.save()

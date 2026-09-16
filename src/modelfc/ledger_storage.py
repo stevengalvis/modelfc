@@ -21,9 +21,10 @@ def utc_timestamp() -> str:
 
 
 def git_commit_sha() -> str:
+    repository = Path(__file__).resolve().parents[2]
     try:
         result = subprocess.run(
-            ("git", "rev-parse", "HEAD"), check=True,
+            ("git", "-C", str(repository), "rev-parse", "HEAD"), check=True,
             capture_output=True, text=True,
         )
     except (OSError, subprocess.CalledProcessError):
@@ -41,6 +42,13 @@ def source_records(paths: Iterable[Path]) -> list[dict[str, str]]:
             raise LedgerError(f"could not hash source CSV {path}: {error}") from error
         records.append({"filename": path.name, "sha256": digest})
     return records
+
+
+def ensure_directory(path: Path, label: str) -> None:
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+    except OSError as error:
+        raise LedgerError(f"could not create {label} {path}: {error}") from error
 
 
 def write_new_record(path: Path, record: dict[str, Any]) -> None:
