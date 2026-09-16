@@ -8,7 +8,8 @@ import unittest
 from unittest.mock import patch
 
 from modelfc.corner_feature_experiment import (
-    feature_mean, format_feature_experiment, rolling_feature_rows,
+    feature_mean, feature_signal_diagnostics, format_feature_experiment,
+    rolling_feature_rows,
     run_feature_experiment, score_feature_rows,
 )
 from modelfc.corner_shot_experiment import main
@@ -134,6 +135,10 @@ class CornerFeatureExperimentTests(unittest.TestCase):
         self.assertIn("corners+shots+sot", text)
         self.assertIn("frozen for holdout", text)
         self.assertIn("Lower is better", text)
+        self.assertIn("Residual~shot ratio", text)
+        signal = feature_signal_diagnostics(rows)
+        self.assertIsNotNone(signal.corner_shot_correlation)
+        self.assertIsNotNone(signal.residual_shot_ratio_correlation)
 
     def test_rejects_missing_inconsistent_and_invalid_inputs(self):
         records = history()
@@ -198,6 +203,17 @@ class CornerFeatureExperimentTests(unittest.TestCase):
                 main()
             self.assertIn("Competition: SP1", output.getvalue())
             self.assertIn("corners-only", output.getvalue())
+
+            lines[1] = lines[1].replace(",10,8,3,2", ",2,8,3,2")
+            path.write_text("\n".join(lines) + "\n")
+            args.extend([
+                "--exclude-fixture", "2025-06-01", "A", "B",
+            ])
+            output = io.StringIO()
+            with patch("sys.argv", args), contextlib.redirect_stdout(output):
+                main()
+            self.assertIn("Explicitly quarantined fixtures: 2025-06-01 A vs B",
+                          output.getvalue())
 
 
 if __name__ == "__main__":

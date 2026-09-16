@@ -25,10 +25,20 @@ def main() -> None:
     parser.add_argument("--min-history", type=int, default=100)
     parser.add_argument("--min-venue-history", type=int, default=5)
     parser.add_argument("--smoothing-matches", type=float, default=5.0)
+    parser.add_argument(
+        "--exclude-fixture", nargs=3, action="append", default=[],
+        metavar=("YYYY-MM-DD", "HOME", "AWAY"),
+        help="explicitly quarantine one source fixture; repeat as needed",
+    )
     args = parser.parse_args()
     try:
+        exclusions = [
+            (date.fromisoformat(raw_date), home, away)
+            for raw_date, home, away in args.exclude_fixture
+        ]
         records = load_team_match_stats_history(
             args.history, competition=args.competition,
+            excluded_fixtures=exclusions,
         )
         experiment = run_feature_experiment(
             records, holdout_from=args.holdout_from, lines=args.lines,
@@ -39,6 +49,10 @@ def main() -> None:
     except ValueError as error:
         parser.error(str(error))
     print("History: " + ", ".join(str(path) for path in args.history))
+    if exclusions:
+        print("Explicitly quarantined fixtures: " + ", ".join(
+            f"{day} {home} vs {away}" for day, home, away in exclusions
+        ))
     print(format_feature_experiment(experiment))
 
 

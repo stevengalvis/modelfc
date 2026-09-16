@@ -1,7 +1,7 @@
 """Adapter for Football-Data.co.uk Premier League CSV files."""
 
 import csv
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 import math
 import re
@@ -175,6 +175,7 @@ def _normalize_corner_row(
 # This richer API is additive: existing result/corner loaders retain their rules.
 def load_team_match_stats(
     path: str | Path, *, competition: str | None = None,
+    excluded_fixtures: Iterable[tuple[date, str, str]] = (),
 ) -> list["TeamMatchStats"]:
     """Load completed European league rows, with optional team statistics.
 
@@ -183,7 +184,22 @@ def load_team_match_stats(
     use the European July boundary from each match's date, not the filename.
     Missing optional columns/cells remain None independently for each team.
     Malformed nonblank values and inconsistent shots fail with row context.
+    Explicit exclusions use exact date/home/away identities and must be found.
     """
+    exclusions = _validate_fixture_exclusions(excluded_fixtures)
+    records, matched = _load_team_match_stats(path, competition, exclusions)
+    missing = exclusions - matched
+    if missing:
+        raise FootballDataError(
+            "excluded fixture was not found: " + _format_fixture_keys(missing)
+        )
+    return records
+
+
+def _load_team_match_stats(
+    path: str | Path, competition: str | None,
+    exclusions: set[tuple[date, str, str]],
+) -> tuple[list["TeamMatchStats"], set[tuple[date, str, str]]]:
     if competition is not None and (
         not isinstance(competition, str) or not competition.strip()
     ):
@@ -202,10 +218,17 @@ def load_team_match_stats(
                                         + ", ".join(missing))
             records = []
             seen = set()
+            matched = set()
             for number, row in enumerate(reader, start=2):
                 try:
                     if None in row or any(value is None for value in row.values()):
                         raise ValueError("row length does not match header")
+                    identity = _team_stats_fixture_identity(row)
+                    if identity in exclusions:
+                        if identity in matched:
+                            raise ValueError(f"duplicate excluded fixture: {identity}")
+                        matched.add(identity)
+                        continue
                     pair = _normalize_team_stats(row, competition)
                     key = pair[0].fixture_key
                     if key in seen:
@@ -216,20 +239,33 @@ def load_team_match_stats(
                     raise FootballDataError(
                         f"invalid Football-Data row {number}: {error}"
                     ) from error
-            return sorted(records, key=lambda item: item.match_date)
+            return sorted(records, key=lambda item: item.match_date), matched
     except OSError as error:
         raise FootballDataError(f"could not read Football-Data CSV: {error}") from error
 
 
 def load_team_match_stats_history(
     paths: Iterable[str | Path], *, competition: str | None = None,
+    excluded_fixtures: Iterable[tuple[date, str, str]] = (),
 ) -> list["TeamMatchStats"]:
-    """Combine non-overlapping files from one competition, in date order."""
+    """Combine non-overlapping files, validating every explicit exclusion."""
+    exclusions = _validate_fixture_exclusions(excluded_fixtures)
     records = []
     seen = set()
     competitions = set()
+    matched_exclusions = set()
     for path in paths:
-        for record in load_team_match_stats(path, competition=competition):
+        file_records, file_matches = _load_team_match_stats(
+            path, competition, exclusions,
+        )
+        duplicate_exclusions = matched_exclusions & file_matches
+        if duplicate_exclusions:
+            raise FootballDataError(
+                "excluded fixture appears in multiple files: "
+                + _format_fixture_keys(duplicate_exclusions)
+            )
+        matched_exclusions.update(file_matches)
+        for record in file_records:
             key = record.fixture_key, record.venue
             if key in seen:
                 raise FootballDataError(f"duplicate team-match record in {path}: {key}")
@@ -238,7 +274,59 @@ def load_team_match_stats_history(
             if len(competitions) > 1:
                 raise FootballDataError("history must contain one competition")
             records.append(record)
+    missing = exclusions - matched_exclusions
+    if missing:
+        raise FootballDataError(
+            "excluded fixture was not found: " + _format_fixture_keys(missing)
+        )
     return sorted(records, key=lambda item: item.match_date)
+
+
+def _validate_fixture_exclusions(
+    values: Iterable[tuple[date, str, str]],
+) -> set[tuple[date, str, str]]:
+    try:
+        items = tuple(values)
+        exclusions = set(items)
+    except (TypeError, ValueError) as error:
+        raise FootballDataError(
+            "excluded fixtures must be unique date/home/away tuples"
+        ) from error
+    if len(exclusions) != len(items):
+        raise FootballDataError("excluded fixtures must be unique date/home/away tuples")
+    for item in exclusions:
+        if (
+            not isinstance(item, tuple) or len(item) != 3
+            or type(item[0]) is not date
+            or not isinstance(item[1], str) or not item[1].strip()
+            or not isinstance(item[2], str) or not item[2].strip()
+            or item[1] != item[1].strip() or item[2] != item[2].strip()
+            or item[1] == item[2]
+        ):
+            raise FootballDataError(
+                "excluded fixtures must be unique date/home/away tuples"
+            )
+    return exclusions
+
+
+def _team_stats_fixture_identity(
+    row: dict[str, str | None],
+) -> tuple[date, str, str]:
+    raw_date = required_text(row, "Date")
+    try:
+        match_date = datetime.strptime(raw_date, "%d/%m/%Y").date()
+    except ValueError as error:
+        raise ValueError(f"Date must use DD/MM/YYYY: {raw_date!r}") from error
+    return (
+        match_date, required_text(row, "HomeTeam"), required_text(row, "AwayTeam"),
+    )
+
+
+def _format_fixture_keys(values: Iterable[tuple[date, str, str]]) -> str:
+    return ", ".join(
+        f"{day.isoformat()} {home} vs {away}"
+        for day, home, away in sorted(values)
+    )
 
 
 def _normalize_team_stats(

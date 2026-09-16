@@ -47,6 +47,19 @@ class FeatureVariant:
 
 
 @dataclass(frozen=True)
+class FeatureSignalDiagnostics:
+    """Descriptive correlations separating raw from incremental signal."""
+
+    corner_shot_correlation: float | None
+    corner_shots_on_target_correlation: float | None
+    baseline_shot_ratio_correlation: float | None
+    baseline_shots_on_target_ratio_correlation: float | None
+    residual_shot_ratio_correlation: float | None
+    residual_shots_on_target_ratio_correlation: float | None
+    shot_ratio_shots_on_target_ratio_correlation: float | None
+
+
+@dataclass(frozen=True)
 class FeatureExperiment:
     competition: str
     holdout_from: date
@@ -59,6 +72,8 @@ class FeatureExperiment:
     holdout_start: date
     holdout_end: date
     excluded_incomplete_fixtures: int
+    development_signal: FeatureSignalDiagnostics
+    holdout_signal: FeatureSignalDiagnostics
     variants: tuple[FeatureVariant, ...]
 
 
@@ -354,6 +369,59 @@ def _mean_count_nll(
     ) / len(rows)
 
 
+def _pearson(left: Iterable[float], right: Iterable[float]) -> float | None:
+    x, y = list(left), list(right)
+    if len(x) != len(y) or not x:
+        raise ValueError("correlation inputs must be non-empty and equal length")
+    x_mean, y_mean = math.fsum(x) / len(x), math.fsum(y) / len(y)
+    x_centered = [value - x_mean for value in x]
+    y_centered = [value - y_mean for value in y]
+    denominator = math.sqrt(
+        math.fsum(value * value for value in x_centered)
+        * math.fsum(value * value for value in y_centered)
+    )
+    if denominator == 0:
+        return None
+    return math.fsum(
+        x_value * y_value
+        for x_value, y_value in zip(x_centered, y_centered)
+    ) / denominator
+
+
+def feature_signal_diagnostics(
+    rows: Iterable[FeatureRow],
+) -> FeatureSignalDiagnostics:
+    """Measure raw association, overlap, and signal left after the baseline."""
+    items = list(rows)
+    if not items:
+        raise ValueError("cannot diagnose an empty feature cohort")
+    if any(
+        row.record.corners_for is None
+        or row.record.shots_for is None
+        or row.record.shots_on_target_for is None
+        for row in items
+    ):
+        raise ValueError("signal diagnostics require complete corner and shot values")
+    corners = [float(row.record.corners_for) for row in items]
+    shots = [float(row.record.shots_for) for row in items]
+    targets = [float(row.record.shots_on_target_for) for row in items]
+    baselines = [row.baseline_mean for row in items]
+    shot_ratios = [row.shot_ratio for row in items]
+    target_ratios = [row.shots_on_target_ratio for row in items]
+    residuals = [actual - baseline for actual, baseline in zip(corners, baselines)]
+    return FeatureSignalDiagnostics(
+        corner_shot_correlation=_pearson(corners, shots),
+        corner_shots_on_target_correlation=_pearson(corners, targets),
+        baseline_shot_ratio_correlation=_pearson(baselines, shot_ratios),
+        baseline_shots_on_target_ratio_correlation=_pearson(baselines, target_ratios),
+        residual_shot_ratio_correlation=_pearson(residuals, shot_ratios),
+        residual_shots_on_target_ratio_correlation=_pearson(residuals, target_ratios),
+        shot_ratio_shots_on_target_ratio_correlation=_pearson(
+            shot_ratios, target_ratios,
+        ),
+    )
+
+
 def run_feature_experiment(
     records: Iterable[TeamMatchStats], *, holdout_from: date,
     lines: Iterable[float] = (3.5, 4.5, 5.5, 6.5),
@@ -402,6 +470,8 @@ def run_feature_experiment(
         holdout_start=holdout[0].record.match_date,
         holdout_end=holdout[-1].record.match_date,
         excluded_incomplete_fixtures=excluded,
+        development_signal=feature_signal_diagnostics(development),
+        holdout_signal=feature_signal_diagnostics(holdout),
         variants=tuple(variants),
     )
 
@@ -434,7 +504,31 @@ def format_feature_experiment(experiment: FeatureExperiment) -> str:
                 f"{metrics.line_brier:.6f}  {metrics.line_log_loss:.6f}"
             )
     result.extend((
+        "",
+        "Split  Corner~same-match shots  Corner~same-match SOT  "
+        "Baseline~shot ratio  Baseline~SOT ratio  Residual~shot ratio  "
+        "Residual~SOT ratio  Shot ratio~SOT ratio",
+    ))
+    for split, signal in (
+        ("development", experiment.development_signal),
+        ("holdout", experiment.holdout_signal),
+    ):
+        values = (
+            signal.corner_shot_correlation,
+            signal.corner_shots_on_target_correlation,
+            signal.baseline_shot_ratio_correlation,
+            signal.baseline_shots_on_target_ratio_correlation,
+            signal.residual_shot_ratio_correlation,
+            signal.residual_shots_on_target_ratio_correlation,
+            signal.shot_ratio_shots_on_target_ratio_correlation,
+        )
+        result.append(split + "  " + "  ".join(
+            "n/a" if value is None else f"{value:+.6f}" for value in values
+        ))
+    result.extend((
         "", "Lower is better for every reported metric.",
+        "Same-match correlations are descriptive only: those shots are unknown pre-match.",
+        "Residual correlations test whether pre-match shot strength adds signal after the corner baseline.",
         "Holdout means weights were frozen; this period is not claimed as an untouched final test.",
         "This is an offline model experiment, not a production prediction or betting result.",
     ))

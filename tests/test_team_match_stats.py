@@ -96,6 +96,34 @@ class TeamMatchStatsTests(unittest.TestCase):
         with self.assertRaisesRegex(FootballDataError, 'duplicate team-match'):
             load_team_match_stats_history([p, p])
 
+    def test_explicit_fixture_quarantine_is_exact_and_auditable(self):
+        bad = dict(self.row, HS="2", HST="7")
+        good = dict(self.row, Date="15/09/2026", HomeTeam="C", AwayTeam="D")
+        path = self.write([bad, good])
+        exclusion = (date(2026, 9, 14), "A", "B")
+        records = load_team_match_stats_history(
+            [path], excluded_fixtures=[exclusion],
+        )
+        self.assertEqual([(item.team, item.opponent) for item in records],
+                         [("C", "D"), ("D", "C")])
+        with self.assertRaisesRegex(FootballDataError, "cannot exceed"):
+            load_team_match_stats_history(
+                [path], excluded_fixtures=[(date(2026, 9, 14), "A", "Missing")],
+            )
+        valid_path = self.write([good], name="valid.csv")
+        with self.assertRaisesRegex(FootballDataError, "was not found"):
+            load_team_match_stats_history(
+                [valid_path], excluded_fixtures=[exclusion],
+            )
+        with self.assertRaisesRegex(FootballDataError, "date/home/away"):
+            load_team_match_stats_history(
+                [path], excluded_fixtures=[("bad", "A", "B")],
+            )
+        with self.assertRaisesRegex(FootballDataError, "must be unique"):
+            load_team_match_stats_history(
+                [path], excluded_fixtures=[exclusion, exclusion],
+            )
+
     def test_history_order_season_boundary_and_competition(self):
         later = self.write(name='later.csv')
         self.row['Date'] = '30/06/2026'

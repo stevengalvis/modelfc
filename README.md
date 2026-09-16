@@ -644,8 +644,9 @@ are rejected. Shots on target cannot exceed total shots when both
 are known. Contradictions, malformed rows and duplicate fixtures raise
 `FootballDataError` with row context. No values are corrected silently. A known
 Championship source row (Burnley vs Swansea, November 10, 2024) has more shots
-on target than total shots and therefore needs source reconciliation before
-that file can be used through this stricter API.
+on target than total shots. The default loader rejects it. Offline experiments
+may explicitly quarantine that exact date/home/away identity while retaining
+every other Championship fixture; a missing or misspelled exclusion fails.
 
 This is a data foundation only. Existing prediction, evaluation, refresh and
 provider APIs retain their behavior; no model consumes the new records yet.
@@ -749,14 +750,32 @@ PYTHONPATH=src python3 -m modelfc.corner_shot_experiment \
   --holdout-from 2025-07-01
 ```
 
+An explicitly verified corrupt source fixture can be quarantined without
+discarding its competition. For the known Championship row:
+
+```bash
+PYTHONPATH=src python3 -m modelfc.corner_shot_experiment \
+  --history E1_2223.csv E1_2324.csv E1_2425.csv E1_2526.csv E1_2627.csv \
+  --holdout-from 2025-07-01 \
+  --exclude-fixture 2024-11-10 Burnley Swansea
+```
+
+This removes one fixture, or two mirrored team observations, before feature
+history is built. It does not repair or reinterpret the source values.
+
 The default gates require 100 prior team observations and five prior matches
 for both teams at their fixture venues. Same-date fixtures use an identical
 prior snapshot and enter history only after every prediction for that date.
 Incomplete fixtures are excluded before history construction and reported.
 Malformed or contradictory source values still fail in the provider adapter;
-the experiment never repairs values silently.
+the experiment never repairs values silently. Its signal table distinguishes
+the descriptive correlation between corners and shots occurring in the same
+match from the correlation between the baseline's remaining error and shot
+strength known before kickoff. Only the latter can add genuine pre-match
+forecast information. It also reports overlap between the corner baseline and
+shot ratios, plus redundancy between shots and shots on target.
 
-The first six-competition run found no consistent holdout improvement, so the
+The seven-competition run found no consistent holdout improvement, so the
 shot variants are not available in `corner_predict`. Full results and source
 limitations are recorded in `EXPERIMENTS.md`. This period had already been
 inspected in the probability diagnostic, and the feature grid was finalized
