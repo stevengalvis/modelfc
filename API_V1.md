@@ -232,6 +232,10 @@ For a whole-number line, `model_probability` is the raw win probability,
 `decisive_model_probability = win / (win + loss)`. `probability_edge` compares
 the decisive probability to sportsbook implied probability. Expected profit is
 `win_probability * profit_if_win - loss_probability` on a `$1` stake.
+If `win_probability + loss_probability` is zero, the market has no decisive
+outcome. It remains in the batch with `status: UNSUPPORTED`,
+`unsupported_reason: NO_DECISIVE_OUTCOMES`, raw model and push probabilities,
+and null decisive probability, edge, and expected profit. It cannot be logged.
 
 An individually unsupported market remains in the successful batch response
 with `status: UNSUPPORTED`, null calculated values, and a machine-readable
@@ -551,6 +555,18 @@ reconciliation compares provider counts with that effective result, not only
 with the preserved original record. The same accepted correction therefore
 remains settled; different counts create a new candidate and reopen
 `NEEDS_REVIEW`.
+
+### `POST /api/v1/admin/forecasts/{forecast_id}/integrity-resolution`
+
+Audited recovery for a `LEDGER_INTEGRITY` review after the underlying ledger has
+been repaired. The request requires an idempotency key and admin reason. The
+backend reruns all forecast, pick, result, and amendment integrity checks. A
+failed revalidation returns `409 LEDGER_INTEGRITY_FAILURE` and leaves the review
+unchanged. A successful revalidation appends an integrity-resolution record and
+transitions to `SETTLED` when an effective result exists, otherwise to `OPEN` so
+normal settlement reconciliation can continue. It never changes immutable
+forecast, market, price, or result records, and it cannot resolve
+`RESULT_CORRECTION` or `DATA_AVAILABILITY` reviews.
 
 ## Result matching and settlement rules
 
