@@ -504,13 +504,17 @@ Administrative/internal endpoint used after a successful validated data
 refresh. It is also safe to invoke manually. It scans `OPEN`, `SETTLED`, and
 `NEEDS_REVIEW` forecasts and does not rerun predictions.
 
-A `NEEDS_REVIEW` forecast with no saved result is automatically recovered only
-when its review type is `DATA_AVAILABILITY`, all ledger integrity checks now
-pass, the configured source is fresh, and a later validated refresh supplies
-exactly one unambiguous fixture with complete corner counts. Every availability
-condition that caused review must have cleared. The result is appended, its
-picks are settled, and the forecast becomes `SETTLED`. If the transient
-condition remains, its status and reason are updated idempotently.
+A `DATA_AVAILABILITY` review with no saved result first resolves the latest
+trusted fixture through its provider ID, active alias, or canonical identity.
+If that fixture's current kickoff plus grace period is still in the future, the
+forecast and picks return idempotently to `OPEN`, regardless of whether the
+reschedule came from the provider or an admin alias. Otherwise, automatic
+recovery requires all ledger integrity checks to pass, the configured source to
+be fresh, and a later validated refresh to supply exactly one unambiguous
+fixture with complete corner counts. Every availability condition that caused
+review must have cleared. The result is appended, its picks are settled, and the
+forecast becomes `SETTLED`. If the transient condition remains, its status and
+reason are updated idempotently.
 `LEDGER_INTEGRITY` reviews are never auto-recovered. A correction conflict
 against an existing effective result is never auto-resolved and still requires
 the explicit resolution endpoint.
