@@ -381,3 +381,40 @@ feature experiment should test a distinct predeclared hypothesis, such as
 recent-form windows, exponentially decayed strengths, blocked shots, crosses,
 or possession, against future untouched data rather than adding more correlated
 volume features to the live model.
+
+## Corner recency experiment (2026-09-16)
+
+This experiment used the same five local Football-Data seasons and July 1,
+2025 holdout boundary as the shot experiment. It compared the current
+expanding-history venue/opponent corner model with two alternatives on exactly
+the same eligible team observations:
+
+- recent window: the most recent 5, 10, 20 or 40 venue-specific records for
+  team attack and opponent concession, with an expanding league venue prior;
+- time decay: exponential age weights over league venue, team attack and
+  opponent concession records using a 30, 60, 90, 180 or 365-day half-life.
+
+The window and half-life were selected only by development count NLL and then
+frozen for the holdout. Negative deltas favor the candidate.
+
+| Competition | Holdout observations | Selected window | Window NLL delta | Window Brier delta | Selected half-life | Decay NLL delta | Decay Brier delta |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| EPL | 806 | 20 | +0.008686 | +0.004804 | 365 days | -0.007029 | -0.000520 |
+| Championship | 1,180 | 20 | -0.001423 | -0.000815 | 180 days | -0.012619 | -0.002797 |
+| La Liga | 796 | 40 | +0.004156 | +0.002148 | 90 days | +0.006588 | +0.002104 |
+| Serie A | 820 | 40 | +0.003947 | +0.001280 | 365 days | -0.001669 | -0.000048 |
+| Bundesliga | 634 | 40 | +0.000723 | -0.001064 | 180 days | +0.003807 | +0.001517 |
+| Ligue 1 | 656 | 40 | +0.000087 | -0.000548 | 180 days | +0.004740 | +0.001385 |
+| Primeira Liga | 668 | 20 | +0.025234 | +0.007066 | 365 days | +0.004693 | +0.001283 |
+
+Across 5,560 holdout team observations, time decay improved weighted average
+count NLL from `2.348067` to `2.346624`, but slightly worsened line Brier from
+`0.208972` to `0.209088`. It improved count NLL in only three of seven
+competitions. Fixed recent windows improved count NLL only in the Championship
+and worsened the weighted average from `2.348067` to `2.353326`.
+
+The Championship produced the clearest decay improvement, but the direction
+was not stable across leagues. Therefore neither recency approach is promoted
+to `corner_predict`. The result suggests league-specific decay may be worth
+tracking on genuinely future fixtures, especially in the Championship, but a
+single global live-model change is not justified by this inspected holdout.
