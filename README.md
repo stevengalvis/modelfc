@@ -601,3 +601,69 @@ does not establish consistent provider methodology across seasons or sources.
 Historical feature generation must filter out target-date and future matches
 before aggregating these records. Player statistics, odds, JSON persistence,
 and new shot or corner models are outside this change.
+
+### Team-corner probability report
+
+This diagnostic replays historical fixtures and evaluates the existing
+venue/opponent Poisson and Negative Binomial probabilities. It does not add,
+fit or recalibrate a model. `corner_probability_report.py` owns the CLI;
+`corner_probability_evaluation.py` owns fixture eligibility, scoring and report
+formatting. Means and dispersion come from the existing optimized rolling
+engine in `corners.py`; full-distribution line probabilities come from
+`corner_forecasts.py`, exactly as in upcoming-fixture prediction. The shared
+team-match statistics introduced for future features are not needed here.
+
+```bash
+cd ~/dev/modelfc
+PYTHONPATH=src python3 -m modelfc.corner_probability_report \
+  --data-config corner_data.json --competition SP1 \
+  --lines 3.5 4.5 5.5 6.5 --from-date 2025-07-01
+```
+
+Alternatively, supply non-overlapping explicit history from **one competition**:
+
+```bash
+PYTHONPATH=src python3 -m modelfc.corner_probability_report \
+  --history SP1_2223.csv SP1_2324.csv SP1_2425.csv SP1_2526.csv SP1_2627.csv \
+  --provider football-data --lines 3.5 4.5 5.5 6.5 \
+  --from-date 2025-07-01 --to-date 2026-09-16
+```
+
+Both models run by default on identical eligible fixtures. Use `--models`
+with one or both existing fixture-model names to select them. The six existing
+providers are supported via `--provider`; Kaggle match stats also requires
+`--country` and `--league`. Explicit histories remain the caller's responsibility
+to restrict to one competition: the corner observation schema has no competition
+identifier. Configured history selects one Football-Data competition.
+
+Date limits are inclusive scoring limits. Earlier matches still supply history,
+and matches after the end date are excluded. Every scored fixture requires at
+least `--min-history` prior team observations (default 100) and
+`--min-venue-history` prior matches for each team at its fixture venue (default
+5). Same-date matches cannot supply history to each other. Both mirrored
+observations must exist, agree on corner counts, and be unique. Matches skipped
+for coverage still enter history after their date, matching live prediction.
+
+The initial report accepts only unique half-integer team lines from 0.5 to
+999.5. Whole-line pushes, match totals and bookmaker odds are outside this
+report. Each line is evaluated for both teams; OVER is scored once and UNDER
+is its complement. The per-line table reports counts, mean predicted OVER
+probability, actual OVER frequency, actual-minus-predicted gap, binary Brier
+score and binary log loss. Lower Brier/log loss is better. Impossible observed
+events have infinite log loss rather than an arbitrary clipped score.
+
+Calibration tables separate each line into fixed ten-percentage-point bins.
+Bins include the lower endpoint and exclude the upper, except the last bin
+includes 100%. Empty bins show `n/a`. A calendar-year breakdown exposes time
+variation without assuming all providers use European seasons. Counts are
+shown separately for fixtures, team observations and line outcomes: multiple
+lines and the two teams from a match are not independent samples. No confidence
+interval or significance claim is made from these descriptive tables.
+
+A model assigning roughly 60% should see roughly 60% OVER outcomes over enough
+comparable predictions. This report measures that behavior; it does not adjust
+probabilities or establish profitability. Fixed tested lines are not evidence
+that a bookmaker offered those lines or any particular price. Choose lines and
+scoring periods before comparing variants, and reserve a later period for
+final evaluation after selecting model changes. The command reads local data;
+it does not download history, modify CSVs, or save a forecast ledger.

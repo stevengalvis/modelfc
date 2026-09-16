@@ -240,3 +240,42 @@ establish a Liga MX point-prediction improvement, calibrated probabilities,
 or a market edge. The export lacks explicit match-status and timezone fields;
 the adapter uses regular-season round labels, consistent completed scores,
 and the supplied calendar dates rather than inferring either field.
+
+## Team-line probability diagnostic (2026-09-16)
+
+Initial diagnostic using the five Football-Data files per league (`2223`,
+`2324`, `2425`, `2526`, `2627`) inspected on 2026-09-16. Scoring starts
+2025-07-01 and ends at the available September 2026 history; earlier dates
+still supply expanding history. Default gates require 100 prior observations
+and five prior matches at each team's fixture venue. No parameters were tuned
+in this diagnostic. This already-inspected period is not an untouched holdout
+for subsequent model selection.
+
+Both models scored exactly the same fixtures in each league. Selected line
+5.5 results below are binary OVER scores, not count-distribution NLL or 1X2
+Brier scores. The command also evaluates 3.5, 4.5 and 6.5 by default.
+
+| League | Eligible fixtures | Poisson Brier | NB Brier | Poisson log loss | NB log loss |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| EPL | 403 | 0.222468 | 0.218901 | 0.636826 | 0.627548 |
+| Championship | 590 | 0.230375 | 0.227472 | 0.654001 | 0.647085 |
+| La Liga | 398 | 0.221162 | 0.216940 | 0.635170 | 0.623626 |
+| Bundesliga | 317 | 0.208904 | 0.208808 | 0.608426 | 0.606741 |
+| Serie A | 410 | 0.198994 | 0.197888 | 0.583700 | 0.580864 |
+| Ligue 1 | 328 | 0.211404 | 0.210392 | 0.611221 | 0.608435 |
+| Primeira Liga | 334 | 0.197491 | 0.194800 | 0.575515 | 0.569966 |
+
+NB had lower Brier and log loss for all four tested lines in each of these
+seven samples. That supports retaining it as the reference distribution,
+not declaring calibrated probabilities or a market edge.
+
+La Liga illustrates why overall averages are insufficient: at line 5.5, NB
+averaged 34.85% OVER probability and observed 35.43% OVER across 796 team
+observations. But the 50–60% bin averaged 54.49% and observed 42.68% (82
+observations); the 60–70% bin averaged 64.73% and observed 51.61% (31
+observations). These are descriptive, dependent, finite samples. They do not
+justify a blanket probability adjustment or establish statistical significance.
+
+The diagnostic uses existing corner observations, so the Championship shot
+inconsistency rejected by the richer stats loader does not affect this report.
+No shot features are used. Commands and metric interpretation are in README.
