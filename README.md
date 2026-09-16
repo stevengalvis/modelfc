@@ -427,6 +427,9 @@ reported without assuming any bookmaker's settlement rules.
 Line probabilities use the full Poisson or Negative Binomial count model,
 including the tail above 20. They are not calculated from the rolling
 evaluation's display grid, which is conditioned on `0..max_corners`.
+Small upper tails are summed directly to avoid rounding possible outcomes
+to zero through subtraction. A convergence limit reports a numerical error
+for exceptionally slow tails rather than returning an incomplete sum.
 This first command handles individual team lines. Match-total distributions,
 odds comparisons, and a saved corner-prediction ledger are separate work.
 

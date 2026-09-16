@@ -46,6 +46,22 @@ class CornerLineTests(unittest.TestCase):
         self.assertAlmostEqual(result.over, (25 / 26)**21)
         self.assertGreater(result.over, 0.4)
 
+    def test_tiny_upper_tails_do_not_round_to_zero(self):
+        # Poisson(1) survival above 20, independently summed from 1/k!.
+        expected = math.exp(-1) * math.fsum(
+            1 / math.factorial(count) for count in range(21, 100)
+        )
+        actual = corner_line_probabilities(1, 20).over
+        self.assertGreater(actual, 0)
+        self.assertAlmostEqual(actual / expected, 1, places=13)
+        # NB size=1 has an analytic geometric tail far below machine epsilon.
+        for line in (20, 200, 1000):
+            with self.subTest(line=line):
+                expected = 0.5 ** (line + 1)
+                actual = corner_line_probabilities(1, line, 1).over
+                self.assertGreater(actual, 0)
+                self.assertAlmostEqual(actual / expected, 1, places=11)
+
     def test_probabilities_are_bounded_monotone_and_sum_to_one(self):
         for mean in (0, 0.01, 4, 25):
             for size in (None, 0.5, 7, 1e9):

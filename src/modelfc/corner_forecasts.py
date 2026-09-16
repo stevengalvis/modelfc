@@ -53,6 +53,39 @@ class CornerFixturePrediction:
     dispersion_size: float | None
 
 
+def _log_count_probability(count: int, mean: float, size: float | None) -> float:
+    if size is not None:
+        return negative_binomial_log_probability(count, mean, size)
+    if mean == 0:
+        return 0.0 if count == 0 else -math.inf
+    return count * math.log(mean) - mean - math.lgamma(count + 1)
+
+
+def _upper_tail(mean: float, first_count: int, size: float | None) -> float:
+    """Sum the survival tail directly, with a bound on the remaining mass."""
+    if mean == 0:
+        return 0.0
+    log_first = _log_count_probability(first_count, mean, size)
+    # Relative weights avoid underflow of the first term before summation.
+    weights = [1.0]
+    total = 1.0
+    limiting_ratio = mean / (mean + size) if size is not None else 0.0
+    for count in range(first_count, first_count + 100_000):
+        ratio = (
+            limiting_ratio * ((size + count) / (count + 1))
+            if size is not None else mean / (count + 1)
+        )
+        # Poisson ratios decrease. NB ratios approach limiting_ratio, from
+        # above when size > 1 and from below when size < 1.
+        bound = max(ratio, limiting_ratio)
+        if bound < 1 and weights[-1] * bound / (1 - bound) <= total * 1e-15:
+            return min(1.0, math.exp(log_first + math.log(math.fsum(weights))))
+        weight = weights[-1] * ratio
+        weights.append(weight)
+        total += weight
+    raise ValueError("upper-tail summation did not converge for these model parameters")
+
+
 def corner_line_probabilities(
     mean: float, line: float, dispersion_size: float | None = None,
 ) -> CornerLineProbability:
@@ -73,23 +106,20 @@ def corner_line_probabilities(
         raise ValueError("mean must be a finite non-negative number")
 
     whole_line = line == math.floor(line)
-    probabilities = []
-    for count in range(math.floor(line) + 1):
-        if dispersion_size is not None:
-            log_probability = negative_binomial_log_probability(
-                count, mean, dispersion_size,
-            )
-        elif mean == 0:
-            log_probability = 0.0 if count == 0 else -math.inf
-        else:
-            log_probability = count * math.log(mean) - mean - math.lgamma(count + 1)
-        probabilities.append(math.exp(log_probability))
+    probabilities = [
+        math.exp(_log_count_probability(count, mean, dispersion_size))
+        for count in range(math.floor(line) + 1)
+    ]
     equal = probabilities[-1] if whole_line else 0.0
     under = math.fsum(probabilities[:-1] if whole_line else probabilities)
     # Guard roundoff at the probability boundaries without renormalizing tails.
     equal = min(1.0, equal)
     under = min(1.0 - equal, under)
-    over = max(0.0, 1.0 - math.fsum((under, equal)))
+    lower_mass = math.fsum((under, equal))
+    over = (
+        _upper_tail(mean, math.floor(line) + 1, dispersion_size)
+        if lower_mass > 0.5 else 1.0 - lower_mass
+    )
     return CornerLineProbability(float(line), over, under, equal)
 
 
