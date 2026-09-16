@@ -3,6 +3,7 @@ import math
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from modelfc.corner_evaluation import evaluate_corner_predictions, negative_log_likelihood
 from modelfc.corners import (
@@ -168,6 +169,63 @@ class NegativeBinomialTests(unittest.TestCase):
 
 
 class VenueOpponentCornerTests(unittest.TestCase):
+    def test_rolling_totals_match_independent_history_snapshots(self) -> None:
+        # Intentionally unpaired observations: concessions must be read from
+        # the opponent's history, not inferred from the team's own counts.
+        items = [
+            venue_observation(day, team, opponent, venue, won, conceded)
+            for day, team, opponent, venue, won, conceded in (
+                (1, "A", "B", Venue.HOME, 0, 9),
+                (1, "B", "A", Venue.AWAY, 7, 2),
+                (2, "A", "C", Venue.AWAY, 12, 3),
+                (2, "C", "A", Venue.HOME, 1, 10),
+                (4, "New", "A", Venue.HOME, 4, 6),
+                (4, "A", "New", Venue.AWAY, 6, 4),
+                (7, "B", "C", Venue.HOME, 9, 1),
+                (7, "C", "B", Venue.AWAY, 1, 9),
+            )
+        ]
+        for smoothing in (0.5, 5.0, 20.0):
+            for minimum in (1, 3, 6):
+                for model in ("venue-opponent", "venue-opponent-poisson",
+                              "venue-opponent-negative-binomial"):
+                    with self.subTest(smoothing=smoothing, minimum=minimum, model=model):
+                        expected = []
+                        # A deliberately slow oracle builds a fresh historical
+                        # snapshot for each target, independent of rolling state.
+                        for item in items:
+                            history = [x for x in items if x.match_date < item.match_date]
+                            if len(history) < minimum:
+                                continue
+                            mu = estimate_expected_corners(
+                                iter(history), item.team, item.opponent,
+                                item.venue, smoothing,
+                            )
+                            size = None
+                            probabilities = None
+                            if model == "venue-opponent-poisson":
+                                probabilities = poisson_probabilities(mu, 8)
+                            elif model == "venue-opponent-negative-binomial":
+                                size = estimate_negative_binomial_size(history)
+                                probabilities = negative_binomial_probabilities(mu, size, 8)
+                            expected.append(CornerPrediction(item, mu, probabilities, size))
+                        # Reverse dates, but keep same-day source order.
+                        shuffled = sorted(items, key=lambda x: x.match_date, reverse=True)
+                        actual = rolling_corner_predictions(
+                            iter(shuffled), model, minimum, 8, smoothing,
+                        )
+                        self.assertEqual(actual, expected)
+
+    def test_dispersion_is_estimated_once_per_eligible_date(self) -> None:
+        items = [observation(1, "A", 1), observation(1, "B", 9),
+                 observation(2, "C", 2), observation(2, "D", 8),
+                 observation(3, "E", 3)]
+        with patch("modelfc.corners.estimate_negative_binomial_size",
+                   wraps=estimate_negative_binomial_size) as estimator:
+            rolling_corner_predictions(items, "venue-opponent-negative-binomial", min_history=2)
+        self.assertEqual([call.args[0] for call in estimator.call_args_list],
+                         [items[:2], items[:4]])
+
     def test_home_uses_team_home_attack_and_opponent_away_concession(self) -> None:
         history = [
             venue_observation(1, "Target", "X", Venue.HOME, 8, 1),

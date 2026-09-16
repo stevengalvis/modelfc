@@ -130,6 +130,23 @@ def estimate_expected_corners(
     estimate remains defined for empty or all-zero histories.
     """
 
+    _validate_smoothing(smoothing_matches)
+    if not isinstance(venue, Venue):
+        raise ValueError("venue must be a Venue")
+
+    league, attack, concession = _CornerTotals(), _CornerTotals(), _CornerTotals()
+    opponent_venue = Venue.AWAY if venue is Venue.HOME else Venue.HOME
+    for item in history:
+        if item.venue is venue:
+            league.add(item)
+            if item.team == team:
+                attack.add(item)
+        if item.team == opponent and item.venue is opponent_venue:
+            concession.add(item)
+    return _expected_from_totals(league, attack, concession, smoothing_matches)
+
+
+def _validate_smoothing(smoothing_matches: float) -> None:
     if (
         not isinstance(smoothing_matches, (int, float))
         or isinstance(smoothing_matches, bool)
@@ -138,32 +155,36 @@ def estimate_expected_corners(
     ):
         raise ValueError("smoothing_matches must be a finite positive number")
 
-    if not isinstance(venue, Venue):
-        raise ValueError("venue must be a Venue")
 
-    observations = list(history)
-    venue_history = [item for item in observations if item.venue is venue]
+@dataclass
+class _CornerTotals:
+    """Integer totals retain the same arithmetic as summing the source rows."""
+
+    count: int = 0
+    corners_for: int = 0
+    corners_against: int = 0
+
+    def add(self, observation: TeamCornerObservation) -> None:
+        self.count += 1
+        self.corners_for += observation.corners_for
+        self.corners_against += observation.corners_against
+
+
+def _expected_from_totals(
+    league: _CornerTotals, attack: _CornerTotals, concession: _CornerTotals,
+    smoothing_matches: float,
+) -> float:
+    """Shared venue/opponent formula for one-off and rolling predictions."""
+
     league_rate = (
-        sum(item.corners_for for item in venue_history) + smoothing_matches
-    ) / (len(venue_history) + smoothing_matches)
-
-    attack_history = [
-        item for item in venue_history if item.team == team
-    ]
-    opponent_venue = Venue.AWAY if venue is Venue.HOME else Venue.HOME
-    concession_history = [
-        item
-        for item in observations
-        if item.team == opponent and item.venue is opponent_venue
-    ]
+        league.corners_for + smoothing_matches
+    ) / (league.count + smoothing_matches)
     attack_rate = (
-        sum(item.corners_for for item in attack_history)
-        + smoothing_matches * league_rate
-    ) / (len(attack_history) + smoothing_matches)
+        attack.corners_for + smoothing_matches * league_rate
+    ) / (attack.count + smoothing_matches)
     concession_rate = (
-        sum(item.corners_against for item in concession_history)
-        + smoothing_matches * league_rate
-    ) / (len(concession_history) + smoothing_matches)
+        concession.corners_against + smoothing_matches * league_rate
+    ) / (concession.count + smoothing_matches)
     return attack_rate * concession_rate / league_rate
 
 
@@ -186,13 +207,19 @@ def rolling_corner_predictions(
         raise ValueError("min_history must be a positive integer")
     # Validate even when the selected model does not use smoothing, so the CLI
     # and Python API handle this option consistently.
-    estimate_expected_corners([], "team", "opponent", Venue.HOME, smoothing_matches)
+    _validate_smoothing(smoothing_matches)
 
     ordered = sorted(observations, key=lambda item: item.match_date)
     league_total = 0
     league_count = 0
     team_totals: dict[str, int] = defaultdict(int)
     team_counts: dict[str, int] = defaultdict(int)
+    venue_totals: dict[Venue, _CornerTotals] = defaultdict(_CornerTotals)
+    team_venue_totals: dict[tuple[str, Venue], _CornerTotals] = defaultdict(_CornerTotals)
+    uses_venue = model in {
+        "venue-opponent", "venue-opponent-poisson",
+        "venue-opponent-negative-binomial",
+    }
     predictions: list[CornerPrediction] = []
     index = 0
     while index < len(ordered):
@@ -203,16 +230,23 @@ def rolling_corner_predictions(
 
         if league_count >= min_history:
             league_mean = league_total / league_count
+            # Every prediction on this date sees the identical history. Keep
+            # the original variance calculation, but perform it only once.
+            size = (
+                estimate_negative_binomial_size(ordered[:index])
+                if model == "venue-opponent-negative-binomial" else None
+            )
             for observation in ordered[index:end]:
                 if model == "league-average":
                     expected = league_mean
-                elif model in {
-                    "venue-opponent", "venue-opponent-poisson",
-                    "venue-opponent-negative-binomial",
-                }:
-                    expected = estimate_expected_corners(
-                        ordered[:index], observation.team,
-                        observation.opponent, observation.venue,
+                elif uses_venue:
+                    opponent_venue = (
+                        Venue.AWAY if observation.venue is Venue.HOME else Venue.HOME
+                    )
+                    expected = _expected_from_totals(
+                        venue_totals[observation.venue],
+                        team_venue_totals[observation.team, observation.venue],
+                        team_venue_totals[observation.opponent, opponent_venue],
                         smoothing_matches,
                     )
                 else:
@@ -221,10 +255,6 @@ def rolling_corner_predictions(
                         team_totals[observation.team] / count
                         if count else league_mean
                     )
-                size = (
-                    estimate_negative_binomial_size(ordered[:index])
-                    if model == "venue-opponent-negative-binomial" else None
-                )
                 if model in {"poisson", "venue-opponent-poisson"}:
                     distribution = poisson_probabilities(expected, max_corners)
                 elif size is not None:
@@ -243,5 +273,8 @@ def rolling_corner_predictions(
             league_count += 1
             team_totals[observation.team] += observation.corners_for
             team_counts[observation.team] += 1
+            if uses_venue:
+                venue_totals[observation.venue].add(observation)
+                team_venue_totals[observation.team, observation.venue].add(observation)
         index = end
     return predictions
