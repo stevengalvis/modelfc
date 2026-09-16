@@ -48,7 +48,7 @@ V1 error codes:
 `ANALYSIS_NOT_FOUND`, `LEDGER_INTEGRITY_FAILURE`, and
 `AUTOMATIC_SETTLEMENT_UNAVAILABLE`, `PICKING_CLOSED`,
 `STALE_REVIEW_CANDIDATE`, `FIXTURE_NOT_FOUND`, `UNTRUSTED_KICKOFF`, and
-`ANALYSIS_FORECAST_MISMATCH`.
+`ANALYSIS_FORECAST_MISMATCH`, `STALE_ALIAS_TARGET`.
 
 Validation errors use HTTP 422, missing resources 404, integrity/idempotency
 conflicts 409, stale or unavailable dependencies 503, and unexpected failures
@@ -650,6 +650,7 @@ forecast/market value.
 {
   "idempotency_key": "reschedule-alias-uuid",
   "target_fixture_record_id": "fixture-record-uuid",
+  "supersedes_alias_id": null,
   "reason": "Match postponed from September 20 to October 8."
 }
 ```
@@ -661,6 +662,11 @@ response is `{ "items": [...] }`; every item contains `fixture_record_id`,
 provider, competition, date, UTC `kickoff_at`, normalized home/away teams,
 `provider_fixture_id` when available, trust source, and trust status. Only a
 uniquely resolved item with trusted status may be used as the alias target.
+The first alias sends `supersedes_alias_id: null`. If an active alias already
+exists, a later postponement must identify that alias in `supersedes_alias_id`;
+a stale or different value returns `409 STALE_ALIAS_TARGET`. The new
+append-only alias becomes active and the prior alias remains in the audit trail
+as superseded. Matching and current-kickoff gating use only the active alias.
 
 ### `GET /api/v1/forecasts/{forecast_id}/result-audit`
 
@@ -670,7 +676,7 @@ is the authoritative audit view for repeated corrections and review decisions:
 ```json
 {
   "forecast_id": "uuid",
-  "effective_result_id": "result-c",
+  "effective_result_id": "result-b",
   "items": [
     {
       "entry_type": "ORIGINAL_RESULT",
@@ -678,7 +684,7 @@ is the authoritative audit view for repeated corrections and review decisions:
       "created_at": "2026-09-21T06:04:00Z",
       "home_corners": 6,
       "away_corners": 4,
-      "source": "football-data",
+      "source": {"provider": "football-data", "filename": "SP1_2627.csv", "sha256": "hash-a"},
       "candidate_id": null,
       "reason": null
     },
@@ -688,7 +694,7 @@ is the authoritative audit view for repeated corrections and review decisions:
       "created_at": "2026-09-22T10:00:00Z",
       "home_corners": 7,
       "away_corners": 4,
-      "source": "football-data",
+      "source": {"provider": "football-data", "filename": "SP1_2627.csv", "sha256": "hash-b"},
       "candidate_id": "candidate-b",
       "reason": "Confirmed provider correction."
     },
@@ -696,9 +702,9 @@ is the authoritative audit view for repeated corrections and review decisions:
       "entry_type": "KEEP_ORIGINAL",
       "entry_id": "decision-c",
       "created_at": "2026-09-23T10:00:00Z",
-      "home_corners": null,
-      "away_corners": null,
-      "source": "football-data",
+      "home_corners": 8,
+      "away_corners": 4,
+      "source": {"provider": "football-data", "filename": "SP1_2627.csv", "sha256": "hash-c"},
       "candidate_id": "candidate-c",
       "reason": "Provider notice was withdrawn."
     }
@@ -708,8 +714,10 @@ is the authoritative audit view for repeated corrections and review decisions:
 
 `entry_type` is `ORIGINAL_RESULT`, `ACCEPT_CORRECTION`, or `KEEP_ORIGINAL`.
 Accepted entries contain the result counts that became effective; keep decisions
-have null counts. Every entry preserves its source audit metadata and admin
-reason where applicable. No audit entry is updated or deleted.
+contain the rejected candidate counts and do not change `effective_result_id`.
+Every entry preserves structured provider/file/hash audit metadata and the admin
+reason where applicable. Manual entries use provider `manual` with null filename
+and hash. No audit entry is updated or deleted.
 
 ## Result matching and settlement rules
 
