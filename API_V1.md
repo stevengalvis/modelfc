@@ -457,13 +457,16 @@ Concrete `review` variants:
   "reason_code": "LEDGER_INTEGRITY_FAILURE",
   "message": "Saved pick does not match its immutable analysis market.",
   "candidate": null,
-  "source": null
+  "source": null,
+  "prior_review": null
 }
 ```
 
 `candidate` is either the complete object shown for `RESULT_CORRECTION` or
 null. `source` contains available audit metadata and may be null only when no
-external source participated in the failure.
+external source participated in the failure. `prior_review` appears only on a
+`LEDGER_INTEGRITY` review and contains the complete review object that was
+active when the integrity failure occurred, or null when there was none.
 
 `next_cursor` is null on the final page. Otherwise, pass it unchanged as the
 next request's `cursor`. Cursors are opaque and stable only for the original
@@ -610,21 +613,37 @@ been repaired. The request requires an idempotency key and admin reason. The
 backend reruns all forecast, pick, result, and amendment integrity checks. A
 failed revalidation returns `409 LEDGER_INTEGRITY_FAILURE` and leaves the review
 unchanged. A successful revalidation appends an integrity-resolution record and
+restores the preserved `prior_review` when one exists. With no prior review, it
 transitions to `SETTLED` when an effective result exists, otherwise to `OPEN` so
 normal settlement reconciliation can continue. It never changes immutable
-forecast, market, price, or result records, and it cannot resolve
-`RESULT_CORRECTION` or `DATA_AVAILABILITY` reviews.
+forecast, market, price, or result records. Restoring a prior review does not
+resolve it; its normal resolution rules still apply.
+
+### `POST /api/v1/admin/forecasts/{forecast_id}/reschedule-alias`
+
+Auditable fallback for a postponed fixture when the source has no stable fixture
+ID. The request requires an idempotency key, admin reason, and the identity of
+one current server-owned trusted fixture record. It appends a settlement alias
+from the immutable forecast fixture to that record without modifying the saved
+forecast date or kickoff. The target must have the same provider, competition,
+and normalized teams and must resolve uniquely; otherwise the request returns
+`409 AMBIGUOUS_FIXTURE`. An alias never changes the original pick cutoff or any
+forecast/market value.
 
 ## Result matching and settlement rules
 
 Automatic settlement is attempted only after the configured provider refresh
 has passed source validation. A candidate completed fixture must match exactly
-one normalized record using:
+one normalized record. Matching uses the first available stable identity:
 
-1. provider and competition;
-2. fixture date;
-3. normalized home-team identity;
-4. normalized away-team identity.
+1. a saved provider fixture ID when the provider supplies one;
+2. an auditable reschedule alias registered for this forecast;
+3. otherwise provider, competition, immutable fixture date, normalized home
+   identity, and normalized away identity.
+
+Provider IDs and aliases must still agree with provider, competition, and
+normalized team identities. Conflicts or multiple matches require review; the
+backend never guesses a reschedule.
 
 Both corner counts must be present and non-negative. Before `kickoff_at` plus
 an eight-hour V1 completion grace period, zero result matches always leave the
