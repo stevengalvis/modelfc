@@ -1,13 +1,14 @@
 from contextlib import redirect_stderr, redirect_stdout
 from datetime import date, timedelta
 from io import StringIO
+import json
 from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import patch
 
 from modelfc.corner_recency_experiment import (
-    format_recency_experiment, main, rolling_recency_rows,
+    _competition_label, format_recency_experiment, main, rolling_recency_rows,
     run_recency_experiment, score_recency_rows,
 )
 from modelfc.corners import rolling_corner_predictions
@@ -165,6 +166,25 @@ class CornerRecencyExperimentTests(unittest.TestCase):
             self.assertIn("Competition: SP1", output.getvalue())
             self.assertIn("time-decay", output.getvalue())
 
+            managed = path.with_name("SP1_2526.csv")
+            managed.write_bytes(path.read_bytes())
+            config = path.with_name("corner_data.json")
+            config.write_text(json.dumps({
+                "data_directory": ".", "leagues": ["SP1"],
+                "max_age_days": 14,
+            }), encoding="utf-8")
+            managed_output = StringIO()
+            managed_arguments = [
+                "corner_recency_experiment", "--data-config", str(config),
+                "--competition", "SP1", "--holdout-from", "2025-02-05",
+                "--min-history", "2", "--min-venue-history", "1",
+                "--windows", "3", "5", "--half-life-days", "5", "15",
+            ]
+            with patch("sys.argv", managed_arguments), \
+                    redirect_stdout(managed_output):
+                main()
+            self.assertIn(f"History: {managed}", managed_output.getvalue())
+
             error = StringIO()
             with patch("sys.argv", arguments[:-4] + [
                 "--half-life-days", "0",
@@ -179,6 +199,22 @@ class CornerRecencyExperimentTests(unittest.TestCase):
                     self.assertRaises(SystemExit):
                 main()
             self.assertIn("does not match competition", wrong.getvalue())
+
+    def test_competition_labels_cannot_contradict_non_football_sources(self):
+        self.assertEqual(
+            _competition_label("mls", None, None, None),
+            "Major League Soccer",
+        )
+        self.assertEqual(
+            _competition_label(
+                "kaggle-match-stats", None, "Italy", "Serie-b",
+            ),
+            "Italy / Serie-b",
+        )
+        with self.assertRaisesRegex(ValueError, "only valid"):
+            _competition_label("mls", "E0", None, None)
+        with self.assertRaisesRegex(ValueError, "requires --competition"):
+            _competition_label("football-data", None, None, None)
 
 
 if __name__ == "__main__":

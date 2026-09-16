@@ -9,7 +9,9 @@ import math
 from pathlib import Path
 from typing import Iterable
 
-from modelfc.corner_data import configured_history, load_data_config
+from modelfc.corner_data import (
+    configured_history, configured_history_paths, load_data_config,
+)
 from modelfc.corner_forecasts import corner_line_probabilities
 from modelfc.corner_sources import PROVIDERS, load_provider_observations
 from modelfc.corners import (
@@ -20,6 +22,13 @@ from modelfc.matches import TeamCornerObservation, Venue
 
 DEFAULT_WINDOWS = (5, 10, 20, 40)
 DEFAULT_HALF_LIVES = (30.0, 60.0, 90.0, 180.0, 365.0)
+
+_PROVIDER_COMPETITIONS = {
+    "brasileirao": "Campeonato Brasileiro",
+    "argentina": "Argentina Primera División",
+    "mls": "Major League Soccer",
+    "liga-mx": "Liga MX",
+}
 
 
 @dataclass(frozen=True)
@@ -149,6 +158,29 @@ def _ordered_observations(
             raise ValueError(f"duplicate corner observation: {key}")
         seen.add(key)
     return ordered
+
+
+def _competition_label(
+    provider: str, requested: str | None,
+    country: str | None, league: str | None,
+) -> str:
+    """Return a label that cannot contradict the selected data source."""
+    if provider == "football-data":
+        if not requested or not requested.strip():
+            raise ValueError("football-data requires --competition")
+        return requested.strip()
+    if requested is not None:
+        raise ValueError("--competition is only valid with football-data")
+    if provider == "kaggle-match-stats":
+        if not country or not league:
+            raise ValueError(
+                "kaggle-match-stats requires both --country and --league"
+            )
+        return f"{country} / {league}"
+    try:
+        return _PROVIDER_COMPETITIONS[provider]
+    except KeyError as error:
+        raise ValueError(f"unsupported provider: {provider}") from error
 
 
 def _mean_from_rates(
@@ -461,7 +493,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("csv", type=Path, nargs="*", help="provider CSV file(s)")
     parser.add_argument("--data-config", type=Path)
-    parser.add_argument("--competition", required=True)
+    parser.add_argument("--competition")
     parser.add_argument("--provider", choices=PROVIDERS, default="football-data")
     parser.add_argument("--country")
     parser.add_argument("--league")
@@ -476,21 +508,30 @@ def main() -> None:
     parser.add_argument("--smoothing-matches", type=float, default=5.0)
     args = parser.parse_args()
     try:
+        competition = _competition_label(
+            args.provider, args.competition, args.country, args.league,
+        )
         if args.data_config:
-            if args.csv or args.provider != "football-data" or args.country or args.league:
+            if (
+                args.csv or args.provider != "football-data"
+                or args.country or args.league
+            ):
                 raise ValueError(
                     "--data-config uses only --competition and football-data"
                 )
+            config = load_data_config(args.data_config)
+            source_paths = configured_history_paths(config, competition)
             observations = configured_history(
-                load_data_config(args.data_config), args.competition,
+                config, competition,
             )
         else:
+            source_paths = args.csv
             observations = load_provider_observations(
                 args.provider, args.csv, args.country, args.league,
-                competition=args.competition,
+                competition=(competition if args.provider == "football-data" else None),
             )
         experiment = run_recency_experiment(
-            observations, competition=args.competition,
+            observations, competition=competition,
             holdout_from=args.holdout_from, windows=args.windows,
             half_life_days=args.half_life_days, lines=args.lines,
             min_history=args.min_history,
@@ -499,7 +540,7 @@ def main() -> None:
         )
     except ValueError as error:
         parser.error(str(error))
-    print("History: " + ", ".join(str(path) for path in args.csv))
+    print("History: " + ", ".join(str(path) for path in source_paths))
     print(format_recency_experiment(experiment))
 
 
