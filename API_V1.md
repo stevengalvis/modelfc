@@ -269,11 +269,16 @@ The supplied `analysis_id` must identify an analysis whose saved
 `forecast_id` equals the path `forecast_id`. A mismatch rejects the entire
 batch with `409 ANALYSIS_FORECAST_MISMATCH` and creates no picks.
 
-The server-resolved `kickoff_at` is stored immutably in UTC and is the
-server-enforced selection cutoff. The entire batch is rejected with
-`409 PICKING_CLOSED` when server time is at or after kickoff, or when a fixture
-result already exists. V1 never accepts a retroactive pick. A client-supplied
-timestamp is never used to extend the selection window.
+The server-resolved `kickoff_at` is stored immutably in UTC for audit. Before
+creating picks, the backend re-resolves the latest trusted fixture record and
+uses the earlier of the saved and current trusted kickoff as the selection
+cutoff. The entire batch is rejected with `409 PICKING_CLOSED` when server time
+is at or after that cutoff, or when a fixture result already exists. If the
+trusted fixture can no longer be resolved unambiguously, selection is rejected
+with `409 UNTRUSTED_KICKOFF`. An earlier schedule change therefore closes picks
+at the new time; a postponement never extends an old analysis and requires a
+new analysis. V1 never accepts a retroactive pick. A client-supplied timestamp
+is never used to extend the selection window.
 
 Idempotency lookup occurs before cutoff and result-state validation. Therefore,
 an identical replay of a selection that originally succeeded before kickoff
@@ -319,6 +324,13 @@ The same market cannot be logged twice for one forecast. An identical
 idempotent replay returns the original response unchanged, including its
 `created` entries. A genuinely different request with a new idempotency key
 that attempts to log an existing market returns `409 DUPLICATE_PICK`.
+
+Duplicate identity is independent of `client_market_id`, analysis ID, and
+price. Within one forecast, the canonical key is
+`(market_type, team_side, side, normalized_line)`, where `team_side` is null
+for match totals and the line is stored as its validated numeric value. A later
+analysis cannot log that same wager again at different odds. The opposite side
+or a different line is a distinct market and may be logged explicitly.
 
 ## History and performance
 
@@ -493,7 +505,8 @@ the exact `candidate_id` returned by the review item, plus one of:
 
 - `ACCEPT_CORRECTION`: append an immutable result-amendment record containing
   the corrected counts and a reference to the original result;
-- `KEEP_ORIGINAL`: append a review decision that retains the original counts.
+- `KEEP_ORIGINAL`: append a review decision that retains the effective result
+  that was active immediately before this pending candidate.
 
 Neither choice edits or deletes the original result. The accepted effective
 result determines pick outcomes and aggregate performance, and the API returns
@@ -506,9 +519,10 @@ different correction.
 provider, competition, fixture date, normalized home and away identities, and
 the candidate home and away corner counts. The whole-file source hash is kept
 for audit but is not part of candidate identity because routine additions to a
-season CSV change that hash. `KEEP_ORIGINAL` freezes the rejected candidate ID.
-Later runs treat that exact correction as reviewed, while different candidate
-counts reopen `NEEDS_REVIEW`.
+season CSV change that hash. `KEEP_ORIGINAL` never reverts an earlier accepted
+amendment: it freezes the rejected candidate ID and retains the immediately
+preceding effective result. Later runs treat that exact correction as reviewed,
+while different candidate counts reopen `NEEDS_REVIEW`.
 
 `ACCEPT_CORRECTION` makes the appended amendment the effective result. Later
 reconciliation compares provider counts with that effective result, not only
