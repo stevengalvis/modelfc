@@ -144,3 +144,18 @@ class TeamMatchStatsTests(unittest.TestCase):
         path = self.write()
         self.assertEqual(load_matches(path)[0], match)
         self.assertEqual(len(load_corner_observations(path)), 2)
+
+    def test_xg_source_syntax_and_range(self):
+        for field in ('HxG', 'AxG'):
+            for value in ('1_0', '-1e-9999', '1e2', '+1', '-0', 'NaN', 'inf',
+                          '１.５', '9'*400, '0.'+'0'*400+'1'):
+                with self.subTest(field=field, value=value):
+                    self.row[field] = value
+                    with self.assertRaisesRegex(FootballDataError, 'row 2'):
+                        load_team_match_stats(self.write())
+            self.row[field] = '0.0'
+        for value in ('0', '0.000', '1', '01.50', ' 2.75 '):
+            with self.subTest(value=value):
+                self.row['HxG'] = value
+                home = load_team_match_stats(self.write())[0]
+                self.assertEqual(home.xg_for, float(value))

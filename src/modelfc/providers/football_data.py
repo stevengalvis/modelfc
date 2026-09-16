@@ -2,6 +2,9 @@
 
 import csv
 from datetime import datetime
+from decimal import Decimal
+import math
+import re
 from pathlib import Path
 from typing import Iterable, TextIO
 
@@ -263,9 +266,20 @@ def _normalize_team_stats(
         for key in (home_key, away_key):
             raw = (row.get(key) or "").strip()
             value = None if not raw else (
-                float(raw) if stat == "xg" else parse_whole_number(raw, key)
+                _parse_xg(raw, key) if stat == "xg" else parse_whole_number(raw, key)
             )
             values.append(value)
         home[f"{stat}_for"], home[f"{stat}_against"] = values
         away[f"{stat}_against"], away[f"{stat}_for"] = values
     return TeamMatchStats(**common, **home), TeamMatchStats(**common, **away)
+
+
+def _parse_xg(raw: str, field: str) -> float:
+    """Accept unsigned ASCII decimal counts without silent range loss."""
+    if re.fullmatch(r"[0-9]+(?:\.[0-9]+)?", raw) is None:
+        raise ValueError(f"{field} must be a non-negative decimal number")
+    exact = Decimal(raw)
+    value = float(exact)
+    if not math.isfinite(value) or (exact != 0 and value == 0):
+        raise ValueError(f"{field} is outside the supported numeric range")
+    return value

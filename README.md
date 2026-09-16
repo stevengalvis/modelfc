@@ -585,7 +585,9 @@ seasons for calendar-year competitions or exceptional rescheduled matches.
 Optional columns and blank optional cells remain `None` independently, including
 one-sided missing values. Missingness does not discard a completed match or
 invent zeros. Populated counts must be non-negative whole numbers. xG must be
-finite and non-negative. Shots on target cannot exceed total shots when both
+finite and non-negative, using unsigned ASCII decimal notation (no signs,
+exponents or underscores). Overflow and nonzero values that underflow to zero
+are rejected. Shots on target cannot exceed total shots when both
 are known. Contradictions, malformed rows and duplicate fixtures raise
 `FootballDataError` with row context. No values are corrected silently. A known
 Championship source row (Burnley vs Swansea, November 10, 2024) has more shots
