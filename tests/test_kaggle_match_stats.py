@@ -68,7 +68,7 @@ class KaggleMatchStatsProviderTests(unittest.TestCase):
 
     def test_whole_decimal_corners_are_accepted(self):
         observations = self.load([self.row(
-            Corner_Kicks_Home="4.0", Corner_Kicks_Host="0.0",
+            Corner_Kicks_Home=" 004.00 ", Corner_Kicks_Host="0.0",
         )])
         self.assertEqual([item.corners_for for item in observations], [4, 0])
 
@@ -94,11 +94,15 @@ class KaggleMatchStatsProviderTests(unittest.TestCase):
             self.load([self.row(Corner_Kicks_Host="")])
 
     def test_invalid_corner_serializations_are_rejected(self):
-        for value in ("4.5", "-1", "4e0", "NaN", "inf", "broken"):
-            with self.subTest(value=value), self.assertRaisesRegex(
-                KaggleMatchStatsProviderError, "non-negative whole number",
-            ):
-                self.load([self.row(Corner_Kicks_Home=value)])
+        for value in ("4.5", "-1", "4e0", "NaN", "inf", "broken", "+4", "1_0", "４"):
+            with self.subTest(value=value):
+                with self.assertRaises(KaggleMatchStatsProviderError) as context:
+                    self.load([self.row(Corner_Kicks_Home=value)])
+                self.assertEqual(
+                    str(context.exception),
+                    "invalid Kaggle match-stat row 2: Corner_Kicks_Home "
+                    f"must be a non-negative whole number: {value!r}",
+                )
 
     def test_blank_team_is_rejected(self):
         with self.assertRaisesRegex(KaggleMatchStatsProviderError, "home_team is required"):

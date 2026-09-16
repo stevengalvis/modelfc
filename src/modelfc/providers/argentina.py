@@ -7,6 +7,7 @@ import re
 from typing import TextIO
 
 from modelfc.matches import TeamCornerObservation, Venue
+from modelfc.providers._csv_values import required_text
 
 
 _REQUIRED_FIELDS = (
@@ -75,7 +76,7 @@ def _normalize_row(
     if game_datetime_missing:
         return ()
 
-    game_datetime = _required(row, "game_datetime")
+    game_datetime = required_text(row, "game_datetime")
     try:
         match_date = datetime.fromisoformat(game_datetime).date()
     except ValueError as error:
@@ -91,8 +92,8 @@ def _normalize_row(
             f"{missing_field} is blank while the other corner value is present"
         )
 
-    home_team = _required(row, "team_home")
-    away_team = _required(row, "team_away")
+    home_team = required_text(row, "team_home")
+    away_team = required_text(row, "team_away")
 
     home_corners = _parse_corners(home_value, "corner_kicks_home")
     away_corners = _parse_corners(away_value, "corner_kicks_away")
@@ -106,13 +107,6 @@ def _normalize_row(
             away_corners, home_corners,
         ),
     )
-
-
-def _required(row: dict[str, str | None], field: str) -> str:
-    value = row[field]
-    if value is None or not value.strip():
-        raise ValueError(f"{field} is required")
-    return value.strip()
 
 
 def _parse_corners(value: str, field: str) -> int:

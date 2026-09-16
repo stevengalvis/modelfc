@@ -54,6 +54,19 @@ class FootballDataAdapterTests(unittest.TestCase):
 
         self.assertIn("Date must use DD/MM/YYYY", str(error))
 
+    def test_short_rows_and_blank_fields_keep_required_value_errors(self) -> None:
+        for row, field in (
+            ("11/08/2023,A,B,1,0", "FTR"),
+            ("11/08/2023, \t ,B,1,0,H", "HomeTeam"),
+        ):
+            with self.subTest(row=row):
+                error = self._load_csv(
+                    "Date,HomeTeam,AwayTeam,FTHG,FTAG,FTR\n" + row + "\n"
+                )
+                self.assertEqual(
+                    str(error), f"invalid Football-Data row 2: {field} is required"
+                )
+
     def test_rejects_result_inconsistent_with_score(self) -> None:
         error = self._load_csv(
             "Date,HomeTeam,AwayTeam,FTHG,FTAG,FTR\n11/08/2023,A,B,1,0,A\n"

@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Iterable, TextIO
 
 from modelfc.matches import Match, MatchResult, TeamCornerObservation, Venue
+from modelfc.providers._csv_values import required_text
 
 SEASON = "2023-24"
 SOURCE_URL = "https://www.football-data.co.uk/mmz4281/2324/E0.csv"
@@ -83,12 +84,7 @@ def _read_matches(csv_file: TextIO) -> list[Match]:
 
 
 def _normalize_row(row: dict[str, str | None]) -> Match:
-    values: dict[str, str] = {}
-    for field in _REQUIRED_FIELDS:
-        value = row[field]
-        if value is None or not value.strip():
-            raise ValueError(f"{field} is required")
-        values[field] = value.strip()
+    values = {field: required_text(row, field) for field in _REQUIRED_FIELDS}
 
     try:
         match_date = datetime.strptime(values["Date"], "%d/%m/%Y").date()
@@ -146,12 +142,7 @@ def _normalize_corner_row(
     if home_corners_missing and away_corners_missing:
         return ()
 
-    values: dict[str, str] = {}
-    for field in _CORNER_FIELDS:
-        value = row[field]
-        if value is None or not value.strip():
-            raise ValueError(f"{field} is required")
-        values[field] = value.strip()
+    values = {field: required_text(row, field) for field in _CORNER_FIELDS}
     try:
         match_date = datetime.strptime(values["Date"], "%d/%m/%Y").date()
     except ValueError as error:

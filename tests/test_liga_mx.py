@@ -50,11 +50,36 @@ class LigaMXTests(unittest.TestCase):
                          row(home_corners="0", away_corners="0")])
         self.assertEqual([x.corners_for for x in obs], [0, 0])
 
-    def test_partial_or_invalid_counts_report_source_row(self):
-        for changes in [dict(home_corners=""), dict(away_corners=""),
-                        *[dict(home_corners=v) for v in ["-1", "2.5", "NaN", "inf", "1e2"]]]:
+    def test_partial_corner_pairs_report_source_row(self):
+        for changes in [dict(home_corners=""), dict(away_corners="")]:
             with self.subTest(changes=changes), self.assertRaisesRegex(LigaMXProviderError, "row 2"):
                 self.load([row(**changes)])
+
+    def test_count_formats_and_field_errors(self):
+        for field in ("home_corners", "home_goals"):
+            for value in ("-1", "1.5", "1e0", "+1", "1_0", "１", "NaN", "inf"):
+                with self.subTest(field=field, value=value):
+                    with self.assertRaises(LigaMXProviderError) as context:
+                        self.load([row(**{field: value})])
+                    self.assertEqual(
+                        str(context.exception),
+                        f"invalid Liga MX row 2: {field} must be a "
+                        f"non-negative whole number: {value!r}",
+                    )
+        home, away = self.load([row(home_corners=" 005.00 ", home_goals=" 001.00 ")])
+        self.assertEqual((home.corners_for, away.corners_against), (5, 5))
+
+    def test_required_fields_keep_missing_value_errors(self):
+        for field in ("match_id", "date", "home_team", "away_team",
+                      "home_goals", "away_goals", "result"):
+            for value in (None, "", " \t "):
+                with self.subTest(field=field, value=value):
+                    with self.assertRaises(LigaMXProviderError) as context:
+                        self.load([row(**{field: value})])
+                    self.assertEqual(
+                        str(context.exception),
+                        f"invalid Liga MX row 2: {field} is required",
+                    )
 
     def test_invalid_identity_date_and_completion_are_rejected(self):
         for changes in [dict(home_team=""), dict(away_team="Puebla"),
