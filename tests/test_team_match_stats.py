@@ -159,3 +159,18 @@ class TeamMatchStatsTests(unittest.TestCase):
                 self.row['HxG'] = value
                 home = load_team_match_stats(self.write())[0]
                 self.assertEqual(home.xg_for, float(value))
+
+    def test_goal_source_syntax_before_legacy_normalization(self):
+        for field in ('FTHG', 'FTAG'):
+            for value in ('1_0', '+2', '２', '-0', '2e0', '2.5', 'NaN', 'inf'):
+                with self.subTest(field=field, value=value):
+                    self.row.update(FTHG='0', FTAG='0', FTR='H' if field == 'FTHG' else 'A')
+                    self.row[field] = value
+                    with self.assertRaisesRegex(FootballDataError, field):
+                        load_team_match_stats(self.write())
+        self.row.update(FTHG=' 2.0 ', FTAG='0.00', FTR='H')
+        home, away = load_team_match_stats(self.write())
+        self.assertEqual((home.goals_for, away.goals_for), (2, 0))
+        # Stricter new ingestion does not modify the legacy result parser.
+        self.row.update(FTHG='1_0', FTAG='0', FTR='H')
+        self.assertEqual(load_matches(self.write())[0].home_goals, 10)

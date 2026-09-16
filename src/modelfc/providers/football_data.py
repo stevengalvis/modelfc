@@ -244,7 +244,12 @@ def load_team_match_stats_history(
 def _normalize_team_stats(
     row: dict[str, str | None], competition: str | None,
 ) -> tuple["TeamMatchStats", "TeamMatchStats"]:
-    match = _normalize_row(row)
+    # Validate source score syntax before the legacy int() parser can accept
+    # underscores, signs or Unicode digits. Preserve the old loader contract.
+    normalized = dict(row)
+    for key in ("FTHG", "FTAG"):
+        normalized[key] = str(parse_whole_number(required_text(row, key), key))
+    match = _normalize_row(normalized)
     division = (row.get("Div") or "").strip()
     if division and competition and division != competition:
         raise ValueError(f"Div {division!r} disagrees with competition {competition!r}")
