@@ -667,3 +667,45 @@ that a bookmaker offered those lines or any particular price. Choose lines and
 scoring periods before comparing variants, and reserve a later period for
 final evaluation after selecting model changes. The command reads local data;
 it does not download history, modify CSVs, or save a forecast ledger.
+
+### Shot-informed corner experiment
+
+`corner_shot_experiment.py` tests whether historical team shots and shots on
+target improve the existing venue/opponent corner mean. This is an offline
+experiment, not another production model option. It consumes the richer
+`TeamMatchStats` records and compares three nested variants on exactly the same
+eligible team observations:
+
+1. current corner-only venue/opponent mean;
+2. corner mean multiplied by a venue/opponent shots-strength ratio;
+3. corner mean multiplied by both shots and shots-on-target strength ratios.
+
+The multipliers use exponents selected from a fixed `-0.50` through `0.50`
+grid in `0.05` steps. Each competition selects weights by minimizing Negative
+Binomial count NLL on development observations strictly before the holdout
+date. The selected weights are then frozen. All variants are scored on the
+same later holdout observations using count MAE, RMSE and NLL plus binary Brier
+and log loss across the requested half-lines. Earlier holdout results may enter
+the history for later holdout fixtures, as they would in a rolling live model,
+but no holdout result changes the frozen feature weights.
+
+```bash
+cd ~/dev/modelfc
+PYTHONPATH=src python3 -m modelfc.corner_shot_experiment \
+  --history SP1_2223.csv SP1_2324.csv SP1_2425.csv SP1_2526.csv SP1_2627.csv \
+  --holdout-from 2025-07-01
+```
+
+The default gates require 100 prior team observations and five prior matches
+for both teams at their fixture venues. Same-date fixtures use an identical
+prior snapshot and enter history only after every prediction for that date.
+Incomplete fixtures are excluded before history construction and reported.
+Malformed or contradictory source values still fail in the provider adapter;
+the experiment never repairs values silently.
+
+The first six-competition run found no consistent holdout improvement, so the
+shot variants are not available in `corner_predict`. Full results and source
+limitations are recorded in `EXPERIMENTS.md`. This period had already been
+inspected in the probability diagnostic, and the feature grid was finalized
+during this experiment. “Holdout” therefore means that weights were frozen
+before those rows were scored; it is not claimed as an untouched final test.
