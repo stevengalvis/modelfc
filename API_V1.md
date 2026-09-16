@@ -563,6 +563,15 @@ Manual fallback only. Requires an idempotency key, non-negative integer home
 and away corner counts, and an admin-supplied reason. It uses the same immutable
 result and settlement path as automation.
 
+```json
+{
+  "idempotency_key": "manual-result-uuid",
+  "home_corners": 6,
+  "away_corners": 4,
+  "reason": "Verified against the official match report."
+}
+```
+
 The first valid manual result is appended and settles the picks. Replaying the
 same counts is idempotent. Submitting different counts against an existing
 effective result does not overwrite it: the backend creates a
@@ -655,6 +664,19 @@ forecast/market value.
 }
 ```
 
+Success returns `201` for both creation and an identical idempotent replay:
+
+```json
+{
+  "alias_id": "alias-uuid",
+  "forecast_id": "uuid",
+  "target_fixture_record_id": "fixture-record-uuid",
+  "supersedes_alias_id": null,
+  "status": "ACTIVE",
+  "created_at": "2026-09-25T12:00:00Z"
+}
+```
+
 Administrators obtain the ID from
 `GET /api/v1/admin/fixture-records?competition=SP1&date_from=2026-10-08&date_to=2026-10-08`.
 Optional `home_team` and `away_team` filters use normalized exact matching. The
@@ -667,6 +689,10 @@ exists, a later postponement must identify that alias in `supersedes_alias_id`;
 a stale or different value returns `409 STALE_ALIAS_TARGET`. The new
 append-only alias becomes active and the prior alias remains in the audit trail
 as superseded. Matching and current-kickoff gating use only the active alias.
+If the forecast is in `DATA_AVAILABILITY` review and the active alias moves the
+current trusted kickoff plus grace period into the future, successful alias
+creation immediately and idempotently restores the forecast and its picks to
+`OPEN`. No result row is required for this pre-completion transition.
 
 ### `GET /api/v1/forecasts/{forecast_id}/result-audit`
 
