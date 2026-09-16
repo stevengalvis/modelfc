@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import TextIO
 
 from modelfc.matches import TeamCornerObservation, Venue
+from modelfc.providers._csv_values import required_text
 
 
 _MATCH_FIELDS = ("ID", "data", "mandante", "visitante")
@@ -121,22 +122,15 @@ def _reader(csv_file: TextIO, required: tuple[str, ...], label: str) -> csv.Dict
     return reader
 
 
-def _required(row: dict[str, str | None], field: str) -> str:
-    value = row[field]
-    if value is None or not value.strip():
-        raise ValueError(f"{field} is required")
-    return value.strip()
-
-
 def _read_matches(csv_file: TextIO) -> dict[str, _MatchMetadata]:
     reader = _reader(csv_file, _MATCH_FIELDS, "matches")
     matches: dict[str, _MatchMetadata] = {}
     for row_number, row in enumerate(reader, start=2):
         try:
-            match_id = _required(row, "ID")
-            date_value = _required(row, "data")
-            home_team = _required(row, "mandante")
-            away_team = _required(row, "visitante")
+            match_id = required_text(row, "ID")
+            date_value = required_text(row, "data")
+            home_team = required_text(row, "mandante")
+            away_team = required_text(row, "visitante")
             if home_team == away_team:
                 raise ValueError("mandante and visitante must be different")
             try:
@@ -165,8 +159,8 @@ def _read_statistics(
     statistics: dict[str, dict[str, _TeamStatistics]] = {}
     for row_number, row in enumerate(reader, start=2):
         try:
-            match_id = _required(row, "partida_id")
-            club = _required(row, "clube")
+            match_id = required_text(row, "partida_id")
+            club = required_text(row, "clube")
             if match_id not in matches:
                 raise ValueError(f"statistics reference unknown match ID {match_id!r}")
             match = matches[match_id]

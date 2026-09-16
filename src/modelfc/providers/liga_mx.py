@@ -6,6 +6,7 @@ from pathlib import Path
 import re
 
 from modelfc.matches import TeamCornerObservation, Venue
+from modelfc.providers._csv_values import parse_whole_number, required_text
 
 
 _FIELDS = (
@@ -14,7 +15,6 @@ _FIELDS = (
 )
 _LEAGUES = {"Liga MX - Apertura", "Liga MX - Clausura"}
 _ROUNDS = {str(n) for n in range(1, 18)}
-_WHOLE = re.compile(r"[0-9]+(?:\.0+)?")
 _MONTHS = dict(zip(
     "January February March April May June July August September October November December".split(),
     range(1, 13),
@@ -25,18 +25,8 @@ class LigaMXProviderError(ValueError):
     """Raised when a Liga MX source row cannot be normalized."""
 
 
-def _required(row: dict, field: str) -> str:
-    value = (row[field] or "").strip()
-    if not value:
-        raise ValueError(f"{field} is required")
-    return value
-
-
-def _count(row: dict, field: str) -> int:
-    value = _required(row, field)
-    if _WHOLE.fullmatch(value) is None:
-        raise ValueError(f"{field} must be a non-negative whole number: {value!r}")
-    return int(value.split(".", 1)[0])
+def _count(row: dict[str, str | None], field: str) -> int:
+    return parse_whole_number(required_text(row, field), field)
 
 
 def _date(value: str) -> date:
@@ -73,13 +63,13 @@ def load_liga_mx_corner_observations(csv_path: str | Path) -> list[TeamCornerObs
                     if not hc or not ac:
                         raise ValueError("one corner value is blank while the other is present")
                     home_corners, away_corners = _count(row, "home_corners"), _count(row, "away_corners")
-                    home, away = _required(row, "home_team"), _required(row, "away_team")
-                    played = _date(_required(row, "date"))
+                    home, away = required_text(row, "home_team"), required_text(row, "away_team")
+                    played = _date(required_text(row, "date"))
                     hg, ag = _count(row, "home_goals"), _count(row, "away_goals")
                     expected = "H" if hg > ag else "A" if hg < ag else "D"
-                    if _required(row, "result") != expected:
+                    if required_text(row, "result") != expected:
                         raise ValueError("result is inconsistent with the score")
-                    match_id = _required(row, "match_id")
+                    match_id = required_text(row, "match_id")
                     fixture = (played, home, away)
                     if match_id in ids or fixture in fixtures:
                         raise ValueError("duplicate match id or dated fixture")

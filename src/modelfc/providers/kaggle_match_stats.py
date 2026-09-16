@@ -7,6 +7,7 @@ import re
 from typing import TextIO
 
 from modelfc.matches import TeamCornerObservation, Venue
+from modelfc.providers._csv_values import parse_whole_number, required_text
 
 
 _REQUIRED_FIELDS = (
@@ -31,7 +32,6 @@ _ACTIVITY_FIELDS = (
     "Fouls_Home",
     "Fouls_Host",
 )
-_WHOLE_NUMBER = re.compile(r"[0-9]+(?:\.0+)?")
 _SEASON = re.compile(r"([0-9]{4})/([0-9]{4})")
 _SEASON_DAY = re.compile(r"([0-9]{1,2})\.([0-9]{1,2})")
 _TEAM_FOOTNOTE = re.compile(r"\r?\n[0-9]+$")
@@ -113,8 +113,8 @@ def _normalize_row(
             f"{missing_field} is blank while the other corner value is present"
         )
 
-    home_corners = _parse_corners(home_value, "Corner_Kicks_Home")
-    away_corners = _parse_corners(away_value, "Corner_Kicks_Host")
+    home_corners = parse_whole_number(home_value, "Corner_Kicks_Home")
+    away_corners = parse_whole_number(away_value, "Corner_Kicks_Host")
     if (
         home_corners == 0
         and away_corners == 0
@@ -125,7 +125,7 @@ def _normalize_row(
 
     home_team = _normalize_team(row["home_team"], "home_team")
     away_team = _normalize_team(row["away_team"], "away_team")
-    match_date = _parse_date(_required(row, "Date_day"), row["season_year"])
+    match_date = _parse_date(required_text(row, "Date_day"), row["season_year"])
     return (
         TeamCornerObservation(
             match_date, home_team, away_team, Venue.HOME,
@@ -140,14 +140,6 @@ def _normalize_row(
 
 def _is_blank(value: str | None) -> bool:
     return value is None or not value.strip()
-
-
-def _required(row: dict[str, str | None], field: str) -> str:
-    value = row[field]
-    if _is_blank(value):
-        raise ValueError(f"{field} is required")
-    assert value is not None
-    return value.strip()
 
 
 def _normalize_team(value: str | None, field: str) -> str:
@@ -196,13 +188,3 @@ def _parse_date(value: str, season_year: str | None) -> date:
         "Date_day must be a valid DD.MM, DD/MM/YYYY, or YYYY-MM-DD date: "
         f"{value!r}"
     )
-
-
-def _parse_corners(value: str | None, field: str) -> int:
-    assert value is not None
-    stripped = value.strip()
-    if _WHOLE_NUMBER.fullmatch(stripped) is None:
-        raise ValueError(
-            f"{field} must be a non-negative whole number: {stripped!r}"
-        )
-    return int(stripped.split(".", 1)[0])

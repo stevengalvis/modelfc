@@ -7,6 +7,7 @@ import re
 from typing import TextIO
 
 from modelfc.matches import TeamCornerObservation, Venue
+from modelfc.providers._csv_values import parse_whole_number, required_text
 
 
 _REQUIRED_FIELDS = (
@@ -21,7 +22,6 @@ _REQUIRED_FIELDS = (
     "home_wonCorners",
     "away_wonCorners",
 )
-_WHOLE_NUMBER = re.compile(r"[0-9]+(?:\.0+)?")
 _YEAR = re.compile(r"[0-9]{4}")
 _NAMED_DATE = re.compile(r"([A-Za-z]+), ([A-Za-z]+) ([0-9]{1,2})")
 _REGULAR_SEASON = re.compile(r"Regular Season(?: ([0-9]{4}))?")
@@ -120,14 +120,14 @@ def _normalize_row(
         missing = "home_wonCorners" if home_missing else "away_wonCorners"
         raise ValueError(f"{missing} is blank while the other corner value is present")
 
-    home_corners = _parse_whole_number(home_value, "home_wonCorners")
-    away_corners = _parse_whole_number(away_value, "away_wonCorners")
-    home_team = _required(row, "home")
-    away_team = _required(row, "away")
+    home_corners = parse_whole_number(home_value, "home_wonCorners")
+    away_corners = parse_whole_number(away_value, "away_wonCorners")
+    home_team = required_text(row, "home")
+    away_team = required_text(row, "away")
     if home_team == away_team:
         raise ValueError("home and away teams must be distinct")
-    match_date = _parse_named_date(_required(row, "date"), year)
-    match_id = _normalize_id(row["id"])
+    match_date = _parse_named_date(required_text(row, "date"), year)
+    match_id = str(parse_whole_number(row["id"], "id"))
     if match_id in accepted_ids:
         raise ValueError(f"duplicate normalized id: {match_id!r}")
     accepted_ids.add(match_id)
@@ -146,29 +146,6 @@ def _normalize_row(
 
 def _trim(value: str | None) -> str:
     return "" if value is None else value.strip()
-
-
-def _required(row: dict[str, str | None], field: str) -> str:
-    value = _trim(row[field])
-    if not value:
-        raise ValueError(f"{field} is required")
-    return value
-
-
-def _parse_whole_number(value: str | None, field: str) -> int:
-    stripped = _trim(value)
-    if _WHOLE_NUMBER.fullmatch(stripped) is None:
-        raise ValueError(
-            f"{field} must be a non-negative whole number: {stripped!r}"
-        )
-    return int(stripped.split(".", 1)[0])
-
-
-def _normalize_id(value: str | None) -> str:
-    stripped = _trim(value)
-    if _WHOLE_NUMBER.fullmatch(stripped) is None:
-        raise ValueError(f"id must be a non-negative whole number: {stripped!r}")
-    return str(int(stripped.split(".", 1)[0]))
 
 
 def _parse_year(value: str | None) -> int:

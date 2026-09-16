@@ -35,7 +35,7 @@ class MLSProviderTests(unittest.TestCase):
 
     def test_valid_match_normalizes_home_then_away_and_whole_decimals(self) -> None:
         observations = self._load(
-            HEADER + row(home="Seattle", away="Portland", home_corners="4.0",
+            HEADER + row(home="Seattle", away="Portland", home_corners=" 004.00 ",
                          away_corners="0.00")
         )
         self.assertEqual(observations, [
@@ -64,11 +64,15 @@ class MLSProviderTests(unittest.TestCase):
                 self._load(HEADER + row(home_corners=home, away_corners=away))
 
     def test_malformed_corners_are_rejected_without_float_parsing(self) -> None:
-        for value in ("-1", "1.5", "1e2", "NaN", "inf", "four"):
-            with self.subTest(value=value), self.assertRaisesRegex(
-                MLSProviderError, "non-negative whole number",
-            ):
-                self._load(HEADER + row(home_corners=value))
+        for value in ("-1", "1.5", "1e2", "NaN", "inf", "four", "+4", "1_0", "４"):
+            with self.subTest(value=value):
+                with self.assertRaises(MLSProviderError) as context:
+                    self._load(HEADER + row(home_corners=value))
+                self.assertEqual(
+                    str(context.exception),
+                    "invalid MLS row 2: home_wonCorners must be a "
+                    f"non-negative whole number: {value!r}",
+                )
 
     def test_only_exact_regular_season_full_time_scope_is_included(self) -> None:
         excluded = (
