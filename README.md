@@ -347,6 +347,31 @@ The venue-and-opponent approach is also still a simple baseline: it does not
 include recency weighting, lineup or tactical context, or current-season
 external data.
 
+### Corner evaluation performance
+
+Rolling venue/opponent estimates maintain integer totals for each venue and
+team/venue instead of repeatedly scanning historical observations. One-off
+and rolling predictions share the same expected-corners formula. Totals are
+updated only after the entire target date has been predicted. Negative
+Binomial dispersion retains the original variance arithmetic and is computed
+once per eligible date; it still scans that date's prior history.
+
+On a local 2026-09-16 comparison using 4,578 Championship observations from
+2022/23 through the available 2026/27 matches, all 4,466 predictions for each
+of the six models matched the pre-refactor implementation exactly, including
+expected values, dispersion, and complete display distributions. Median
+in-process runtimes across five alternating before/after runs were:
+
+| Model | Before | After |
+| --- | ---: | ---: |
+| Venue-opponent | 1.023 s | 0.009 s |
+| Venue-opponent Poisson | 1.064 s | 0.038 s |
+| Venue-opponent Negative Binomial | 2.353 s | 0.302 s |
+
+These timings exclude file loading, depend on the machine and date grouping,
+and compare against commit `575a7eb`. They demonstrate faster evaluation,
+not improved predictive accuracy. No model settings or provider rules changed.
+
 ### Liga MX corner history
 
 The `liga-mx` provider reads the Soccerway-format `scraped_dataset.csv` published
