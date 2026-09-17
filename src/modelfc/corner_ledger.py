@@ -7,7 +7,11 @@ from pathlib import Path
 from typing import Any, Iterable
 import uuid
 
-from modelfc.corner_forecasts import CornerFixturePrediction
+from modelfc.corner_forecasts import CornerFixturePrediction, CornerLineProbability
+from modelfc.corner_markets import (
+    american_odds_terms as _domain_american_odds_terms,
+    price_corner_market,
+)
 from modelfc.ledger_storage import (
     LedgerError, ensure_directory, git_commit_sha, ledger_lock, read_json_record,
     source_records, utc_timestamp, write_new_record,
@@ -279,11 +283,11 @@ def save_corner_forecast(
 
 
 def american_odds_terms(odds: int) -> tuple[float, float]:
-    if (isinstance(odds, bool) or not isinstance(odds, int)
-            or (-100 < odds < 100)):
-        raise LedgerError("American odds must be an integer at least +100 or at most -100")
-    profit = odds / 100 if odds > 0 else 100 / abs(odds)
-    return profit, 1 / (profit + 1)
+    """Backward-compatible ledger wrapper around shared market math."""
+    try:
+        return _domain_american_odds_terms(odds)
+    except ValueError as error:
+        raise LedgerError(str(error)) from error
 
 
 def _line_for_pick(forecast: dict[str, Any], team_side: str,
@@ -297,24 +301,27 @@ def _line_for_pick(forecast: dict[str, Any], team_side: str,
 
 
 def _pick_values(line_record: dict[str, Any], side: str, odds: int) -> dict[str, float]:
-    if side not in ("over", "under"):
-        raise LedgerError("side must be over or under")
-    profit_if_win, implied = american_odds_terms(odds)
-    win = line_record[side]
-    loss = line_record["under" if side == "over" else "over"]
-    push = line_record["equal"]
-    if win + loss == 0:
-        raise LedgerError("cannot price a market with 100% model push probability")
-    decisive = win / (win + loss)
+    try:
+        value = price_corner_market(CornerLineProbability(
+            float(line_record["line"]), line_record["over"],
+            line_record["under"], line_record["equal"],
+        ), side, odds)
+    except ValueError as error:
+        message = str(error)
+        if message == "side must be OVER or UNDER":
+            message = "side must be over or under"
+        elif message == "market has no decisive outcomes":
+            message = "cannot price a market with 100% model push probability"
+        raise LedgerError(message) from error
     return {
-        "profit_if_win": profit_if_win,
-        "implied_probability": implied,
-        "win_probability": win,
-        "loss_probability": loss,
-        "push_probability": push,
-        "decisive_win_probability": decisive,
-        "decisive_probability_edge": decisive - implied,
-        "expected_profit": win * profit_if_win - loss,
+        "profit_if_win": value.profit_if_win,
+        "implied_probability": value.implied_probability,
+        "win_probability": value.model_probability,
+        "loss_probability": value.loss_probability,
+        "push_probability": value.push_probability,
+        "decisive_win_probability": value.decisive_model_probability,
+        "decisive_probability_edge": value.probability_edge,
+        "expected_profit": value.expected_profit,
     }
 
 
