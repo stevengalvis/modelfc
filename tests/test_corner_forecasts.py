@@ -113,6 +113,16 @@ class CornerLineTests(unittest.TestCase):
         self.assertEqual(half.equal, 0)
         self.assertAlmostEqual(half.under, expected_under + expected_equal)
 
+    def test_match_total_sums_tiny_upper_tail_directly(self):
+        # The sum of two geometric variables has
+        # P(S >= n) = q**n * (p*(n+1) + q).
+        line = 150.5
+        first_over = 151
+        expected = 0.75**first_over * (0.25 * (first_over + 1) + 0.75)
+        actual = match_total_line_probabilities(3, 3, line, 1).over
+        self.assertGreater(actual, 0)
+        self.assertAlmostEqual(actual / expected, 1, places=12)
+
     def test_match_total_is_not_the_sum_of_team_over_probabilities(self):
         home = corner_line_probabilities(4, 9.5, 2).over
         away = corner_line_probabilities(4, 9.5, 2).over
