@@ -55,14 +55,15 @@ and path to consume.
 Read [DEPLOYMENT_READINESS.md](DEPLOYMENT_READINESS.md). The recommended target
 is the existing Ubuntu VPS with durable local data/state, one Uvicorn worker,
 systemd, and HTTPS through a reverse proxy. No host has been deployed by this
-task. Steve must provide deployment access, an API hostname/DNS path, allowed
-frontend origins, and explicit approval for infrastructure changes.
+task. Use the existing task authorization for deployment work once the required
+host access, API hostname/DNS path, allowed frontend origins, and configuration
+are confirmed.
 
 After access is provided, inspect existing VPS services, source paths, filesystem
 permissions, and available resources. Prepare one focused runtime PR with a
 dedicated health endpoint, service/proxy/environment templates, and restart,
 backup, and rollback instructions. Preserve the current source-refresh schedule.
-Deploy only with approval, then coordinate a real E1 browser-to-API smoke test
+After those prerequisites are confirmed, coordinate a real E1 browser-to-API smoke test
 with mocks disabled. Record both deployed SHAs, source dates/hashes, canonical
 home/away names, warnings, and persistence across restart. Logging stays disabled.
 
