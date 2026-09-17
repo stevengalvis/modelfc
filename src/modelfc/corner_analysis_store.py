@@ -122,7 +122,9 @@ def _analysis_path(state_dir: Path, analysis_id: str) -> Path:
     return state_dir / "analyses" / f"{normalized}.json"
 
 
-def load_analysis(state_dir: str | Path, analysis_id: str) -> dict[str, Any]:
+def _load_analysis_record(
+    state_dir: str | Path, analysis_id: str,
+) -> dict[str, Any]:
     path = _analysis_path(Path(state_dir), analysis_id)
     record = read_json_record(path, "corner analysis", f"unknown analysis ID: {analysis_id}")
     try:
@@ -139,7 +141,11 @@ def load_analysis(state_dir: str | Path, analysis_id: str) -> dict[str, Any]:
         uuid.UUID(hex=response["forecast_id"])
     except (KeyError, TypeError, ValueError) as error:
         raise LedgerError(f"invalid corner analysis record {path}: {error}") from error
-    return response
+    return record
+
+
+def load_analysis(state_dir: str | Path, analysis_id: str) -> dict[str, Any]:
+    return _load_analysis_record(state_dir, analysis_id)["response"]
 
 
 def analyze_and_store(
@@ -175,13 +181,10 @@ def analyze_and_store(
     def replay() -> dict[str, Any] | None:
         if not analysis_path.exists():
             return None
-        saved = read_json_record(
-            analysis_path, "corner analysis",
-            f"unknown analysis ID: {analysis_id}",
-        )
-        if saved.get("request_hash") != request_hash:
+        saved = _load_analysis_record(state, analysis_id)
+        if saved["request_hash"] != request_hash:
             raise LedgerError("IDEMPOTENCY_CONFLICT")
-        return load_analysis(state, analysis_id)
+        return saved["response"]
 
     with ledger_lock(state):
         existing = replay()
