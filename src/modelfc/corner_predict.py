@@ -55,6 +55,22 @@ def format_corner_prediction(prediction: CornerFixturePrediction, max_age_days: 
             if probability.line.is_integer():
                 text += f" EXACT={probability.equal:.6%}"
             lines.append(text)
+    if prediction.total is not None:
+        lines.extend((
+            "",
+            "Match total",
+            f"Expected corners: {prediction.total.expected_corners:.6f}",
+            f"Distribution method: {prediction.total.method}",
+            "Assumption: home and away corner counts are conditionally independent",
+        ))
+        for probability in prediction.total.lines:
+            text = (
+                f"Line {probability.line:g}: OVER={probability.over:.6%} "
+                f"UNDER={probability.under:.6%}"
+            )
+            if probability.line.is_integer():
+                text += f" EXACT={probability.equal:.6%}"
+            lines.append(text)
     lines.extend((
         "",
         "OVER means strictly more; UNDER means strictly fewer; EXACT means equal.",
@@ -80,6 +96,8 @@ def main() -> None:
                         help="home-team whole or half corner lines, e.g. 4.5 5.5")
     parser.add_argument("--away-lines", type=float, nargs="+", default=[],
                         help="away-team whole or half corner lines, e.g. 3.5 4.5")
+    parser.add_argument("--total-lines", type=float, nargs="+", default=[],
+                        help="match-total whole or half corner lines, e.g. 9.5 10.5")
     parser.add_argument("--model", choices=CORNER_FIXTURE_MODELS,
                         default="venue-opponent-negative-binomial")
     parser.add_argument("--min-history", type=int, default=100,
@@ -114,6 +132,7 @@ def main() -> None:
                 source_paths = args.history
             prediction = predict_corner_fixture(
                 observations, fixture, args.home_lines, args.away_lines,
+                args.total_lines,
                 model=args.model, min_history=args.min_history,
                 min_venue_history=args.min_venue_history,
                 smoothing_matches=args.smoothing_matches,
