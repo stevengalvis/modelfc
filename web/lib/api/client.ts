@@ -1,13 +1,13 @@
 import { isApiErrorBody, ModelFCApiError } from "./errors";
 import { mockAnalyze, mockCapabilities } from "./mock";
+import { decodeCapabilities } from "./capabilities";
 import type { AnalysisRequest, AnalysisResponse, CapabilitiesResponse } from "./types";
 
-const API_BASE = process.env.NEXT_PUBLIC_MODELFC_API_URL ?? "http://localhost:8000/api/v1";
-const USE_MOCKS = process.env.NEXT_PUBLIC_MODELFC_API_MODE !== "live";
-export const apiMode: "mock" | "live" = USE_MOCKS ? "mock" : "live";
+const API_BASE = process.env.NEXT_PUBLIC_MODELFC_API_URL;
+export const apiMode = process.env.NEXT_PUBLIC_MODELFC_API_MODE ?? "mock";
 
-async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${API_BASE}${path}`, {
+async function requestJson<T>(baseUrl: string, path: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(`${baseUrl.replace(/\/$/, "")}${path}`, {
     ...init,
     headers: { "Content-Type": "application/json", ...init?.headers },
   });
@@ -21,13 +21,28 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
   return body as T;
 }
 
-export const api = {
-  capabilities(signal?: AbortSignal): Promise<CapabilitiesResponse> {
-    return USE_MOCKS ? Promise.resolve(mockCapabilities) : requestJson("/capabilities", { signal });
-  },
-  analyze(payload: AnalysisRequest, signal?: AbortSignal): Promise<AnalysisResponse> {
-    return USE_MOCKS
-      ? mockAnalyze(payload, signal)
-      : requestJson("/analyses", { method: "POST", body: JSON.stringify(payload), signal });
-  },
-};
+export function createApiClient(mode: string, baseUrl?: string) {
+  function checkConfiguration() {
+    if (!["live", "mock"].includes(mode) || (mode === "live" && !baseUrl?.trim())) {
+      throw new ModelFCApiError(
+        "Set API mode to mock or live. Live mode also requires NEXT_PUBLIC_MODELFC_API_URL.",
+        "API_CONFIGURATION_ERROR", false,
+      );
+    }
+  }
+  return {
+    async capabilities(signal?: AbortSignal): Promise<CapabilitiesResponse> {
+      checkConfiguration();
+      const value = mode === "mock" ? structuredClone(mockCapabilities)
+        : await requestJson<unknown>(baseUrl!, "/capabilities", { signal });
+      return decodeCapabilities(value);
+    },
+    async analyze(payload: AnalysisRequest, signal?: AbortSignal): Promise<AnalysisResponse> {
+      checkConfiguration();
+      return mode === "mock" ? mockAnalyze(payload, signal)
+        : requestJson<AnalysisResponse>(baseUrl!, "/analyses", { method: "POST", body: JSON.stringify(payload), signal });
+    },
+  };
+}
+
+export const api = createApiClient(apiMode, API_BASE);

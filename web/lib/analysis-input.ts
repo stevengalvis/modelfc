@@ -1,5 +1,6 @@
 import type { CapabilitiesResponse, FixtureInput, MarketInput } from "./api/types";
 import type { EditableFixtureInput, EditableMarketInput } from "./parse-sportsbook-input";
+import { competitionIssue, eligibleTeams, findCompetition, unavailableMarketReason } from "./api/capabilities";
 
 export const MAX_MARKETS_PER_ANALYSIS = 32;
 export const MAX_CORNER_LINE = 1000;
@@ -9,6 +10,7 @@ export type FieldErrors = Record<string, string>;
 export interface InputValidation {
   fixtureErrors: FieldErrors;
   marketErrors: Record<string, FieldErrors>;
+  marketUnavailable: Record<string, string>;
   batchError: string | null;
   competitionError: string | null;
   validMarkets: MarketInput[];
@@ -41,25 +43,22 @@ function validateFixture(fixture: EditableFixtureInput): FieldErrors {
   return errors;
 }
 
-function validateMarket(market: EditableMarketInput, capabilities: CapabilitiesResponse | null): FieldErrors {
+function validateMarket(market: EditableMarketInput): FieldErrors {
   const errors: FieldErrors = {};
   if (!market.market_type) errors.market_type = "Choose team total or match total.";
-  else if (capabilities && !capabilities.markets.includes(market.market_type)) {
-    errors.market_type = `${market.market_type.replace("_", " ")} is not advertised by the backend.`;
-  }
   if (market.market_type === "TEAM_TOTAL" && !market.team_side) errors.team_side = "Choose the home or away team.";
   if (!market.side) errors.side = "Choose over or under.";
   if (!market.line.trim()) errors.line = "Line is required.";
   else {
     const line = Number(market.line);
-    if (!Number.isFinite(line) || line < 0 || line > MAX_CORNER_LINE || !Number.isInteger(line * 2)) {
+    if (!/^\d+(?:\.\d+)?$/.test(market.line.trim()) || !Number.isFinite(line) || line < 0 || line > MAX_CORNER_LINE || !Number.isInteger(line * 2)) {
       errors.line = `Use a whole or half line from 0 to ${MAX_CORNER_LINE}.`;
     }
   }
   if (!market.american_odds.trim()) errors.american_odds = "American odds are required.";
   else {
     const odds = Number(market.american_odds);
-    if (!Number.isInteger(odds) || (odds > -100 && odds < 100)) {
+    if (!/^[+-]?\d+$/.test(market.american_odds.trim()) || !Number.isSafeInteger(odds) || (odds > -100 && odds < 100)) {
       errors.american_odds = "Use integer American odds of -100 or lower, or +100 or higher.";
     }
   }
@@ -72,12 +71,28 @@ export function validateAnalysisInput(
   capabilities: CapabilitiesResponse | null,
 ): InputValidation {
   const fixtureErrors = validateFixture(fixtureInput);
+  const capability = findCompetition(capabilities, fixtureInput.competition);
+  if (capability?.analysis) {
+    for (const [field, side] of [["home_team", "HOME"], ["away_team", "AWAY"]] as const) {
+      const team = fixtureInput[field].trim();
+      if (!team || fixtureErrors[field]) continue;
+      if (!eligibleTeams(capability, side).includes(team)) {
+        const opposite = eligibleTeams(capability, side === "HOME" ? "AWAY" : "HOME");
+        fixtureErrors[field] = opposite.includes(team)
+          ? `${team} has insufficient ${side.toLowerCase()} venue history. Choose an eligible ${side.toLowerCase()} team.`
+          : `“${team}” is not an eligible canonical ${side.toLowerCase()} team. Choose a name supplied by ${capability.name}'s data source.`;
+      }
+    }
+  }
   const marketErrors: Record<string, FieldErrors> = {};
+  const marketUnavailable: Record<string, string> = {};
   const validMarkets: MarketInput[] = [];
   for (const market of markets) {
-    const errors = validateMarket(market, capabilities);
+    const errors = validateMarket(market);
+    const unavailable = market.market_type ? unavailableMarketReason(market.market_type, capability, capabilities) : null;
+    if (unavailable) marketUnavailable[market.client_market_id] = unavailable;
     marketErrors[market.client_market_id] = errors;
-    if (Object.keys(errors).length === 0) {
+    if (Object.keys(errors).length === 0 && !unavailable) {
       validMarkets.push({
         client_market_id: market.client_market_id,
         market_type: market.market_type as MarketInput["market_type"],
@@ -92,15 +107,11 @@ export function validateAnalysisInput(
   const batchError = markets.length > MAX_MARKETS_PER_ANALYSIS
     ? `The backend accepts at most ${MAX_MARKETS_PER_ANALYSIS} markets in one analysis.`
     : null;
-  const capability = capabilities?.competitions.find(
-    (item) => item.code.toLocaleUpperCase() === fixtureInput.competition.trim().toLocaleUpperCase(),
-  );
   let competitionError: string | null = null;
   if (capabilities && fixtureInput.competition.trim() && !capability) {
     competitionError = `${fixtureInput.competition.trim()} is not listed by the backend. Choose a reported competition or wait for backend data support.`;
   } else if (capability && !capability.analysis) {
-    competitionError = capability.warnings[0]?.message
-      ?? `${capability.name} is known but is not ready for analysis.`;
+    competitionError = competitionIssue(capability)?.message ?? `${capability.name} is not ready for analysis.`;
   }
 
   const fixture = Object.keys(fixtureErrors).length === 0 ? {
@@ -110,7 +121,7 @@ export function validateAnalysisInput(
     away_team: fixtureInput.away_team.trim(),
   } : null;
 
-  return { fixtureErrors, marketErrors, batchError, competitionError, validMarkets, fixture };
+  return { fixtureErrors, marketErrors, marketUnavailable, batchError, competitionError, validMarkets, fixture };
 }
 
 export function requestFingerprint(fixture: FixtureInput, model: string, markets: MarketInput[]): string {

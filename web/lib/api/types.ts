@@ -79,7 +79,12 @@ export interface CompetitionCapability {
   name: string;
   provider: string;
   analysis: boolean;
+  markets: MarketType[];
+  teams: string[];
+  teams_by_side: Record<TeamSide, string[]>;
   automatic_refresh: boolean;
+  refresh_job_status: "UNVERIFIED";
+  last_refresh_status: "SUCCEEDED" | "FAILED" | null;
   automatic_settlement: "SUPPORTED" | "MANUAL_ONLY";
   trusted_kickoff_source: string | null;
   latest_result_date: string | null;
@@ -93,5 +98,10 @@ export interface CapabilitiesResponse {
   stake: number;
   models: string[];
   markets: MarketType[];
+  market_capabilities: Array<{
+    market_type: MarketType;
+    status: "SUPPORTED" | "UNAVAILABLE";
+    reason: string | null;
+  }>;
   competitions: CompetitionCapability[];
 }

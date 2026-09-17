@@ -54,3 +54,47 @@ jobs:
 
       - name: Build production frontend
         run: npm run build
+
+  frontend-integration:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - name: Check out frontend
+        uses: actions/checkout@v4
+
+      # PR #49 remains a separate backend-owned dependency. Pin the reviewed fixes.
+      - name: Check out corrected capability contract
+        uses: actions/checkout@v4
+        with:
+          ref: 4f3373826ffd23878736a96fe33fe4cdd0f25acf
+          path: backend-contract
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install dependencies
+        run: |
+          python3 -m pip install -r ../backend-contract/requirements.txt
+          npm ci
+
+      - name: Verify backend fixture provenance
+        run: |
+          for fixture in lib/api/fixtures/*.json; do
+            cmp "$fixture" "../backend-contract/tests/fixtures/api_v1/$(basename "$fixture")"
+          done
+
+      - name: Test the real FastAPI boundary with synthetic history
+        env:
+          PYTHONPATH: ${{ github.workspace }}/backend-contract/src:${{ github.workspace }}/backend-contract
+        run: bash scripts/test-live-api.sh
