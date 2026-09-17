@@ -1,6 +1,6 @@
 """Run the real backend for frontend HTTP integration, using backend-owned synthetic data.
 
-Set PYTHONPATH to a checkout of the corrected backend PR #49 (src and repository).
+Use the merged backend from this repository (src and repository on PYTHONPATH).
 No network data, real ledger records, or backend implementation are modified.
 """
 from pathlib import Path

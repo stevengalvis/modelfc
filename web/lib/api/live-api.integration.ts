@@ -3,7 +3,7 @@ import { createApiClient } from "./client";
 import { decodeCapabilities } from "./capabilities";
 import { parseSportsbookInput } from "../parse-sportsbook-input";
 import { validateAnalysisInput } from "../analysis-input";
-import wholeLineFixture from "./fixtures/analysis_whole_line.json";
+import wholeLineFixture from "../../../tests/fixtures/api_v1/analysis_whole_line.json";
 
 const live = createApiClient("live", process.env.MODELFC_TEST_API_URL ?? "http://127.0.0.1:8000/api/v1");
 

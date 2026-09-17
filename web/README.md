@@ -15,9 +15,9 @@ npm run dev -- --hostname 127.0.0.1
 The application uses fixed, backend-generated synthetic responses by default.
 Use **Use example** for whole-line probabilities or **Mixed board example** for
 an explicitly excluded match total and stale-history warnings. Mock mode cannot
-price arbitrary edited terms. See [fixture provenance](lib/api/fixtures/README.md).
+price arbitrary edited terms. See [fixture provenance](lib/api/FIXTURES.md).
 
-To connect a running FastAPI service with the corrected PR #49 contract:
+To connect a running FastAPI service with the merged PR #49 contract:
 
 ```bash
 NEXT_PUBLIC_MODELFC_API_MODE=live \
@@ -46,12 +46,12 @@ npm run build
 
 There is no separate lint command configured. Run `git diff --check` as well.
 
-For the real HTTP boundary, check out backend PR #49 at
-`4f3373826ffd23878736a96fe33fe4cdd0f25acf` in a separate directory, install its
-`requirements.txt`, and run from `web/`:
+PR #49 is merged at `40a0bac17c82f023ffa0af181d6d2981604a8596`.
+For the real HTTP boundary, use the backend from this synchronized checkout.
+Install the repository's Python dependencies and run from `web/`:
 
 ```bash
-PYTHONPATH=/absolute/path/to/backend/src:/absolute/path/to/backend \
+python3 -m pip install -r ../requirements.txt
 bash scripts/test-live-api.sh
 ```
 
@@ -60,8 +60,17 @@ temporary state, then calls it with mocks off. It verifies canonical correction,
 per-competition market gating, whole-line values, idempotent replay, backend
 warnings, unavailable SP2, and insufficient history before the fixture date.
 GitHub Actions runs this boundary test separately from the existing Python and
-frontend checks, and verifies that the vendored JSON fixtures match the pinned
-backend files. This establishes synthetic integration, not production readiness.
+frontend checks. Demo and test JSON imports use `../tests/fixtures/api_v1/`
+directly; there are no duplicate vendored fixtures. The integration job verifies
+backend fixture regeneration parity on the same checkout. This establishes
+synthetic integration, not production readiness.
+
+Run the backend checks from the repository root:
+
+```bash
+PYTHONPATH=src python3 -m unittest discover -v
+python3 -m compileall -q src tests
+```
 
 ## Preview deployment handoff
 
@@ -71,17 +80,42 @@ For a demo set `NEXT_PUBLIC_MODELFC_API_MODE=mock`; for live verification set it
 to `live`, supply the reachable FastAPI `/api/v1` URL, and allow the preview
 origin in backend CORS. Do not promote production during frontend verification.
 
-The current connected Vercel account returns an empty team list; project access
-and the Git branch link could not be verified. Steve must reconnect Vercel with
-access to the team that owns `modelfc`, or create the branch preview from that
-existing project's dashboard and share its URL. A public production URL does
-not grant deployment access. No current preview URL has been obtained.
+The build needs the repository's `tests/fixtures/api_v1/` files as well as `web/`.
+Next.js uses the repository as its Turbopack root for these shared static imports.
+Confirm the existing Vercel project's build context includes these files before
+deploying; a `web/`-only upload is insufficient. This task has not changed any
+project-wide root/source-inclusion or production settings. If access requires a
+project-wide setting change, report it for approval before changing it.
+
+Access rechecked on 2026-09-17: the Vercel connection returns `teams: []`, and
+project listing without a team returns `Failed to list projects`. Neither the
+repository nor `web/` has a local Vercel project link, and no deployment credential
+is available. The earlier handoff identifies workspace `modelfc`, project
+`modelfc`; a direct lookup of that project now returns `403 Forbidden` (connector
+code `INVALID_ARGUMENT`). Its account identity and team/project IDs therefore
+remain unverified. No preview creation request can safely target the existing
+project until access is restored; do not create a replacement project.
+
+Shortest manual route:
+
+1. Open the existing `modelfc` project in the owning Vercel workspace (reported
+   as `modelfc` in the earlier handoff) and confirm its `modelfc.vercel.app` domain.
+2. Under Deployments, choose Create Deployment and select `frontend/analyze-v1`
+   (or the synchronized PR #45 commit). Confirm **Preview** before creating it.
+3. Share the preview URL and its commit SHA. If the branch is not available,
+   check that the project's Git connection is `stevengalvis/modelfc`; do not
+   import a duplicate project or change the production branch.
+
+See [Vercel's Git-reference deployment instructions](https://vercel.com/docs/git#creating-a-deployment-from-a-git-reference).
+Alternatively, reconnect the ChatGPT Vercel app using that owning account and
+team, and share the existing project's dashboard URL so its scope can be verified.
 
 Browser acceptance remains pending for the current revision in both desktop and
-mobile layouts. The browser inspection of `https://modelfc.vercel.app/` still
-shows the older read-only mock review. The available remote browser cannot open
-the local development server. Unit/component tests and HTTP boundary tests are
-recorded separately from these outstanding browser checks.
+mobile layouts. A cache-busted production check on 2026-09-17 used Use example
+and Parse lines and still showed the older read-only mock review. It does not
+verify this branch. No preview or public FastAPI URL is available for the required
+desktop/mobile mock and live browser workflow, console, and network checks.
+Unit/component tests and real local HTTP tests are separate evidence.
 
 Quantitative calculations belong to the Python backend. The frontend may
 format API values but must not recalculate probabilities, edge, expected value,

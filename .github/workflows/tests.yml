@@ -61,15 +61,8 @@ jobs:
       run:
         working-directory: web
     steps:
-      - name: Check out frontend
+      - name: Check out synchronized frontend and backend
         uses: actions/checkout@v4
-
-      # PR #49 remains a separate backend-owned dependency. Pin the reviewed fixes.
-      - name: Check out corrected capability contract
-        uses: actions/checkout@v4
-        with:
-          ref: 4f3373826ffd23878736a96fe33fe4cdd0f25acf
-          path: backend-contract
 
       - name: Set up Python 3.12
         uses: actions/setup-python@v5
@@ -85,16 +78,14 @@ jobs:
 
       - name: Install dependencies
         run: |
-          python3 -m pip install -r ../backend-contract/requirements.txt
+          python3 -m pip install -r ../requirements.txt
           npm ci
 
-      - name: Verify backend fixture provenance
-        run: |
-          for fixture in lib/api/fixtures/*.json; do
-            cmp "$fixture" "../backend-contract/tests/fixtures/api_v1/$(basename "$fixture")"
-          done
+      - name: Verify shared backend fixture regeneration parity
+        working-directory: .
+        env:
+          PYTHONPATH: src
+        run: python3 -m unittest tests.test_api_response_fixtures -v
 
       - name: Test the real FastAPI boundary with synthetic history
-        env:
-          PYTHONPATH: ${{ github.workspace }}/backend-contract/src:${{ github.workspace }}/backend-contract
         run: bash scripts/test-live-api.sh

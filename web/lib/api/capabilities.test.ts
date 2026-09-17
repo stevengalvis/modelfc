@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { decodeCapabilities, eligibleTeams, unavailableMarketReason } from "./capabilities";
 import { createApiClient } from "./client";
 import { mockCapabilities, mockAnalyze } from "./mock";
-import wholeLineFixture from "./fixtures/analysis_whole_line.json";
+import wholeLineFixture from "../../../tests/fixtures/api_v1/analysis_whole_line.json";
 import { parseSportsbookInput } from "../parse-sportsbook-input";
 import { validateAnalysisInput } from "../analysis-input";
 

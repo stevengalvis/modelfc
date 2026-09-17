@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# PYTHONPATH must contain the corrected backend checkout's src and root folders.
+# Use this checkout's backend by default, including its synthetic-history fixture.
+integration_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+export PYTHONPATH="$integration_root/src:$integration_root"
 MODELFC_TEST_API_PORT="${MODELFC_TEST_API_PORT:-8000}"
 export MODELFC_TEST_API_PORT
 export MODELFC_TEST_API_URL="http://127.0.0.1:${MODELFC_TEST_API_PORT}/api/v1"

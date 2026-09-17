@@ -1,10 +1,17 @@
 # Backend-generated demo responses
 
-These JSON files are byte-for-byte copies of `tests/fixtures/api_v1/` in backend
-PR #49 at `4f3373826ffd23878736a96fe33fe4cdd0f25acf`.
-Regenerate upstream with `tests/generate_api_response_fixtures.py`, then copy the
-generated files here. Do not hand-edit probabilities, warnings, eligibility, or
-refresh metadata. The backend's fixture regression checks regeneration parity.
+The frontend imports JSON directly from the backend-owned
+[`tests/fixtures/api_v1/`](../../../tests/fixtures/api_v1/) directory in this
+checkout. There are no vendored response copies or separately pinned backend
+checkout. PR #49 introduced these fixtures and is merged into main at
+`40a0bac17c82f023ffa0af181d6d2981604a8596`.
+
+Regenerate with `PYTHONPATH=src python3 tests/generate_api_response_fixtures.py`
+from the repository root. Do not hand-edit probabilities, warnings, eligibility,
+or refresh metadata. `tests.test_api_response_fixtures` verifies byte-for-byte
+regeneration parity; the frontend integration CI runs it on the same revision
+as the application. The production build includes only statically imported JSON,
+not the Python fixture generator or real source data.
 
 The history is synthetic: Birmingham and Millwall, six September 2026 fixtures.
 These responses do not establish production data readiness or active scheduling.

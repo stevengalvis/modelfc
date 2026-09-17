@@ -88,16 +88,32 @@ Returns model and data-source capabilities needed to populate the UI.
   "api_version": "v1",
   "stake": 1.0,
   "models": ["venue-opponent-negative-binomial", "venue-opponent-poisson"],
-  "markets": ["TEAM_TOTAL", "MATCH_TOTAL"],
+  "markets": ["TEAM_TOTAL"],
+  "market_capabilities": [
+    {"market_type": "TEAM_TOTAL", "status": "SUPPORTED", "reason": null},
+    {
+      "market_type": "MATCH_TOTAL",
+      "status": "UNAVAILABLE",
+      "reason": "HISTORICAL_EVALUATION_REQUIRED"
+    }
+  ],
   "competitions": [
     {
       "code": "SP1",
       "name": "La Liga",
       "provider": "football-data",
       "analysis": true,
+      "markets": ["TEAM_TOTAL"],
+      "teams": ["Athletic Club", "Valencia"],
+      "teams_by_side": {
+        "HOME": ["Athletic Club", "Valencia"],
+        "AWAY": ["Athletic Club", "Valencia"]
+      },
       "automatic_refresh": true,
-      "automatic_settlement": "SUPPORTED",
-      "trusted_kickoff_source": "ADMIN_REGISTRY",
+      "refresh_job_status": "UNVERIFIED",
+      "last_refresh_status": "SUCCEEDED",
+      "automatic_settlement": "MANUAL_ONLY",
+      "trusted_kickoff_source": null,
       "latest_result_date": "2026-09-14",
       "last_refresh_at": "2026-09-16T03:17:39Z",
       "stale": false,
@@ -110,6 +126,35 @@ Returns model and data-source capabilities needed to populate the UI.
 Configured Football-Data competitions may support automatic settlement.
 Providers without a validated current-results refresh path must return
 `MANUAL_ONLY`; the API must not imply otherwise.
+
+`markets` lists the market types currently exposed for production analysis.
+`market_capabilities` also reports known but gated types and their
+machine-readable reason. `teams_by_side.HOME` and `teams_by_side.AWAY` contain
+sorted canonical names that meet the configured venue-history gate for each
+side. Frontend selectors should use these lists. The existing `teams` list is
+their intersection, so clients using one list for both sides only see teams
+eligible at both venues. All selection lists are empty when the competition
+cannot meet the overall history gate or has no eligible distinct home/away pair.
+Readiness uses the loaded history; analysis still checks strictly prior-date
+history for the requested fixture, so an earlier fixture date can fail coverage.
+Home and away selections must be different teams.
+
+`automatic_refresh` means that Model FC has a validated refresh implementation
+for the configured provider. It does not prove that a scheduler is installed
+or running. V1 therefore returns `refresh_job_status: UNVERIFIED` until a
+deployment-owned health signal exists. `last_refresh_status` is `SUCCEEDED`,
+`FAILED`, or null and describes only the saved `status.json` attempt.
+`last_refresh_at` uses that attempt's `checked_at` only when exactly one result
+matches the competition. Missing or duplicate competition results leave it
+null, even if the report contains a timestamp for other competitions. Analysis
+readiness is derived independently from the currently readable and validated
+history files. Stale but readable history remains analyzable and is marked with
+`stale: true` plus a `STALE_DATA` warning.
+
+Configured competitions with missing or invalid history remain in the response
+with `analysis: false` and a `DATA_SOURCE_UNAVAILABLE` warning. SP2 is included
+as an explicit unavailable priority even when it is not configured; it must not
+be confused with SP1 or promoted from match counts that lack verified corners.
 
 ## Batch market analysis
 
@@ -1082,3 +1127,10 @@ known Poisson equivalence, whole-line pushes, half-lines, convolution accuracy,
 leakage prevention, and calibration metrics at representative total lines
 `8.5`, `9.5`, `10.5`, and `11.5`. The existing champion team-corner model is
 not changed by this work.
+
+Until that real-data report is recorded for a competition, capabilities omit
+`MATCH_TOTAL` from both the top-level and competition market lists. A
+well-formed match-total request remains in a successful batch with
+`status: UNSUPPORTED` and
+`unsupported_reason: HISTORICAL_EVALUATION_REQUIRED`. This keeps a mixed batch
+useful without presenting an unevaluated probability as production-ready.

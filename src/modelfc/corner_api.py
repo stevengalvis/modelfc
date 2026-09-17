@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 
 from modelfc.corner_analysis import MAX_MARKETS_PER_ANALYSIS, CornerMarketRequest
 from modelfc.corner_analysis_store import analyze_and_store, load_analysis
+from modelfc.corner_capabilities import api_capabilities
 from modelfc.ledger_storage import LedgerError, LedgerStorageUnavailable
 
 
@@ -119,6 +120,45 @@ class AnalysisResponse(StrictModel):
     warnings: list[WarningResponse]
 
 
+class MarketCapabilityResponse(StrictModel):
+    market_type: str
+    status: str
+    reason: str | None
+
+
+class TeamsBySideResponse(StrictModel):
+    HOME: list[str]
+    AWAY: list[str]
+
+
+class CompetitionCapabilityResponse(StrictModel):
+    code: str
+    name: str
+    provider: str
+    analysis: bool
+    markets: list[str]
+    teams: list[str]
+    teams_by_side: TeamsBySideResponse
+    automatic_refresh: bool
+    refresh_job_status: str
+    last_refresh_status: str | None
+    automatic_settlement: str
+    trusted_kickoff_source: str | None
+    latest_result_date: date | None
+    last_refresh_at: str | None
+    stale: bool
+    warnings: list[WarningResponse]
+
+
+class CapabilitiesResponse(StrictModel):
+    api_version: str
+    stake: float
+    models: list[str]
+    markets: list[str]
+    market_capabilities: list[MarketCapabilityResponse]
+    competitions: list[CompetitionCapabilityResponse]
+
+
 def _error(code: str, message: str, status: int, *, retryable: bool = False) -> JSONResponse:
     return JSONResponse(status_code=status, content={"error": {
         "code": code, "message": message, "details": {},
@@ -219,6 +259,16 @@ def create_app(
             )
             return response
         except (ValueError, LedgerError) as error:
+            return _domain_error(error)
+
+    @app.get("/api/v1/capabilities", response_model=CapabilitiesResponse)
+    def get_capabilities() -> dict[str, Any]:
+        try:
+            return api_capabilities(
+                config, min_history=min_history,
+                min_venue_history=min_venue_history,
+            )
+        except ValueError as error:
             return _domain_error(error)
 
     @app.get("/api/v1/analyses/{analysis_id}", response_model=AnalysisResponse)

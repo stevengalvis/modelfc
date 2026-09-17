@@ -1,10 +1,10 @@
 import { ModelFCApiError } from "./errors";
-import capabilityFixture from "./fixtures/capabilities.json";
-import staleAnalysisFixture from "./fixtures/analysis.json";
-import wholeLineFixture from "./fixtures/analysis_whole_line.json";
+import capabilityFixture from "../../../tests/fixtures/api_v1/capabilities.json";
+import staleAnalysisFixture from "../../../tests/fixtures/api_v1/analysis.json";
+import wholeLineFixture from "../../../tests/fixtures/api_v1/analysis_whole_line.json";
 import type { AnalysisRequest, AnalysisResponse, CapabilitiesResponse, MarketInput } from "./types";
 
-// Exact JSON copies from backend PR #49, 4f3373826ffd23878736a96fe33fe4cdd0f25acf.
+// Import the backend-owned generated responses directly from this checkout.
 // Only request correlation IDs and the subset/order of fixed markets are adapted.
 export const mockCapabilities = capabilityFixture as CapabilitiesResponse;
 const responses = [wholeLineFixture, staleAnalysisFixture] as AnalysisResponse[];

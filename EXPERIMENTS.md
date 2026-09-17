@@ -280,6 +280,37 @@ The diagnostic uses existing corner observations, so the Championship shot
 inconsistency rejected by the richer stats loader does not affect this report.
 No shot features are used. Commands and metric interpretation are in README.
 
+## Match-total probability promotion status (2026-09-17)
+
+PR #46 added the conditionally independent team-distribution convolution and
+the leakage-safe `corner_total_probability_report` diagnostic. Its unit tests
+cover probability mass, Poisson equivalence, Negative Binomial convolution,
+whole-line pushes, future-result leakage and representative synthetic scoring.
+
+No completed real Football-Data match-total report is committed or otherwise
+reproducible from this repository. The managed season CSVs are deliberately
+local and were not present in the implementation workspace, so prior team-line
+metrics and Kaggle match counts cannot substitute for the required total-line
+evaluation. Production API support is therefore gated with
+`HISTORICAL_EVALUATION_REQUIRED`; the champion team-corner model is unchanged.
+
+Promotion for each competition requires the five validated Football-Data
+season files, including the current season, and this predeclared command shape:
+
+```bash
+PYTHONPATH=src python3 -m modelfc.corner_total_probability_report \
+  --data-config corner_data.json --competition E1 \
+  --models venue-opponent-negative-binomial \
+  --lines 8.5 9.5 10.5 11.5 \
+  --from-date 2025-07-01 --to-date 2026-09-16
+```
+
+The recorded result must include every source filename and SHA-256, the exact
+scoring dates and model gates, fixtures in the scoring window, eligible paired
+fixtures, and per-line count, mean probability, hit rate, Brier score and log
+loss. A future promotion PR can then add that competition to the reviewed
+readiness set without changing the distribution implementation.
+
 ## Shot-informed corner experiment (2026-09-16)
 
 This experiment used the five local Football-Data files from `2223` through
