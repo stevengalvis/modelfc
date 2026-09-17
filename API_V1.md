@@ -502,7 +502,10 @@ logged. ROI is null when no stake is settled.
 
 Administrative/internal endpoint used after a successful validated data
 refresh. It is also safe to invoke manually. It scans `OPEN`, `SETTLED`, and
-`NEEDS_REVIEW` forecasts and does not rerun predictions.
+`NEEDS_REVIEW` forecasts that are referenced by at least one logged pick and
+does not rerun predictions. Forecasts created only for analysis with zero picks
+are excluded from result retrieval, settlement, and review; analysis alone
+never creates an official tracked outcome.
 
 A `DATA_AVAILABILITY` review with no saved result first resolves the latest
 trusted fixture through its provider ID, active alias, or canonical identity.
@@ -855,6 +858,40 @@ If the forecast is in `DATA_AVAILABILITY` review and the active alias moves the
 current trusted kickoff plus grace period into the future, successful alias
 creation immediately and idempotently restores the forecast and its picks to
 `OPEN`. No result row is required for this pre-completion transition.
+
+### `GET /api/v1/forecasts/{forecast_id}/reschedule-aliases`
+
+Returns the active alias and complete append-only alias history, so a restarted
+client can safely construct a later supersession request:
+
+```json
+{
+  "forecast_id": "uuid",
+  "active_alias_id": "alias-b",
+  "items": [
+    {
+      "alias_id": "alias-a",
+      "target_fixture_record_id": "fixture-record-a",
+      "supersedes_alias_id": null,
+      "status": "SUPERSEDED",
+      "reason": "First postponement.",
+      "created_at": "2026-09-25T12:00:00Z"
+    },
+    {
+      "alias_id": "alias-b",
+      "target_fixture_record_id": "fixture-record-b",
+      "supersedes_alias_id": "alias-a",
+      "status": "ACTIVE",
+      "reason": "Second postponement.",
+      "created_at": "2026-10-05T12:00:00Z"
+    }
+  ]
+}
+```
+
+Exactly one item is `ACTIVE` when `active_alias_id` is non-null. With no alias,
+`active_alias_id` is null and `items` is empty. This current-state GET is not an
+idempotent replay and therefore reflects later supersessions.
 
 ### `GET /api/v1/forecasts/{forecast_id}/result-audit`
 
