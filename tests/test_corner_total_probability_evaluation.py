@@ -1,4 +1,5 @@
 from datetime import date
+import math
 import unittest
 
 from modelfc.corner_total_probability_evaluation import (
@@ -32,9 +33,10 @@ class MatchTotalProbabilityEvaluationTests(unittest.TestCase):
         ]
 
     def evaluate(self, history=None, **options):
+        options.setdefault("lines", (8.5, 9.5))
         return evaluate_match_total_probabilities(
             self.history if history is None else history,
-            min_history=4, min_venue_history=2, lines=(8.5, 9.5),
+            min_history=4, min_venue_history=2,
             **options,
         )
 
@@ -57,6 +59,21 @@ class MatchTotalProbabilityEvaluationTests(unittest.TestCase):
     def test_generator_input_is_supported(self):
         report = self.evaluate(iter(self.history))
         self.assertEqual(report.eligible_fixtures, 4)
+
+    def test_whole_line_push_uses_equal_mass_in_binary_score(self):
+        report = self.evaluate(lines=(7.0,))
+        pushed = [item for item in report.outcomes if item.actual_total == 7]
+        self.assertEqual(len(pushed), 1)
+        self.assertGreater(pushed[0].equal_probability, 0)
+        expected = math.fsum(
+            -math.log(
+                item.over_probability if item.over_happened else
+                item.under_probability + item.equal_probability
+            )
+            for item in report.outcomes
+        ) / len(report.outcomes)
+        self.assertAlmostEqual(match_total_summaries(report)[7.0].log_loss, expected)
+        self.assertIn("UNDER + EQUAL", format_match_total_probability_report(report))
 
     def test_duplicate_and_invalid_lines_are_rejected(self):
         for lines in ((), (8.5, 8.5), (8.25,), (-1,)):
