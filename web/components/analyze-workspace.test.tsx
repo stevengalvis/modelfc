@@ -90,6 +90,32 @@ describe("AnalyzeWorkspace", () => {
     expect(screen.getByRole("button", { name: /analyze all/i })).toBeDisabled();
   });
 
+  it("keeps incomplete excluded rows visible without blocking ready team totals", async () => {
+    const analyze = vi.spyOn(api, "analyze");
+    render(<AnalyzeWorkspace />);
+    await pasteAndParse(sportsbookText + "\nTotal O9.5");
+    expect(screen.getByText("American odds are missing.")).toBeInTheDocument();
+    expect(screen.getByText(/Not analyzed: HISTORICAL_EVALUATION_REQUIRED/)).toBeInTheDocument();
+    await analyzeDemo();
+    expect(analyze.mock.calls[0][0].markets).toHaveLength(1);
+    expect(screen.getByText("Total O9.5")).toBeInTheDocument();
+  });
+
+  it("applies the 32-market limit to outbound rows while unresolved supported rows still block", async () => {
+    const analyze = vi.spyOn(api, "analyze");
+    render(<AnalyzeWorkspace />);
+    const supported = Array.from({ length: 31 }, () => "Birmingham O4 -110").join("\n");
+    await pasteAndParse(sportsbookText + "\n" + supported + "\nTotal O9.5\nTotal U10.5 -125");
+    expect(screen.getByText("32 of 34 markets ready")).toBeInTheDocument();
+    await analyzeDemo();
+    expect(analyze.mock.calls[0][0].markets).toHaveLength(32);
+    fireEvent.change(screen.getByLabelText("Market 1 American odds"), { target: { value: "" } });
+    expect(screen.getByRole("button", { name: /analyze all/i })).toBeDisabled();
+    await pasteAndParse(sportsbookText + "\n" + supported + "\nBirmingham O4 -110\nTotal O9.5");
+    expect(screen.getByText(/backend accepts at most 32/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /analyze all/i })).toBeDisabled();
+  });
+
   it("shows raw win, push, decisive probability and the disabled-logging reason", async () => {
     render(<AnalyzeWorkspace />);
     await pasteAndParse();

@@ -104,7 +104,7 @@ export function validateAnalysisInput(
     }
   }
 
-  const batchError = markets.length > MAX_MARKETS_PER_ANALYSIS
+  const batchError = validMarkets.length > MAX_MARKETS_PER_ANALYSIS
     ? `The backend accepts at most ${MAX_MARKETS_PER_ANALYSIS} markets in one analysis.`
     : null;
   let competitionError: string | null = null;

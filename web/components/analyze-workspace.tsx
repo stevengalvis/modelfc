@@ -94,7 +94,8 @@ export function AnalyzeWorkspace() {
 
   async function analyze() {
     if (!parsed || !validation?.fixture || !model) return;
-    const hasMarketErrors = parsed.markets.some((market) => Object.keys(validation.marketErrors[market.client_market_id] ?? {}).length > 0);
+    const hasMarketErrors = parsed.markets.some((market) => !validation.marketUnavailable[market.client_market_id]
+      && Object.keys(validation.marketErrors[market.client_market_id] ?? {}).length > 0);
     if (hasMarketErrors || validation.batchError || validation.competitionError || validation.validMarkets.length === 0) {
       setError({ title: "Input validation failed", message: "Correct the highlighted fields before analyzing." });
       return;
@@ -144,7 +145,8 @@ export function AnalyzeWorkspace() {
   };
   const hasFixtureErrors = Boolean(validation && Object.keys(validation.fixtureErrors).length > 0);
   const hasMarketErrors = Boolean(parsed && validation && parsed.markets.some(
-    (market) => Object.keys(validation.marketErrors[market.client_market_id] ?? {}).length > 0,
+    (market) => !validation.marketUnavailable[market.client_market_id]
+      && Object.keys(validation.marketErrors[market.client_market_id] ?? {}).length > 0,
   ));
   const ready = Boolean(
     capabilities && model && validation?.fixture && validation.validMarkets.length > 0
