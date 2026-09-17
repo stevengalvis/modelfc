@@ -576,6 +576,53 @@ result and settlement path as automation.
 }
 ```
 
+The first accepted result returns `201`:
+
+```json
+{
+  "forecast_id": "uuid",
+  "status": "SETTLED",
+  "result": {
+    "result_id": "result-a",
+    "home_corners": 6,
+    "away_corners": 4,
+    "source": {"provider": "manual", "filename": null, "sha256": null},
+    "recorded_at": "2026-09-21T10:00:00Z",
+    "is_amendment": false
+  },
+  "review": null
+}
+```
+
+Different counts against an effective result also return `201`, but create no
+amendment until resolved:
+
+```json
+{
+  "forecast_id": "uuid",
+  "status": "NEEDS_REVIEW",
+  "result": {
+    "result_id": "result-a",
+    "home_corners": 6,
+    "away_corners": 4
+  },
+  "review": {
+    "type": "RESULT_CORRECTION",
+    "reason_code": "CONFLICTING_RESULT",
+    "message": "Manual counts differ from the effective saved result.",
+    "candidate": {
+      "candidate_id": "sha256-digest",
+      "home_corners": 7,
+      "away_corners": 4
+    },
+    "source": {"provider": "manual", "filename": null, "sha256": null}
+  }
+}
+```
+
+An identical idempotent replay returns the original `201` status, headers, and
+body for either response variant.
+
 The first valid manual result is appended and settles the picks. Replaying the
 same counts is idempotent. Submitting different counts against an existing
 effective result does not overwrite it: the backend creates a
@@ -695,6 +742,34 @@ transitions to `SETTLED` when an effective result exists, otherwise to `OPEN` so
 normal settlement reconciliation can continue. It never changes immutable
 forecast, market, price, or result records. Restoring a prior review does not
 resolve it; its normal resolution rules still apply.
+
+### `GET /api/v1/forecasts/{forecast_id}/integrity-audit`
+
+Returns append-only integrity-review and resolution records in ascending order:
+
+```json
+{
+  "forecast_id": "uuid",
+  "items": [
+    {
+      "integrity_review_id": "integrity-review-uuid",
+      "opened_at": "2026-09-22T08:00:00Z",
+      "failure_reason_code": "LEDGER_INTEGRITY_FAILURE",
+      "failure_message": "Saved pick does not match its immutable analysis market.",
+      "prior_review_type": "RESULT_CORRECTION",
+      "resolution_id": "integrity-resolution-uuid",
+      "resolved_at": "2026-09-22T12:00:00Z",
+      "resolved_to_status": "NEEDS_REVIEW",
+      "restored_review_type": "RESULT_CORRECTION",
+      "admin_reason": "Repaired the corrupted pick reference and revalidated the ledger."
+    }
+  ]
+}
+```
+
+An unresolved integrity review has null resolution fields. Records retain the
+failure details, prior review type, admin reason, and final transition; they are
+never updated or deleted except to append the one immutable resolution linkage.
 
 ### `POST /api/v1/admin/forecasts/{forecast_id}/reschedule-alias`
 
