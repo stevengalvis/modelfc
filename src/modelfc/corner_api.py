@@ -134,6 +134,9 @@ def _domain_error(error: Exception) -> JSONResponse:
         return _error("LEDGER_INTEGRITY_FAILURE", message, 409)
     if ("could not read corner data config" in message
             or "history files" in message
+            or "Football-Data CSV" in message
+            or "configured corner history" in message
+            or "overlapping" in message and "history" in message
             or "could not hash source CSV" in message):
         return _error("DATA_SOURCE_UNAVAILABLE", message, 503, retryable=True)
     if "not enabled in the data config" in message:
