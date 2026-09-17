@@ -4,6 +4,21 @@ Status: **frontend-safe contract**. Additive fields may be introduced during V1,
 but documented field names, enum values, endpoint paths, and semantics must not
 change without updating this document first.
 
+## Implementation status
+
+This document includes planned endpoints. At main `1a2e935` (2026-09-17), the
+runtime exposes only `POST /api/v1/analyses` and
+`GET /api/v1/analyses/{analysis_id}`. Capabilities, explicit pick selection,
+history, performance, automatic settlement, and admin/review HTTP endpoints
+remain to be implemented. Analysis returns `pick_logging.status: DISABLED`
+with reason `UNTRUSTED_KICKOFF`; example supported-logging responses below
+describe the target behavior, not current availability.
+
+See [the integration audit](docs/INTEGRATION_STATUS.md) for checked revisions,
+league readiness, and the unresolved match-total empirical evaluation requirement.
+Update this status when implementation changes; runtime OpenAPI describes the
+routes actually exposed by the deployed code.
+
 The backend is authoritative for forecasts, probability and odds calculations,
 ledger integrity, results, settlement, and performance. The frontend may format
 these values but must not recalculate them.
