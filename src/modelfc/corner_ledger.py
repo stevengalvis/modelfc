@@ -301,6 +301,8 @@ def _line_for_pick(forecast: dict[str, Any], team_side: str,
 
 
 def _pick_values(line_record: dict[str, Any], side: str, odds: int) -> dict[str, float]:
+    if side not in ("over", "under"):
+        raise LedgerError("side must be over or under")
     try:
         value = price_corner_market(CornerLineProbability(
             float(line_record["line"]), line_record["over"],
@@ -308,9 +310,7 @@ def _pick_values(line_record: dict[str, Any], side: str, odds: int) -> dict[str,
         ), side, odds)
     except ValueError as error:
         message = str(error)
-        if message == "side must be OVER or UNDER":
-            message = "side must be over or under"
-        elif message == "market has no decisive outcomes":
+        if message == "market has no decisive outcomes":
             message = "cannot price a market with 100% model push probability"
         raise LedgerError(message) from error
     return {
