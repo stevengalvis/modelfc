@@ -17,9 +17,13 @@ these values but must not recalculate them.
 - Expected profit and realized profit use a fixed `$1.00` stake in V1.
 - Corner lines are whole or half numbers from `0` through `1000`, inclusive.
 - American odds are integers at least `+100` or at most `-100`.
-- Clients send an `idempotency_key` on every mutating request. Repeating the
-  same key and identical body returns the original response. Reusing a key with
-  a different body returns `409 IDEMPOTENCY_CONFLICT`.
+- Clients send an `idempotency_key` on every mutating request. Idempotency
+  identity is `(HTTP method, concrete normalized request path, idempotency_key)`;
+  path parameters such as `forecast_id` are part of the concrete path. Repeating
+  that identity with an identical body returns the original response. Reusing
+  it with a different body returns `409 IDEMPOTENCY_CONFLICT`. The V1 internal
+  API has no caller/auth scope; if authentication is added, caller/tenant scope
+  must also become part of this identity.
 - The persisted fixture forecast is immutable. An analysis may save/reuse a
   forecast, but it never creates a pick. Picks are created only by the explicit
   selection endpoint.
@@ -48,7 +52,8 @@ V1 error codes:
 `ANALYSIS_NOT_FOUND`, `LEDGER_INTEGRITY_FAILURE`, and
 `AUTOMATIC_SETTLEMENT_UNAVAILABLE`, `PICKING_CLOSED`,
 `STALE_REVIEW_CANDIDATE`, `FIXTURE_NOT_FOUND`, `UNTRUSTED_KICKOFF`, and
-`ANALYSIS_FORECAST_MISMATCH`, `STALE_ALIAS_TARGET`, `RESULT_NOT_READY`.
+`ANALYSIS_FORECAST_MISMATCH`, `STALE_ALIAS_TARGET`, `RESULT_NOT_READY`, and
+`RETROACTIVE_ALIAS`.
 
 Validation errors use HTTP 422, missing resources 404, integrity/idempotency
 conflicts 409, stale or unavailable dependencies 503, and unexpected failures
@@ -819,6 +824,12 @@ forecast date or kickoff. The target must have the same provider, competition,
 and normalized teams and must resolve uniquely; otherwise the request returns
 `409 AMBIGUOUS_FIXTURE`. An alias never changes the original pick cutoff or any
 forecast/market value.
+
+Before activation, the backend compares the target trusted kickoff with every
+logged pick's immutable creation timestamp. If any pick was created at or after
+the target kickoff, the request returns `409 RETROACTIVE_ALIAS`, writes no alias,
+and leaves forecast/pick state unchanged. A reschedule can never convert a
+post-kickoff selection into an apparently valid prematch pick.
 
 ```json
 {
