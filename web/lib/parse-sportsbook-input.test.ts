@@ -4,6 +4,26 @@ import { MAX_MARKETS_PER_ANALYSIS, isCalendarDate, validateAnalysisInput } from 
 import { parseSportsbookInput } from "./parse-sportsbook-input";
 
 describe("sportsbook parsing and validation", () => {
+  it.each([
+    ["E1", "bare E1"],
+    ["Competition: E1", "prefixed E1"],
+    ["Championship", "Championship"],
+    ["English Championship", "English Championship"],
+    ["Championship (E1)", "Championship with code"],
+  ])("recognizes %s as E1 (%s)", (competitionLine) => {
+    const parsed = parseSportsbookInput(`${competitionLine}\n2026-09-20\nCoventry City vs Birmingham City\nCoventry City O4.5 -145`);
+    expect(parsed.fixture.competition).toBe("E1");
+    expect(parsed.markets).toHaveLength(1);
+  });
+
+  it("does not treat E1 inside unrelated text as a competition", () => {
+    const parsed = parseSportsbookInput("E1 Championship special\n2026-09-20\nCoventry City vs Birmingham City");
+    expect(parsed.fixture.competition).toBe("");
+    expect(parsed.markets).toHaveLength(1);
+    expect(parsed.markets[0].source_text).toBe("E1 Championship special");
+    expect(parsed.markets[0].parse_issue).toMatch(/could not determine/i);
+  });
+
   it("parses the reproduced Championship shorthand without guessing", () => {
     const parsed = parseSportsbookInput(`Championship
 2026-09-20

@@ -24,7 +24,7 @@ export interface ParsedSportsbookInput {
 }
 
 const COMPETITION_PATTERNS = [
-  { code: "E1", pattern: /^(?:(?:league|competition)\s*[:=-]?\s*)?(?:english\s+)?championship(?:\s*\(?(?:E1)\)?)?$/i },
+  { code: "E1", pattern: /^(?:(?:(?:league|competition)\s*[:=-]?\s*)?(?:english\s+)?championship(?:\s*\(?(?:E1)\)?)?|(?:competition\s*[:=-]?\s*)?E1)$/i },
   { code: "SP2", pattern: /^(?:(?:league|competition)\s*[:=-]?\s*)?(?:la\s*liga\s*2|laliga\s*2|segunda(?:\s+divisi[oó]n)?|SP2)$/i },
   { code: "SP1", pattern: /^(?:(?:league|competition)\s*[:=-]?\s*)?(?:la\s*liga|SP1)$/i },
 ] as const;
