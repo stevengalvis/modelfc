@@ -1,0 +1,78 @@
+{
+  "api_version": "v1",
+  "stake": 1.0,
+  "models": [
+    "venue-opponent-negative-binomial",
+    "venue-opponent-poisson"
+  ],
+  "markets": [
+    "TEAM_TOTAL"
+  ],
+  "market_capabilities": [
+    {
+      "market_type": "TEAM_TOTAL",
+      "status": "SUPPORTED",
+      "reason": null
+    },
+    {
+      "market_type": "MATCH_TOTAL",
+      "status": "UNAVAILABLE",
+      "reason": "HISTORICAL_EVALUATION_REQUIRED"
+    }
+  ],
+  "competitions": [
+    {
+      "code": "E1",
+      "name": "Championship",
+      "provider": "football-data",
+      "analysis": true,
+      "markets": [
+        "TEAM_TOTAL"
+      ],
+      "teams": [
+        "Birmingham",
+        "Millwall"
+      ],
+      "automatic_refresh": true,
+      "refresh_job_status": "UNVERIFIED",
+      "last_refresh_status": "SUCCEEDED",
+      "automatic_settlement": "MANUAL_ONLY",
+      "trusted_kickoff_source": null,
+      "latest_result_date": "2026-09-14",
+      "last_refresh_at": "2026-09-16T03:17:39+00:00",
+      "stale": false,
+      "warnings": [
+        {
+          "code": "MATCH_TOTAL_NOT_VALIDATED",
+          "message": "Match-total probabilities require a recorded leakage-safe historical evaluation at lines 8.5, 9.5, 10.5, and 11.5."
+        }
+      ]
+    },
+    {
+      "code": "SP2",
+      "name": "La Liga 2",
+      "provider": "football-data",
+      "analysis": false,
+      "markets": [],
+      "teams": [],
+      "automatic_refresh": false,
+      "refresh_job_status": "UNVERIFIED",
+      "last_refresh_status": null,
+      "automatic_settlement": "MANUAL_ONLY",
+      "trusted_kickoff_source": null,
+      "latest_result_date": null,
+      "last_refresh_at": null,
+      "stale": true,
+      "warnings": [
+        {
+          "code": "UNCONFIGURED_COMPETITION",
+          "message": "SP2 is not enabled in the corner data configuration."
+        },
+        {
+          "code": "UNVERIFIED_CORNER_COVERAGE",
+          "message": "La Liga 2 corner history and its refresh path have not been verified."
+        }
+      ]
+    }
+  ]
+}

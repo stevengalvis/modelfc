@@ -1,0 +1,8 @@
+{
+  "error": {
+    "code": "DATA_SOURCE_UNAVAILABLE",
+    "message": "no E1_NNNN.csv history files in <TEMP_DATA_ROOT>/missing",
+    "details": {},
+    "retryable": true
+  }
+}

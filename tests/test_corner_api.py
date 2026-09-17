@@ -74,14 +74,36 @@ class CornerApiTests(unittest.TestCase):
             "status": "DISABLED", "reason": "UNTRUSTED_KICKOFF",
         })
         self.assertEqual(len(body["markets"]), 3)
-        self.assertEqual({item["status"] for item in body["markets"]}, {"SUPPORTED"})
+        self.assertEqual(
+            [item["status"] for item in body["markets"]],
+            ["SUPPORTED", "SUPPORTED", "UNSUPPORTED"],
+        )
         self.assertEqual(body["markets"][0]["team"], "A")
         self.assertIsNone(body["markets"][2]["team"])
+        self.assertEqual(
+            body["markets"][2]["unsupported_reason"],
+            "HISTORICAL_EVALUATION_REQUIRED",
+        )
         self.assertGreater(body["markets"][0]["model_probability"], 0)
         self.assertEqual(len(body["forecast"]["source_data_hashes"][0]["sha256"]), 64)
         loaded = self.client.get(f"/api/v1/analyses/{body['analysis_id']}")
         self.assertEqual(loaded.status_code, 200)
         self.assertEqual(loaded.json(), body)
+
+    def test_whole_line_exposes_push_and_decisive_probability(self):
+        payload = json.loads(json.dumps(self.payload))
+        payload["idempotency_key"] = "whole-line"
+        payload["markets"] = [{
+            "client_market_id": "a-over-4", "market_type": "TEAM_TOTAL",
+            "team_side": "HOME", "side": "OVER", "line": 4,
+            "american_odds": -110,
+        }]
+        market = self.client.post("/api/v1/analyses", json=payload).json()["markets"][0]
+        self.assertEqual(market["status"], "SUPPORTED")
+        self.assertGreater(market["push_probability"], 0)
+        self.assertNotEqual(
+            market["model_probability"], market["decisive_model_probability"],
+        )
 
     def test_idempotent_replay_and_conflict(self):
         first = self.client.post("/api/v1/analyses", json=self.payload)
