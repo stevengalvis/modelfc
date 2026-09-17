@@ -76,6 +76,7 @@ def _base_competition(code: str, configured: bool) -> dict[str, Any]:
         "analysis": False,
         "markets": [],
         "teams": [],
+        "teams_by_side": {"HOME": [], "AWAY": []},
         "automatic_refresh": configured,
         "refresh_job_status": "UNVERIFIED",
         "last_refresh_status": None,
@@ -107,7 +108,7 @@ def _competition_capability(
         return result
 
     refresh = _refresh_result(report, code)
-    if report is not None and isinstance(report.get("checked_at"), str):
+    if refresh is not None and isinstance(report.get("checked_at"), str):
         result["last_refresh_at"] = report["checked_at"]
     if refresh is None:
         result["warnings"].append(_warning(
@@ -138,7 +139,6 @@ def _competition_capability(
     latest = max(item.match_date for item in observations)
     teams = sorted({item.team for item in observations})
     result.update({
-        "teams": teams,
         "latest_result_date": latest.isoformat(),
         "stale": (today - latest).days > config.max_age_days,
     })
@@ -158,6 +158,10 @@ def _competition_capability(
     if len(observations) >= min_history and has_fixture_pair:
         result["analysis"] = True
         result["markets"] = list(supported_markets_for(code))
+        result["teams"] = sorted(home_ready & away_ready)
+        result["teams_by_side"] = {
+            "HOME": sorted(home_ready), "AWAY": sorted(away_ready),
+        }
     else:
         result["warnings"].append(_warning(
             "INSUFFICIENT_HISTORY",

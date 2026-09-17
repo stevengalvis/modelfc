@@ -126,6 +126,11 @@ class MarketCapabilityResponse(StrictModel):
     reason: str | None
 
 
+class TeamsBySideResponse(StrictModel):
+    HOME: list[str]
+    AWAY: list[str]
+
+
 class CompetitionCapabilityResponse(StrictModel):
     code: str
     name: str
@@ -133,6 +138,7 @@ class CompetitionCapabilityResponse(StrictModel):
     analysis: bool
     markets: list[str]
     teams: list[str]
+    teams_by_side: TeamsBySideResponse
     automatic_refresh: bool
     refresh_job_status: str
     last_refresh_status: str | None

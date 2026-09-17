@@ -33,6 +33,16 @@
         "Birmingham",
         "Millwall"
       ],
+      "teams_by_side": {
+        "HOME": [
+          "Birmingham",
+          "Millwall"
+        ],
+        "AWAY": [
+          "Birmingham",
+          "Millwall"
+        ]
+      },
       "automatic_refresh": true,
       "refresh_job_status": "UNVERIFIED",
       "last_refresh_status": "SUCCEEDED",
@@ -55,6 +65,10 @@
       "analysis": false,
       "markets": [],
       "teams": [],
+      "teams_by_side": {
+        "HOME": [],
+        "AWAY": []
+      },
       "automatic_refresh": false,
       "refresh_job_status": "UNVERIFIED",
       "last_refresh_status": null,

@@ -105,6 +105,10 @@ Returns model and data-source capabilities needed to populate the UI.
       "analysis": true,
       "markets": ["TEAM_TOTAL"],
       "teams": ["Athletic Club", "Valencia"],
+      "teams_by_side": {
+        "HOME": ["Athletic Club", "Valencia"],
+        "AWAY": ["Athletic Club", "Valencia"]
+      },
       "automatic_refresh": true,
       "refresh_job_status": "UNVERIFIED",
       "last_refresh_status": "SUCCEEDED",
@@ -125,14 +129,24 @@ Providers without a validated current-results refresh path must return
 
 `markets` lists the market types currently exposed for production analysis.
 `market_capabilities` also reports known but gated types and their
-machine-readable reason. `teams` contains exact canonical names from the
-validated local history, not an independently maintained alias list.
+machine-readable reason. `teams_by_side.HOME` and `teams_by_side.AWAY` contain
+sorted canonical names that meet the configured venue-history gate for each
+side. Frontend selectors should use these lists. The existing `teams` list is
+their intersection, so clients using one list for both sides only see teams
+eligible at both venues. All selection lists are empty when the competition
+cannot meet the overall history gate or has no eligible distinct home/away pair.
+Readiness uses the loaded history; analysis still checks strictly prior-date
+history for the requested fixture, so an earlier fixture date can fail coverage.
+Home and away selections must be different teams.
 
 `automatic_refresh` means that Model FC has a validated refresh implementation
 for the configured provider. It does not prove that a scheduler is installed
 or running. V1 therefore returns `refresh_job_status: UNVERIFIED` until a
 deployment-owned health signal exists. `last_refresh_status` is `SUCCEEDED`,
-`FAILED`, or null and describes only the saved `status.json` attempt. Analysis
+`FAILED`, or null and describes only the saved `status.json` attempt.
+`last_refresh_at` uses that attempt's `checked_at` only when exactly one result
+matches the competition. Missing or duplicate competition results leave it
+null, even if the report contains a timestamp for other competitions. Analysis
 readiness is derived independently from the currently readable and validated
 history files. Stale but readable history remains analyzable and is marked with
 `stale: true` plus a `STALE_DATA` warning.

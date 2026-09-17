@@ -117,6 +117,74 @@ class CornerApiCapabilityTests(unittest.TestCase):
         )
         self.assertNotIn(markets[1]["market_type"], capabilities["markets"])
 
+    def test_selectable_teams_pass_their_respective_venue_gates(self):
+        self.history.write_text(
+            HISTORY
+            + "E1,02/09/2026,New Team,Birmingham,3,4\n"
+            + "E1,04/09/2026,Home Only,Birmingham,5,2\n"
+            + "E1,06/09/2026,Home Only,Millwall,4,3\n"
+            + "E1,08/09/2026,Birmingham,Away Only,6,2\n"
+            + "E1,09/09/2026,Millwall,Away Only,3,5\n",
+            encoding="utf-8",
+        )
+        e1 = self.capabilities().json()["competitions"][0]
+        self.assertTrue(e1["analysis"])
+        self.assertEqual(e1["teams"], ["Birmingham", "Millwall"])
+        self.assertEqual(e1["teams_by_side"], {
+            "HOME": ["Birmingham", "Home Only", "Millwall"],
+            "AWAY": ["Away Only", "Birmingham", "Millwall"],
+        })
+        # Cross the real analysis boundary for every advertised distinct pair.
+        for home in e1["teams_by_side"]["HOME"]:
+            for away in e1["teams_by_side"]["AWAY"]:
+                if home == away:
+                    continue
+                with self.subTest(home=home, away=away):
+                    payload = json.loads(json.dumps(self.payload))
+                    payload["idempotency_key"] = f"ready:{home}:{away}"
+                    payload["fixture"].update(home_team=home, away_team=away)
+                    response = self.client.post("/api/v1/analyses", json=payload)
+                    self.assertEqual(response.status_code, 201, response.text)
+        # These names remain valid historical identities but are not eligible
+        # choices at the requested venue.
+        for home, away in (
+            ("New Team", "Millwall"), ("Away Only", "Millwall"),
+            ("Birmingham", "Home Only"),
+        ):
+            with self.subTest(home=home, away=away):
+                payload = json.loads(json.dumps(self.payload))
+                payload["idempotency_key"] = f"unready:{home}:{away}"
+                payload["fixture"].update(home_team=home, away_team=away)
+                response = self.client.post("/api/v1/analyses", json=payload)
+                self.assertEqual(response.status_code, 422)
+                self.assertEqual(response.json()["error"]["code"], "INSUFFICIENT_HISTORY")
+
+    def test_refresh_timestamp_requires_a_unique_competition_result(self):
+        status_path = self.root / "data" / "corner-refresh" / "status.json"
+        report = json.loads(status_path.read_text(encoding="utf-8"))
+        result = report["results"][0]
+        # Simulate enabling E1 after a report was written for E0, then a
+        # malformed report containing duplicate E1 results.
+        for results in ([{**result, "league": "E0"}], [], [result, result]):
+            with self.subTest(results=results):
+                status_path.write_text(json.dumps({**report, "results": results}),
+                                       encoding="utf-8")
+                e1 = self.capabilities().json()["competitions"][0]
+                self.assertTrue(e1["analysis"])
+                self.assertIsNone(e1["last_refresh_at"])
+                self.assertIsNone(e1["last_refresh_status"])
+                self.assertIn("REFRESH_STATUS_UNAVAILABLE", {
+                    warning["code"] for warning in e1["warnings"]
+                })
+        for status, expected in (("unchanged", "SUCCEEDED"), ("failed", "FAILED")):
+            with self.subTest(status=status):
+                status_path.write_text(json.dumps({
+                    **report, "results": [{**result, "status": status}],
+                }), encoding="utf-8")
+                e1 = self.capabilities().json()["competitions"][0]
+                self.assertEqual(e1["last_refresh_at"], report["checked_at"])
+                self.assertEqual(e1["last_refresh_status"], expected)
+
     def test_missing_and_stale_history_are_reported_per_competition(self):
         self.history.unlink()
         missing = self.capabilities()
@@ -142,6 +210,8 @@ class CornerApiCapabilityTests(unittest.TestCase):
         e1 = self.capabilities().json()["competitions"][0]
         self.assertFalse(e1["analysis"])
         self.assertEqual(e1["markets"], [])
+        self.assertEqual(e1["teams"], [])
+        self.assertEqual(e1["teams_by_side"], {"HOME": [], "AWAY": []})
         self.assertIn("INSUFFICIENT_HISTORY", {
             warning["code"] for warning in e1["warnings"]
         })
