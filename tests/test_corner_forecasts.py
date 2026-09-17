@@ -3,7 +3,8 @@ import math
 import unittest
 
 from modelfc.corner_forecasts import (
-    CORNER_FIXTURE_MODELS, corner_line_probabilities, predict_corner_fixture,
+    CORNER_FIXTURE_MODELS, corner_line_probabilities,
+    match_total_line_probabilities, predict_corner_fixture,
 )
 from modelfc.corners import rolling_corner_predictions
 from modelfc.matches import TeamCornerObservation, UpcomingFixture, Venue
@@ -88,6 +89,47 @@ class CornerLineTests(unittest.TestCase):
             with self.subTest(size=size), self.assertRaisesRegex(ValueError, "size must"):
                 corner_line_probabilities(4, 4.5, size)
 
+    def test_poisson_match_total_equals_poisson_at_summed_mean(self):
+        for line in (0, 4.5, 10, 20.5):
+            with self.subTest(line=line):
+                actual = match_total_line_probabilities(4.25, 3.75, line)
+                expected = corner_line_probabilities(8, line)
+                self.assertAlmostEqual(actual.over, expected.over)
+                self.assertAlmostEqual(actual.under, expected.under)
+                self.assertAlmostEqual(actual.equal, expected.equal)
+
+    def test_negative_binomial_match_total_uses_discrete_convolution(self):
+        # Two independent NB2(size=1, mean=3) variables are geometric with
+        # P(X=k)=.25*.75**k. Their convolution has P(S=k)=(k+1)*.25**2*.75**k.
+        whole = match_total_line_probabilities(3, 3, 4, 1)
+        expected_equal = 5 * 0.25**2 * 0.75**4
+        expected_under = sum(
+            (count + 1) * 0.25**2 * 0.75**count for count in range(4)
+        )
+        self.assertAlmostEqual(whole.equal, expected_equal)
+        self.assertAlmostEqual(whole.under, expected_under)
+        self.assertAlmostEqual(whole.over, 1 - expected_under - expected_equal)
+        half = match_total_line_probabilities(3, 3, 4.5, 1)
+        self.assertEqual(half.equal, 0)
+        self.assertAlmostEqual(half.under, expected_under + expected_equal)
+
+    def test_match_total_sums_tiny_upper_tail_directly(self):
+        # The sum of two geometric variables has
+        # P(S >= n) = q**n * (p*(n+1) + q).
+        line = 150.5
+        first_over = 151
+        expected = 0.75**first_over * (0.25 * (first_over + 1) + 0.75)
+        actual = match_total_line_probabilities(3, 3, line, 1).over
+        self.assertGreater(actual, 0)
+        self.assertAlmostEqual(actual / expected, 1, places=12)
+
+    def test_match_total_is_not_the_sum_of_team_over_probabilities(self):
+        home = corner_line_probabilities(4, 9.5, 2).over
+        away = corner_line_probabilities(4, 9.5, 2).over
+        total = match_total_line_probabilities(4, 4, 9.5, 2).over
+        self.assertNotAlmostEqual(total, home + away)
+        self.assertTrue(0 <= total <= 1)
+
 
 class CornerFixtureTests(unittest.TestCase):
     def setUp(self):
@@ -121,6 +163,22 @@ class CornerFixtureTests(unittest.TestCase):
         self.assertEqual(changed.historical_observation_count, 6)
         self.assertEqual(changed.latest_history_date, date(2026, 1, 3))
         self.assertEqual(changed.excluded_observation_count, 4)
+
+    def test_fixture_prediction_includes_match_total_lines(self):
+        prediction = predict_corner_fixture(
+            self.history, self.fixture, [4.5], [3.5], [8.5, 9],
+            min_history=4, min_venue_history=2,
+        )
+        self.assertIsNotNone(prediction.total)
+        self.assertEqual(
+            prediction.total.expected_corners,
+            prediction.home.expected_corners + prediction.away.expected_corners,
+        )
+        self.assertEqual(prediction.total.method, "independent-discrete-convolution")
+        self.assertTrue(prediction.total.assumes_independence)
+        self.assertEqual([item.line for item in prediction.total.lines], [8.5, 9.0])
+        for item in prediction.total.lines:
+            self.assertAlmostEqual(item.over + item.under + item.equal, 1)
 
     def test_team_freshness_is_separate_from_league_and_venue_freshness(self):
         prediction = self.predict(
