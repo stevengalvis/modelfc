@@ -138,6 +138,17 @@ class CornerApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 422)
         self.assertEqual(response.json()["error"]["code"], "UNSUPPORTED_MARKET")
 
+        for index, change in enumerate((
+            {"side": "YES"},
+            {"market_type": "MATCH_TOTAL", "team_side": "HOME"},
+        )):
+            invalid_shape = json.loads(json.dumps(self.payload))
+            invalid_shape["idempotency_key"] = f"invalid-shape-{index}"
+            invalid_shape["markets"][0].update(change)
+            response = self.client.post("/api/v1/analyses", json=invalid_shape)
+            self.assertEqual(response.status_code, 422)
+            self.assertEqual(response.json()["error"]["code"], "UNSUPPORTED_MARKET")
+
         oversized = json.loads(json.dumps(self.payload))
         oversized["idempotency_key"] = "oversized-batch"
         oversized["markets"] = [
@@ -207,6 +218,15 @@ class CornerApiTests(unittest.TestCase):
         self.assertEqual(response.json()["error"]["code"], "STATE_STORAGE_UNAVAILABLE")
 
         path = self.state / "analyses" / f"{created['analysis_id']}.json"
+        original_record = json.loads(path.read_text(encoding="utf-8"))
+        damaged_hash = json.loads(json.dumps(original_record))
+        damaged_hash["request_hash"] = "0" * 64
+        path.write_text(json.dumps(damaged_hash), encoding="utf-8")
+        response = self.client.post("/api/v1/analyses", json=self.payload)
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json()["error"]["code"], "LEDGER_INTEGRITY_FAILURE")
+        path.write_text(json.dumps(original_record), encoding="utf-8")
+
         record = json.loads(path.read_text(encoding="utf-8"))
         record["response"]["forecast"]["home_expected_corners"] = 999
         path.write_text(json.dumps(record), encoding="utf-8")
