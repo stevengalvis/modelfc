@@ -1,7 +1,7 @@
 # Integration audit: 2026-09-17
 
-This is a commit-specific inspection, not live deployment status. Recheck current
-main and open PRs before acting on it.
+The code inspection below is commit-specific. A separate deployed-browser review
+appears at the end. Recheck current main and open PRs before acting on either.
 
 - Backend/main: `1a2e935535be0bf89a3391289c72bbc5d65db40c`.
 - Frontend PR [#45](https://github.com/stevengalvis/modelfc/pull/45):
@@ -35,9 +35,10 @@ main and open PRs before acting on it.
 2. **Mocks overstate readiness and hide backend behavior.**
    `web/lib/api/mock.ts` advertises SP2, refresh, automatic settlement, and trusted
    kickoff support. It invents a 19:00 kickoff and permits pick logging. The real
-   API returns `DISABLED / UNTRUSTED_KICKOFF`. Mocks default on, have no prominent
-   mode indicator, and calculate their own probability/EV values. Replace them
-   with explicit fixtures captured from the backend and a visible demo state.
+   API returns `DISABLED / UNTRUSTED_KICKOFF`. Mocks default on and calculate
+   their own probability/EV values. The deployed header visibly says `Mock data`,
+   correcting the initial audit's claim about a missing mode indicator. Preserve
+   that indicator and replace invented values with explicit backend fixtures.
    The mock rejects match totals while the real API currently returns them as
    `SUPPORTED`; tests consequently assert behavior that differs from main.
 
@@ -114,3 +115,49 @@ passed. No production deployment, VPS timer inspection, new source acquisition,
 historical evaluation rerun, or autonomous monitoring was performed in this audit.
 
 Next owners and acceptance criteria are in [AGENT_TASKS.md](AGENT_TASKS.md).
+
+## Deployed browser review: 2026-09-17 UTC
+
+Opened and interacted with [the deployment](https://modelfc.vercel.app/) in the
+cloud browser. The observed interface explicitly says `Mock data`. This verifies
+the deployed demo experience; its exact build SHA and live backend connection
+were not established. Desktop viewport only; no mobile emulation was performed.
+
+| Interaction | Observed result | Implication for F1 |
+| --- | --- | --- |
+| Use example, then Parse lines | Four markets parsed for the displayed Coventry City / Birmingham City fixture | The simplified paste-first flow is deployed |
+| Analyze all | Three supported team rows and one unsupported match-total row appear | Demo behavior matches its fixtures, not current backend support |
+| Select all supported, then uncheck Coventry O4.5 | Selection count changes 0 -> 3 -> 2; unsupported row cannot be selected | Multi-selection works in the demo |
+| Log selected | Disabled even with two selected rows | Actual persistence remains unavailable |
+| Review parsed markets | No editable row fields or fixture correction controls | User must change the original paste to correct anything |
+| Abbreviated market input below | All three market lines rejected; zero markets; Analyze disabled | Parser needs broader, unambiguous corner shorthand and usable correction controls |
+| Replace date with `2026-02-30` in otherwise accepted input | Impossible date displayed without error and Analyze enabled | Validate calendar dates before submitting; this is a browser-observed validation gap |
+| Predictions navigation | "Logged picks will live here." placeholder | History UI remains unimplemented |
+| Performance navigation | "Performance arrives after logging." placeholder | Performance UI remains unimplemented |
+
+Reproduction for rejected shorthand (in this corner-only workspace):
+
+```text
+Championship
+2026-09-20
+Coventry City vs Birmingham City
+Coventry City O4.5 -145
+Opponent O3.5 -120
+Total U10.5 -125
+```
+
+The UI reports `Could not read` for each market and `No corner markets were
+found`. Recognize shorthand only where the corner-market context is explicit;
+ambiguous pasted markets should still require correction.
+
+The results table shows 64.2% for both Coventry OVER 4.5 and OVER 5.5, reflecting
+the placeholder probability logic. These are not valid evidence about the live
+model. Replace the mock calculation with consistent backend-generated fixtures.
+
+Visual review: the dark layout, bright action buttons, and selection state are
+coherent. Several secondary labels and table headings are small and low contrast
+at the tested desktop size. Prioritize editable rows, parsing, validation, and
+real API behavior before decorative redesign. Keep internal model identifiers
+in optional detail if they distract from comparing markets.
+
+No bets were placed or picks logged, and no deployment configuration was changed.
