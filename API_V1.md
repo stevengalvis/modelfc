@@ -527,11 +527,12 @@ official tracked outcome.
 A `DATA_AVAILABILITY` review with no saved result first resolves the latest
 trusted fixture through its provider ID, active alias, or canonical identity.
 Before any normal settlement or automatic recovery, reconciliation compares
-that fixture's current trusted kickoff with every logged pick's immutable
-creation timestamp. If any pick was created at or after the current kickoff,
-the forecast and all of its picks become `NEEDS_REVIEW` with review type
-`LEDGER_INTEGRITY` and reason code `RETROACTIVE_KICKOFF`; no result is recorded
-or settled. This check applies equally to provider-ID matches and admin aliases,
+that fixture's current trusted kickoff with every non-void logged pick's
+immutable creation timestamp. If any such pick was created at or after the
+current kickoff, the forecast and all of its non-void picks become
+`NEEDS_REVIEW` with review type `LEDGER_INTEGRITY` and reason code
+`RETROACTIVE_KICKOFF`; no result is recorded or settled. This check applies
+equally to provider-ID matches and admin aliases,
 so a provider kickoff correction cannot bypass the prematch invariant.
 If that fixture's current kickoff plus grace period is still in the future, the
 forecast and picks return idempotently to `OPEN`, regardless of whether the
@@ -799,6 +800,7 @@ Success is `201` for a new resolution and an identical idempotent replay:
   "integrity_resolution_id": "integrity-resolution-uuid",
   "action": "REVALIDATE",
   "voided_pick_ids": [],
+  "authoritative_kickoff_at": null,
   "status": "NEEDS_REVIEW",
   "restored_review": {
     "type": "RESULT_CORRECTION",
@@ -817,9 +819,13 @@ Success is `201` for a new resolution and an identical idempotent replay:
 
 For `VOID_RETROACTIVE_PICKS`, `action` contains that value and
 `voided_pick_ids` contains the exact affected IDs in stable ascending order.
-For `REVALIDATE`, it is always an empty array. Voiding appends immutable void
-records with the resolution ID, authoritative kickoff, admin reason, and
-timestamp; rerunning the same request cannot void or account for a pick twice.
+`authoritative_kickoff_at` contains the trusted UTC kickoff used for that
+decision. For `REVALIDATE`, the ID array is empty and the kickoff is null.
+Voiding appends immutable void records with the resolution ID, authoritative
+kickoff, admin reason, and timestamp; rerunning the same request cannot void or
+account for a pick twice. Later reconciliation excludes already-void picks from
+the retroactive-kickoff comparison, so the terminal resolution cannot reopen
+itself while valid earlier picks continue normally.
 When there was no prior review, `restored_review` is null and `status` is
 `SETTLED` if an effective result exists or `OPEN` otherwise. Failed revalidation
 returns the existing `409` error and no resolution ID. An identical replay
@@ -842,6 +848,7 @@ Returns append-only integrity-review and resolution records in ascending order:
       "resolution_id": "integrity-resolution-uuid",
       "resolution_action": "REVALIDATE",
       "voided_pick_ids": [],
+      "authoritative_kickoff_at": null,
       "resolved_at": "2026-09-22T12:00:00Z",
       "resolved_to_status": "NEEDS_REVIEW",
       "restored_review_type": "RESULT_CORRECTION",
@@ -855,6 +862,8 @@ An unresolved integrity review has null resolution fields; its
 `voided_pick_ids` is empty. Records retain the failure details, prior review
 type, action, affected pick IDs, admin reason, and final transition; they are
 never updated or deleted except to append the one immutable resolution linkage.
+For `VOID_RETROACTIVE_PICKS`, the audit item's `authoritative_kickoff_at` is the
+trusted UTC kickoff used to select the voided IDs; it is null for `REVALIDATE`.
 
 ### `POST /api/v1/admin/forecasts/{forecast_id}/reschedule-alias`
 
