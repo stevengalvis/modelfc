@@ -149,7 +149,10 @@ def _domain_error(error: Exception) -> JSONResponse:
         return _error("DATA_SOURCE_UNAVAILABLE", message, 503, retryable=True)
     if "not enabled in the data config" in message:
         return _error("UNSUPPORTED_COMPETITION", message, 422)
-    if "unsupported market type" in message or "requires team_side" in message:
+    if ("unsupported market type" in message
+            or "requires team_side" in message
+            or "requires a null team_side" in message
+            or message == "side must be OVER or UNDER"):
         return _error("UNSUPPORTED_MARKET", message, 422)
     if "no history for team" in message:
         return _error("UNKNOWN_TEAM", message, 422)
