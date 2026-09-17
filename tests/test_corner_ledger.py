@@ -144,6 +144,7 @@ class CornerLedgerTests(unittest.TestCase):
             (("neutral", 3.5, "over", -110), "home or away"),
             (("home", 9.5, "over", -110), "was not saved"),
             (("home", 3.5, "exact", -110), "over or under"),
+            (("home", 3.5, "OVER", -110), "over or under"),
             (("home", 3.5, "over", -99), "American odds"),
         ):
             with self.subTest(arguments=arguments), self.assertRaisesRegex(LedgerError, message):
