@@ -145,7 +145,8 @@ def match_total_line_probabilities(
     Poisson sums are exactly Poisson. For NB2 forecasts, the component PMFs
     generally have different success probabilities, so their sum is evaluated
     by discrete convolution rather than approximated by another NB2 variable.
-    Only mass at or below the requested line is needed; OVER is its complement.
+    The upper tail is summed directly when complementing the lower mass would
+    lose precision.
     """
     _validate_line_and_mean(home_mean, line)
     _validate_line_and_mean(away_mean, line)
@@ -170,7 +171,29 @@ def match_total_line_probabilities(
     under = math.fsum(totals[:-1] if whole_line else totals)
     equal = min(1.0, equal)
     under = min(1.0 - equal, under)
-    over = max(0.0, 1.0 - math.fsum((under, equal)))
+    lower_mass = math.fsum((under, equal))
+    if lower_mass > 0.5:
+        first_over = last_count + 1
+        # Partition on the home count. For home counts below first_over, use
+        # P(away >= first_over-home); the final term is P(home >= first_over).
+        # Build every away survival value by stable backward addition from one
+        # directly summed tail rather than subtracting a CDF from one.
+        away_tails = [0.0] * (first_over + 1)
+        away_tails[first_over] = _upper_tail(
+            away_mean, first_over, dispersion_size,
+        )
+        for count in range(first_over - 1, -1, -1):
+            away_tails[count] = math.fsum((away[count], away_tails[count + 1]))
+        over = math.fsum((
+            _upper_tail(home_mean, first_over, dispersion_size),
+            math.fsum(
+                home[count] * away_tails[first_over - count]
+                for count in range(first_over)
+            ),
+        ))
+        over = min(1.0, over)
+    else:
+        over = 1.0 - lower_mass
     return CornerLineProbability(float(line), over, under, equal)
 
 
