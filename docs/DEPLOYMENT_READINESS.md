@@ -141,9 +141,10 @@ Steve needs to provide or confirm:
 3. Allowed production/custom/preview frontend origins and the intended internal
    access boundary. Coordinate any browser access implications with the frontend
    owner before selecting a proxy restriction.
-4. Explicit deployment approval for the reviewed service/proxy configuration.
-   Disk permissions, actual E1 inventory/freshness, current services and backup
-   location can then be established by inspecting the host.
+4. Confirmation of the reviewed service/proxy configuration and the intended
+   access boundary before applying it. Existing task authorization covers the
+   deployment work; disk permissions, actual E1 inventory/freshness, current
+   services and backup location can then be established by inspecting the host.
 
 Next backend task: prepare a focused runtime PR containing a health endpoint,
 service/proxy/environment templates and a deployment/rollback runbook based on
