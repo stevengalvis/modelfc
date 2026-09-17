@@ -15,6 +15,7 @@ from modelfc.matches import TeamCornerObservation, UpcomingFixture
 
 
 SUPPORTED_MARKET_TYPES = ("TEAM_TOTAL", "MATCH_TOTAL")
+MAX_MARKETS_PER_ANALYSIS = 32
 
 
 @dataclass(frozen=True)
@@ -58,6 +59,10 @@ def _validate_requests(
     items = tuple(markets)
     if not items:
         raise ValueError("markets must contain at least one item")
+    if len(items) > MAX_MARKETS_PER_ANALYSIS:
+        raise ValueError(
+            f"markets must contain at most {MAX_MARKETS_PER_ANALYSIS} items"
+        )
     identifiers = set()
     normalized = []
     for item in items:
