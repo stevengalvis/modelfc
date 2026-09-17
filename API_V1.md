@@ -71,7 +71,7 @@ available for the selected model or competition remains a per-market
 | `team_side` | `HOME`, `AWAY`, or `null` for match totals |
 | `side` | `OVER`, `UNDER` |
 | market `status` | `SUPPORTED`, `UNSUPPORTED` |
-| pick `status` | `OPEN`, `SETTLED`, `NEEDS_REVIEW` |
+| pick `status` | `OPEN`, `SETTLED`, `NEEDS_REVIEW`, `VOID` |
 | settlement `outcome` | `WIN`, `LOSS`, `PUSH` |
 | forecast result status | `OPEN`, `SETTLED`, `NEEDS_REVIEW` |
 | automatic settlement capability | `SUPPORTED`, `MANUAL_ONLY` |
@@ -430,6 +430,13 @@ null. Immutable source hashes and full model configuration remain available
 through the referenced forecast/analysis response rather than being duplicated
 in every history row.
 
+For a `VOID` item, `settlement` and `review` are null, realized profit is not
+created, and the row includes non-null `voided_at` and `void_reason` fields.
+`result` may be present when the fixture result was already recorded, but it
+does not grade the void pick. V1 creates this terminal status only through the
+audited retroactive-kickoff resolution below; it is not a sportsbook-result
+grading outcome.
+
 Concrete `review` variants:
 
 ```json
@@ -487,6 +494,7 @@ Optional competition/date filters use the same semantics as pick history.
   "total_logged_picks": 20,
   "open_picks": 3,
   "needs_review_picks": 1,
+  "void_picks": 0,
   "settled_picks": 16,
   "wins": 9,
   "losses": 6,
@@ -499,7 +507,10 @@ Optional competition/date filters use the same semantics as pick history.
 ```
 
 `recorded_expected_profit` is computed from the values frozen when picks were
-logged. ROI is null when no stake is settled.
+logged for non-void picks. Void picks remain included in `total_logged_picks`
+for auditability but are excluded from open, settled, W-L-P, settled stake,
+realized profit, ROI, and recorded expected profit. ROI is null when no stake
+is settled.
 
 ## Automatic settlement
 
@@ -507,10 +518,11 @@ logged. ROI is null when no stake is settled.
 
 Administrative/internal endpoint used after a successful validated data
 refresh. It is also safe to invoke manually. It scans `OPEN`, `SETTLED`, and
-`NEEDS_REVIEW` forecasts that are referenced by at least one logged pick and
-does not rerun predictions. Forecasts created only for analysis with zero picks
-are excluded from result retrieval, settlement, and review; analysis alone
-never creates an official tracked outcome.
+`NEEDS_REVIEW` forecasts that are referenced by at least one non-void logged
+pick and does not rerun predictions. Forecasts created only for analysis with
+zero picks, and forecasts whose picks are all terminally `VOID`, are excluded
+from result retrieval, settlement, and review; analysis alone never creates an
+official tracked outcome.
 
 A `DATA_AVAILABILITY` review with no saved result first resolves the latest
 trusted fixture through its provider ID, active alias, or canonical identity.
@@ -750,20 +762,31 @@ remains settled; different counts create a new candidate and reopen
 
 ### `POST /api/v1/admin/forecasts/{forecast_id}/integrity-resolution`
 
-Audited recovery for a `LEDGER_INTEGRITY` review after the underlying ledger has
-been repaired. The request requires an idempotency key and admin reason. The
-backend reruns all forecast, pick, result, and amendment integrity checks. A
-failed revalidation returns `409 LEDGER_INTEGRITY_FAILURE` and leaves the review
-unchanged. A successful revalidation appends an integrity-resolution record and
-restores the preserved `prior_review` when one exists. With no prior review, it
-transitions to `SETTLED` when an effective result exists, otherwise to `OPEN` so
-normal settlement reconciliation can continue. It never changes immutable
-forecast, market, price, or result records. Restoring a prior review does not
-resolve it; its normal resolution rules still apply.
+Audited recovery for a `LEDGER_INTEGRITY` review. The request requires an
+idempotency key, admin reason, and one action:
+
+- `REVALIDATE` reruns all forecast, pick, result, and amendment integrity
+  checks after the underlying data has been repaired. Failed revalidation
+  returns `409 LEDGER_INTEGRITY_FAILURE` and leaves the review unchanged.
+- `VOID_RETROACTIVE_PICKS` is accepted only for reason code
+  `RETROACTIVE_KICKOFF`. The backend re-resolves the authoritative trusted
+  kickoff and terminally marks only picks created at or after it as `VOID`.
+  It returns `409 STALE_REVIEW_CANDIDATE` if the review or trusted kickoff no
+  longer identifies the same offending picks. This action does not void valid
+  earlier picks.
+
+A successful action appends an integrity-resolution record and restores the
+preserved `prior_review` when one exists. With no prior review, it transitions
+to `SETTLED` when an effective result exists, otherwise to `OPEN` so normal
+settlement reconciliation can continue for any non-void picks. A forecast with
+only void picks is excluded from later settlement scans. Neither action changes
+immutable forecast, market, price, pick timestamps, or result records. Restoring
+a prior review does not resolve it; its normal resolution rules still apply.
 
 ```json
 {
   "idempotency_key": "integrity-resolution-request-uuid",
+  "action": "REVALIDATE",
   "reason": "Repaired the corrupted pick reference and revalidated the ledger."
 }
 ```
@@ -774,6 +797,8 @@ Success is `201` for a new resolution and an identical idempotent replay:
 {
   "forecast_id": "uuid",
   "integrity_resolution_id": "integrity-resolution-uuid",
+  "action": "REVALIDATE",
+  "voided_pick_ids": [],
   "status": "NEEDS_REVIEW",
   "restored_review": {
     "type": "RESULT_CORRECTION",
@@ -790,6 +815,11 @@ Success is `201` for a new resolution and an identical idempotent replay:
 }
 ```
 
+For `VOID_RETROACTIVE_PICKS`, `action` contains that value and
+`voided_pick_ids` contains the exact affected IDs in stable ascending order.
+For `REVALIDATE`, it is always an empty array. Voiding appends immutable void
+records with the resolution ID, authoritative kickoff, admin reason, and
+timestamp; rerunning the same request cannot void or account for a pick twice.
 When there was no prior review, `restored_review` is null and `status` is
 `SETTLED` if an effective result exists or `OPEN` otherwise. Failed revalidation
 returns the existing `409` error and no resolution ID. An identical replay
@@ -810,6 +840,8 @@ Returns append-only integrity-review and resolution records in ascending order:
       "failure_message": "Saved pick does not match its immutable analysis market.",
       "prior_review_type": "RESULT_CORRECTION",
       "resolution_id": "integrity-resolution-uuid",
+      "resolution_action": "REVALIDATE",
+      "voided_pick_ids": [],
       "resolved_at": "2026-09-22T12:00:00Z",
       "resolved_to_status": "NEEDS_REVIEW",
       "restored_review_type": "RESULT_CORRECTION",
@@ -819,8 +851,9 @@ Returns append-only integrity-review and resolution records in ascending order:
 }
 ```
 
-An unresolved integrity review has null resolution fields. Records retain the
-failure details, prior review type, admin reason, and final transition; they are
+An unresolved integrity review has null resolution fields; its
+`voided_pick_ids` is empty. Records retain the failure details, prior review
+type, action, affected pick IDs, admin reason, and final transition; they are
 never updated or deleted except to append the one immutable resolution linkage.
 
 ### `POST /api/v1/admin/forecasts/{forecast_id}/reschedule-alias`
