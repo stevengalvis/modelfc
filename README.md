@@ -4,6 +4,9 @@ ModelFC is an experimental football forecasting project intended to compare
 statistical models, simulation techniques, and future AI-agent approaches to
 probabilistic forecasting.
 
+The shared frontend/backend contract for the internal corner-analysis product
+is documented in [API_V1.md](API_V1.md).
+
 ## Project status
 
 The data-ingestion layer and three rolling forecasting experiments are in
