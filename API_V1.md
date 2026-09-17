@@ -47,7 +47,7 @@ V1 error codes:
 
 `UNSUPPORTED_MARKET`, `UNSUPPORTED_COMPETITION`, `INVALID_ODDS`,
 `INVALID_LINE`, `INVALID_REQUEST`, `UNKNOWN_TEAM`, `INSUFFICIENT_HISTORY`,
-`DATA_SOURCE_UNAVAILABLE`,
+`DATA_SOURCE_UNAVAILABLE`, `STATE_STORAGE_UNAVAILABLE`,
 `STALE_DATA`, `MISSING_RESULT_DATA`, `AMBIGUOUS_FIXTURE`,
 `DUPLICATE_PICK`, `IDEMPOTENCY_CONFLICT`, `FORECAST_NOT_FOUND`,
 `ANALYSIS_NOT_FOUND`, `LEDGER_INTEGRITY_FAILURE`, and
@@ -117,7 +117,8 @@ Providers without a validated current-results refresh path must return
 
 Analyzes every supplied market against one immutable fixture forecast. Market
 order is preserved. `client_market_id` must be unique within the request and is
-used by the frontend when selecting markets later.
+used by the frontend when selecting markets later. A request contains 1 through
+32 markets; clients split larger boards into separate fixture analyses.
 
 ```json
 {
