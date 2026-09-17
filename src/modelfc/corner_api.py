@@ -9,9 +9,9 @@ from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
-from modelfc.corner_analysis import CornerMarketRequest
+from modelfc.corner_analysis import MAX_MARKETS_PER_ANALYSIS, CornerMarketRequest
 from modelfc.corner_analysis_store import analyze_and_store, load_analysis
 from modelfc.ledger_storage import LedgerError
 
@@ -41,7 +41,9 @@ class AnalysisRequest(StrictModel):
     idempotency_key: str
     fixture: FixtureRequest
     model: str = "venue-opponent-negative-binomial"
-    markets: list[MarketRequest]
+    markets: list[MarketRequest] = Field(
+        min_length=1, max_length=MAX_MARKETS_PER_ANALYSIS,
+    )
 
 
 class WarningResponse(StrictModel):
@@ -132,6 +134,10 @@ def _domain_error(error: Exception) -> JSONResponse:
         return _error("ANALYSIS_NOT_FOUND", message, 404)
     if message.startswith("invalid corner analysis record"):
         return _error("LEDGER_INTEGRITY_FAILURE", message, 409)
+    if (message.startswith("could not create")
+            or message.startswith("could not lock ledger")
+            or message.startswith("could not write ledger record")):
+        return _error("STATE_STORAGE_UNAVAILABLE", message, 503, retryable=True)
     if ("could not read corner data config" in message
             or "history files" in message
             or "Football-Data CSV" in message
@@ -151,6 +157,8 @@ def _domain_error(error: Exception) -> JSONResponse:
         return _error("INVALID_ODDS", message, 422)
     if "line must" in message:
         return _error("INVALID_LINE", message, 422)
+    if isinstance(error, LedgerError):
+        return _error("LEDGER_INTEGRITY_FAILURE", message, 500)
     return _error("INVALID_REQUEST", message, 422)
 
 
