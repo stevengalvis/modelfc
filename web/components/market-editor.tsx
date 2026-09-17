@@ -22,7 +22,8 @@ export function MarketEditor({ markets, errors, onChange }: Props) {
       </div>
       {markets.map((market, index) => {
         const rowErrors = errors[market.client_market_id] ?? {};
-        const issue = market.parse_issue ?? Object.values(rowErrors)[0];
+        const issues = market.parse_issue ? [market.parse_issue] : Object.values(rowErrors);
+        const issue = issues.join(" ");
         return (
           <div className={`market-row-wrap${issue ? " needs-attention" : ""}`} key={market.client_market_id}>
             <div className="market-source"><span>Source</span>{market.source_text}</div>
