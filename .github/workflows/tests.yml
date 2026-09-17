@@ -18,6 +18,9 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Install runtime and test dependencies
+        run: python3 -m pip install -r requirements.txt
+
       - name: Run test suite
         run: PYTHONPATH=src python3 -m unittest discover -v
 
