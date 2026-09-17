@@ -128,6 +128,7 @@ def analyze_corner_markets(
     model: str = "venue-opponent-negative-binomial",
     min_history: int = 100, min_venue_history: int = 5,
     smoothing_matches: float = 5.0, max_age_days: int = 14,
+    available_market_types: Iterable[str] = SUPPORTED_MARKET_TYPES,
 ) -> CornerBatchAnalysis:
     """Run one fixture forecast and price every supplied corner market."""
     if model not in CORNER_FIXTURE_MODELS:
@@ -135,16 +136,22 @@ def analyze_corner_markets(
     if isinstance(max_age_days, bool) or not isinstance(max_age_days, int) or max_age_days < 1:
         raise ValueError("max_age_days must be a positive integer")
     requests = _validate_requests(markets)
+    available = frozenset(available_market_types)
+    if not available.issubset(SUPPORTED_MARKET_TYPES):
+        raise ValueError("available market types contain an unsupported market")
     home_lines = sorted({
         item.line for item in requests
-        if item.market_type == "TEAM_TOTAL" and item.team_side == "HOME"
+        if item.market_type in available
+        and item.market_type == "TEAM_TOTAL" and item.team_side == "HOME"
     })
     away_lines = sorted({
         item.line for item in requests
-        if item.market_type == "TEAM_TOTAL" and item.team_side == "AWAY"
+        if item.market_type in available
+        and item.market_type == "TEAM_TOTAL" and item.team_side == "AWAY"
     })
     total_lines = sorted({
-        item.line for item in requests if item.market_type == "MATCH_TOTAL"
+        item.line for item in requests
+        if item.market_type in available and item.market_type == "MATCH_TOTAL"
     })
     prediction = predict_corner_fixture(
         observations, fixture, home_lines, away_lines, total_lines,
@@ -167,6 +174,12 @@ def analyze_corner_markets(
     )
     results = []
     for request in requests:
+        if request.market_type not in available:
+            results.append(AnalyzedCornerMarket(
+                request, None, "UNSUPPORTED", "HISTORICAL_EVALUATION_REQUIRED",
+                None, None, None, (),
+            ))
+            continue
         if request.market_type == "MATCH_TOTAL":
             if prediction.total is None:
                 raise RuntimeError("match-total prediction was not created")

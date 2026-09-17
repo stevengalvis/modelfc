@@ -1,0 +1,64 @@
+{
+  "analysis_id": "02fa2a0045a1532e96a4751dfe303935",
+  "forecast_id": "11111111111141118111111111111111",
+  "created_at": "2026-09-17T12:00:00+00:00",
+  "pick_logging": {
+    "status": "DISABLED",
+    "reason": "UNTRUSTED_KICKOFF"
+  },
+  "fixture": {
+    "competition": "E1",
+    "date": "2026-09-17",
+    "kickoff_at": null,
+    "home_team": "Birmingham",
+    "away_team": "Millwall"
+  },
+  "forecast": {
+    "model": "venue-opponent-negative-binomial",
+    "model_version": "fixture-model-version",
+    "configuration": {
+      "min_history": 4,
+      "min_venue_history": 2,
+      "smoothing_matches": 5.0,
+      "dispersion_size": 49.818840579710134,
+      "match_total_method": "independent_discrete_convolution"
+    },
+    "home_expected_corners": 5.312653562653563,
+    "away_expected_corners": 3.7678483201581026,
+    "match_expected_corners": 9.080501882811665,
+    "latest_history_date": "2026-09-14",
+    "source_data_hashes": [
+      {
+        "filename": "E1_2627.csv",
+        "sha256": "a670b2f5aac61db54a416733cc0c4821c20e5f866381d3d7afb48b25a6cf3eb1"
+      }
+    ]
+  },
+  "markets": [
+    {
+      "client_market_id": "home-o4",
+      "market_type": "TEAM_TOTAL",
+      "team_side": "HOME",
+      "team": "Birmingham",
+      "side": "OVER",
+      "line": 4.0,
+      "american_odds": -110,
+      "status": "SUPPORTED",
+      "unsupported_reason": null,
+      "model_probability": 0.6017322938963536,
+      "push_probability": 0.15988047101220734,
+      "decisive_model_probability": 0.7162460496797916,
+      "implied_probability": 0.5238095238095238,
+      "probability_edge": 0.19243652587026772,
+      "expected_profit": 0.30864212299615523,
+      "expected_corners": 5.312653562653563,
+      "warnings": []
+    }
+  ],
+  "warnings": [
+    {
+      "code": "UNTRUSTED_KICKOFF",
+      "message": "No trusted UTC kickoff registry is configured; analysis is available for inspection but pick logging is disabled."
+    }
+  ]
+}
