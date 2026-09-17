@@ -514,6 +514,13 @@ never creates an official tracked outcome.
 
 A `DATA_AVAILABILITY` review with no saved result first resolves the latest
 trusted fixture through its provider ID, active alias, or canonical identity.
+Before any normal settlement or automatic recovery, reconciliation compares
+that fixture's current trusted kickoff with every logged pick's immutable
+creation timestamp. If any pick was created at or after the current kickoff,
+the forecast and all of its picks become `NEEDS_REVIEW` with review type
+`LEDGER_INTEGRITY` and reason code `RETROACTIVE_KICKOFF`; no result is recorded
+or settled. This check applies equally to provider-ID matches and admin aliases,
+so a provider kickoff correction cannot bypass the prematch invariant.
 If that fixture's current kickoff plus grace period is still in the future, the
 forecast and picks return idempotently to `OPEN`, regardless of whether the
 reschedule came from the provider or an admin alias. Otherwise, automatic
@@ -973,7 +980,10 @@ backend never guesses a reschedule.
 Both corner counts must be present and non-negative. Result-availability timing
 uses the latest trusted kickoff associated with the stable provider ID or
 reschedule alias, while the immutable original kickoff remains the pick cutoff
-and audit value. Before the current trusted kickoff plus an eight-hour V1
+and audit value. Every refresh/reconciliation reruns the retroactive-kickoff
+check before result matching. A violation creates the non-auto-recovering
+`LEDGER_INTEGRITY` review described above, even if a complete result row exists.
+Before the current trusted kickoff plus an eight-hour V1
 completion grace period, zero result matches always leave the forecast `OPEN`,
 even if the source is stale. After that threshold, an unsettled forecast with a
 missing row, stale source, multiple matches, ambiguous identity, or partial
