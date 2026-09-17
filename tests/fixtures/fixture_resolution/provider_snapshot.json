@@ -1,0 +1,58 @@
+{
+  "schema_version": 1,
+  "provider_name": "recorded-schedule",
+  "provider_request_id": "req-2026-09-17-e1",
+  "retrieved_at": "2026-09-16T12:00:00Z",
+  "provider_payload_hash": "payload-sha256-example",
+  "provider_snapshot_id": "46461ded399ee172531b3b21dc86a3319229fcd81a3f57a1187ed4508da4a9e0",
+  "fixtures": [
+    {
+      "provider_fixture_id": "e1-1001",
+      "competition_id": "E1",
+      "competition_label": "Championship",
+      "season": "2026/2027",
+      "kickoff_utc": "2026-09-17T18:45:00Z",
+      "home_team": "Birmingham",
+      "away_team": "Millwall",
+      "status": "scheduled",
+      "provider_name": "recorded-schedule",
+      "fetched_at": "2026-09-16T12:00:00Z"
+    },
+    {
+      "provider_fixture_id": "e1-1002",
+      "competition_id": "E1",
+      "competition_label": "Championship",
+      "season": "2026/2027",
+      "kickoff_utc": "2026-09-17T19:00:00Z",
+      "home_team": "Birmingham",
+      "away_team": "Coventry",
+      "status": "scheduled",
+      "provider_name": "recorded-schedule",
+      "fetched_at": "2026-09-16T12:00:00Z"
+    },
+    {
+      "provider_fixture_id": "e1-1003",
+      "competition_id": "E1",
+      "competition_label": "Championship",
+      "season": "2026/2027",
+      "kickoff_utc": "2026-09-20T14:00:00Z",
+      "home_team": "Leicester",
+      "away_team": "Millwall",
+      "status": "postponed",
+      "provider_name": "recorded-schedule",
+      "fetched_at": "2026-09-16T12:00:00Z"
+    },
+    {
+      "provider_fixture_id": "e1-0999",
+      "competition_id": "E1",
+      "competition_label": "Championship",
+      "season": "2025/2026",
+      "kickoff_utc": "2026-05-02T14:00:00Z",
+      "home_team": "Birmingham",
+      "away_team": "Millwall",
+      "status": "completed",
+      "provider_name": "recorded-schedule",
+      "fetched_at": "2026-09-16T12:00:00Z"
+    }
+  ]
+}
