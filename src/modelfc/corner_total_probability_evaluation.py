@@ -2,13 +2,14 @@
 
 from dataclasses import dataclass
 from datetime import date
+import math
 from typing import Iterable
 
 from modelfc.corner_forecasts import (
     CORNER_FIXTURE_MODELS, match_total_line_probabilities,
 )
 from modelfc.corner_probability_evaluation import (
-    ProbabilitySummary, _fixture_key, evaluate_corner_probabilities, summarize,
+    ProbabilitySummary, _fixture_key, evaluate_corner_probabilities,
 )
 from modelfc.corners import rolling_corner_predictions
 from modelfc.matches import TeamCornerObservation, Venue
@@ -23,6 +24,7 @@ class MatchTotalLineOutcome:
     line: float
     over_probability: float
     under_probability: float
+    equal_probability: float
 
     @property
     def over_happened(self) -> bool:
@@ -94,7 +96,7 @@ def evaluate_match_total_probabilities(
             )
             outcomes.append(MatchTotalLineOutcome(
                 key[0], key[1], key[2], actual, line,
-                probability.over, probability.under,
+                probability.over, probability.under, probability.equal,
             ))
     return MatchTotalProbabilityReport(
         model, selected_lines, eligibility.fixtures_in_window,
@@ -105,10 +107,28 @@ def evaluate_match_total_probabilities(
 def match_total_summaries(
     report: MatchTotalProbabilityReport,
 ) -> dict[float, ProbabilitySummary]:
-    return {
-        line: summarize(item for item in report.outcomes if item.line == line)
-        for line in report.lines
-    }
+    result = {}
+    for line in report.lines:
+        items = [item for item in report.outcomes if item.line == line]
+        if not items:
+            raise ValueError("cannot summarize empty outcomes")
+        losses = []
+        for item in items:
+            probability = (item.over_probability if item.over_happened else
+                           item.under_probability + item.equal_probability)
+            losses.append(-math.log(probability) if probability > 0 else math.inf)
+        count = len(items)
+        result[line] = ProbabilitySummary(
+            count,
+            math.fsum(item.over_probability for item in items) / count,
+            sum(item.over_happened for item in items) / count,
+            math.fsum(
+                (item.over_probability - item.over_happened) ** 2
+                for item in items
+            ) / count,
+            math.fsum(losses) / count,
+        )
+    return result
 
 
 def format_match_total_probability_report(report: MatchTotalProbabilityReport) -> str:
@@ -129,6 +149,7 @@ def format_match_total_probability_report(report: MatchTotalProbabilityReport) -
     lines.extend((
         "",
         "Lower Brier and log loss are better.",
+        "Whole-line pushes are scored as NOT OVER (UNDER + EQUAL) in these binary diagnostics.",
         "The V1 total assumes conditional independence between team corner counts.",
         "Each forecast uses strictly earlier dates and the live coverage gates.",
     ))
