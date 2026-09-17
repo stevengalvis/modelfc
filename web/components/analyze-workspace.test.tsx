@@ -54,4 +54,14 @@ describe("AnalyzeWorkspace", () => {
     expect(screen.getByText("La Liga 2")).toBeInTheDocument();
     await waitFor(() => expect(screen.getByRole("button", { name: /analyze all/i })).toBeEnabled());
   });
+
+  it("maps opponent shorthand to the other fixture team", async () => {
+    render(<AnalyzeWorkspace />);
+    fireEvent.change(screen.getByRole("textbox", { name: /sportsbook fixture/i }), {
+      target: { value: sportsbookText.replace("Birmingham City team corners O3.5", "Opponent team corners O3.5") },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /parse lines/i }));
+    expect(screen.getByText("Birmingham City corners O3.5 -120")).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole("button", { name: /analyze all/i })).toBeEnabled());
+  });
 });

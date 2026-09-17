@@ -62,6 +62,7 @@ export function parseSportsbookInput(text: string): ParsedSportsbookInput {
   let date: string | undefined;
   let homeTeam: string | undefined;
   let awayTeam: string | undefined;
+  let primaryTeamSide: TeamSide | null = null;
 
   for (const line of lines) {
     const competitionMatch = COMPETITION_PATTERNS.find(({ pattern }) => pattern.test(line));
@@ -105,7 +106,10 @@ export function parseSportsbookInput(text: string): ParsedSportsbookInput {
       const teamName = normalized(teamTotal[1]);
       const home = normalized(homeTeam);
       const away = normalized(awayTeam);
-      const teamSide = teamName === home ? "HOME" : teamName === away ? "AWAY" : null;
+      const namedTeamSide: TeamSide | null = teamName === home ? "HOME" : teamName === away ? "AWAY" : null;
+      const teamSide: TeamSide | null = teamName === "opponent" && primaryTeamSide
+        ? primaryTeamSide === "HOME" ? "AWAY" : "HOME"
+        : namedTeamSide;
       const lineValue = Number(teamTotal[3]);
       const odds = Number(teamTotal[4]);
       if (!teamSide) {
@@ -114,6 +118,7 @@ export function parseSportsbookInput(text: string): ParsedSportsbookInput {
         errors.push(`Check the line or odds: “${line}”`);
       } else {
         parsedMarkets.push(market("TEAM_TOTAL", teamSide, side(teamTotal[2]), lineValue, odds));
+        if (namedTeamSide && !primaryTeamSide) primaryTeamSide = namedTeamSide;
       }
       continue;
     }
