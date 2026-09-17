@@ -7,6 +7,34 @@ probabilistic forecasting.
 The shared frontend/backend contract for the internal corner-analysis product
 is documented in [API_V1.md](API_V1.md).
 
+## Internal batch corner-analysis API
+
+The FastAPI boundary exposes the first V1 frontend/backend vertical slice. One
+`POST /api/v1/analyses` request accepts all team-total and match-total corner
+markets for a fixture, runs the existing fixture model once, calculates
+American-odds break-even probability and expected profit in Python, and saves
+the exact immutable response. `GET /api/v1/analyses/{analysis_id}` retrieves
+that saved response. Reusing an idempotency key with the same request replays
+the original response; changing the request returns a conflict.
+
+Start the API from the repository root with the managed data configuration and
+an untracked writable state directory:
+
+```bash
+MODELFC_DATA_CONFIG=corner_data.json \
+MODELFC_STATE_DIR=data/model-fc-state \
+MODELFC_CORS_ORIGINS=http://localhost:3000 \
+PYTHONPATH=src python3 -m uvicorn modelfc.corner_api:app \
+  --host 127.0.0.1 --port 8000
+```
+
+The full typed request/response contract is in `API_V1.md`; FastAPI also serves
+interactive local documentation at `/docs`. Current history files identify a
+match by date and teams but do not provide a trusted UTC kickoff. Analyses are
+therefore available to the frontend, while their `pick_logging` capability is
+explicitly `DISABLED` with reason `UNTRUSTED_KICKOFF`. A later fixture-registry
+change will enable selection without weakening the pre-kickoff integrity rule.
+
 ## Project status
 
 The data-ingestion layer and three rolling forecasting experiments are in
