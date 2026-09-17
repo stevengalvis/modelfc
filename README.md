@@ -16,12 +16,26 @@ implemented, tested, and deployed behavior.
 ## Internal batch corner-analysis API
 
 The FastAPI boundary exposes the first V1 frontend/backend vertical slice. One
-`POST /api/v1/analyses` request accepts all team-total and match-total corner
-markets for a fixture, runs the existing fixture model once, calculates
+`GET /api/v1/capabilities` request reports live competition, history, canonical
+team-name, refresh and market readiness. One `POST /api/v1/analyses` request
+accepts multiple known team-total and match-total corner markets for a fixture,
+runs the existing fixture model once, calculates
 American-odds break-even probability and expected profit in Python, and saves
 the exact immutable response. `GET /api/v1/analyses/{analysis_id}` retrieves
 that saved response. Reusing an idempotency key with the same request replays
 the original response; changing the request returns a conflict.
+
+Production team-total markets are enabled. Match-total requests currently
+return a per-market `UNSUPPORTED` result with
+`HISTORICAL_EVALUATION_REQUIRED`; the distribution implementation is present,
+but its required real-data evaluation is not yet recorded. Deterministic
+responses generated through the actual FastAPI application are under
+`tests/fixtures/api_v1/`. Regenerate and verify them with:
+
+```bash
+PYTHONPATH=src python3 tests/generate_api_response_fixtures.py
+PYTHONPATH=src python3 -m unittest tests.test_api_response_fixtures
+```
 
 Start the API from the repository root with the managed data configuration and
 an untracked writable state directory:

@@ -15,6 +15,7 @@ from modelfc.corner_data import (
     configured_history, configured_history_lock, configured_history_paths,
     load_data_config,
 )
+from modelfc.corner_capabilities import supported_markets_for
 from modelfc.ledger_storage import (
     LedgerError, ensure_directory, git_commit_sha, ledger_lock,
     read_json_record, source_records, utc_timestamp, write_new_record,
@@ -200,6 +201,7 @@ def analyze_and_store(
             market_items, model=model, min_history=min_history,
             min_venue_history=min_venue_history,
             smoothing_matches=smoothing_matches, max_age_days=config.max_age_days,
+            available_market_types=supported_markets_for(competition),
         )
         forecast_id = uuid.uuid4().hex
         created_at = utc_timestamp()

@@ -1,0 +1,96 @@
+{
+  "analysis_id": "6e4501c193fd51519ad7ac99d9a62974",
+  "forecast_id": "11111111111141118111111111111111",
+  "created_at": "2026-09-17T12:00:00+00:00",
+  "pick_logging": {
+    "status": "DISABLED",
+    "reason": "UNTRUSTED_KICKOFF"
+  },
+  "fixture": {
+    "competition": "E1",
+    "date": "2026-10-01",
+    "kickoff_at": null,
+    "home_team": "Birmingham",
+    "away_team": "Millwall"
+  },
+  "forecast": {
+    "model": "venue-opponent-negative-binomial",
+    "model_version": "fixture-model-version",
+    "configuration": {
+      "min_history": 4,
+      "min_venue_history": 2,
+      "smoothing_matches": 5.0,
+      "dispersion_size": 49.818840579710134,
+      "match_total_method": "independent_discrete_convolution"
+    },
+    "home_expected_corners": 5.312653562653563,
+    "away_expected_corners": 3.7678483201581026,
+    "match_expected_corners": 9.080501882811665,
+    "latest_history_date": "2026-09-14",
+    "source_data_hashes": [
+      {
+        "filename": "E1_2627.csv",
+        "sha256": "a670b2f5aac61db54a416733cc0c4821c20e5f866381d3d7afb48b25a6cf3eb1"
+      }
+    ]
+  },
+  "markets": [
+    {
+      "client_market_id": "home-o4.5",
+      "market_type": "TEAM_TOTAL",
+      "team_side": "HOME",
+      "team": "Birmingham",
+      "side": "OVER",
+      "line": 4.5,
+      "american_odds": -110,
+      "status": "SUPPORTED",
+      "unsupported_reason": null,
+      "model_probability": 0.6017322938963536,
+      "push_probability": 0.0,
+      "decisive_model_probability": 0.6017322938963536,
+      "implied_probability": 0.5238095238095238,
+      "probability_edge": 0.0779227700868298,
+      "expected_profit": 0.14876165198394786,
+      "expected_corners": 5.312653562653563,
+      "warnings": [
+        {
+          "code": "TEAM_HISTORY_AGE",
+          "message": "Latest Birmingham observation is 17 days before the fixture."
+        },
+        {
+          "code": "TEAM_VENUE_HISTORY_AGE",
+          "message": "Latest Birmingham home observation is 21 days before the fixture."
+        }
+      ]
+    },
+    {
+      "client_market_id": "match-o9.5",
+      "market_type": "MATCH_TOTAL",
+      "team_side": null,
+      "team": null,
+      "side": "OVER",
+      "line": 9.5,
+      "american_odds": 105,
+      "status": "UNSUPPORTED",
+      "unsupported_reason": "HISTORICAL_EVALUATION_REQUIRED",
+      "model_probability": null,
+      "push_probability": null,
+      "decisive_model_probability": null,
+      "implied_probability": null,
+      "probability_edge": null,
+      "expected_profit": null,
+      "expected_corners": null,
+      "warnings": []
+    }
+  ],
+  "warnings": [
+    {
+      "code": "STALE_DATA",
+      "message": "Latest usable history is 17 days before the fixture."
+    },
+    {
+      "code": "UNTRUSTED_KICKOFF",
+      "message": "No trusted UTC kickoff registry is configured; analysis is available for inspection but pick logging is disabled."
+    }
+  ]
+}

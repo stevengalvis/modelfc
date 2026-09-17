@@ -1,32 +1,25 @@
 # Agent tasks and handoff prompts
 
 Read [AGENTS.md](../AGENTS.md), [PRODUCT_V1.md](PRODUCT_V1.md), and
-[INTEGRATION_STATUS.md](INTEGRATION_STATUS.md) first. These assignments are based
-on main `1a2e935` and frontend PR #45 `d1187f5`; inspect newer work before coding.
+[INTEGRATION_STATUS.md](INTEGRATION_STATUS.md) first. The backend status below is
+updated through main `40a0bac` (PR #49 merged). Frontend criteria came from the
+PR #45 `d1187f5` audit; inspect newer frontend work before coding.
 
-The first two tasks can proceed in their separate areas. Live frontend acceptance
-depends on B1. Subsequent tasks are intentionally sequenced to avoid building
-multiple competing ledger or fixture systems.
+Live frontend acceptance now depends on B1.1 deployment and real E1 verification.
+Subsequent tasks are intentionally sequenced to avoid building multiple competing
+ledger or fixture systems. Do not begin B2, settlement automation, match-total
+enablement, or SP2 work as part of the deployment milestone.
 
-## B1: capabilities and analysis readiness (backend, next task)
+## B1: capabilities and analysis readiness (backend, completed)
 
-Copy this prompt to the backend agent:
+Delivered by [PR #49](https://github.com/stevengalvis/modelfc/pull/49), merged as
+`40a0bac17c82f023ffa0af181d6d2981604a8596`. Merged-state tests: 314 run,
+313 passed, one optional dataset skip; compilation and main Actions passed.
+Capabilities, per-side eligible teams, conservative refresh evidence, consistent
+match-total gating, and real Python-generated synthetic responses are on main.
+This establishes implemented/tested behavior, not a deployed E1 integration.
 
-> Continue as the Model FC backend owner in stevengalvis/modelfc. Fetch current
-> main, inspect recent PRs and existing uncommitted work, and read AGENTS.md,
-> API_V1.md, docs/PRODUCT_V1.md, and docs/INTEGRATION_STATUS.md. Complete B1 in
-> docs/AGENT_TASKS.md as one bounded PR. The immediate problem is that the real
-> frontend requires GET /api/v1/capabilities, but the inspected backend only
-> exposes analysis POST/GET. Implement the documented endpoint with truthful
-> data/capability state, preserving existing analysis and ledger behavior.
-> Resolve the match-total evaluation requirement before advertising supported
-> live markets. Provide real response fixtures and focused HTTP tests for the
-> frontend handoff. Report what is implemented, what the current data actually
-> supports, what remains unavailable, tests run, and the exact branch/commit.
-> Keep the current champion model and do not combine this with pick logging,
-> a parser rewrite, or a speculative SP2 enablement.
-
-Acceptance criteria:
+Delivered criteria (retain for frontend handoff and regression coverage):
 
 - `/capabilities` follows the existing snake_case contract and lets the frontend
   discover the champion model, market support, and per-competition readiness.
@@ -57,6 +50,22 @@ owner owns `web/` and its CI job. Put shared test responses under a documented
 backend-owned fixture path and tell the frontend owner exactly which revision
 and path to consume.
 
+## B1.1: deploy and verify real E1 analysis (backend, next milestone)
+
+Read [DEPLOYMENT_READINESS.md](DEPLOYMENT_READINESS.md). The recommended target
+is the existing Ubuntu VPS with durable local data/state, one Uvicorn worker,
+systemd, and HTTPS through a reverse proxy. No host has been deployed by this
+task. Steve must provide deployment access, an API hostname/DNS path, allowed
+frontend origins, and explicit approval for infrastructure changes.
+
+After access is provided, inspect existing VPS services, source paths, filesystem
+permissions, and available resources. Prepare one focused runtime PR with a
+dedicated health endpoint, service/proxy/environment templates, and restart,
+backup, and rollback instructions. Preserve the current source-refresh schedule.
+Deploy only with approval, then coordinate a real E1 browser-to-API smoke test
+with mocks disabled. Record both deployed SHAs, source dates/hashes, canonical
+home/away names, warnings, and persistence across restart. Logging stays disabled.
+
 ## F1: editable input and truthful live analysis (frontend, next task)
 
 Copy this prompt to the frontend agent:
@@ -66,9 +75,9 @@ Copy this prompt to the frontend agent:
 > than building a replacement app. Read AGENTS.md, API_V1.md,
 > docs/PRODUCT_V1.md, docs/INTEGRATION_STATUS.md, and task F1 here. Complete an
 > editable paste-to-analysis flow using the real backend contract. The backend
-> agent is implementing capabilities in B1; do not fabricate that endpoint or
-> work around its absence by presenting mock results as live. Keep mock/demo
-> mode explicit, show real warnings and disabled-logging reasons, and add frontend
+> agent merged capabilities in B1; consume the real endpoint and its
+> `teams_by_side` eligibility. B1.1 supplies hosting; do not present mocks as live.
+> Keep mock/demo mode explicit, show real warnings and disabled-logging reasons, and add frontend
 > CI plus a focused real-API integration check. Preserve the simple input flow:
 > paste once, correct parsed rows, analyze all, then choose predictions. Report
 > your exact revision, preview mode, tests, and any B1 or deployment dependency.
@@ -106,15 +115,15 @@ Acceptance criteria:
   describe the deployed app as integrated while its data is still mocked.
 
 Owned files: `web/` and the frontend CI job. Contract/runtime changes remain with
-the backend agent. This task can start before B1, but live integration acceptance
-must wait for B1 and its fixtures. Keep Predictions/Performance honest placeholders
-until their endpoints exist.
+the backend agent. B1 and its fixtures are on main; live integration acceptance
+must wait for B1.1 and real data verification. Keep Predictions/Performance honest
+placeholders until their endpoints exist.
 
 ## Next sequence after B1/F1
 
 | Task | Owner | Dependency | Completion evidence |
 | --- | --- | --- | --- |
-| B2: trusted fixture registry and explicit picks | Backend | B1; source choice for trusted kickoff | Backend resolves fixture identity and UTC kickoff; selected analysis rows log immutable terms; idempotent retry, duplicate handling, cutoff and reschedule cases pass the contract. A date or browser-supplied kickoff alone cannot unlock logging. |
+| B2: trusted fixture registry and explicit picks | Backend | B1.1/F1 real E1 analysis verified; source choice for trusted kickoff; separate go-ahead | Backend resolves fixture identity and UTC kickoff; selected analysis rows log immutable terms; idempotent retry, duplicate handling, cutoff and reschedule cases pass the contract. A date or browser-supplied kickoff alone cannot unlock logging. |
 | F2: Log selected and Predictions | Frontend | B2 | Only selected supported rows create picks; retries do not duplicate them; saved terms and lifecycle statuses come from the API. |
 | B3: refresh, automatic settlement and performance API | Backend | B2 | Validated refresh invokes settlement; complete results settle once; stale/missing/ambiguous/corrected results follow the contract; performance excludes unselected analyses and handles review/voids. |
 | F3: Performance and exception visibility | Frontend | B3 | W-L-P, profit, ROI, open/review/void counts agree with backend records; exceptions and source timing are visible without requiring routine manual results. |
