@@ -48,7 +48,7 @@ V1 error codes:
 `ANALYSIS_NOT_FOUND`, `LEDGER_INTEGRITY_FAILURE`, and
 `AUTOMATIC_SETTLEMENT_UNAVAILABLE`, `PICKING_CLOSED`,
 `STALE_REVIEW_CANDIDATE`, `FIXTURE_NOT_FOUND`, `UNTRUSTED_KICKOFF`, and
-`ANALYSIS_FORECAST_MISMATCH`, `STALE_ALIAS_TARGET`.
+`ANALYSIS_FORECAST_MISMATCH`, `STALE_ALIAS_TARGET`, `RESULT_NOT_READY`.
 
 Validation errors use HTTP 422, missing resources 404, integrity/idempotency
 conflicts 409, stale or unavailable dependencies 503, and unexpected failures
@@ -586,6 +586,11 @@ path is available to `MANUAL_ONLY` competitions and remains append-only.
 While a `LEDGER_INTEGRITY` review is active, manual result submission returns
 `409 LEDGER_INTEGRITY_FAILURE` and writes nothing; successful integrity
 resolution is required first.
+For a first manual result, the backend resolves the latest trusted fixture and
+requires its current kickoff plus the eight-hour completion grace period to
+have passed. Earlier submissions return `409 RESULT_NOT_READY` and write
+nothing. An identical replay of a result accepted earlier still follows the
+global idempotency-first rule.
 
 ### `POST /api/v1/admin/forecasts/{forecast_id}/result-resolution`
 
@@ -608,6 +613,50 @@ the exact `candidate_id` returned by the review item, plus one of:
 ```
 
 `action` is required and accepts only `ACCEPT_CORRECTION` or `KEEP_ORIGINAL`.
+
+Success is `201` for a new resolution and an identical idempotent replay:
+
+```json
+{
+  "forecast_id": "uuid",
+  "status": "SETTLED",
+  "candidate_id": "sha256-digest",
+  "action": "ACCEPT_CORRECTION",
+  "effective_result": {
+    "result_id": "result-b",
+    "home_corners": 7,
+    "away_corners": 4,
+    "source": {"provider": "football-data", "filename": "SP1_2627.csv", "sha256": "hash-b"},
+    "recorded_at": "2026-09-22T10:00:00Z",
+    "is_amendment": true
+  },
+  "original_result": {
+    "result_id": "result-a",
+    "home_corners": 6,
+    "away_corners": 4,
+    "source": {"provider": "football-data", "filename": "SP1_2627.csv", "sha256": "hash-a"},
+    "recorded_at": "2026-09-21T06:04:00Z",
+    "is_amendment": false
+  },
+  "amendment_result": {
+    "result_id": "result-b",
+    "home_corners": 7,
+    "away_corners": 4
+  },
+  "decision": {
+    "decision_id": "decision-uuid",
+    "reason": "Confirmed against the provider correction notice.",
+    "decided_at": "2026-09-22T10:00:00Z"
+  }
+}
+```
+
+For `KEEP_ORIGINAL`, `effective_result` is the result that was effective before
+the candidate, `original_result` remains the first recorded result,
+`amendment_result` is null, and `decision` records the keep action, reason, and
+timestamp. For `ACCEPT_CORRECTION`, `amendment_result` is the newly appended
+effective result. Both actions append the `decision` and appear in the result
+audit endpoint.
 
 Neither choice edits or deletes the original result. The accepted effective
 result determines pick outcomes and aggregate performance, and the API returns
