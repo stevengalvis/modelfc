@@ -4,6 +4,37 @@ ModelFC is an experimental football forecasting project intended to compare
 statistical models, simulation techniques, and future AI-agent approaches to
 probabilistic forecasting.
 
+The shared frontend/backend contract for the internal corner-analysis product
+is documented in [API_V1.md](API_V1.md).
+
+## Internal batch corner-analysis API
+
+The FastAPI boundary exposes the first V1 frontend/backend vertical slice. One
+`POST /api/v1/analyses` request accepts all team-total and match-total corner
+markets for a fixture, runs the existing fixture model once, calculates
+American-odds break-even probability and expected profit in Python, and saves
+the exact immutable response. `GET /api/v1/analyses/{analysis_id}` retrieves
+that saved response. Reusing an idempotency key with the same request replays
+the original response; changing the request returns a conflict.
+
+Start the API from the repository root with the managed data configuration and
+an untracked writable state directory:
+
+```bash
+MODELFC_DATA_CONFIG=corner_data.json \
+MODELFC_STATE_DIR=data/model-fc-state \
+MODELFC_CORS_ORIGINS=http://localhost:3000 \
+PYTHONPATH=src python3 -m uvicorn modelfc.corner_api:app \
+  --host 127.0.0.1 --port 8000
+```
+
+The full typed request/response contract is in `API_V1.md`; FastAPI also serves
+interactive local documentation at `/docs`. Current history files identify a
+match by date and teams but do not provide a trusted UTC kickoff. Analyses are
+therefore available to the frontend, while their `pick_logging` capability is
+explicitly `DISABLED` with reason `UNTRUSTED_KICKOFF`. A later fixture-registry
+change will enable selection without weakening the pre-kickoff integrity rule.
+
 ## Project status
 
 The data-ingestion layer and three rolling forecasting experiments are in
@@ -392,7 +423,8 @@ on September 16, 2026, using the downloaded Liga MX export:
 PYTHONPATH=src python3 -m modelfc.corner_predict \
   --history scraped_dataset.csv --provider liga-mx \
   --date 2026-09-16 --home Puebla --away Toluca \
-  --home-lines 3.5 4.5 --away-lines 5.5 6.5
+  --home-lines 3.5 4.5 --away-lines 5.5 6.5 \
+  --total-lines 9.5 10.5
 ```
 
 `--history` uses the same six providers as corner evaluation. Football-Data
@@ -434,8 +466,12 @@ evaluation's display grid, which is conditioned on `0..max_corners`.
 Small upper tails are summed directly to avoid rounding possible outcomes
 to zero through subtraction. A convergence limit reports a numerical error
 for exceptionally slow tails rather than returning an incomplete sum.
-This command handles individual team lines. Match-total distributions and
-automatic sportsbook collection remain separate work.
+Match totals combine the home and away count distributions. Poisson totals use
+the exact Poisson sum. Negative Binomial totals use discrete convolution because
+the component distributions generally cannot be replaced by a single NB2
+distribution. Both methods assume the team counts are conditionally independent;
+game-state dependence is a known limitation. Team probabilities are never added.
+Automatic sportsbook collection remains separate work.
 
 ### Saved corner forecasts and flat-$1 pick record
 
@@ -717,6 +753,25 @@ variation without assuming all providers use European seasons. Counts are
 shown separately for fixtures, team observations and line outcomes: multiple
 lines and the two teams from a match are not independent samples. No confidence
 interval or significance claim is made from these descriptive tables.
+
+### Match-total corner probability report
+
+`corner_total_probability_report.py` evaluates the same leakage-safe eligible
+fixtures at common match-total lines. It pairs the two team forecasts, combines
+their distributions under the documented independence assumption, and reports
+Brier score and log loss once per fixture and line.
+
+```bash
+PYTHONPATH=src python3 -m modelfc.corner_total_probability_report \
+  --data-config corner_data.json --competition SP1 \
+  --lines 8.5 9.5 10.5 11.5 --from-date 2025-07-01
+```
+
+The report is an offline diagnostic, not a claim of sportsbook profitability.
+Its date cutoff, pairing validation, history gates, provider selection and model
+selection follow the team-corner probability report. Historical calibration can
+expose weakness in the independence assumption without changing the champion
+team-corner model.
 
 A model assigning roughly 60% should see roughly 60% OVER outcomes over enough
 comparable predictions. This report measures that behavior; it does not adjust

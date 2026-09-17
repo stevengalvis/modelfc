@@ -1,5 +1,6 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
+import { apiMode } from "@/lib/api/client";
 
 const links = [
   { label: "Analyze", href: "/" },
@@ -28,7 +29,7 @@ export function AppShell({ active, children }: { active: string; children: React
             </Link>
           ))}
         </nav>
-        <div className="system-status"><span /> Mock data</div>
+        <div className={`system-status ${apiMode}`}><span /> {apiMode === "mock" ? "Mock data" : "Live API"}</div>
       </header>
       <main>{children}</main>
     </div>

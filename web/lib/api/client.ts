@@ -4,6 +4,7 @@ import type { AnalysisRequest, AnalysisResponse, CapabilitiesResponse } from "./
 
 const API_BASE = process.env.NEXT_PUBLIC_MODELFC_API_URL ?? "http://localhost:8000/api/v1";
 const USE_MOCKS = process.env.NEXT_PUBLIC_MODELFC_API_MODE !== "live";
+export const apiMode: "mock" | "live" = USE_MOCKS ? "mock" : "live";
 
 async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE}${path}`, {
@@ -21,12 +22,12 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
-  capabilities(): Promise<CapabilitiesResponse> {
-    return USE_MOCKS ? Promise.resolve(mockCapabilities) : requestJson("/capabilities");
+  capabilities(signal?: AbortSignal): Promise<CapabilitiesResponse> {
+    return USE_MOCKS ? Promise.resolve(mockCapabilities) : requestJson("/capabilities", { signal });
   },
-  analyze(payload: AnalysisRequest): Promise<AnalysisResponse> {
+  analyze(payload: AnalysisRequest, signal?: AbortSignal): Promise<AnalysisResponse> {
     return USE_MOCKS
-      ? mockAnalyze(payload)
-      : requestJson("/analyses", { method: "POST", body: JSON.stringify(payload) });
+      ? mockAnalyze(payload, signal)
+      : requestJson("/analyses", { method: "POST", body: JSON.stringify(payload), signal });
   },
 };

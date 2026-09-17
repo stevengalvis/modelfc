@@ -1,1 +1,5 @@
-# ModelFC currently has no runtime dependencies.
+fastapi>=0.115,<1
+uvicorn>=0.30,<1
+
+# Used by FastAPI's in-process TestClient.
+httpx>=0.27,<1

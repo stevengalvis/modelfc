@@ -7,7 +7,11 @@ from pathlib import Path
 from typing import Any, Iterable
 import uuid
 
-from modelfc.corner_forecasts import CornerFixturePrediction
+from modelfc.corner_forecasts import CornerFixturePrediction, CornerLineProbability
+from modelfc.corner_markets import (
+    american_odds_terms as _domain_american_odds_terms,
+    price_corner_market,
+)
 from modelfc.ledger_storage import (
     LedgerError, ensure_directory, git_commit_sha, ledger_lock, read_json_record,
     source_records, utc_timestamp, write_new_record,
@@ -60,18 +64,9 @@ def _forecast_path(ledger: Path, forecast_id: str) -> Path:
     return ledger / "forecasts" / f"{normalized}.json"
 
 
-def _validate_team_prediction(team: dict[str, Any], expected_name: str,
-                              expected_venue: str) -> None:
-    if team["team"] != expected_name or team["venue"] != expected_venue:
-        raise ValueError("team prediction identity does not match fixture")
-    _valid_number(team["expected_corners"], "expected corners")
-    _valid_count(team["historical_match_count"], "team history count")
-    _valid_count(team["venue_match_count"], "venue history count")
-    date.fromisoformat(team["latest_match_date"])
-    date.fromisoformat(team["latest_venue_match_date"])
-    lines = team["lines"]
+def _validate_line_records(lines: Any) -> None:
     if not isinstance(lines, list):
-        raise ValueError("team lines must be a list")
+        raise ValueError("corner lines must be a list")
     seen = set()
     for item in lines:
         line = item["line"]
@@ -86,6 +81,34 @@ def _validate_team_prediction(team: dict[str, Any], expected_name: str,
             raise ValueError("line probabilities must sum to 1")
         if line % 1 == 0.5 and item["equal"] != 0:
             raise ValueError("half-line equality probability must be zero")
+
+
+def _validate_team_prediction(team: dict[str, Any], expected_name: str,
+                              expected_venue: str) -> None:
+    if team["team"] != expected_name or team["venue"] != expected_venue:
+        raise ValueError("team prediction identity does not match fixture")
+    _valid_number(team["expected_corners"], "expected corners")
+    _valid_count(team["historical_match_count"], "team history count")
+    _valid_count(team["venue_match_count"], "venue history count")
+    date.fromisoformat(team["latest_match_date"])
+    date.fromisoformat(team["latest_venue_match_date"])
+    _validate_line_records(team["lines"])
+
+
+def _validate_total_prediction(total: dict[str, Any], prediction: dict[str, Any],
+                               model_name: str) -> None:
+    _valid_number(total["expected_corners"], "expected match corners")
+    expected = (
+        prediction["home"]["expected_corners"]
+        + prediction["away"]["expected_corners"]
+    )
+    if total["expected_corners"] != expected:
+        raise ValueError("expected match corners must equal the two team means")
+    method = ("independent-discrete-convolution"
+              if model_name.endswith("negative-binomial") else "poisson-sum")
+    if total["method"] != method or total["assumes_independence"] is not True:
+        raise ValueError("invalid match-total distribution metadata")
+    _validate_line_records(total["lines"])
 
 
 def _validate_forecast(record: dict[str, Any], path: Path) -> None:
@@ -141,6 +164,8 @@ def _validate_forecast(record: dict[str, Any], path: Path) -> None:
         prediction = record["prediction"]
         _validate_team_prediction(prediction["home"], fixture["home_team"], "home")
         _validate_team_prediction(prediction["away"], fixture["away_team"], "away")
+        if "total" in prediction:
+            _validate_total_prediction(prediction["total"], prediction, model["name"])
         _validate_sources(record["sources"])
         if not isinstance(record["git_commit_sha"], str) or not record["git_commit_sha"]:
             raise ValueError("git commit SHA must be non-empty text")
@@ -189,6 +214,19 @@ def _team_record(team: Any) -> dict[str, Any]:
     }
 
 
+def _total_record(total: Any) -> dict[str, Any]:
+    return {
+        "expected_corners": total.expected_corners,
+        "method": total.method,
+        "assumes_independence": total.assumes_independence,
+        "lines": [
+            {"line": item.line, "over": item.over,
+             "under": item.under, "equal": item.equal}
+            for item in total.lines
+        ],
+    }
+
+
 def save_corner_forecast(
     ledger_dir: str | Path, prediction: CornerFixturePrediction,
     history_dates: Iterable[date], source_paths: Iterable[str | Path], *,
@@ -224,7 +262,9 @@ def save_corner_forecast(
                     "earliest_date": dates[0].isoformat(),
                     "latest_date": dates[-1].isoformat()},
         "prediction": {"home": _team_record(prediction.home),
-                       "away": _team_record(prediction.away)},
+                       "away": _team_record(prediction.away),
+                       **({"total": _total_record(prediction.total)}
+                          if prediction.total is not None else {})},
         "sources": source_records(Path(path) for path in source_paths),
     }
     path = ledger / "forecasts" / f"{forecast_id}.json"
@@ -243,11 +283,11 @@ def save_corner_forecast(
 
 
 def american_odds_terms(odds: int) -> tuple[float, float]:
-    if (isinstance(odds, bool) or not isinstance(odds, int)
-            or (-100 < odds < 100)):
-        raise LedgerError("American odds must be an integer at least +100 or at most -100")
-    profit = odds / 100 if odds > 0 else 100 / abs(odds)
-    return profit, 1 / (profit + 1)
+    """Backward-compatible ledger wrapper around shared market math."""
+    try:
+        return _domain_american_odds_terms(odds)
+    except ValueError as error:
+        raise LedgerError(str(error)) from error
 
 
 def _line_for_pick(forecast: dict[str, Any], team_side: str,
@@ -263,22 +303,25 @@ def _line_for_pick(forecast: dict[str, Any], team_side: str,
 def _pick_values(line_record: dict[str, Any], side: str, odds: int) -> dict[str, float]:
     if side not in ("over", "under"):
         raise LedgerError("side must be over or under")
-    profit_if_win, implied = american_odds_terms(odds)
-    win = line_record[side]
-    loss = line_record["under" if side == "over" else "over"]
-    push = line_record["equal"]
-    if win + loss == 0:
-        raise LedgerError("cannot price a market with 100% model push probability")
-    decisive = win / (win + loss)
+    try:
+        value = price_corner_market(CornerLineProbability(
+            float(line_record["line"]), line_record["over"],
+            line_record["under"], line_record["equal"],
+        ), side, odds)
+    except ValueError as error:
+        message = str(error)
+        if message == "market has no decisive outcomes":
+            message = "cannot price a market with 100% model push probability"
+        raise LedgerError(message) from error
     return {
-        "profit_if_win": profit_if_win,
-        "implied_probability": implied,
-        "win_probability": win,
-        "loss_probability": loss,
-        "push_probability": push,
-        "decisive_win_probability": decisive,
-        "decisive_probability_edge": decisive - implied,
-        "expected_profit": win * profit_if_win - loss,
+        "profit_if_win": value.profit_if_win,
+        "implied_probability": value.implied_probability,
+        "win_probability": value.model_probability,
+        "loss_probability": value.loss_probability,
+        "push_probability": value.push_probability,
+        "decisive_win_probability": value.decisive_model_probability,
+        "decisive_probability_edge": value.probability_edge,
+        "expected_profit": value.expected_profit,
     }
 
 

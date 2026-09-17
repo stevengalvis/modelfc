@@ -18,8 +18,39 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Install runtime and test dependencies
+        run: python3 -m pip install -r requirements.txt
+
       - name: Run test suite
         run: PYTHONPATH=src python3 -m unittest discover -v
 
       - name: Compile Python sources and tests
         run: python3 -m compileall -q src tests
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Type check frontend
+        run: npm run typecheck
+
+      - name: Run frontend tests
+        run: npm test
+
+      - name: Build production frontend
+        run: npm run build

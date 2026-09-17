@@ -41,6 +41,14 @@ class TeamCornerForecast:
 
 
 @dataclass(frozen=True)
+class MatchCornerForecast:
+    expected_corners: float
+    method: str
+    assumes_independence: bool
+    lines: tuple[CornerLineProbability, ...]
+
+
+@dataclass(frozen=True)
 class CornerFixturePrediction:
     fixture: UpcomingFixture
     model: str
@@ -51,6 +59,7 @@ class CornerFixturePrediction:
     excluded_observation_count: int
     smoothing_matches: float
     dispersion_size: float | None
+    total: MatchCornerForecast | None = None
 
 
 def _log_count_probability(count: int, mean: float, size: float | None) -> float:
@@ -86,14 +95,7 @@ def _upper_tail(mean: float, first_count: int, size: float | None) -> float:
     raise ValueError("upper-tail summation did not converge for these model parameters")
 
 
-def corner_line_probabilities(
-    mean: float, line: float, dispersion_size: float | None = None,
-) -> CornerLineProbability:
-    """Use the full Poisson/NB distribution, never the truncated display grid.
-
-    Integer lines have a separate equality probability. Half-integer lines
-    cannot tie. The 0..1000 line bound limits work for malformed CLI input.
-    """
+def _validate_line_and_mean(mean: float, line: float) -> None:
     if (
         isinstance(line, bool) or not isinstance(line, (int, float))
         or not 0 <= line <= 1000 or line % 0.5 != 0
@@ -104,6 +106,17 @@ def corner_line_probabilities(
         or not math.isfinite(mean) or mean < 0
     ):
         raise ValueError("mean must be a finite non-negative number")
+
+
+def corner_line_probabilities(
+    mean: float, line: float, dispersion_size: float | None = None,
+) -> CornerLineProbability:
+    """Use the full Poisson/NB distribution, never the truncated display grid.
+
+    Integer lines have a separate equality probability. Half-integer lines
+    cannot tie. The 0..1000 line bound limits work for malformed CLI input.
+    """
+    _validate_line_and_mean(mean, line)
 
     whole_line = line == math.floor(line)
     probabilities = [
@@ -123,11 +136,73 @@ def corner_line_probabilities(
     return CornerLineProbability(float(line), over, under, equal)
 
 
+def match_total_line_probabilities(
+    home_mean: float, away_mean: float, line: float,
+    dispersion_size: float | None = None,
+) -> CornerLineProbability:
+    """Price the sum of two conditionally independent corner counts.
+
+    Poisson sums are exactly Poisson. For NB2 forecasts, the component PMFs
+    generally have different success probabilities, so their sum is evaluated
+    by discrete convolution rather than approximated by another NB2 variable.
+    The upper tail is summed directly when complementing the lower mass would
+    lose precision.
+    """
+    _validate_line_and_mean(home_mean, line)
+    _validate_line_and_mean(away_mean, line)
+    if dispersion_size is None:
+        return corner_line_probabilities(home_mean + away_mean, line)
+
+    last_count = math.floor(line)
+    home = [
+        math.exp(_log_count_probability(count, home_mean, dispersion_size))
+        for count in range(last_count + 1)
+    ]
+    away = [
+        math.exp(_log_count_probability(count, away_mean, dispersion_size))
+        for count in range(last_count + 1)
+    ]
+    totals = [
+        math.fsum(home[index] * away[count - index] for index in range(count + 1))
+        for count in range(last_count + 1)
+    ]
+    whole_line = line == last_count
+    equal = totals[-1] if whole_line else 0.0
+    under = math.fsum(totals[:-1] if whole_line else totals)
+    equal = min(1.0, equal)
+    under = min(1.0 - equal, under)
+    lower_mass = math.fsum((under, equal))
+    if lower_mass > 0.5:
+        first_over = last_count + 1
+        # Partition on the home count. For home counts below first_over, use
+        # P(away >= first_over-home); the final term is P(home >= first_over).
+        # Build every away survival value by stable backward addition from one
+        # directly summed tail rather than subtracting a CDF from one.
+        away_tails = [0.0] * (first_over + 1)
+        away_tails[first_over] = _upper_tail(
+            away_mean, first_over, dispersion_size,
+        )
+        for count in range(first_over - 1, -1, -1):
+            away_tails[count] = math.fsum((away[count], away_tails[count + 1]))
+        over = math.fsum((
+            _upper_tail(home_mean, first_over, dispersion_size),
+            math.fsum(
+                home[count] * away_tails[first_over - count]
+                for count in range(first_over)
+            ),
+        ))
+        over = min(1.0, over)
+    else:
+        over = 1.0 - lower_mass
+    return CornerLineProbability(float(line), over, under, equal)
+
+
 def predict_corner_fixture(
     observations: Iterable[TeamCornerObservation],
     fixture: UpcomingFixture,
     home_lines: Iterable[float] = (),
     away_lines: Iterable[float] = (),
+    total_lines: Iterable[float] = (),
     *,
     model: str = "venue-opponent-negative-binomial",
     min_history: int = 100,
@@ -199,8 +274,16 @@ def predict_corner_fixture(
 
     home = predict_team(fixture.home_team, fixture.away_team, Venue.HOME, home_lines)
     away = predict_team(fixture.away_team, fixture.home_team, Venue.AWAY, away_lines)
+    total = MatchCornerForecast(
+        home.expected_corners + away.expected_corners,
+        ("poisson-sum" if size is None else "independent-discrete-convolution"),
+        True,
+        tuple(match_total_line_probabilities(
+            home.expected_corners, away.expected_corners, line, size,
+        ) for line in total_lines),
+    )
     return CornerFixturePrediction(
         fixture, model, home, away, len(history),
         max(item.match_date for item in history), excluded_count,
-        smoothing_matches, size,
+        smoothing_matches, size, total,
     )

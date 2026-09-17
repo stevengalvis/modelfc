@@ -1,5 +1,6 @@
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import redirect_stderr, redirect_stdout
+from dataclasses import replace
 from datetime import date
 from io import StringIO
 import json
@@ -10,7 +11,8 @@ import unittest
 from unittest.mock import patch
 
 from modelfc.corner_forecasts import (
-    CornerFixturePrediction, CornerLineProbability, TeamCornerForecast,
+    CornerFixturePrediction, CornerLineProbability, MatchCornerForecast,
+    TeamCornerForecast,
 )
 from modelfc.corner_ledger import (
     LedgerError, american_odds_terms, corner_ledger_summary,
@@ -71,6 +73,18 @@ class CornerLedgerTests(unittest.TestCase):
         with self.assertRaisesRegex(LedgerError, "already exists"):
             self.save()
 
+    def test_forecast_preserves_match_total_distribution(self):
+        total = MatchCornerForecast(
+            6.623456789, "independent-discrete-convolution", True,
+            (CornerLineProbability(8.5, .3, .7, 0),),
+        )
+        forecast, _ = self.save(replace(self.prediction(), total=total))
+        saved = forecast["prediction"]["total"]
+        self.assertEqual(saved["expected_corners"], total.expected_corners)
+        self.assertEqual(saved["method"], "independent-discrete-convolution")
+        self.assertTrue(saved["assumes_independence"])
+        self.assertEqual(saved["lines"][0]["over"], .3)
+
     def test_odds_value_and_flat_stake_are_exact(self):
         forecast, _ = self.save()
         negative, _ = record_corner_pick(
@@ -130,6 +144,7 @@ class CornerLedgerTests(unittest.TestCase):
             (("neutral", 3.5, "over", -110), "home or away"),
             (("home", 9.5, "over", -110), "was not saved"),
             (("home", 3.5, "exact", -110), "over or under"),
+            (("home", 3.5, "OVER", -110), "over or under"),
             (("home", 3.5, "over", -99), "American odds"),
         ):
             with self.subTest(arguments=arguments), self.assertRaisesRegex(LedgerError, message):

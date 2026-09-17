@@ -39,7 +39,10 @@ class CornerPredictCliTests(unittest.TestCase):
         return 0, stdout.getvalue(), stderr.getvalue()
 
     def test_real_csv_to_report_with_cutoff_and_integer_line(self):
-        code, stdout, stderr = self.run_cli(["--home-lines", "4", "4.5", "--away-lines", "3.5"])
+        code, stdout, stderr = self.run_cli([
+            "--home-lines", "4", "4.5", "--away-lines", "3.5",
+            "--total-lines", "8.5", "9",
+        ])
         self.assertEqual((code, stderr), (0, ""))
         for expected in (
             "Provider: football-data", "Fixture: 2026-01-10 | A vs B",
@@ -49,6 +52,9 @@ class CornerPredictCliTests(unittest.TestCase):
             "Observations excluded on/after fixture date: 2",
             "Team history: 3 matches; 3 at this venue", "A (home)", "B (away)",
             "Line 4: OVER=", "EXACT=", "Line 4.5: OVER=", "Line 3.5: OVER=",
+            "Match total", "Distribution method: independent-discrete-convolution",
+            "Assumption: home and away corner counts are conditionally independent",
+            "Line 8.5: OVER=", "Line 9: OVER=",
         ):
             self.assertIn(expected, stdout)
 

@@ -16,6 +16,10 @@ class LedgerError(ValueError):
     """Raised when a ledger operation or saved record is invalid."""
 
 
+class LedgerStorageUnavailable(LedgerError):
+    """Raised when state storage cannot currently be accessed."""
+
+
 def utc_timestamp() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
@@ -48,7 +52,9 @@ def ensure_directory(path: Path, label: str) -> None:
     try:
         path.mkdir(parents=True, exist_ok=True)
     except OSError as error:
-        raise LedgerError(f"could not create {label} {path}: {error}") from error
+        raise LedgerStorageUnavailable(
+            f"could not create {label} {path}: {error}"
+        ) from error
 
 
 def write_new_record(path: Path, record: dict[str, Any]) -> None:
@@ -71,7 +77,9 @@ def write_new_record(path: Path, record: dict[str, Any]) -> None:
     except FileExistsError as error:
         raise LedgerError(f"refusing to overwrite existing record: {path}") from error
     except OSError as error:
-        raise LedgerError(f"could not write ledger record {path}: {error}") from error
+        raise LedgerStorageUnavailable(
+            f"could not write ledger record {path}: {error}"
+        ) from error
     finally:
         if temporary_path is not None:
             try:
@@ -89,7 +97,9 @@ def ledger_lock(ledger: Path) -> Iterator[None]:
             fcntl.flock(lock_file, fcntl.LOCK_EX)
             yield
     except OSError as error:
-        raise LedgerError(f"could not lock ledger {ledger}: {error}") from error
+        raise LedgerStorageUnavailable(
+            f"could not lock ledger {ledger}: {error}"
+        ) from error
 
 
 def read_json_record(path: Path, kind: str, unknown: str) -> dict[str, Any]:
@@ -97,7 +107,11 @@ def read_json_record(path: Path, kind: str, unknown: str) -> dict[str, Any]:
         record = json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError as error:
         raise LedgerError(unknown) from error
-    except (OSError, json.JSONDecodeError) as error:
+    except OSError as error:
+        raise LedgerStorageUnavailable(
+            f"could not read {kind} record {path}: {error}"
+        ) from error
+    except json.JSONDecodeError as error:
         raise LedgerError(f"invalid {kind} record {path}: {error}") from error
     if not isinstance(record, dict):
         raise LedgerError(f"invalid {kind} record {path}: expected a JSON object")
