@@ -13,7 +13,7 @@ from pydantic import BaseModel, Field
 
 from modelfc.corner_analysis import MAX_MARKETS_PER_ANALYSIS, CornerMarketRequest
 from modelfc.corner_analysis_store import analyze_and_store, load_analysis
-from modelfc.ledger_storage import LedgerError
+from modelfc.ledger_storage import LedgerError, LedgerStorageUnavailable
 
 
 class StrictModel(BaseModel):
@@ -132,13 +132,15 @@ def _domain_error(error: Exception) -> JSONResponse:
         return _error("IDEMPOTENCY_CONFLICT", "Idempotency key was reused with a different request.", 409)
     if message.startswith("unknown analysis ID"):
         return _error("ANALYSIS_NOT_FOUND", message, 404)
+    if isinstance(error, LedgerStorageUnavailable):
+        return _error("STATE_STORAGE_UNAVAILABLE", message, 503, retryable=True)
     if message.startswith("invalid corner analysis record"):
         return _error("LEDGER_INTEGRITY_FAILURE", message, 409)
-    if (message.startswith("could not create")
-            or message.startswith("could not lock ledger")
-            or message.startswith("could not write ledger record")):
-        return _error("STATE_STORAGE_UNAVAILABLE", message, 503, retryable=True)
     if ("could not read corner data config" in message
+            or "config requires" in message
+            or "data_directory must" in message
+            or "leagues must" in message
+            or "max_age_days must" in message
             or "history files" in message
             or "Football-Data CSV" in message
             or "configured corner history" in message
