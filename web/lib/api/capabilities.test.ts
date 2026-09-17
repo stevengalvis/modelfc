@@ -57,6 +57,7 @@ describe("capability boundary", () => {
 
   it("rejects invalid mode and missing live URL instead of silently using mocks", async () => {
     await expect(createApiClient("liv").capabilities()).rejects.toMatchObject({ code: "API_CONFIGURATION_ERROR" });
+    await expect(createApiClient(undefined).capabilities()).rejects.toMatchObject({ code: "API_CONFIGURATION_ERROR" });
     await expect(createApiClient("live").capabilities()).rejects.toMatchObject({ code: "API_CONFIGURATION_ERROR" });
   });
 

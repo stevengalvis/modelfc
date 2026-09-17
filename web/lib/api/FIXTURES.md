@@ -3,8 +3,8 @@
 The frontend imports JSON directly from the backend-owned
 [`tests/fixtures/api_v1/`](../../../tests/fixtures/api_v1/) directory in this
 checkout. There are no vendored response copies or separately pinned backend
-checkout. PR #49 introduced these fixtures and is merged into main at
-`40a0bac17c82f023ffa0af181d6d2981604a8596`.
+checkout. They are generated from the backend currently checked out alongside
+the frontend; there is no separately pinned PR or vendored response copy.
 
 Regenerate with `PYTHONPATH=src python3 tests/generate_api_response_fixtures.py`
 from the repository root. Do not hand-edit probabilities, warnings, eligibility,

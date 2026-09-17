@@ -52,6 +52,25 @@ first-half corners 4.5 -110`);
     expect(parsed.markets[1].parse_issue).toMatch(/could not determine/i);
   });
 
+  it("keeps multiple pasted fixtures as source-preserving blocks", () => {
+    const parsed = parseSportsbookInput(`E1
+2026-09-20
+Coventry City vs Birmingham City
+Coventry City O4.5 -145
+
+SP2
+not-a-date
+unresolved fixture text
+Opponent O3.5 -120`);
+    expect(parsed.blocks).toHaveLength(2);
+    expect(parsed.blocks[0].source_text).toContain("Coventry City vs Birmingham City");
+    expect(parsed.blocks[0].warnings).toEqual([]);
+    expect(parsed.blocks[1].source_text).toContain("unresolved fixture text");
+    expect(parsed.blocks[1].warnings.join(" ")).toMatch(/incomplete|unresolved/i);
+    expect(parsed.blocks[1].markets[0].source_text).toBe("not-a-date");
+    expect(parsed.blocks[1].markets.some((market) => market.source_text === "unresolved fixture text")).toBe(true);
+  });
+
   it("validates real dates, odds, line precision, and batch size without coercing blanks", () => {
     expect(isCalendarDate("2026-02-30")).toBe(false);
     const parsed = parseSportsbookInput(`Championship

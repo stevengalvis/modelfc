@@ -1,5 +1,10 @@
 import type { BetSide, MarketType, TeamSide } from "./api/types";
 
+// This is deliberately a lossless browser-side input adapter, not a second
+// source of truth. The API owns canonical fixture/team resolution, grounding,
+// and market eligibility; anything this adapter cannot identify remains in a
+// block/row for correction instead of being guessed or discarded.
+
 export interface EditableFixtureInput {
   competition: string;
   date: string;
@@ -18,8 +23,20 @@ export interface EditableMarketInput {
   parse_issue: string | null;
 }
 
-export interface ParsedSportsbookInput {
+export interface ParsedInputBlock {
+  block_id: string;
+  source_text: string;
   fixture: EditableFixtureInput;
+  markets: EditableMarketInput[];
+  warnings: string[];
+}
+
+export interface ParsedSportsbookInput {
+  blocks: ParsedInputBlock[];
+  warnings: string[];
+  /** @deprecated Use blocks. Kept for callers migrating from the single-fixture model. */
+  fixture: EditableFixtureInput;
+  /** @deprecated Use blocks[0].markets. */
   markets: EditableMarketInput[];
 }
 
@@ -96,8 +113,32 @@ function identifyTeam(
   };
 }
 
-export function parseSportsbookInput(text: string): ParsedSportsbookInput {
-  const lines = text.split(/\r?\n/).map(cleanLine).filter(Boolean);
+function splitBlocks(text: string): string[] {
+  const sourceLines = text.split(/\r?\n/);
+  const blocks: string[] = [];
+  let current: string[] = [];
+  const flush = () => {
+    const source = current.join("\n").trim();
+    if (source) blocks.push(source);
+    current = [];
+  };
+  for (const rawLine of sourceLines) {
+    const line = cleanLine(rawLine);
+    const startsCompetition = COMPETITION_PATTERNS.some(({ pattern }) => pattern.test(line));
+    // Blank lines are the normal separator. A repeated competition line also
+    // starts a block so copied boards do not need perfect whitespace.
+    const hasFixture = current.some((entry) => FIXTURE_PATTERN.test(cleanLine(entry)));
+    // Ignore decorative whitespace inside an incomplete header, but use a
+    // blank line after a fixture as the unambiguous block separator.
+    if ((!line && hasFixture) || (startsCompetition && hasFixture)) flush();
+    if (line) current.push(rawLine);
+  }
+  flush();
+  return blocks;
+}
+
+function parseBlock(source: string, blockIndex: number): ParsedInputBlock {
+  const lines = source.split(/\r?\n/).map(cleanLine).filter(Boolean);
   const fixture: EditableFixtureInput = { competition: "", date: "", home_team: "", away_team: "" };
   const marketLines: string[] = [];
 
@@ -163,7 +204,33 @@ export function parseSportsbookInput(text: string): ParsedSportsbookInput {
       parse_issue: "Enter at least one corner market.",
     }));
   }
-  return { fixture, markets };
+  const warnings: string[] = [];
+  if (!fixture.competition) warnings.push("Competition was not recognized; choose a backend-reported competition.");
+  if (!fixture.date || !fixture.home_team || !fixture.away_team) {
+    warnings.push("Fixture details are incomplete; correct the fields before analysis.");
+  }
+  const unresolved = markets.filter((market) => market.parse_issue).length;
+  if (unresolved) warnings.push(`${unresolved} market row${unresolved === 1 ? " is" : "s are"} unresolved and needs correction.`);
+  return {
+    block_id: `block-${blockIndex + 1}`,
+    source_text: source,
+    fixture,
+    markets,
+    warnings,
+  };
+}
+
+export function parseSportsbookInput(text: string): ParsedSportsbookInput {
+  const blocks = splitBlocks(text).map(parseBlock);
+  if (blocks.length === 0) blocks.push(parseBlock("", 0));
+  const warnings = blocks.flatMap((block) => block.warnings);
+  return {
+    blocks,
+    warnings,
+    // Compatibility aliases for integrations that have not migrated to blocks.
+    fixture: blocks[0].fixture,
+    markets: blocks[0].markets,
+  };
 }
 
 export const competitionLabels: Record<string, string> = {

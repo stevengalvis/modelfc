@@ -48,6 +48,17 @@ describe("AnalyzeWorkspace", () => {
     expect(screen.getByText("1 of 1 markets ready")).toBeInTheDocument();
   });
 
+  it("fans out one backend request per valid pasted fixture block", async () => {
+    const analyze = vi.spyOn(api, "analyze");
+    render(<AnalyzeWorkspace />);
+    await pasteAndParse(`${sportsbookText}\n\n${sportsbookText}`);
+    await waitFor(() => expect(screen.getByRole("button", { name: /analyze all/i })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: /analyze all/i }));
+    await waitFor(() => expect(analyze).toHaveBeenCalledTimes(2));
+    expect(screen.getAllByText("Analysis complete")).toHaveLength(2);
+    expect(screen.getAllByText("Original source")).toHaveLength(2);
+  });
+
   it("rejects impossible calendar dates and empty numeric fields", async () => {
     render(<AnalyzeWorkspace />);
     await pasteAndParse(sportsbookText.replace("2026-09-17", "2026-02-30"));

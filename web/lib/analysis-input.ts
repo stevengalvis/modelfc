@@ -1,5 +1,5 @@
-import type { CapabilitiesResponse, FixtureInput, MarketInput } from "./api/types";
-import type { EditableFixtureInput, EditableMarketInput } from "./parse-sportsbook-input";
+import type { BetSide, CapabilitiesResponse, FixtureInput, MarketInput, MarketType, TeamSide } from "./api/types";
+import type { EditableFixtureInput, EditableMarketInput, ParsedInputBlock } from "./parse-sportsbook-input";
 import { competitionIssue, eligibleTeams, findCompetition, unavailableMarketReason } from "./api/capabilities";
 
 export const MAX_MARKETS_PER_ANALYSIS = 32;
@@ -15,6 +15,10 @@ export interface InputValidation {
   competitionError: string | null;
   validMarkets: MarketInput[];
   fixture: FixtureInput | null;
+}
+
+export interface BlockValidation extends InputValidation {
+  blockId: string;
 }
 
 export function isCalendarDate(value: string): boolean {
@@ -65,6 +69,29 @@ function validateMarket(market: EditableMarketInput): FieldErrors {
   return errors;
 }
 
+/** Map editable UI values to the exact backend market contract. */
+export function toBackendMarketInput(market: EditableMarketInput): MarketInput | null {
+  if (!market.market_type || !market.side || !market.line.trim() || !market.american_odds.trim()) return null;
+  const marketType: MarketType | null = market.market_type === "TEAM_TOTAL"
+    ? "TEAM_TOTAL" : market.market_type === "MATCH_TOTAL" ? "MATCH_TOTAL" : null;
+  const side: BetSide | null = market.side === "OVER" ? "OVER" : market.side === "UNDER" ? "UNDER" : null;
+  const teamSide: TeamSide | null = market.team_side === "HOME" ? "HOME"
+    : market.team_side === "AWAY" ? "AWAY" : null;
+  if (!marketType || !side) return null;
+  const line = Number(market.line.trim());
+  const americanOdds = Number(market.american_odds.trim());
+  if (!Number.isFinite(line) || !Number.isSafeInteger(americanOdds)) return null;
+  if (marketType === "TEAM_TOTAL" && !teamSide) return null;
+  return {
+    client_market_id: market.client_market_id,
+    market_type: marketType,
+    team_side: marketType === "MATCH_TOTAL" ? null : teamSide,
+    side,
+    line,
+    american_odds: americanOdds,
+  };
+}
+
 export function validateAnalysisInput(
   fixtureInput: EditableFixtureInput,
   markets: EditableMarketInput[],
@@ -93,14 +120,8 @@ export function validateAnalysisInput(
     if (unavailable) marketUnavailable[market.client_market_id] = unavailable;
     marketErrors[market.client_market_id] = errors;
     if (Object.keys(errors).length === 0 && !unavailable) {
-      validMarkets.push({
-        client_market_id: market.client_market_id,
-        market_type: market.market_type as MarketInput["market_type"],
-        team_side: market.market_type === "MATCH_TOTAL" ? null : market.team_side as MarketInput["team_side"],
-        side: market.side as MarketInput["side"],
-        line: Number(market.line),
-        american_odds: Number(market.american_odds),
-      });
+      const mapped = toBackendMarketInput(market);
+      if (mapped) validMarkets.push(mapped);
     }
   }
 
@@ -122,6 +143,16 @@ export function validateAnalysisInput(
   } : null;
 
   return { fixtureErrors, marketErrors, marketUnavailable, batchError, competitionError, validMarkets, fixture };
+}
+
+export function validateAnalysisBlocks(
+  blocks: ParsedInputBlock[],
+  capabilities: CapabilitiesResponse | null,
+): BlockValidation[] {
+  return blocks.map((block) => ({
+    blockId: block.block_id,
+    ...validateAnalysisInput(block.fixture, block.markets, capabilities),
+  }));
 }
 
 export function requestFingerprint(fixture: FixtureInput, model: string, markets: MarketInput[]): string {

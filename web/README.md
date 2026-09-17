@@ -12,12 +12,14 @@ npm ci
 npm run dev -- --hostname 127.0.0.1
 ```
 
-The application uses fixed, backend-generated synthetic responses by default.
+The application requires an explicit API mode. Set `NEXT_PUBLIC_MODELFC_API_MODE=mock`
+for fixed, backend-generated synthetic responses, or use `live` with a reachable
+FastAPI service. Missing mode configuration is an error, never an implicit demo.
 Use **Use example** for whole-line probabilities or **Mixed board example** for
 an explicitly excluded match total and stale-history warnings. Mock mode cannot
 price arbitrary edited terms. See [fixture provenance](lib/api/FIXTURES.md).
 
-To connect a running FastAPI service with the merged PR #49 contract:
+To connect a running FastAPI service with the current V1 contract:
 
 ```bash
 NEXT_PUBLIC_MODELFC_API_MODE=live \
@@ -46,7 +48,6 @@ npm run build
 
 There is no separate lint command configured. Run `git diff --check` as well.
 
-PR #49 is merged at `40a0bac17c82f023ffa0af181d6d2981604a8596`.
 For the real HTTP boundary, use the backend from this synchronized checkout.
 Install the repository's Python dependencies and run from `web/`:
 

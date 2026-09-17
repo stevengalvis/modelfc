@@ -11,7 +11,8 @@ export function findCompetition(capabilities: CapabilitiesResponse | null, code:
 }
 
 export function eligibleTeams(competition: CompetitionCapability | null, side: TeamSide): string[] {
-  // No fallback to the legacy all-venue list: older PR #49 responses listed ineligible teams.
+  // No fallback to the legacy all-venue list: the backend's venue-specific
+  // eligibility is the source of truth for fixture correction.
   return competition?.analysis ? competition.teams_by_side?.[side] ?? [] : [];
 }
 
