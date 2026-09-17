@@ -391,7 +391,8 @@ on September 16, 2026, using the downloaded Liga MX export:
 PYTHONPATH=src python3 -m modelfc.corner_predict \
   --history scraped_dataset.csv --provider liga-mx \
   --date 2026-09-16 --home Puebla --away Toluca \
-  --home-lines 3.5 4.5 --away-lines 5.5 6.5
+  --home-lines 3.5 4.5 --away-lines 5.5 6.5 \
+  --total-lines 9.5 10.5
 ```
 
 `--history` uses the same six providers as corner evaluation. Football-Data
@@ -433,8 +434,12 @@ evaluation's display grid, which is conditioned on `0..max_corners`.
 Small upper tails are summed directly to avoid rounding possible outcomes
 to zero through subtraction. A convergence limit reports a numerical error
 for exceptionally slow tails rather than returning an incomplete sum.
-This command handles individual team lines. Match-total distributions and
-automatic sportsbook collection remain separate work.
+Match totals combine the home and away count distributions. Poisson totals use
+the exact Poisson sum. Negative Binomial totals use discrete convolution because
+the component distributions generally cannot be replaced by a single NB2
+distribution. Both methods assume the team counts are conditionally independent;
+game-state dependence is a known limitation. Team probabilities are never added.
+Automatic sportsbook collection remains separate work.
 
 ### Saved corner forecasts and flat-$1 pick record
 
@@ -716,6 +721,25 @@ variation without assuming all providers use European seasons. Counts are
 shown separately for fixtures, team observations and line outcomes: multiple
 lines and the two teams from a match are not independent samples. No confidence
 interval or significance claim is made from these descriptive tables.
+
+### Match-total corner probability report
+
+`corner_total_probability_report.py` evaluates the same leakage-safe eligible
+fixtures at common match-total lines. It pairs the two team forecasts, combines
+their distributions under the documented independence assumption, and reports
+Brier score and log loss once per fixture and line.
+
+```bash
+PYTHONPATH=src python3 -m modelfc.corner_total_probability_report \
+  --data-config corner_data.json --competition SP1 \
+  --lines 8.5 9.5 10.5 11.5 --from-date 2025-07-01
+```
+
+The report is an offline diagnostic, not a claim of sportsbook profitability.
+Its date cutoff, pairing validation, history gates, provider selection and model
+selection follow the team-corner probability report. Historical calibration can
+expose weakness in the independence assumption without changing the champion
+team-corner model.
 
 A model assigning roughly 60% should see roughly 60% OVER outcomes over enough
 comparable predictions. This report measures that behavior; it does not adjust
