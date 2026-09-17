@@ -743,6 +743,40 @@ normal settlement reconciliation can continue. It never changes immutable
 forecast, market, price, or result records. Restoring a prior review does not
 resolve it; its normal resolution rules still apply.
 
+```json
+{
+  "idempotency_key": "integrity-resolution-request-uuid",
+  "reason": "Repaired the corrupted pick reference and revalidated the ledger."
+}
+```
+
+Success is `201` for a new resolution and an identical idempotent replay:
+
+```json
+{
+  "forecast_id": "uuid",
+  "integrity_resolution_id": "integrity-resolution-uuid",
+  "status": "NEEDS_REVIEW",
+  "restored_review": {
+    "type": "RESULT_CORRECTION",
+    "reason_code": "CONFLICTING_RESULT",
+    "message": "Provider counts differ from the effective saved result.",
+    "candidate": {
+      "candidate_id": "sha256-digest",
+      "home_corners": 7,
+      "away_corners": 4
+    },
+    "source": {"provider": "football-data", "filename": "SP1_2627.csv", "sha256": "hash-b"}
+  },
+  "resolved_at": "2026-09-22T12:00:00Z"
+}
+```
+
+When there was no prior review, `restored_review` is null and `status` is
+`SETTLED` if an effective result exists or `OPEN` otherwise. Failed revalidation
+returns the existing `409` error and no resolution ID. An identical replay
+returns the original status, headers, and body without rerunning mutation logic.
+
 ### `GET /api/v1/forecasts/{forecast_id}/integrity-audit`
 
 Returns append-only integrity-review and resolution records in ascending order:
