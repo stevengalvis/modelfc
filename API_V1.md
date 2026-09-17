@@ -878,10 +878,12 @@ and normalized teams and must resolve uniquely; otherwise the request returns
 forecast/market value.
 
 Before activation, the backend compares the target trusted kickoff with every
-logged pick's immutable creation timestamp. If any pick was created at or after
-the target kickoff, the request returns `409 RETROACTIVE_ALIAS`, writes no alias,
-and leaves forecast/pick state unchanged. A reschedule can never convert a
-post-kickoff selection into an apparently valid prematch pick.
+non-void logged pick's immutable creation timestamp. If any such pick was
+created at or after the target kickoff, the request returns
+`409 RETROACTIVE_ALIAS`, writes no alias, and leaves forecast/pick state
+unchanged. Terminally voided picks do not block an alias for remaining valid
+picks. A reschedule can never convert a post-kickoff selection into an
+apparently valid prematch pick.
 
 ```json
 {
