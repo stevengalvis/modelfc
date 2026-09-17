@@ -152,6 +152,15 @@ class CornerApiTests(unittest.TestCase):
         self.assertEqual(response.json()["error"]["code"], "DATA_SOURCE_UNAVAILABLE")
         self.assertTrue(response.json()["error"]["retryable"])
 
+        malformed = self.root / "SP1_2425.csv"
+        malformed.write_text("Div,Date,HomeTeam\n", encoding="utf-8")
+        malformed_payload = json.loads(json.dumps(self.payload))
+        malformed_payload["idempotency_key"] = "malformed-history"
+        response = self.client.post("/api/v1/analyses", json=malformed_payload)
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.json()["error"]["code"], "DATA_SOURCE_UNAVAILABLE")
+        malformed.unlink()
+
         created = self.client.post("/api/v1/analyses", json=self.payload).json()
         path = self.state / "analyses" / f"{created['analysis_id']}.json"
         record = json.loads(path.read_text(encoding="utf-8"))
