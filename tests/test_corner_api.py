@@ -4,12 +4,14 @@ import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
 from modelfc.corner_api import create_app
 from modelfc.corner_analysis import CornerMarketRequest
 from modelfc.corner_analysis_store import analyze_and_store
+from modelfc.ledger_storage import LedgerStorageUnavailable
 
 
 class CornerApiTests(unittest.TestCase):
@@ -162,6 +164,19 @@ class CornerApiTests(unittest.TestCase):
         self.assertEqual(response.json()["error"]["code"], "DATA_SOURCE_UNAVAILABLE")
         self.assertTrue(response.json()["error"]["retryable"])
 
+        invalid_config = self.root / "invalid-config.json"
+        invalid_config.write_text(json.dumps({
+            "data_directory": ".", "leagues": ["SP1"],
+        }), encoding="utf-8")
+        invalid_config_client = TestClient(create_app(
+            data_config_path=invalid_config,
+            state_dir=self.root / "invalid-config-state",
+            min_history=4, min_venue_history=2,
+        ))
+        response = invalid_config_client.post("/api/v1/analyses", json=self.payload)
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.json()["error"]["code"], "DATA_SOURCE_UNAVAILABLE")
+
         state_file = self.root / "state-file"
         state_file.write_text("not a directory", encoding="utf-8")
         unavailable_state = TestClient(create_app(
@@ -183,6 +198,14 @@ class CornerApiTests(unittest.TestCase):
         malformed.unlink()
 
         created = self.client.post("/api/v1/analyses", json=self.payload).json()
+        with patch(
+            "modelfc.corner_analysis_store.read_json_record",
+            side_effect=LedgerStorageUnavailable("temporary state read failure"),
+        ):
+            response = self.client.get(f"/api/v1/analyses/{created['analysis_id']}")
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.json()["error"]["code"], "STATE_STORAGE_UNAVAILABLE")
+
         path = self.state / "analyses" / f"{created['analysis_id']}.json"
         record = json.loads(path.read_text(encoding="utf-8"))
         record["response"]["forecast"]["home_expected_corners"] = 999
