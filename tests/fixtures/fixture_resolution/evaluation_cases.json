@@ -1,0 +1,199 @@
+{
+  "schema_version": 1,
+  "snapshot_file": "provider_snapshot.json",
+  "description": "Recorded Stage 2 resolution and grounding cases. Responses are supplied by the deterministic test harness.",
+  "cases": [
+    {
+      "case_id": "exact-provider-match",
+      "expected_status": "resolved",
+      "ground_truth": {
+        "fixture_id": "e1-1001",
+        "competition_id": "E1",
+        "competition_label": "Championship",
+        "match_date": "2026-09-17",
+        "home_team": "Birmingham",
+        "away_team": "Millwall",
+        "expected_status": "resolved",
+        "expected_behavior": "accept",
+        "markets": [
+          {
+            "market_type": "team_total_corners",
+            "team": "Birmingham",
+            "team_side": "home",
+            "direction": "over",
+            "line": 4.5,
+            "american_odds": -110
+          }
+        ]
+      },
+      "explicit_clues": {
+        "competition": "E1",
+        "match_date": "2026-09-17",
+        "home_team": "Birmingham",
+        "away_team": "Millwall"
+      }
+    },
+    {
+      "case_id": "multiple-candidates",
+      "expected_status": "needs_confirmation",
+      "ground_truth": {
+        "fixture_id": null,
+        "competition_id": "E1",
+        "competition_label": "Championship",
+        "match_date": "2026-09-17",
+        "home_team": "Birmingham",
+        "away_team": "",
+        "expected_status": "needs_confirmation",
+        "expected_behavior": "ask_confirmation",
+        "candidate_fixture_ids": ["e1-1001", "e1-1002"]
+      },
+      "explicit_clues": {
+        "competition": "E1",
+        "match_date": "2026-09-17",
+        "home_team": "Birmingham"
+      }
+    },
+    {
+      "case_id": "no-candidate",
+      "expected_status": "unresolved",
+      "ground_truth": {
+        "fixture_id": null,
+        "competition_id": "E1",
+        "competition_label": "Championship",
+        "match_date": "2026-09-18",
+        "home_team": "Birmingham",
+        "away_team": "Millwall",
+        "expected_status": "unresolved",
+        "expected_behavior": "abstain"
+      },
+      "explicit_clues": {
+        "competition": "E1",
+        "match_date": "2026-09-18",
+        "home_team": "Birmingham",
+        "away_team": "Millwall"
+      }
+    },
+    {
+      "case_id": "completed-fixture",
+      "expected_status": "unresolved",
+      "ground_truth": {
+        "fixture_id": "e1-0999",
+        "competition_id": "E1",
+        "competition_label": "Championship",
+        "match_date": "2026-05-02",
+        "home_team": "Birmingham",
+        "away_team": "Millwall",
+        "expected_status": "unresolved",
+        "expected_behavior": "reject"
+      },
+      "explicit_clues": {
+        "competition": "E1",
+        "match_date": "2026-05-02",
+        "home_team": "Birmingham",
+        "away_team": "Millwall"
+      }
+    },
+    {
+      "case_id": "postponed-fixture",
+      "expected_status": "unresolved",
+      "ground_truth": {
+        "fixture_id": "e1-1003",
+        "competition_id": "E1",
+        "competition_label": "Championship",
+        "match_date": "2026-09-20",
+        "home_team": "Leicester",
+        "away_team": "Millwall",
+        "expected_status": "unresolved",
+        "expected_behavior": "reject"
+      },
+      "explicit_clues": {
+        "competition": "E1",
+        "match_date": "2026-09-20",
+        "home_team": "Leicester",
+        "away_team": "Millwall"
+      }
+    },
+    {
+      "case_id": "unsupported-fixture",
+      "expected_status": "unresolved",
+      "ground_truth": {
+        "fixture_id": "e1-4040",
+        "competition_id": "SP2",
+        "competition_label": "La Liga 2",
+        "match_date": "2026-09-17",
+        "home_team": "Unavailable FC",
+        "away_team": "Unknown CF",
+        "expected_status": "unresolved",
+        "expected_behavior": "abstain"
+      },
+      "explicit_clues": {
+        "competition": "SP2",
+        "match_date": "2026-09-17",
+        "home_team": "Unavailable FC",
+        "away_team": "Unknown CF"
+      }
+    },
+    {
+      "case_id": "invented-fixture",
+      "expected_status": "resolved",
+      "ground_truth": {
+        "fixture_id": "e1-4041",
+        "competition_id": "E1",
+        "competition_label": "Championship",
+        "match_date": "2026-09-17",
+        "home_team": "Birmingham",
+        "away_team": "Millwall",
+        "expected_status": "resolved",
+        "expected_behavior": "accept"
+      }
+    },
+    {
+      "case_id": "conflicting-date",
+      "expected_status": "resolved",
+      "ground_truth": {
+        "fixture_id": "e1-1001",
+        "competition_id": "E1",
+        "competition_label": "Championship",
+        "match_date": "2026-09-17",
+        "home_team": "Birmingham",
+        "away_team": "Millwall",
+        "expected_status": "resolved",
+        "expected_behavior": "accept"
+      },
+      "explicit_clues": {
+        "competition": "E1",
+        "match_date": "2026-09-18",
+        "home_team": "Birmingham",
+        "away_team": "Millwall"
+      }
+    },
+    {
+      "case_id": "provider-snapshot-mismatch",
+      "expected_status": "resolved",
+      "ground_truth": {
+        "fixture_id": "e1-1001",
+        "competition_id": "E1",
+        "competition_label": "Championship",
+        "match_date": "2026-09-17",
+        "home_team": "Birmingham",
+        "away_team": "Millwall",
+        "expected_status": "resolved",
+        "expected_behavior": "accept"
+      }
+    },
+    {
+      "case_id": "missing-provider-fixture-id",
+      "expected_status": "resolved",
+      "ground_truth": {
+        "fixture_id": "e1-1001",
+        "competition_id": "E1",
+        "competition_label": "Championship",
+        "match_date": "2026-09-17",
+        "home_team": "Birmingham",
+        "away_team": "Millwall",
+        "expected_status": "resolved",
+        "expected_behavior": "accept"
+      }
+    }
+  ]
+}

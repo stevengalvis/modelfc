@@ -66,3 +66,27 @@ UTC kickoff semantics, and retention permission before production use. The
 existing Football-Data source is a local historical-result source and its
 documented terms must be revisited before any commercial or automated schedule
 use. This stage therefore provides recorded evidence only.
+
+## Stage 2 grounding and evaluation
+
+`fixture_resolution_api.py` defines the versioned response envelope and the
+four resolution statuses (`resolved`, `needs_confirmation`, `unresolved`, and
+`invalid`). `fixture_grounding.py` validates a final candidate against the
+provider snapshot and a recorded `GroundTruthFixture`. It rejects missing or
+invented fixture IDs, provider snapshot mismatches, competition/date/team
+conflicts, invented market/line/odds claims, and automatic resolution of
+ambiguous candidates. See
+`tests/fixtures/fixture_resolution/evaluation_cases.json` for the recorded
+cases and `tests/test_fixture_grounding.py` for the reproducible evaluation.
+
+The recorded report uses positive cases as the denominator for exact fixture
+accuracy and provider-grounded resolution rate, expected abstention cases as
+the denominator for correct abstention rate, and all cases for schema
+validity. Hallucination count is the number of unsupported claims rejected by
+the evaluator. The current recorded harness has no LLM calls, so token totals
+and estimated spend are both zero.
+
+The evaluator is an offline test boundary, not an LLM or production schedule
+adapter. A real upcoming-fixture provider remains a prerequisite for
+production. League support must be enabled only after both that provider and
+validated historical corner coverage are configured for the league.
