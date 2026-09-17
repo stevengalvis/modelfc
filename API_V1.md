@@ -536,10 +536,13 @@ the explicit resolution endpoint.
 
 A forecast that already has an effective result is not demoted from `SETTLED`
 because a later validated source is stale, temporarily omits its row, or has a
-partial row. Reconciliation changes such a forecast only when one complete,
-unambiguous provider row supplies corner counts that conflict with the effective
-result. Matching counts are an idempotent no-op; conflicting counts create
-`NEEDS_REVIEW` for explicit correction resolution.
+partial row. The retroactive-kickoff integrity check above is an explicit
+exception: it runs for settled forecasts too, and a violation removes their
+picks from settled performance by moving them to `NEEDS_REVIEW`. When that
+integrity check passes, reconciliation changes a settled forecast only when one
+complete, unambiguous provider row supplies corner counts that conflict with the
+effective result. Matching counts are an idempotent no-op; conflicting counts
+create `NEEDS_REVIEW` for explicit correction resolution.
 
 ```json
 {
