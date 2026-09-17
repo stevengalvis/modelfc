@@ -119,6 +119,8 @@ class CornerBatchAnalysisTests(unittest.TestCase):
         for markets in cases:
             with self.subTest(markets=markets), self.assertRaises(ValueError):
                 self.analyze(markets)
+        with self.assertRaisesRegex(ValueError, "at most 32"):
+            self.analyze(tuple(self.markets[0] for _ in range(33)))
 
 
 if __name__ == "__main__":
