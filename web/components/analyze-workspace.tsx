@@ -177,7 +177,7 @@ export function AnalyzeWorkspace() {
 
       <section className="panel paste-panel" aria-labelledby="paste-title">
         <div className="section-title section-title-row">
-          <div className="title-cluster"><span>01</span><div><h2 id="paste-title">Paste sportsbook lines</h2><p>League, date, fixture, then one corner market per line.</p></div></div>
+          <div className="title-cluster"><span>01</span><div><h2 id="paste-title">Paste sportsbook lines</h2><p>Competition code or label, date, fixture, then one corner market per line.</p></div></div>
           <div className="example-actions">
             <button className="text-button" type="button" onClick={() => changeRawInput(exampleInput)}>Use example</button>
             <button className="text-button" type="button" onClick={() => changeRawInput(mixedExampleInput)}>Mixed board example</button>

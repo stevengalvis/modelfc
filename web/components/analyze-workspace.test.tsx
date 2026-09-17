@@ -40,6 +40,14 @@ describe("AnalyzeWorkspace", () => {
     expect((screen.getByRole("textbox", { name: /sportsbook fixture/i }) as HTMLTextAreaElement).value).toContain("Birmingham City");
   });
 
+  it("accepts the backend E1 code end to end without an unresolved competition row", async () => {
+    render(<AnalyzeWorkspace />);
+    await pasteAndParse(sportsbookText.replace("Championship", "E1"));
+    expect(screen.getByLabelText("Competition code")).toHaveValue("E1");
+    expect(screen.queryByText(/could not determine the corner market/i)).not.toBeInTheDocument();
+    expect(screen.getByText("1 of 1 markets ready")).toBeInTheDocument();
+  });
+
   it("rejects impossible calendar dates and empty numeric fields", async () => {
     render(<AnalyzeWorkspace />);
     await pasteAndParse(sportsbookText.replace("2026-09-17", "2026-02-30"));
