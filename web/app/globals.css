@@ -18,7 +18,7 @@
 * { box-sizing: border-box; }
 html { background: var(--bg); color-scheme: dark; }
 body { margin: 0; background: radial-gradient(circle at 85% -10%, rgba(66, 115, 81, .2), transparent 32rem), var(--bg); color: var(--ink); font-family: var(--font-sans); }
-button, input, select { font: inherit; }
+button, input, select, textarea { font: inherit; }
 button { cursor: pointer; }
 button:disabled { cursor: not-allowed; opacity: .45; }
 a { color: inherit; text-decoration: none; }
@@ -56,11 +56,13 @@ main { width: min(1440px, 100%); margin: 0 auto; }
 .fixture-grid { display: grid; grid-template-columns: 1.1fr .9fr 1.3fr 1.3fr; gap: 12px; padding: 0 24px; }
 label { color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .08em; font-weight: 600; }
 input, select { width: 100%; height: 44px; color: var(--ink); background: #0a120f; border: 1px solid var(--line-bright); border-radius: 7px; padding: 0 12px; margin-top: 7px; outline: none; font-size: 13px; text-transform: none; letter-spacing: normal; }
-input:focus, select:focus { border-color: var(--lime); box-shadow: 0 0 0 3px rgba(200, 255, 66, .08); }
+input:focus, select:focus, textarea:focus { border-color: var(--lime); box-shadow: 0 0 0 3px rgba(200, 255, 66, .08); }
 select:disabled { color: var(--subtle); }
 
 .secondary-button, .ghost-button { border: 1px solid var(--line-bright); background: transparent; color: var(--ink); border-radius: 7px; padding: 9px 13px; font-size: 12px; }
 .secondary-button:hover, .ghost-button:hover { border-color: var(--muted); background: rgba(255,255,255,.025); }
+.text-button { border: 0; background: transparent; color: var(--lime); padding: 8px 0; font-size: 12px; }
+.text-button:hover { color: #d7ff73; }
 .primary-button { min-height: 43px; padding: 0 22px; border: 0; border-radius: 7px; background: var(--lime); color: #0a100c; font-weight: 800; font-size: 12px; text-transform: uppercase; letter-spacing: .06em; box-shadow: inset 0 -2px 0 rgba(0,0,0,.18); }
 .primary-button:hover:not(:disabled) { background: #d7ff73; transform: translateY(-1px); }
 
@@ -78,6 +80,29 @@ select:disabled { color: var(--subtle); }
 .analyze-bar > label { width: min(350px, 45%); }
 .analyze-bar > div { display: flex; align-items: center; gap: 18px; }
 .market-count { color: var(--muted); font: 500 11px/1 var(--font-mono); }
+.paste-panel { overflow: visible; }
+.paste-input-wrap { padding: 0 24px 24px; }
+.paste-input-wrap textarea { width: 100%; min-height: 230px; resize: vertical; display: block; color: var(--ink); background: #08100d; border: 1px solid var(--line-bright); border-radius: 9px; padding: 16px; outline: none; font: 500 14px/1.75 var(--font-mono); }
+.paste-input-wrap textarea::placeholder { color: #607068; opacity: .7; }
+.paste-actions { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-top: 12px; }
+.paste-actions > span { color: var(--muted); font: 500 10px/1 var(--font-mono); text-transform: uppercase; letter-spacing: .08em; }
+.review-panel { overflow: hidden; }
+.fixture-summary { display: grid; grid-template-columns: 1fr 2fr 1fr; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); background: rgba(255,255,255,.012); }
+.fixture-summary > div { padding: 15px 24px; border-left: 1px solid var(--line); }
+.fixture-summary > div:first-child { border-left: 0; }
+.fixture-summary span, .fixture-summary strong { display: block; }
+.fixture-summary span { margin-bottom: 7px; color: var(--subtle); font: 500 8px/1 var(--font-mono); text-transform: uppercase; letter-spacing: .08em; }
+.fixture-summary strong { font-size: 13px; }
+.fixture-summary em { color: var(--subtle); font-style: normal; font-weight: 400; }
+.parsed-markets > div { display: grid; grid-template-columns: 32px minmax(0, 1fr) auto; gap: 12px; align-items: center; min-height: 54px; padding: 0 24px; border-bottom: 1px solid var(--line); }
+.parsed-markets span { color: var(--subtle); font: 500 10px/1 var(--font-mono); }
+.parsed-markets strong { font-size: 13px; }
+.parsed-markets small { color: var(--muted); font: 500 9px/1 var(--font-mono); text-transform: uppercase; letter-spacing: .06em; }
+.parse-errors { margin: 16px 24px; padding: 14px 16px; border: 1px solid rgba(255, 139, 74, .35); border-radius: 9px; background: rgba(255, 139, 74, .07); }
+.parse-errors strong { color: var(--orange); font-size: 12px; }
+.parse-errors ul { margin: 9px 0 0; padding-left: 18px; color: var(--muted); font-size: 12px; line-height: 1.6; }
+.simple-analyze-bar { justify-content: flex-end; }
+.simple-analyze-bar .market-count { margin-right: auto; }
 .error-banner { display: flex; gap: 12px; margin-top: 16px; border: 1px solid rgba(255, 107, 104, .4); background: rgba(255, 107, 104, .08); border-radius: 10px; padding: 14px 18px; font-size: 13px; }
 .error-banner strong { color: var(--red); }
 .error-banner span { color: var(--muted); }
@@ -142,6 +167,8 @@ select:disabled { color: var(--subtle); }
   .analyze-bar { align-items: stretch; flex-direction: column; gap: 16px; }
   .analyze-bar > label { width: 100%; }
   .analyze-bar > div { justify-content: space-between; }
+  .fixture-summary { grid-template-columns: 1fr 1fr; }
+  .fixture-summary > div:nth-child(2) { grid-column: 1 / -1; grid-row: 1; border-left: 0; border-bottom: 1px solid var(--line); }
   .forecast-strip { width: 100%; }
   .forecast-strip > div { flex: 1; padding: 11px; }
 }
@@ -153,6 +180,14 @@ select:disabled { color: var(--subtle); }
   .section-title, .fixture-grid, .market-row, .market-header, .analyze-bar { padding-left: 15px; padding-right: 15px; }
   .section-title-row { align-items: end; }
   .section-title p { max-width: 190px; }
+  .paste-input-wrap { padding-left: 15px; padding-right: 15px; }
+  .paste-input-wrap textarea { min-height: 260px; font-size: 13px; }
+  .paste-actions { align-items: stretch; flex-direction: column; }
+  .paste-actions > span { text-align: center; }
+  .fixture-summary > div { padding: 13px 15px; }
+  .parsed-markets > div { grid-template-columns: 25px minmax(0, 1fr); padding: 13px 15px; }
+  .parsed-markets small { grid-column: 2; }
+  .simple-analyze-bar { align-items: stretch; }
   .market-row { grid-template-columns: 22px 1fr 1fr 28px; }
   .analyze-bar > div { align-items: stretch; flex-direction: column; gap: 10px; }
   .market-count { text-align: center; }

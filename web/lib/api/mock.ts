@@ -13,8 +13,8 @@ export const mockCapabilities: CapabilitiesResponse = {
   markets: ["TEAM_TOTAL", "MATCH_TOTAL"],
   competitions: [
     {
-      code: "SP1",
-      name: "La Liga",
+      code: "SP2",
+      name: "La Liga 2",
       provider: "football-data",
       analysis: true,
       automatic_refresh: true,

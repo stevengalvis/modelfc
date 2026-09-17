@@ -1,58 +1,35 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { AnalysisResults } from "./analysis-results";
-import { MarketEditor, type EditableMarket } from "./market-editor";
 import { api } from "@/lib/api/client";
 import { ModelFCApiError } from "@/lib/api/errors";
-import type { AnalysisResponse, CapabilitiesResponse, FixtureInput, MarketInput } from "@/lib/api/types";
+import { formatMarket, parseSportsbookInput, type ParsedSportsbookInput } from "@/lib/parse-sportsbook-input";
+import type { AnalysisResponse, CapabilitiesResponse, FixtureInput } from "@/lib/api/types";
 
-const defaultFixture: FixtureInput = {
-  competition: "SP1",
-  date: "2026-09-20",
-  home_team: "Athletic Club",
-  away_team: "Valencia",
-};
+const exampleInput = `Championship
+2026-09-20
+Coventry City vs Birmingham City
+Coventry City team corners O4.5 -145
+Coventry City team corners O5.5 +105
+Birmingham City team corners O3.5 -120
+Match total corners U10.5 -125`;
 
-function newMarket(overrides: Partial<EditableMarket> = {}): EditableMarket {
-  return {
-    client_market_id: crypto.randomUUID(),
-    market_type: "TEAM_TOTAL",
-    team_side: "HOME",
-    side: "OVER",
-    line: "4.5",
-    american_odds: "-110",
-    ...overrides,
-  };
+function competitionName(code: string | undefined): string {
+  return code === "SP2" ? "La Liga 2" : code === "E1" ? "Championship" : "Unknown";
 }
 
-const initialMarkets: EditableMarket[] = [
-  newMarket({ line: "4.5", american_odds: "-145" }),
-  newMarket({ line: "5.5", american_odds: "+105" }),
-  newMarket({ team_side: "AWAY", line: "3.5", american_odds: "-120" }),
-  newMarket({ market_type: "MATCH_TOTAL", team_side: null, line: "9.5", american_odds: "-110" }),
-];
-
-function parseMarket(row: EditableMarket): MarketInput | null {
-  const line = Number(row.line);
-  const odds = Number(row.american_odds);
-  if (!Number.isFinite(line) || line < 0 || !Number.isInteger(line * 2)) return null;
-  if (!Number.isInteger(odds) || (odds > -100 && odds < 100)) return null;
-  return {
-    client_market_id: row.client_market_id,
-    market_type: row.market_type,
-    team_side: row.market_type === "MATCH_TOTAL" ? null : row.team_side,
-    side: row.side,
-    line,
-    american_odds: odds,
-  };
+function completeFixture(parsed: ParsedSportsbookInput | null): FixtureInput | null {
+  const fixture = parsed?.fixture;
+  if (!fixture?.competition || !fixture.date || !fixture.home_team || !fixture.away_team) return null;
+  return fixture as FixtureInput;
 }
 
 export function AnalyzeWorkspace() {
-  const [fixture, setFixture] = useState(defaultFixture);
-  const [markets, setMarkets] = useState(initialMarkets);
+  const [rawInput, setRawInput] = useState("");
+  const [parsed, setParsed] = useState<ParsedSportsbookInput | null>(null);
   const [capabilities, setCapabilities] = useState<CapabilitiesResponse | null>(null);
-  const [model, setModel] = useState("venue-opponent-negative-binomial");
+  const [model, setModel] = useState("");
   const [analysis, setAnalysis] = useState<AnalysisResponse | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -68,16 +45,17 @@ export function AnalyzeWorkspace() {
       });
   }, []);
 
-  const parsedMarkets = useMemo(() => markets.map(parseMarket), [markets]);
-  const formValid = Boolean(
-    fixture.date && fixture.home_team.trim() && fixture.away_team.trim() &&
-    fixture.home_team.trim().toLowerCase() !== fixture.away_team.trim().toLowerCase() &&
-    markets.length > 0 && parsedMarkets.every(Boolean),
-  );
+  function parseInput() {
+    const result = parseSportsbookInput(rawInput);
+    setParsed(result);
+    setAnalysis(null);
+    setError(null);
+  }
 
   async function analyze() {
-    if (!formValid) {
-      setError("Complete the fixture and fix invalid lines or American odds before analyzing.");
+    const fixture = completeFixture(parsed);
+    if (!fixture || !parsed || parsed.errors.length > 0 || parsed.markets.length === 0) {
+      setError("Fix the highlighted input before analyzing.");
       return;
     }
     setBusy(true);
@@ -86,13 +64,9 @@ export function AnalyzeWorkspace() {
     try {
       const response = await api.analyze({
         idempotency_key: crypto.randomUUID(),
-        fixture: {
-          ...fixture,
-          home_team: fixture.home_team.trim(),
-          away_team: fixture.away_team.trim(),
-        },
+        fixture,
         model,
-        markets: parsedMarkets as MarketInput[],
+        markets: parsed.markets,
       });
       setAnalysis(response);
     } catch (cause) {
@@ -105,68 +79,83 @@ export function AnalyzeWorkspace() {
     }
   }
 
+  const fixture = completeFixture(parsed);
+  const ready = Boolean(capabilities && model && fixture && parsed && parsed.markets.length > 0 && parsed.errors.length === 0);
+  const latestResultDate = fixture
+    ? capabilities?.competitions.find((item) => item.code === fixture.competition)?.latest_result_date
+    : null;
+
   return (
     <div className="workspace">
       <section className="page-heading">
         <div>
           <p className="eyebrow">Pre-match workspace</p>
-          <h1>Compare the market to the model.</h1>
-          <p>One fixture, every available corner line, one decision surface.</p>
+          <h1>Paste the lines. Find the value.</h1>
+          <p>Model FC turns one fixture and every available corner line into a comparable decision table.</p>
         </div>
-        <div className="data-chip">
-          <span>Latest result data</span>
-          <strong>{capabilities?.competitions.find((item) => item.code === fixture.competition)?.latest_result_date ?? "Loading"}</strong>
-        </div>
+        {latestResultDate ? <div className="data-chip"><span>Latest result data</span><strong>{latestResultDate}</strong></div> : null}
       </section>
 
-      <section className="panel setup-panel" aria-labelledby="fixture-title">
-        <div className="section-title">
-          <span>01</span>
-          <div><h2 id="fixture-title">Fixture</h2><p>Set this once for every market below.</p></div>
-        </div>
-        <div className="fixture-grid">
-          <label>Competition
-            <select value={fixture.competition} onChange={(event) => setFixture({ ...fixture, competition: event.target.value })}>
-              {(capabilities?.competitions ?? []).map((competition) => (
-                <option key={competition.code} value={competition.code}>{competition.name} · {competition.code}</option>
-              ))}
-            </select>
-          </label>
-          <label>Date
-            <input type="date" value={fixture.date} onChange={(event) => setFixture({ ...fixture, date: event.target.value })} />
-          </label>
-          <label>Home team
-            <input value={fixture.home_team} onChange={(event) => setFixture({ ...fixture, home_team: event.target.value })} />
-          </label>
-          <label>Away team
-            <input value={fixture.away_team} onChange={(event) => setFixture({ ...fixture, away_team: event.target.value })} />
-          </label>
-        </div>
-      </section>
-
-      <section className="panel" aria-labelledby="markets-title">
+      <section className="panel paste-panel" aria-labelledby="paste-title">
         <div className="section-title section-title-row">
-          <div className="title-cluster"><span>02</span><div><h2 id="markets-title">Available markets</h2><p>Add every line you want to compare.</p></div></div>
-          <button className="secondary-button" type="button" onClick={() => setMarkets([...markets, newMarket()])}>+ Add market</button>
+          <div className="title-cluster"><span>01</span><div><h2 id="paste-title">Paste sportsbook lines</h2><p>Include the league, date, fixture, and every corner market you want to compare.</p></div></div>
+          <button className="text-button" type="button" onClick={() => { setRawInput(exampleInput); setParsed(null); setAnalysis(null); }}>Use example</button>
         </div>
-        <MarketEditor markets={markets} setMarkets={setMarkets} />
-        <div className="analyze-bar">
-          <label>Model
-            <select value={model} onChange={(event) => setModel(event.target.value)}>
-              {(capabilities?.models ?? [model]).map((item) => <option key={item} value={item}>{item}</option>)}
-            </select>
-          </label>
-          <div>
-            <span className="market-count">{markets.length} market{markets.length === 1 ? "" : "s"} ready</span>
-            <button className="primary-button" type="button" disabled={busy || !capabilities} onClick={analyze}>
-              {busy ? "Running model…" : "Analyze all"}
-            </button>
+        <div className="paste-input-wrap">
+          <textarea
+            aria-label="Sportsbook fixture and corner markets"
+            placeholder={exampleInput}
+            value={rawInput}
+            onChange={(event) => { setRawInput(event.target.value); setParsed(null); setAnalysis(null); }}
+          />
+          <div className="paste-actions">
+            <span>Championship and La Liga 2 only</span>
+            <button className="secondary-button" type="button" disabled={!rawInput.trim()} onClick={parseInput}>Parse lines</button>
           </div>
         </div>
       </section>
 
-      {error && <div className="error-banner" role="alert"><strong>Could not analyze</strong><span>{error}</span></div>}
-      {analysis && <AnalysisResults analysis={analysis} />}
+      {parsed ? (
+        <section className="panel review-panel" aria-labelledby="review-title">
+          <div className="section-title">
+            <span>02</span>
+            <div><h2 id="review-title">Review parsed markets</h2><p>Confirm what Model FC found before running the model.</p></div>
+          </div>
+          {fixture ? (
+            <div className="fixture-summary">
+              <div><span>Competition</span><strong>{competitionName(fixture.competition)}</strong></div>
+              <div><span>Fixture</span><strong>{fixture.home_team} <em>vs</em> {fixture.away_team}</strong></div>
+              <div><span>Date</span><strong>{fixture.date}</strong></div>
+            </div>
+          ) : null}
+          {parsed.markets.length > 0 ? (
+            <div className="parsed-markets">
+              {parsed.markets.map((item, index) => (
+                <div key={item.client_market_id}>
+                  <span>{String(index + 1).padStart(2, "0")}</span>
+                  <strong>{formatMarket(item, parsed.fixture)}</strong>
+                  <small>{item.market_type === "MATCH_TOTAL" ? "Match total" : "Team total"}</small>
+                </div>
+              ))}
+            </div>
+          ) : null}
+          {parsed.errors.length > 0 ? (
+            <div className="parse-errors" role="alert">
+              <strong>Some text needs attention</strong>
+              <ul>{parsed.errors.map((item) => <li key={item}>{item}</li>)}</ul>
+            </div>
+          ) : null}
+          <div className="analyze-bar simple-analyze-bar">
+            <span className="market-count">{parsed.markets.length} market{parsed.markets.length === 1 ? "" : "s"} parsed</span>
+            <button className="primary-button" type="button" disabled={busy || !ready} onClick={analyze}>
+              {busy ? "Running model…" : "Analyze all"}
+            </button>
+          </div>
+        </section>
+      ) : null}
+
+      {error ? <div className="error-banner" role="alert"><strong>Could not analyze</strong><span>{error}</span></div> : null}
+      {analysis ? <AnalysisResults analysis={analysis} /> : null}
     </div>
   );
 }
