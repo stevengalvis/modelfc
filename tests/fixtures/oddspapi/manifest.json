@@ -1,0 +1,317 @@
+{
+  "created_at": "2026-09-20T12:21:10.332519+00:00",
+  "purpose": "Historical raw OddsPapi examples for offline integration tests; not current quotes. No API requests made.",
+  "sources": [
+    {
+      "path": "/tmp/wolves-west-brom-odds.json",
+      "sha256": "20fd9068e8472b9d2ff3d6f49722e78f25ecf777e6aeddc68cc256a6deace9e8",
+      "modified_at": "2026-09-20T01:54:06.358330+00:00"
+    },
+    {
+      "path": "/tmp/norwich-bolton-odds.json",
+      "sha256": "5bccd02e58a68045b915c4281531af9f4606150a171a984207f15752de603700",
+      "modified_at": "2026-09-20T01:54:14.615674+00:00"
+    },
+    {
+      "path": "/tmp/odds-markets.json",
+      "sha256": "19afff435082035052f61f54753a62adaa5f52c871db1aabfdefadfce4f996ff",
+      "modified_at": "2026-09-20T01:54:42.296829+00:00"
+    },
+    {
+      "path": "/tmp/odds-fixtures.json",
+      "sha256": "5be96cc549f0838d7bca42fca9aafa793ce158f3d003ebcad73c9b9d60d9ca13",
+      "modified_at": "2026-09-20T01:53:44.178404+00:00"
+    }
+  ],
+  "csv_directory_inspected": "/root/odds-provider-spike/results contains CSVs only; none used to reconstruct JSON.",
+  "structure": "Odds response objects, bookmaker maps, market maps, outcome maps, players maps, dictionary entries and fixture list entries copied directly from raw JSON. Formatting normalized; retained values unchanged except any explicit credential removals. participant1 is HOME; participant2 is AWAY.",
+  "cases": [
+    {
+      "fixture": "id1000001872339860",
+      "bookmaker": "draftkings",
+      "present": true,
+      "original_market_count": 128,
+      "original_corner_market_count": 23,
+      "exported_market_count": 15,
+      "target_market_count": 7,
+      "all_returned_target_lines": {
+        "teamtotals-corners-team1": [
+          5.5
+        ],
+        "teamtotals-corners-team2": [
+          3.5
+        ],
+        "totals-corners": [
+          7.5,
+          8.5,
+          9.5,
+          10.5,
+          11.5
+        ]
+      },
+      "exclusion_samples": [
+        {
+          "market_id": "101717",
+          "market_type": "1x2-corners",
+          "period": "p2"
+        },
+        {
+          "market_id": "10871",
+          "market_type": "spread-corners",
+          "period": "fulltime"
+        },
+        {
+          "market_id": "101532",
+          "market_type": "1x2-corners",
+          "period": "p1"
+        },
+        {
+          "market_id": "101744",
+          "market_type": "totals-corners",
+          "period": "p2"
+        },
+        {
+          "market_id": "101394",
+          "market_type": "oddeven-corners",
+          "period": "fulltime"
+        },
+        {
+          "market_id": "101547",
+          "market_type": "totals-corners",
+          "period": "p1"
+        },
+        {
+          "market_id": "101798",
+          "market_type": "spreads-corners",
+          "period": "p2"
+        },
+        {
+          "market_id": "101613",
+          "market_type": "spread-corners",
+          "period": "p1"
+        }
+      ],
+      "absence_evidence": null
+    },
+    {
+      "fixture": "id1000001872339860",
+      "bookmaker": "fanduel",
+      "present": true,
+      "original_market_count": 139,
+      "original_corner_market_count": 58,
+      "exported_market_count": 49,
+      "target_market_count": 47,
+      "all_returned_target_lines": {
+        "teamtotals-corners-team1": [
+          2.5,
+          3.5,
+          4.5,
+          5.5,
+          6.5,
+          7.5,
+          8.5,
+          9.5,
+          10.5,
+          11.5,
+          12.5
+        ],
+        "teamtotals-corners-team2": [
+          2.5,
+          3.5,
+          4.5,
+          5.5,
+          6.5,
+          7.5,
+          8.5,
+          9.5,
+          10.5
+        ],
+        "totals-corners": [
+          3.0,
+          4.0,
+          4.5,
+          5.0,
+          5.5,
+          6.0,
+          6.5,
+          7.0,
+          7.5,
+          8.0,
+          8.5,
+          9.0,
+          9.5,
+          10.0,
+          10.5,
+          11.0,
+          11.5,
+          12.0,
+          12.5,
+          13.0,
+          13.5,
+          14.0,
+          14.5,
+          15.0,
+          15.5,
+          16.0,
+          17.0
+        ]
+      },
+      "exclusion_samples": [
+        {
+          "market_id": "101549",
+          "market_type": "totals-corners",
+          "period": "p1"
+        },
+        {
+          "market_id": "10764",
+          "market_type": "1x2-corners",
+          "period": "fulltime"
+        }
+      ],
+      "absence_evidence": null
+    },
+    {
+      "fixture": "id1000001872339852",
+      "bookmaker": "draftkings",
+      "present": true,
+      "original_market_count": 129,
+      "original_corner_market_count": 23,
+      "exported_market_count": 15,
+      "target_market_count": 7,
+      "all_returned_target_lines": {
+        "teamtotals-corners-team1": [
+          6.5
+        ],
+        "teamtotals-corners-team2": [
+          3.5
+        ],
+        "totals-corners": [
+          8.5,
+          9.5,
+          10.5,
+          11.5,
+          12.5
+        ]
+      },
+      "exclusion_samples": [
+        {
+          "market_id": "101798",
+          "market_type": "spreads-corners",
+          "period": "p2"
+        },
+        {
+          "market_id": "101532",
+          "market_type": "1x2-corners",
+          "period": "p1"
+        },
+        {
+          "market_id": "101559",
+          "market_type": "totals-corners",
+          "period": "p1"
+        },
+        {
+          "market_id": "101394",
+          "market_type": "oddeven-corners",
+          "period": "fulltime"
+        },
+        {
+          "market_id": "101744",
+          "market_type": "totals-corners",
+          "period": "p2"
+        },
+        {
+          "market_id": "101717",
+          "market_type": "1x2-corners",
+          "period": "p2"
+        },
+        {
+          "market_id": "101609",
+          "market_type": "spread-corners",
+          "period": "p1"
+        },
+        {
+          "market_id": "10867",
+          "market_type": "spread-corners",
+          "period": "fulltime"
+        }
+      ],
+      "absence_evidence": null
+    },
+    {
+      "fixture": "id1000001872339852",
+      "bookmaker": "fanduel",
+      "present": true,
+      "original_market_count": 63,
+      "original_corner_market_count": 0,
+      "exported_market_count": 63,
+      "target_market_count": 0,
+      "all_returned_target_lines": {
+        "teamtotals-corners-team1": [],
+        "teamtotals-corners-team2": [],
+        "totals-corners": []
+      },
+      "exclusion_samples": [],
+      "absence_evidence": "Complete original bookmaker block retained; zero corner markets in source."
+    }
+  ],
+  "missing_cases": [
+    "No standalone DraftKings/FanDuel bookmaker-directory raw response found. Original embedded bookmaker metadata is included for both fixtures."
+  ],
+  "source_missing_outcomes_preserved": [
+    {
+      "fixture": "id1000001872339860",
+      "bookmaker": "fanduel",
+      "market_id": "101512",
+      "market_type": "teamtotals-corners-team2",
+      "line": 10.5,
+      "missing_outcome_ids": [
+        "101513"
+      ]
+    },
+    {
+      "fixture": "id1000001872339860",
+      "bookmaker": "fanduel",
+      "market_id": "10833",
+      "market_type": "totals-corners",
+      "line": 17.0,
+      "missing_outcome_ids": [
+        "10833"
+      ]
+    },
+    {
+      "fixture": "id1000001872339860",
+      "bookmaker": "fanduel",
+      "market_id": "10777",
+      "market_type": "totals-corners",
+      "line": 3.0,
+      "missing_outcome_ids": [
+        "10778"
+      ]
+    },
+    {
+      "fixture": "id1000001872339860",
+      "bookmaker": "fanduel",
+      "market_id": "10781",
+      "market_type": "totals-corners",
+      "line": 4.0,
+      "missing_outcome_ids": [
+        "10782"
+      ]
+    }
+  ],
+  "data_removed": [
+    "Other bookmakers from both fixture odds responses.",
+    "External-provider cross-reference IDs (native OddsPapi and bookmaker IDs retained).",
+    "Non-corner markets except complete Norwich–Bolton FanDuel block retained to prove bookmaker presence with no corner markets.",
+    "Exclusion corner families reduced to one original market per marketType/period per bookmaker; full-match target families retain every returned line and outcome.",
+    "Unrelated fixtures and market dictionary entries."
+  ],
+  "bookmaker_metadata": "Original bookmakerIsActive, bookmakerFixtureId, fixturePath, suspended are retained inside bookmakerOdds. No invented bookmaker directory entries.",
+  "freshness": "Original provider timestamps retained; filesystem modification times are provenance, not guaranteed retrieval timestamps.",
+  "validation": {
+    "api_requests": 0,
+    "raw_source_hashes_unchanged": true,
+    "all_returned_target_lines_preserved": true,
+    "missing_outcomes_not_synthesized": true
+  }
+}

@@ -1,0 +1,3442 @@
+[
+  {
+    "marketId": 101,
+    "marketLength": 3,
+    "marketName": "Full Time Result",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": 0.0,
+    "period": "fulltime",
+    "marketType": "1x2",
+    "outcomes": [
+      {
+        "outcomeId": 101,
+        "outcomeName": "1"
+      },
+      {
+        "outcomeId": 103,
+        "outcomeName": "2"
+      },
+      {
+        "outcomeId": 102,
+        "outcomeName": "X"
+      }
+    ]
+  },
+  {
+    "marketId": 104,
+    "marketLength": 2,
+    "marketName": "Both Teams To Score",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": 0.0,
+    "period": "fulltime",
+    "marketType": "bothteamsscore",
+    "outcomes": [
+      {
+        "outcomeId": 105,
+        "outcomeName": "No"
+      },
+      {
+        "outcomeId": 104,
+        "outcomeName": "Yes"
+      }
+    ]
+  },
+  {
+    "marketId": 106,
+    "marketLength": 2,
+    "marketName": "Over Under Full Time",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": 0.5,
+    "period": "fulltime",
+    "marketType": "totals",
+    "outcomes": [
+      {
+        "outcomeId": 106,
+        "outcomeName": "Over"
+      },
+      {
+        "outcomeId": 107,
+        "outcomeName": "Under"
+      }
+    ]
+  },
+  {
+    "marketId": 108,
+    "marketLength": 2,
+    "marketName": "Over Under Full Time",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": 1.5,
+    "period": "fulltime",
+    "marketType": "totals",
+    "outcomes": [
+      {
+        "outcomeId": 109,
+        "outcomeName": "Under"
+      },
+      {
+        "outcomeId": 108,
+        "outcomeName": "Over"
+      }
+    ]
+  },
+  {
+    "marketId": 1010,
+    "marketLength": 2,
+    "marketName": "Over Under Full Time",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": 2.5,
+    "period": "fulltime",
+    "marketType": "totals",
+    "outcomes": [
+      {
+        "outcomeId": 1010,
+        "outcomeName": "Over"
+      },
+      {
+        "outcomeId": 1011,
+        "outcomeName": "Under"
+      }
+    ]
+  },
+  {
+    "marketId": 1012,
+    "marketLength": 2,
+    "marketName": "Over Under Full Time",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": 3.5,
+    "period": "fulltime",
+    "marketType": "totals",
+    "outcomes": [
+      {
+        "outcomeId": 1013,
+        "outcomeName": "Under"
+      },
+      {
+        "outcomeId": 1012,
+        "outcomeName": "Over"
+      }
+    ]
+  },
+  {
+    "marketId": 1014,
+    "marketLength": 2,
+    "marketName": "Over Under Full Time",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": 4.5,
+    "period": "fulltime",
+    "marketType": "totals",
+    "outcomes": [
+      {
+        "outcomeId": 1014,
+        "outcomeName": "Over"
+      },
+      {
+        "outcomeId": 1015,
+        "outcomeName": "Under"
+      }
+    ]
+  },
+  {
+    "marketId": 1016,
+    "marketLength": 2,
+    "marketName": "Over Under Full Time",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": 5.5,
+    "period": "fulltime",
+    "marketType": "totals",
+    "outcomes": [
+      {
+        "outcomeId": 1017,
+        "outcomeName": "Under"
+      },
+      {
+        "outcomeId": 1016,
+        "outcomeName": "Over"
+      }
+    ]
+  },
+  {
+    "marketId": 1018,
+    "marketLength": 2,
+    "marketName": "Over Under Full Time",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": 6.5,
+    "period": "fulltime",
+    "marketType": "totals",
+    "outcomes": [
+      {
+        "outcomeId": 1018,
+        "outcomeName": "Over"
+      },
+      {
+        "outcomeId": 1019,
+        "outcomeName": "Under"
+      }
+    ]
+  },
+  {
+    "marketId": 1020,
+    "marketLength": 2,
+    "marketName": "Over Under Full Time",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": 7.5,
+    "period": "fulltime",
+    "marketType": "totals",
+    "outcomes": [
+      {
+        "outcomeId": 1020,
+        "outcomeName": "Over"
+      },
+      {
+        "outcomeId": 1021,
+        "outcomeName": "Under"
+      }
+    ]
+  },
+  {
+    "marketId": 1022,
+    "marketLength": 2,
+    "marketName": "Over Under Full Time",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": 8.5,
+    "period": "fulltime",
+    "marketType": "totals",
+    "outcomes": [
+      {
+        "outcomeId": 1022,
+        "outcomeName": "Over"
+      },
+      {
+        "outcomeId": 1023,
+        "outcomeName": "Under"
+      }
+    ]
+  },
+  {
+    "marketId": 1028,
+    "marketLength": 2,
+    "marketName": "Asian Handicap",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": -5.5,
+    "period": "fulltime",
+    "marketType": "spreads",
+    "outcomes": [
+      {
+        "outcomeId": 1028,
+        "outcomeName": "1"
+      },
+      {
+        "outcomeId": 1029,
+        "outcomeName": "2"
+      }
+    ]
+  },
+  {
+    "marketId": 1036,
+    "marketLength": 2,
+    "marketName": "Asian Handicap",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": -4.5,
+    "period": "fulltime",
+    "marketType": "spreads",
+    "outcomes": [
+      {
+        "outcomeId": 1036,
+        "outcomeName": "1"
+      },
+      {
+        "outcomeId": 1037,
+        "outcomeName": "2"
+      }
+    ]
+  },
+  {
+    "marketId": 1044,
+    "marketLength": 2,
+    "marketName": "Asian Handicap",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": -3.5,
+    "period": "fulltime",
+    "marketType": "spreads",
+    "outcomes": [
+      {
+        "outcomeId": 1045,
+        "outcomeName": "2"
+      },
+      {
+        "outcomeId": 1044,
+        "outcomeName": "1"
+      }
+    ]
+  },
+  {
+    "marketId": 1052,
+    "marketLength": 2,
+    "marketName": "Asian Handicap",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": -2.5,
+    "period": "fulltime",
+    "marketType": "spreads",
+    "outcomes": [
+      {
+        "outcomeId": 1052,
+        "outcomeName": "1"
+      },
+      {
+        "outcomeId": 1053,
+        "outcomeName": "2"
+      }
+    ]
+  },
+  {
+    "marketId": 1060,
+    "marketLength": 2,
+    "marketName": "Asian Handicap",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": -1.5,
+    "period": "fulltime",
+    "marketType": "spreads",
+    "outcomes": [
+      {
+        "outcomeId": 1061,
+        "outcomeName": "2"
+      },
+      {
+        "outcomeId": 1060,
+        "outcomeName": "1"
+      }
+    ]
+  },
+  {
+    "marketId": 1084,
+    "marketLength": 2,
+    "marketName": "Asian Handicap",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": 1.5,
+    "period": "fulltime",
+    "marketType": "spreads",
+    "outcomes": [
+      {
+        "outcomeId": 1085,
+        "outcomeName": "2"
+      },
+      {
+        "outcomeId": 1084,
+        "outcomeName": "1"
+      }
+    ]
+  },
+  {
+    "marketId": 1092,
+    "marketLength": 2,
+    "marketName": "Asian Handicap",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": 2.5,
+    "period": "fulltime",
+    "marketType": "spreads",
+    "outcomes": [
+      {
+        "outcomeId": 1093,
+        "outcomeName": "2"
+      },
+      {
+        "outcomeId": 1092,
+        "outcomeName": "1"
+      }
+    ]
+  },
+  {
+    "marketId": 10208,
+    "marketLength": 3,
+    "marketName": "First Half Result",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": 0.0,
+    "period": "p1",
+    "marketType": "1x2",
+    "outcomes": [
+      {
+        "outcomeId": 10210,
+        "outcomeName": "2"
+      },
+      {
+        "outcomeId": 10209,
+        "outcomeName": "X"
+      },
+      {
+        "outcomeId": 10208,
+        "outcomeName": "1"
+      }
+    ]
+  },
+  {
+    "marketId": 10214,
+    "marketLength": 2,
+    "marketName": "Draw No Bet",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": 0.0,
+    "period": "fulltime",
+    "marketType": "drawnobet",
+    "outcomes": [
+      {
+        "outcomeId": 10214,
+        "outcomeName": "1"
+      },
+      {
+        "outcomeId": 10215,
+        "outcomeName": "2"
+      }
+    ]
+  },
+  {
+    "marketId": 10216,
+    "marketLength": 3,
+    "marketName": "First Goal Full Time",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": 0.0,
+    "period": "fulltime",
+    "marketType": "firstgoal",
+    "outcomes": [
+      {
+        "outcomeId": 10217,
+        "outcomeName": "No Goal"
+      },
+      {
+        "outcomeId": 10216,
+        "outcomeName": "1"
+      },
+      {
+        "outcomeId": 10218,
+        "outcomeName": "2"
+      }
+    ]
+  },
+  {
+    "marketId": 10224,
+    "marketLength": 2,
+    "marketName": "Over Under Team 1",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": 0.5,
+    "period": "fulltime",
+    "marketType": "teamtotals-team1",
+    "outcomes": [
+      {
+        "outcomeId": 10225,
+        "outcomeName": "Under"
+      },
+      {
+        "outcomeId": 10224,
+        "outcomeName": "Over"
+      }
+    ]
+  },
+  {
+    "marketId": 10226,
+    "marketLength": 2,
+    "marketName": "Over Under Team 1",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": 1.5,
+    "period": "fulltime",
+    "marketType": "teamtotals-team1",
+    "outcomes": [
+      {
+        "outcomeId": 10227,
+        "outcomeName": "Under"
+      },
+      {
+        "outcomeId": 10226,
+        "outcomeName": "Over"
+      }
+    ]
+  },
+  {
+    "marketId": 10228,
+    "marketLength": 2,
+    "marketName": "Over Under Team 1",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": 2.5,
+    "period": "fulltime",
+    "marketType": "teamtotals-team1",
+    "outcomes": [
+      {
+        "outcomeId": 10228,
+        "outcomeName": "Over"
+      },
+      {
+        "outcomeId": 10229,
+        "outcomeName": "Under"
+      }
+    ]
+  },
+  {
+    "marketId": 10230,
+    "marketLength": 2,
+    "marketName": "Over Under Team 1",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": 3.5,
+    "period": "fulltime",
+    "marketType": "teamtotals-team1",
+    "outcomes": [
+      {
+        "outcomeId": 10230,
+        "outcomeName": "Over"
+      },
+      {
+        "outcomeId": 10231,
+        "outcomeName": "Under"
+      }
+    ]
+  },
+  {
+    "marketId": 10232,
+    "marketLength": 2,
+    "marketName": "Over Under Team 1",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": 4.5,
+    "period": "fulltime",
+    "marketType": "teamtotals-team1",
+    "outcomes": [
+      {
+        "outcomeId": 10232,
+        "outcomeName": "Over"
+      },
+      {
+        "outcomeId": 10233,
+        "outcomeName": "Under"
+      }
+    ]
+  },
+  {
+    "marketId": 10234,
+    "marketLength": 2,
+    "marketName": "Over Under Team 1",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": 5.5,
+    "period": "fulltime",
+    "marketType": "teamtotals-team1",
+    "outcomes": [
+      {
+        "outcomeId": 10234,
+        "outcomeName": "Over"
+      },
+      {
+        "outcomeId": 10235,
+        "outcomeName": "Under"
+      }
+    ]
+  },
+  {
+    "marketId": 10240,
+    "marketLength": 2,
+    "marketName": "Over Under Team 2",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": 0.5,
+    "period": "fulltime",
+    "marketType": "teamtotals-team2",
+    "outcomes": [
+      {
+        "outcomeId": 10240,
+        "outcomeName": "Over"
+      },
+      {
+        "outcomeId": 10241,
+        "outcomeName": "Under"
+      }
+    ]
+  },
+  {
+    "marketId": 10242,
+    "marketLength": 2,
+    "marketName": "Over Under Team 2",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": 1.5,
+    "period": "fulltime",
+    "marketType": "teamtotals-team2",
+    "outcomes": [
+      {
+        "outcomeId": 10242,
+        "outcomeName": "Over"
+      },
+      {
+        "outcomeId": 10243,
+        "outcomeName": "Under"
+      }
+    ]
+  },
+  {
+    "marketId": 10244,
+    "marketLength": 2,
+    "marketName": "Over Under Team 2",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": 2.5,
+    "period": "fulltime",
+    "marketType": "teamtotals-team2",
+    "outcomes": [
+      {
+        "outcomeId": 10244,
+        "outcomeName": "Over"
+      },
+      {
+        "outcomeId": 10245,
+        "outcomeName": "Under"
+      }
+    ]
+  },
+  {
+    "marketId": 10246,
+    "marketLength": 2,
+    "marketName": "Over Under Team 2",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": 3.5,
+    "period": "fulltime",
+    "marketType": "teamtotals-team2",
+    "outcomes": [
+      {
+        "outcomeId": 10247,
+        "outcomeName": "Under"
+      },
+      {
+        "outcomeId": 10246,
+        "outcomeName": "Over"
+      }
+    ]
+  },
+  {
+    "marketId": 10256,
+    "marketLength": 2,
+    "marketName": "Over Under First Half",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": 0.5,
+    "period": "p1",
+    "marketType": "totals",
+    "outcomes": [
+      {
+        "outcomeId": 10256,
+        "outcomeName": "Over"
+      },
+      {
+        "outcomeId": 10257,
+        "outcomeName": "Under"
+      }
+    ]
+  },
+  {
+    "marketId": 10258,
+    "marketLength": 2,
+    "marketName": "Over Under First Half",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": 1.5,
+    "period": "p1",
+    "marketType": "totals",
+    "outcomes": [
+      {
+        "outcomeId": 10258,
+        "outcomeName": "Over"
+      },
+      {
+        "outcomeId": 10259,
+        "outcomeName": "Under"
+      }
+    ]
+  },
+  {
+    "marketId": 10260,
+    "marketLength": 2,
+    "marketName": "Over Under First Half",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": 2.5,
+    "period": "p1",
+    "marketType": "totals",
+    "outcomes": [
+      {
+        "outcomeId": 10261,
+        "outcomeName": "Under"
+      },
+      {
+        "outcomeId": 10260,
+        "outcomeName": "Over"
+      }
+    ]
+  },
+  {
+    "marketId": 10262,
+    "marketLength": 2,
+    "marketName": "Over Under First Half",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": 3.5,
+    "period": "p1",
+    "marketType": "totals",
+    "outcomes": [
+      {
+        "outcomeId": 10263,
+        "outcomeName": "Under"
+      },
+      {
+        "outcomeId": 10262,
+        "outcomeName": "Over"
+      }
+    ]
+  },
+  {
+    "marketId": 10264,
+    "marketLength": 2,
+    "marketName": "Over Under First Half",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": 4.5,
+    "period": "p1",
+    "marketType": "totals",
+    "outcomes": [
+      {
+        "outcomeId": 10265,
+        "outcomeName": "Under"
+      },
+      {
+        "outcomeId": 10264,
+        "outcomeName": "Over"
+      }
+    ]
+  },
+  {
+    "marketId": 10266,
+    "marketLength": 2,
+    "marketName": "Over Under First Half",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": 5.5,
+    "period": "p1",
+    "marketType": "totals",
+    "outcomes": [
+      {
+        "outcomeId": 10266,
+        "outcomeName": "Over"
+      },
+      {
+        "outcomeId": 10267,
+        "outcomeName": "Under"
+      }
+    ]
+  },
+  {
+    "marketId": 10296,
+    "marketLength": 2,
+    "marketName": "Team 1 To Score in Both Halves",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": 0.0,
+    "period": null,
+    "marketType": "toscoreinbh-team1",
+    "outcomes": [
+      {
+        "outcomeId": 10297,
+        "outcomeName": "No"
+      },
+      {
+        "outcomeId": 10296,
+        "outcomeName": "Yes"
+      }
+    ]
+  },
+  {
+    "marketId": 10298,
+    "marketLength": 2,
+    "marketName": "Team 2 To Score in Both Halves",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": 0.0,
+    "period": null,
+    "marketType": "toscoreinbh-team2",
+    "outcomes": [
+      {
+        "outcomeId": 10298,
+        "outcomeName": "Yes"
+      },
+      {
+        "outcomeId": 10299,
+        "outcomeName": "No"
+      }
+    ]
+  },
+  {
+    "marketId": 10300,
+    "marketLength": 2,
+    "marketName": "Both Teams To Score First Half",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": 0.0,
+    "period": "p1",
+    "marketType": "bothteamsscore",
+    "outcomes": [
+      {
+        "outcomeId": 10301,
+        "outcomeName": "No"
+      },
+      {
+        "outcomeId": 10300,
+        "outcomeName": "Yes"
+      }
+    ]
+  },
+  {
+    "marketId": 10304,
+    "marketLength": 2,
+    "marketName": "Team 1 To Win Either Halves",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": 0.0,
+    "period": null,
+    "marketType": "wineitherh-team1",
+    "outcomes": [
+      {
+        "outcomeId": 10304,
+        "outcomeName": "Yes"
+      },
+      {
+        "outcomeId": 10305,
+        "outcomeName": "No"
+      }
+    ]
+  },
+  {
+    "marketId": 10306,
+    "marketLength": 2,
+    "marketName": "Team 2 To Win Either Halves",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": 0.0,
+    "period": null,
+    "marketType": "wineitherh-team2",
+    "outcomes": [
+      {
+        "outcomeId": 10307,
+        "outcomeName": "No"
+      },
+      {
+        "outcomeId": 10306,
+        "outcomeName": "Yes"
+      }
+    ]
+  },
+  {
+    "marketId": 10308,
+    "marketLength": 2,
+    "marketName": "Team 1 To Win Both Halves",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": 0.0,
+    "period": null,
+    "marketType": "winbothh-team1",
+    "outcomes": [
+      {
+        "outcomeId": 10309,
+        "outcomeName": "No"
+      },
+      {
+        "outcomeId": 10308,
+        "outcomeName": "Yes"
+      }
+    ]
+  },
+  {
+    "marketId": 10310,
+    "marketLength": 2,
+    "marketName": "Team 2 To Win Both Halves",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": 0.0,
+    "period": null,
+    "marketType": "winbothh-team2",
+    "outcomes": [
+      {
+        "outcomeId": 10311,
+        "outcomeName": "No"
+      },
+      {
+        "outcomeId": 10310,
+        "outcomeName": "Yes"
+      }
+    ]
+  },
+  {
+    "marketId": 10316,
+    "marketLength": 2,
+    "marketName": "Team 1 Win To Nil",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": 0.0,
+    "period": "fulltime",
+    "marketType": "wintonil-team1",
+    "outcomes": [
+      {
+        "outcomeId": 10317,
+        "outcomeName": "No"
+      },
+      {
+        "outcomeId": 10316,
+        "outcomeName": "Yes"
+      }
+    ]
+  },
+  {
+    "marketId": 10318,
+    "marketLength": 2,
+    "marketName": "Team 2 Win To Nil",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": 0.0,
+    "period": "fulltime",
+    "marketType": "wintonil-team2",
+    "outcomes": [
+      {
+        "outcomeId": 10319,
+        "outcomeName": "No"
+      },
+      {
+        "outcomeId": 10318,
+        "outcomeName": "Yes"
+      }
+    ]
+  },
+  {
+    "marketId": 10336,
+    "marketLength": 0,
+    "marketName": "Correct Score Full Time",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": 0.0,
+    "period": "fulltime",
+    "marketType": "correctscore",
+    "outcomes": [
+      {
+        "outcomeId": 10354,
+        "outcomeName": "2:2"
+      },
+      {
+        "outcomeId": 10377,
+        "outcomeName": "1:5"
+      },
+      {
+        "outcomeId": 10399,
+        "outcomeName": "7:7"
+      },
+      {
+        "outcomeId": 10360,
+        "outcomeName": "0:3"
+      },
+      {
+        "outcomeId": 10352,
+        "outcomeName": "0:2"
+      },
+      {
+        "outcomeId": 10386,
+        "outcomeName": "2:6"
+      },
+      {
+        "outcomeId": 10348,
+        "outcomeName": "4:1"
+      },
+      {
+        "outcomeId": 10388,
+        "outcomeName": "4:6"
+      },
+      {
+        "outcomeId": 10341,
+        "outcomeName": "5:0"
+      },
+      {
+        "outcomeId": 10387,
+        "outcomeName": "3:6"
+      },
+      {
+        "outcomeId": 10337,
+        "outcomeName": "1:0"
+      },
+      {
+        "outcomeId": 10394,
+        "outcomeName": "2:7"
+      },
+      {
+        "outcomeId": 10362,
+        "outcomeName": "2:3"
+      },
+      {
+        "outcomeId": 10369,
+        "outcomeName": "1:4"
+      },
+      {
+        "outcomeId": 10363,
+        "outcomeName": "3:3"
+      },
+      {
+        "outcomeId": 10390,
+        "outcomeName": "6:6"
+      },
+      {
+        "outcomeId": 10376,
+        "outcomeName": "0:5"
+      },
+      {
+        "outcomeId": 10350,
+        "outcomeName": "6:1"
+      },
+      {
+        "outcomeId": 10396,
+        "outcomeName": "4:7"
+      },
+      {
+        "outcomeId": 10374,
+        "outcomeName": "6:4"
+      },
+      {
+        "outcomeId": 10365,
+        "outcomeName": "5:3"
+      },
+      {
+        "outcomeId": 10357,
+        "outcomeName": "5:2"
+      },
+      {
+        "outcomeId": 10347,
+        "outcomeName": "3:1"
+      },
+      {
+        "outcomeId": 10372,
+        "outcomeName": "4:4"
+      },
+      {
+        "outcomeId": 10366,
+        "outcomeName": "6:3"
+      },
+      {
+        "outcomeId": 10383,
+        "outcomeName": "7:5"
+      },
+      {
+        "outcomeId": 10378,
+        "outcomeName": "2:5"
+      },
+      {
+        "outcomeId": 10342,
+        "outcomeName": "6:0"
+      },
+      {
+        "outcomeId": 10370,
+        "outcomeName": "2:4"
+      },
+      {
+        "outcomeId": 10345,
+        "outcomeName": "1:1"
+      },
+      {
+        "outcomeId": 10397,
+        "outcomeName": "5:7"
+      },
+      {
+        "outcomeId": 10349,
+        "outcomeName": "5:1"
+      },
+      {
+        "outcomeId": 10358,
+        "outcomeName": "6:2"
+      },
+      {
+        "outcomeId": 10371,
+        "outcomeName": "3:4"
+      },
+      {
+        "outcomeId": 10344,
+        "outcomeName": "0:1"
+      },
+      {
+        "outcomeId": 10395,
+        "outcomeName": "3:7"
+      },
+      {
+        "outcomeId": 10392,
+        "outcomeName": "0:7"
+      },
+      {
+        "outcomeId": 10398,
+        "outcomeName": "6:7"
+      },
+      {
+        "outcomeId": 10368,
+        "outcomeName": "0:4"
+      },
+      {
+        "outcomeId": 10336,
+        "outcomeName": "0:0"
+      },
+      {
+        "outcomeId": 10381,
+        "outcomeName": "5:5"
+      },
+      {
+        "outcomeId": 10393,
+        "outcomeName": "1:7"
+      },
+      {
+        "outcomeId": 10353,
+        "outcomeName": "1:2"
+      },
+      {
+        "outcomeId": 10356,
+        "outcomeName": "4:2"
+      },
+      {
+        "outcomeId": 10343,
+        "outcomeName": "7:0"
+      },
+      {
+        "outcomeId": 10351,
+        "outcomeName": "7:1"
+      },
+      {
+        "outcomeId": 10367,
+        "outcomeName": "7:3"
+      },
+      {
+        "outcomeId": 10384,
+        "outcomeName": "0:6"
+      },
+      {
+        "outcomeId": 10364,
+        "outcomeName": "4:3"
+      },
+      {
+        "outcomeId": 10375,
+        "outcomeName": "7:4"
+      },
+      {
+        "outcomeId": 10361,
+        "outcomeName": "1:3"
+      },
+      {
+        "outcomeId": 10373,
+        "outcomeName": "5:4"
+      },
+      {
+        "outcomeId": 10380,
+        "outcomeName": "4:5"
+      },
+      {
+        "outcomeId": 10391,
+        "outcomeName": "7:6"
+      },
+      {
+        "outcomeId": 10359,
+        "outcomeName": "7:2"
+      },
+      {
+        "outcomeId": 10379,
+        "outcomeName": "3:5"
+      },
+      {
+        "outcomeId": 10340,
+        "outcomeName": "4:0"
+      },
+      {
+        "outcomeId": 10385,
+        "outcomeName": "1:6"
+      },
+      {
+        "outcomeId": 10389,
+        "outcomeName": "5:6"
+      },
+      {
+        "outcomeId": 10346,
+        "outcomeName": "2:1"
+      },
+      {
+        "outcomeId": 10382,
+        "outcomeName": "6:5"
+      },
+      {
+        "outcomeId": 10355,
+        "outcomeName": "3:2"
+      },
+      {
+        "outcomeId": 10338,
+        "outcomeName": "2:0"
+      },
+      {
+        "outcomeId": 10339,
+        "outcomeName": "3:0"
+      }
+    ]
+  },
+  {
+    "marketId": 10761,
+    "marketLength": 3,
+    "marketName": "2Up - Full Time Result",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": 0.0,
+    "period": "fulltime",
+    "marketType": "2up",
+    "outcomes": [
+      {
+        "outcomeId": 10762,
+        "outcomeName": "X"
+      },
+      {
+        "outcomeId": 10763,
+        "outcomeName": "2"
+      },
+      {
+        "outcomeId": 10761,
+        "outcomeName": "1"
+      }
+    ]
+  },
+  {
+    "marketId": 10764,
+    "marketLength": 3,
+    "marketName": "Corners - 1X2",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": 0.0,
+    "period": "fulltime",
+    "marketType": "1x2-corners",
+    "outcomes": [
+      {
+        "outcomeId": 10766,
+        "outcomeName": "2"
+      },
+      {
+        "outcomeId": 10764,
+        "outcomeName": "1"
+      },
+      {
+        "outcomeId": 10765,
+        "outcomeName": "X"
+      }
+    ]
+  },
+  {
+    "marketId": 10777,
+    "marketLength": 2,
+    "marketName": "Corners - Over Under Full Time",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": 3.0,
+    "period": "fulltime",
+    "marketType": "totals-corners",
+    "outcomes": [
+      {
+        "outcomeId": 10778,
+        "outcomeName": "Under"
+      },
+      {
+        "outcomeId": 10777,
+        "outcomeName": "Over"
+      }
+    ]
+  },
+  {
+    "marketId": 10781,
+    "marketLength": 2,
+    "marketName": "Corners - Over Under Full Time",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": 4.0,
+    "period": "fulltime",
+    "marketType": "totals-corners",
+    "outcomes": [
+      {
+        "outcomeId": 10782,
+        "outcomeName": "Under"
+      },
+      {
+        "outcomeId": 10781,
+        "outcomeName": "Over"
+      }
+    ]
+  },
+  {
+    "marketId": 10783,
+    "marketLength": 2,
+    "marketName": "Corners - Over Under Full Time",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": 4.5,
+    "period": "fulltime",
+    "marketType": "totals-corners",
+    "outcomes": [
+      {
+        "outcomeId": 10784,
+        "outcomeName": "Under"
+      },
+      {
+        "outcomeId": 10783,
+        "outcomeName": "Over"
+      }
+    ]
+  },
+  {
+    "marketId": 10785,
+    "marketLength": 2,
+    "marketName": "Corners - Over Under Full Time",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": 5.0,
+    "period": "fulltime",
+    "marketType": "totals-corners",
+    "outcomes": [
+      {
+        "outcomeId": 10786,
+        "outcomeName": "Under"
+      },
+      {
+        "outcomeId": 10785,
+        "outcomeName": "Over"
+      }
+    ]
+  },
+  {
+    "marketId": 10787,
+    "marketLength": 2,
+    "marketName": "Corners - Over Under Full Time",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": 5.5,
+    "period": "fulltime",
+    "marketType": "totals-corners",
+    "outcomes": [
+      {
+        "outcomeId": 10788,
+        "outcomeName": "Under"
+      },
+      {
+        "outcomeId": 10787,
+        "outcomeName": "Over"
+      }
+    ]
+  },
+  {
+    "marketId": 10789,
+    "marketLength": 2,
+    "marketName": "Corners - Over Under Full Time",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": 6.0,
+    "period": "fulltime",
+    "marketType": "totals-corners",
+    "outcomes": [
+      {
+        "outcomeId": 10790,
+        "outcomeName": "Under"
+      },
+      {
+        "outcomeId": 10789,
+        "outcomeName": "Over"
+      }
+    ]
+  },
+  {
+    "marketId": 10791,
+    "marketLength": 2,
+    "marketName": "Corners - Over Under Full Time",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": 6.5,
+    "period": "fulltime",
+    "marketType": "totals-corners",
+    "outcomes": [
+      {
+        "outcomeId": 10791,
+        "outcomeName": "Over"
+      },
+      {
+        "outcomeId": 10792,
+        "outcomeName": "Under"
+      }
+    ]
+  },
+  {
+    "marketId": 10793,
+    "marketLength": 2,
+    "marketName": "Corners - Over Under Full Time",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": 7.0,
+    "period": "fulltime",
+    "marketType": "totals-corners",
+    "outcomes": [
+      {
+        "outcomeId": 10794,
+        "outcomeName": "Under"
+      },
+      {
+        "outcomeId": 10793,
+        "outcomeName": "Over"
+      }
+    ]
+  },
+  {
+    "marketId": 10795,
+    "marketLength": 2,
+    "marketName": "Corners - Over Under Full Time",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": 7.5,
+    "period": "fulltime",
+    "marketType": "totals-corners",
+    "outcomes": [
+      {
+        "outcomeId": 10796,
+        "outcomeName": "Under"
+      },
+      {
+        "outcomeId": 10795,
+        "outcomeName": "Over"
+      }
+    ]
+  },
+  {
+    "marketId": 10797,
+    "marketLength": 2,
+    "marketName": "Corners - Over Under Full Time",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": 8.0,
+    "period": "fulltime",
+    "marketType": "totals-corners",
+    "outcomes": [
+      {
+        "outcomeId": 10797,
+        "outcomeName": "Over"
+      },
+      {
+        "outcomeId": 10798,
+        "outcomeName": "Under"
+      }
+    ]
+  },
+  {
+    "marketId": 10799,
+    "marketLength": 2,
+    "marketName": "Corners - Over Under Full Time",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": 8.5,
+    "period": "fulltime",
+    "marketType": "totals-corners",
+    "outcomes": [
+      {
+        "outcomeId": 10799,
+        "outcomeName": "Over"
+      },
+      {
+        "outcomeId": 10800,
+        "outcomeName": "Under"
+      }
+    ]
+  },
+  {
+    "marketId": 10801,
+    "marketLength": 2,
+    "marketName": "Corners - Over Under Full Time",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": 9.0,
+    "period": "fulltime",
+    "marketType": "totals-corners",
+    "outcomes": [
+      {
+        "outcomeId": 10802,
+        "outcomeName": "Under"
+      },
+      {
+        "outcomeId": 10801,
+        "outcomeName": "Over"
+      }
+    ]
+  },
+  {
+    "marketId": 10803,
+    "marketLength": 2,
+    "marketName": "Corners - Over Under Full Time",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": 9.5,
+    "period": "fulltime",
+    "marketType": "totals-corners",
+    "outcomes": [
+      {
+        "outcomeId": 10804,
+        "outcomeName": "Under"
+      },
+      {
+        "outcomeId": 10803,
+        "outcomeName": "Over"
+      }
+    ]
+  },
+  {
+    "marketId": 10805,
+    "marketLength": 2,
+    "marketName": "Corners - Over Under Full Time",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": 10.0,
+    "period": "fulltime",
+    "marketType": "totals-corners",
+    "outcomes": [
+      {
+        "outcomeId": 10806,
+        "outcomeName": "Under"
+      },
+      {
+        "outcomeId": 10805,
+        "outcomeName": "Over"
+      }
+    ]
+  },
+  {
+    "marketId": 10807,
+    "marketLength": 2,
+    "marketName": "Corners - Over Under Full Time",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": 10.5,
+    "period": "fulltime",
+    "marketType": "totals-corners",
+    "outcomes": [
+      {
+        "outcomeId": 10808,
+        "outcomeName": "Under"
+      },
+      {
+        "outcomeId": 10807,
+        "outcomeName": "Over"
+      }
+    ]
+  },
+  {
+    "marketId": 10809,
+    "marketLength": 2,
+    "marketName": "Corners - Over Under Full Time",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": 11.0,
+    "period": "fulltime",
+    "marketType": "totals-corners",
+    "outcomes": [
+      {
+        "outcomeId": 10809,
+        "outcomeName": "Over"
+      },
+      {
+        "outcomeId": 10810,
+        "outcomeName": "Under"
+      }
+    ]
+  },
+  {
+    "marketId": 10811,
+    "marketLength": 2,
+    "marketName": "Corners - Over Under Full Time",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": 11.5,
+    "period": "fulltime",
+    "marketType": "totals-corners",
+    "outcomes": [
+      {
+        "outcomeId": 10811,
+        "outcomeName": "Over"
+      },
+      {
+        "outcomeId": 10812,
+        "outcomeName": "Under"
+      }
+    ]
+  },
+  {
+    "marketId": 10813,
+    "marketLength": 2,
+    "marketName": "Corners - Over Under Full Time",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": 12.0,
+    "period": "fulltime",
+    "marketType": "totals-corners",
+    "outcomes": [
+      {
+        "outcomeId": 10813,
+        "outcomeName": "Over"
+      },
+      {
+        "outcomeId": 10814,
+        "outcomeName": "Under"
+      }
+    ]
+  },
+  {
+    "marketId": 10815,
+    "marketLength": 2,
+    "marketName": "Corners - Over Under Full Time",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": 12.5,
+    "period": "fulltime",
+    "marketType": "totals-corners",
+    "outcomes": [
+      {
+        "outcomeId": 10815,
+        "outcomeName": "Over"
+      },
+      {
+        "outcomeId": 10816,
+        "outcomeName": "Under"
+      }
+    ]
+  },
+  {
+    "marketId": 10817,
+    "marketLength": 2,
+    "marketName": "Corners - Over Under Full Time",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": 13.0,
+    "period": "fulltime",
+    "marketType": "totals-corners",
+    "outcomes": [
+      {
+        "outcomeId": 10817,
+        "outcomeName": "Over"
+      },
+      {
+        "outcomeId": 10818,
+        "outcomeName": "Under"
+      }
+    ]
+  },
+  {
+    "marketId": 10819,
+    "marketLength": 2,
+    "marketName": "Corners - Over Under Full Time",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": 13.5,
+    "period": "fulltime",
+    "marketType": "totals-corners",
+    "outcomes": [
+      {
+        "outcomeId": 10820,
+        "outcomeName": "Under"
+      },
+      {
+        "outcomeId": 10819,
+        "outcomeName": "Over"
+      }
+    ]
+  },
+  {
+    "marketId": 10821,
+    "marketLength": 2,
+    "marketName": "Corners - Over Under Full Time",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": 14.0,
+    "period": "fulltime",
+    "marketType": "totals-corners",
+    "outcomes": [
+      {
+        "outcomeId": 10822,
+        "outcomeName": "Under"
+      },
+      {
+        "outcomeId": 10821,
+        "outcomeName": "Over"
+      }
+    ]
+  },
+  {
+    "marketId": 10823,
+    "marketLength": 2,
+    "marketName": "Corners - Over Under Full Time",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": 14.5,
+    "period": "fulltime",
+    "marketType": "totals-corners",
+    "outcomes": [
+      {
+        "outcomeId": 10824,
+        "outcomeName": "Under"
+      },
+      {
+        "outcomeId": 10823,
+        "outcomeName": "Over"
+      }
+    ]
+  },
+  {
+    "marketId": 10825,
+    "marketLength": 2,
+    "marketName": "Corners - Over Under Full Time",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": 15.0,
+    "period": "fulltime",
+    "marketType": "totals-corners",
+    "outcomes": [
+      {
+        "outcomeId": 10825,
+        "outcomeName": "Over"
+      },
+      {
+        "outcomeId": 10826,
+        "outcomeName": "Under"
+      }
+    ]
+  },
+  {
+    "marketId": 10827,
+    "marketLength": 2,
+    "marketName": "Corners - Over Under Full Time",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": 15.5,
+    "period": "fulltime",
+    "marketType": "totals-corners",
+    "outcomes": [
+      {
+        "outcomeId": 10828,
+        "outcomeName": "Under"
+      },
+      {
+        "outcomeId": 10827,
+        "outcomeName": "Over"
+      }
+    ]
+  },
+  {
+    "marketId": 10829,
+    "marketLength": 2,
+    "marketName": "Corners - Over Under Full Time",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": 16.0,
+    "period": "fulltime",
+    "marketType": "totals-corners",
+    "outcomes": [
+      {
+        "outcomeId": 10829,
+        "outcomeName": "Over"
+      },
+      {
+        "outcomeId": 10830,
+        "outcomeName": "Under"
+      }
+    ]
+  },
+  {
+    "marketId": 10833,
+    "marketLength": 2,
+    "marketName": "Corners - Over Under Full Time",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": 17.0,
+    "period": "fulltime",
+    "marketType": "totals-corners",
+    "outcomes": [
+      {
+        "outcomeId": 10833,
+        "outcomeName": "Over"
+      },
+      {
+        "outcomeId": 10834,
+        "outcomeName": "Under"
+      }
+    ]
+  },
+  {
+    "marketId": 10867,
+    "marketLength": 2,
+    "marketName": "Corners - Handicap",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": -2.5,
+    "period": "fulltime",
+    "marketType": "spread-corners",
+    "outcomes": [
+      {
+        "outcomeId": 10867,
+        "outcomeName": "1"
+      },
+      {
+        "outcomeId": 10868,
+        "outcomeName": "2"
+      }
+    ]
+  },
+  {
+    "marketId": 10871,
+    "marketLength": 2,
+    "marketName": "Corners - Handicap",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": -1.5,
+    "period": "fulltime",
+    "marketType": "spread-corners",
+    "outcomes": [
+      {
+        "outcomeId": 10871,
+        "outcomeName": "1"
+      },
+      {
+        "outcomeId": 10872,
+        "outcomeName": "2"
+      }
+    ]
+  },
+  {
+    "marketId": 101394,
+    "marketLength": 2,
+    "marketName": "Corners - Odd Even",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": 0.0,
+    "period": "fulltime",
+    "marketType": "oddeven-corners",
+    "outcomes": [
+      {
+        "outcomeId": 101394,
+        "outcomeName": "Odd"
+      },
+      {
+        "outcomeId": 101395,
+        "outcomeName": "Even"
+      }
+    ]
+  },
+  {
+    "marketId": 101420,
+    "marketLength": 2,
+    "marketName": "Corners - Over Under Team 1",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": 2.5,
+    "period": "fulltime",
+    "marketType": "teamtotals-corners-team1",
+    "outcomes": [
+      {
+        "outcomeId": 101421,
+        "outcomeName": "Under"
+      },
+      {
+        "outcomeId": 101420,
+        "outcomeName": "Over"
+      }
+    ]
+  },
+  {
+    "marketId": 101424,
+    "marketLength": 2,
+    "marketName": "Corners - Over Under Team 1",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": 3.5,
+    "period": "fulltime",
+    "marketType": "teamtotals-corners-team1",
+    "outcomes": [
+      {
+        "outcomeId": 101424,
+        "outcomeName": "Over"
+      },
+      {
+        "outcomeId": 101425,
+        "outcomeName": "Under"
+      }
+    ]
+  },
+  {
+    "marketId": 101428,
+    "marketLength": 2,
+    "marketName": "Corners - Over Under Team 1",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": 4.5,
+    "period": "fulltime",
+    "marketType": "teamtotals-corners-team1",
+    "outcomes": [
+      {
+        "outcomeId": 101429,
+        "outcomeName": "Under"
+      },
+      {
+        "outcomeId": 101428,
+        "outcomeName": "Over"
+      }
+    ]
+  },
+  {
+    "marketId": 101432,
+    "marketLength": 2,
+    "marketName": "Corners - Over Under Team 1",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": 5.5,
+    "period": "fulltime",
+    "marketType": "teamtotals-corners-team1",
+    "outcomes": [
+      {
+        "outcomeId": 101433,
+        "outcomeName": "Under"
+      },
+      {
+        "outcomeId": 101432,
+        "outcomeName": "Over"
+      }
+    ]
+  },
+  {
+    "marketId": 101436,
+    "marketLength": 2,
+    "marketName": "Corners - Over Under Team 1",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": 6.5,
+    "period": "fulltime",
+    "marketType": "teamtotals-corners-team1",
+    "outcomes": [
+      {
+        "outcomeId": 101436,
+        "outcomeName": "Over"
+      },
+      {
+        "outcomeId": 101437,
+        "outcomeName": "Under"
+      }
+    ]
+  },
+  {
+    "marketId": 101440,
+    "marketLength": 2,
+    "marketName": "Corners - Over Under Team 1",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": 7.5,
+    "period": "fulltime",
+    "marketType": "teamtotals-corners-team1",
+    "outcomes": [
+      {
+        "outcomeId": 101441,
+        "outcomeName": "Under"
+      },
+      {
+        "outcomeId": 101440,
+        "outcomeName": "Over"
+      }
+    ]
+  },
+  {
+    "marketId": 101444,
+    "marketLength": 2,
+    "marketName": "Corners - Over Under Team 1",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": 8.5,
+    "period": "fulltime",
+    "marketType": "teamtotals-corners-team1",
+    "outcomes": [
+      {
+        "outcomeId": 101445,
+        "outcomeName": "Under"
+      },
+      {
+        "outcomeId": 101444,
+        "outcomeName": "Over"
+      }
+    ]
+  },
+  {
+    "marketId": 101448,
+    "marketLength": 2,
+    "marketName": "Corners - Over Under Team 1",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": 9.5,
+    "period": "fulltime",
+    "marketType": "teamtotals-corners-team1",
+    "outcomes": [
+      {
+        "outcomeId": 101448,
+        "outcomeName": "Over"
+      },
+      {
+        "outcomeId": 101449,
+        "outcomeName": "Under"
+      }
+    ]
+  },
+  {
+    "marketId": 101452,
+    "marketLength": 2,
+    "marketName": "Corners - Over Under Team 1",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": 10.5,
+    "period": "fulltime",
+    "marketType": "teamtotals-corners-team1",
+    "outcomes": [
+      {
+        "outcomeId": 101453,
+        "outcomeName": "Under"
+      },
+      {
+        "outcomeId": 101452,
+        "outcomeName": "Over"
+      }
+    ]
+  },
+  {
+    "marketId": 101456,
+    "marketLength": 2,
+    "marketName": "Corners - Over Under Team 1",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": 11.5,
+    "period": "fulltime",
+    "marketType": "teamtotals-corners-team1",
+    "outcomes": [
+      {
+        "outcomeId": 101456,
+        "outcomeName": "Over"
+      },
+      {
+        "outcomeId": 101457,
+        "outcomeName": "Under"
+      }
+    ]
+  },
+  {
+    "marketId": 101460,
+    "marketLength": 2,
+    "marketName": "Corners - Over Under Team 1",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": 12.5,
+    "period": "fulltime",
+    "marketType": "teamtotals-corners-team1",
+    "outcomes": [
+      {
+        "outcomeId": 101461,
+        "outcomeName": "Under"
+      },
+      {
+        "outcomeId": 101460,
+        "outcomeName": "Over"
+      }
+    ]
+  },
+  {
+    "marketId": 101480,
+    "marketLength": 2,
+    "marketName": "Corners - Over Under Team 2",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": 2.5,
+    "period": "fulltime",
+    "marketType": "teamtotals-corners-team2",
+    "outcomes": [
+      {
+        "outcomeId": 101480,
+        "outcomeName": "Over"
+      },
+      {
+        "outcomeId": 101481,
+        "outcomeName": "Under"
+      }
+    ]
+  },
+  {
+    "marketId": 101484,
+    "marketLength": 2,
+    "marketName": "Corners - Over Under Team 2",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": 3.5,
+    "period": "fulltime",
+    "marketType": "teamtotals-corners-team2",
+    "outcomes": [
+      {
+        "outcomeId": 101485,
+        "outcomeName": "Under"
+      },
+      {
+        "outcomeId": 101484,
+        "outcomeName": "Over"
+      }
+    ]
+  },
+  {
+    "marketId": 101488,
+    "marketLength": 2,
+    "marketName": "Corners - Over Under Team 2",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": 4.5,
+    "period": "fulltime",
+    "marketType": "teamtotals-corners-team2",
+    "outcomes": [
+      {
+        "outcomeId": 101488,
+        "outcomeName": "Over"
+      },
+      {
+        "outcomeId": 101489,
+        "outcomeName": "Under"
+      }
+    ]
+  },
+  {
+    "marketId": 101492,
+    "marketLength": 2,
+    "marketName": "Corners - Over Under Team 2",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": 5.5,
+    "period": "fulltime",
+    "marketType": "teamtotals-corners-team2",
+    "outcomes": [
+      {
+        "outcomeId": 101492,
+        "outcomeName": "Over"
+      },
+      {
+        "outcomeId": 101493,
+        "outcomeName": "Under"
+      }
+    ]
+  },
+  {
+    "marketId": 101496,
+    "marketLength": 2,
+    "marketName": "Corners - Over Under Team 2",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": 6.5,
+    "period": "fulltime",
+    "marketType": "teamtotals-corners-team2",
+    "outcomes": [
+      {
+        "outcomeId": 101496,
+        "outcomeName": "Over"
+      },
+      {
+        "outcomeId": 101497,
+        "outcomeName": "Under"
+      }
+    ]
+  },
+  {
+    "marketId": 101500,
+    "marketLength": 2,
+    "marketName": "Corners - Over Under Team 2",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": 7.5,
+    "period": "fulltime",
+    "marketType": "teamtotals-corners-team2",
+    "outcomes": [
+      {
+        "outcomeId": 101500,
+        "outcomeName": "Over"
+      },
+      {
+        "outcomeId": 101501,
+        "outcomeName": "Under"
+      }
+    ]
+  },
+  {
+    "marketId": 101504,
+    "marketLength": 2,
+    "marketName": "Corners - Over Under Team 2",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": 8.5,
+    "period": "fulltime",
+    "marketType": "teamtotals-corners-team2",
+    "outcomes": [
+      {
+        "outcomeId": 101505,
+        "outcomeName": "Under"
+      },
+      {
+        "outcomeId": 101504,
+        "outcomeName": "Over"
+      }
+    ]
+  },
+  {
+    "marketId": 101508,
+    "marketLength": 2,
+    "marketName": "Corners - Over Under Team 2",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": 9.5,
+    "period": "fulltime",
+    "marketType": "teamtotals-corners-team2",
+    "outcomes": [
+      {
+        "outcomeId": 101508,
+        "outcomeName": "Over"
+      },
+      {
+        "outcomeId": 101509,
+        "outcomeName": "Under"
+      }
+    ]
+  },
+  {
+    "marketId": 101512,
+    "marketLength": 2,
+    "marketName": "Corners - Over Under Team 2",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": 10.5,
+    "period": "fulltime",
+    "marketType": "teamtotals-corners-team2",
+    "outcomes": [
+      {
+        "outcomeId": 101512,
+        "outcomeName": "Over"
+      },
+      {
+        "outcomeId": 101513,
+        "outcomeName": "Under"
+      }
+    ]
+  },
+  {
+    "marketId": 101532,
+    "marketLength": 3,
+    "marketName": "Corners - 1X2 First Half",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": 0.0,
+    "period": "p1",
+    "marketType": "1x2-corners",
+    "outcomes": [
+      {
+        "outcomeId": 101533,
+        "outcomeName": "X"
+      },
+      {
+        "outcomeId": 101532,
+        "outcomeName": "1"
+      },
+      {
+        "outcomeId": 101534,
+        "outcomeName": "2"
+      }
+    ]
+  },
+  {
+    "marketId": 101547,
+    "marketLength": 2,
+    "marketName": "Corners - Over Under First Half",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": 3.5,
+    "period": "p1",
+    "marketType": "totals-corners",
+    "outcomes": [
+      {
+        "outcomeId": 101547,
+        "outcomeName": "Over"
+      },
+      {
+        "outcomeId": 101548,
+        "outcomeName": "Under"
+      }
+    ]
+  },
+  {
+    "marketId": 101549,
+    "marketLength": 2,
+    "marketName": "Corners - Over Under First Half",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": 4.0,
+    "period": "p1",
+    "marketType": "totals-corners",
+    "outcomes": [
+      {
+        "outcomeId": 101549,
+        "outcomeName": "Over"
+      },
+      {
+        "outcomeId": 101550,
+        "outcomeName": "Under"
+      }
+    ]
+  },
+  {
+    "marketId": 101559,
+    "marketLength": 2,
+    "marketName": "Corners - Over Under First Half",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": 6.5,
+    "period": "p1",
+    "marketType": "totals-corners",
+    "outcomes": [
+      {
+        "outcomeId": 101560,
+        "outcomeName": "Under"
+      },
+      {
+        "outcomeId": 101559,
+        "outcomeName": "Over"
+      }
+    ]
+  },
+  {
+    "marketId": 101609,
+    "marketLength": 2,
+    "marketName": "Corners - Handicap First Half",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": -1.5,
+    "period": "p1",
+    "marketType": "spread-corners",
+    "outcomes": [
+      {
+        "outcomeId": 101610,
+        "outcomeName": "2"
+      },
+      {
+        "outcomeId": 101609,
+        "outcomeName": "1"
+      }
+    ]
+  },
+  {
+    "marketId": 101613,
+    "marketLength": 2,
+    "marketName": "Corners - Handicap First Half",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": -0.5,
+    "period": "p1",
+    "marketType": "spread-corners",
+    "outcomes": [
+      {
+        "outcomeId": 101613,
+        "outcomeName": "1"
+      },
+      {
+        "outcomeId": 101614,
+        "outcomeName": "2"
+      }
+    ]
+  },
+  {
+    "marketId": 101717,
+    "marketLength": 3,
+    "marketName": "Corners - 1X2 Second Half",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": 0.0,
+    "period": "p2",
+    "marketType": "1x2-corners",
+    "outcomes": [
+      {
+        "outcomeId": 101717,
+        "outcomeName": "1"
+      },
+      {
+        "outcomeId": 101718,
+        "outcomeName": "X"
+      },
+      {
+        "outcomeId": 101719,
+        "outcomeName": "2"
+      }
+    ]
+  },
+  {
+    "marketId": 101744,
+    "marketLength": 2,
+    "marketName": "Corners - Over Under Second Half",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": 6.5,
+    "period": "p2",
+    "marketType": "totals-corners",
+    "outcomes": [
+      {
+        "outcomeId": 101745,
+        "outcomeName": "Under"
+      },
+      {
+        "outcomeId": 101744,
+        "outcomeName": "Over"
+      }
+    ]
+  },
+  {
+    "marketId": 101798,
+    "marketLength": 2,
+    "marketName": "Corners - Handicap Second Half",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": -0.5,
+    "period": "p2",
+    "marketType": "spreads-corners",
+    "outcomes": [
+      {
+        "outcomeId": 101798,
+        "outcomeName": "1"
+      },
+      {
+        "outcomeId": 101799,
+        "outcomeName": "2"
+      }
+    ]
+  },
+  {
+    "marketId": 101902,
+    "marketLength": 3,
+    "marketName": "Double Chance Full Time",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": 0.0,
+    "period": "fulltime",
+    "marketType": "doublechance",
+    "outcomes": [
+      {
+        "outcomeId": 101903,
+        "outcomeName": "12"
+      },
+      {
+        "outcomeId": 101904,
+        "outcomeName": "2X"
+      },
+      {
+        "outcomeId": 101902,
+        "outcomeName": "1X"
+      }
+    ]
+  },
+  {
+    "marketId": 101919,
+    "marketLength": 9,
+    "marketName": "Half Time / Full Time",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": 0.0,
+    "period": null,
+    "marketType": "halftime-fulltime",
+    "outcomes": [
+      {
+        "outcomeId": 101920,
+        "outcomeName": "1/X"
+      },
+      {
+        "outcomeId": 101925,
+        "outcomeName": "2/1"
+      },
+      {
+        "outcomeId": 101919,
+        "outcomeName": "1/1"
+      },
+      {
+        "outcomeId": 101926,
+        "outcomeName": "2/X"
+      },
+      {
+        "outcomeId": 101924,
+        "outcomeName": "X/2"
+      },
+      {
+        "outcomeId": 101922,
+        "outcomeName": "X/1"
+      },
+      {
+        "outcomeId": 101927,
+        "outcomeName": "2/2"
+      },
+      {
+        "outcomeId": 101921,
+        "outcomeName": "1/2"
+      },
+      {
+        "outcomeId": 101923,
+        "outcomeName": "X/X"
+      }
+    ]
+  },
+  {
+    "marketId": 101936,
+    "marketLength": 2,
+    "marketName": "Winning Margin Full Time",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": 0.0,
+    "period": "fulltime",
+    "marketType": "winningmargin",
+    "outcomes": [
+      {
+        "outcomeId": 101942,
+        "outcomeName": "1 By 4"
+      },
+      {
+        "outcomeId": 101973,
+        "outcomeName": "2 By 5+"
+      },
+      {
+        "outcomeId": 101972,
+        "outcomeName": "2 By 4+"
+      },
+      {
+        "outcomeId": 101947,
+        "outcomeName": "1 By 9"
+      },
+      {
+        "outcomeId": 101968,
+        "outcomeName": "1 By 10+"
+      },
+      {
+        "outcomeId": 101976,
+        "outcomeName": "2 By 8+"
+      },
+      {
+        "outcomeId": 101960,
+        "outcomeName": "1 By 2+"
+      },
+      {
+        "outcomeId": 101955,
+        "outcomeName": "2 By 7"
+      },
+      {
+        "outcomeId": 101936,
+        "outcomeName": "No Goal"
+      },
+      {
+        "outcomeId": 101964,
+        "outcomeName": "1 By 6+"
+      },
+      {
+        "outcomeId": 101966,
+        "outcomeName": "1 By 8+"
+      },
+      {
+        "outcomeId": 101971,
+        "outcomeName": "2 By 3+"
+      },
+      {
+        "outcomeId": 101943,
+        "outcomeName": "1 By 5"
+      },
+      {
+        "outcomeId": 101950,
+        "outcomeName": "2 By 2"
+      },
+      {
+        "outcomeId": 101959,
+        "outcomeName": "1 By 1+"
+      },
+      {
+        "outcomeId": 101962,
+        "outcomeName": "1 By 4+"
+      },
+      {
+        "outcomeId": 101963,
+        "outcomeName": "1 By 5+"
+      },
+      {
+        "outcomeId": 101958,
+        "outcomeName": "2 By 10"
+      },
+      {
+        "outcomeId": 101970,
+        "outcomeName": "2 By 2+"
+      },
+      {
+        "outcomeId": 101957,
+        "outcomeName": "2 By 9"
+      },
+      {
+        "outcomeId": 101939,
+        "outcomeName": "1 By 1"
+      },
+      {
+        "outcomeId": 101953,
+        "outcomeName": "2 By 5"
+      },
+      {
+        "outcomeId": 101961,
+        "outcomeName": "1 By 3+"
+      },
+      {
+        "outcomeId": 101946,
+        "outcomeName": "1 By 8"
+      },
+      {
+        "outcomeId": 101977,
+        "outcomeName": "2 By 9+"
+      },
+      {
+        "outcomeId": 101969,
+        "outcomeName": "2 By 1+"
+      },
+      {
+        "outcomeId": 101941,
+        "outcomeName": "1 By 3"
+      },
+      {
+        "outcomeId": 101949,
+        "outcomeName": "2 By 1"
+      },
+      {
+        "outcomeId": 101954,
+        "outcomeName": "2 By 6"
+      },
+      {
+        "outcomeId": 101967,
+        "outcomeName": "1 By 9+"
+      },
+      {
+        "outcomeId": 101956,
+        "outcomeName": "2 By 8"
+      },
+      {
+        "outcomeId": 101978,
+        "outcomeName": "2 By 10+"
+      },
+      {
+        "outcomeId": 101951,
+        "outcomeName": "2 By 3"
+      },
+      {
+        "outcomeId": 101944,
+        "outcomeName": "1 By 6"
+      },
+      {
+        "outcomeId": 101940,
+        "outcomeName": "1 By 2"
+      },
+      {
+        "outcomeId": 101975,
+        "outcomeName": "2 By 7+"
+      },
+      {
+        "outcomeId": 101952,
+        "outcomeName": "2 By 4"
+      },
+      {
+        "outcomeId": 101937,
+        "outcomeName": "Draw (incl 0:0)"
+      },
+      {
+        "outcomeId": 101974,
+        "outcomeName": "2 By 6+"
+      },
+      {
+        "outcomeId": 101948,
+        "outcomeName": "1 By 10"
+      },
+      {
+        "outcomeId": 101945,
+        "outcomeName": "1 By 7"
+      },
+      {
+        "outcomeId": 101965,
+        "outcomeName": "1 By 7+"
+      },
+      {
+        "outcomeId": 101938,
+        "outcomeName": "Draw"
+      }
+    ]
+  },
+  {
+    "marketId": 102041,
+    "marketLength": 3,
+    "marketName": "Highest Scoring Half",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": 0.0,
+    "period": null,
+    "marketType": "highestscoringh",
+    "outcomes": [
+      {
+        "outcomeId": 102042,
+        "outcomeName": "X"
+      },
+      {
+        "outcomeId": 102043,
+        "outcomeName": "2nd"
+      },
+      {
+        "outcomeId": 102041,
+        "outcomeName": "1st"
+      }
+    ]
+  },
+  {
+    "marketId": 102074,
+    "marketLength": 0,
+    "marketName": "Team 1 Exact Score Full Time",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": 0.0,
+    "period": "fulltime",
+    "marketType": "exactscore-team1",
+    "outcomes": [
+      {
+        "outcomeId": 102085,
+        "outcomeName": "1+"
+      },
+      {
+        "outcomeId": 102083,
+        "outcomeName": "9"
+      },
+      {
+        "outcomeId": 102074,
+        "outcomeName": "0"
+      },
+      {
+        "outcomeId": 102082,
+        "outcomeName": "8"
+      },
+      {
+        "outcomeId": 102081,
+        "outcomeName": "7"
+      },
+      {
+        "outcomeId": 102076,
+        "outcomeName": "2"
+      },
+      {
+        "outcomeId": 102084,
+        "outcomeName": "10"
+      },
+      {
+        "outcomeId": 102092,
+        "outcomeName": "8+"
+      },
+      {
+        "outcomeId": 102087,
+        "outcomeName": "3+"
+      },
+      {
+        "outcomeId": 102088,
+        "outcomeName": "4+"
+      },
+      {
+        "outcomeId": 102077,
+        "outcomeName": "3"
+      },
+      {
+        "outcomeId": 102086,
+        "outcomeName": "2+"
+      },
+      {
+        "outcomeId": 102090,
+        "outcomeName": "6+"
+      },
+      {
+        "outcomeId": 102094,
+        "outcomeName": "10+"
+      },
+      {
+        "outcomeId": 102089,
+        "outcomeName": "5+"
+      },
+      {
+        "outcomeId": 102080,
+        "outcomeName": "6"
+      },
+      {
+        "outcomeId": 102091,
+        "outcomeName": "7+"
+      },
+      {
+        "outcomeId": 102079,
+        "outcomeName": "5"
+      },
+      {
+        "outcomeId": 102078,
+        "outcomeName": "4"
+      },
+      {
+        "outcomeId": 102075,
+        "outcomeName": "1"
+      },
+      {
+        "outcomeId": 102093,
+        "outcomeName": "9+"
+      }
+    ]
+  },
+  {
+    "marketId": 102095,
+    "marketLength": 0,
+    "marketName": "Team 2 Exact Score Full Time",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": 0.0,
+    "period": "fulltime",
+    "marketType": "exactscore-team2",
+    "outcomes": [
+      {
+        "outcomeId": 102112,
+        "outcomeName": "7+"
+      },
+      {
+        "outcomeId": 102105,
+        "outcomeName": "10"
+      },
+      {
+        "outcomeId": 102110,
+        "outcomeName": "5+"
+      },
+      {
+        "outcomeId": 102102,
+        "outcomeName": "7"
+      },
+      {
+        "outcomeId": 102109,
+        "outcomeName": "4+"
+      },
+      {
+        "outcomeId": 102104,
+        "outcomeName": "9"
+      },
+      {
+        "outcomeId": 102113,
+        "outcomeName": "8+"
+      },
+      {
+        "outcomeId": 102108,
+        "outcomeName": "3+"
+      },
+      {
+        "outcomeId": 102111,
+        "outcomeName": "6+"
+      },
+      {
+        "outcomeId": 102100,
+        "outcomeName": "5"
+      },
+      {
+        "outcomeId": 102103,
+        "outcomeName": "8"
+      },
+      {
+        "outcomeId": 102097,
+        "outcomeName": "2"
+      },
+      {
+        "outcomeId": 102096,
+        "outcomeName": "1"
+      },
+      {
+        "outcomeId": 102101,
+        "outcomeName": "6"
+      },
+      {
+        "outcomeId": 102095,
+        "outcomeName": "0"
+      },
+      {
+        "outcomeId": 102107,
+        "outcomeName": "2+"
+      },
+      {
+        "outcomeId": 102114,
+        "outcomeName": "9+"
+      },
+      {
+        "outcomeId": 102099,
+        "outcomeName": "4"
+      },
+      {
+        "outcomeId": 102115,
+        "outcomeName": "10+"
+      },
+      {
+        "outcomeId": 102106,
+        "outcomeName": "1+"
+      },
+      {
+        "outcomeId": 102098,
+        "outcomeName": "3"
+      }
+    ]
+  },
+  {
+    "marketId": 102131,
+    "marketLength": 0,
+    "marketName": "Team 1 Exact Score First Half",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": 0.0,
+    "period": "p1",
+    "marketType": "exactscore-team1",
+    "outcomes": [
+      {
+        "outcomeId": 102141,
+        "outcomeName": "3+"
+      },
+      {
+        "outcomeId": 102139,
+        "outcomeName": "1+"
+      },
+      {
+        "outcomeId": 102143,
+        "outcomeName": "5+"
+      },
+      {
+        "outcomeId": 102136,
+        "outcomeName": "5"
+      },
+      {
+        "outcomeId": 102134,
+        "outcomeName": "3"
+      },
+      {
+        "outcomeId": 102138,
+        "outcomeName": "7"
+      },
+      {
+        "outcomeId": 102145,
+        "outcomeName": "7+"
+      },
+      {
+        "outcomeId": 102137,
+        "outcomeName": "6"
+      },
+      {
+        "outcomeId": 102131,
+        "outcomeName": "0"
+      },
+      {
+        "outcomeId": 102140,
+        "outcomeName": "2+"
+      },
+      {
+        "outcomeId": 102135,
+        "outcomeName": "4"
+      },
+      {
+        "outcomeId": 102133,
+        "outcomeName": "2"
+      },
+      {
+        "outcomeId": 102144,
+        "outcomeName": "6+"
+      },
+      {
+        "outcomeId": 102132,
+        "outcomeName": "1"
+      },
+      {
+        "outcomeId": 102142,
+        "outcomeName": "4+"
+      }
+    ]
+  },
+  {
+    "marketId": 102146,
+    "marketLength": 0,
+    "marketName": "Team 2 Exact Score First Half",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": 0.0,
+    "period": "p1",
+    "marketType": "exactscore-team2",
+    "outcomes": [
+      {
+        "outcomeId": 102150,
+        "outcomeName": "4"
+      },
+      {
+        "outcomeId": 102153,
+        "outcomeName": "7"
+      },
+      {
+        "outcomeId": 102149,
+        "outcomeName": "3"
+      },
+      {
+        "outcomeId": 102156,
+        "outcomeName": "3+"
+      },
+      {
+        "outcomeId": 102157,
+        "outcomeName": "4+"
+      },
+      {
+        "outcomeId": 102152,
+        "outcomeName": "6"
+      },
+      {
+        "outcomeId": 102154,
+        "outcomeName": "1+"
+      },
+      {
+        "outcomeId": 102158,
+        "outcomeName": "5+"
+      },
+      {
+        "outcomeId": 102159,
+        "outcomeName": "6+"
+      },
+      {
+        "outcomeId": 102151,
+        "outcomeName": "5"
+      },
+      {
+        "outcomeId": 102148,
+        "outcomeName": "2"
+      },
+      {
+        "outcomeId": 102160,
+        "outcomeName": "7+"
+      },
+      {
+        "outcomeId": 102155,
+        "outcomeName": "2+"
+      },
+      {
+        "outcomeId": 102147,
+        "outcomeName": "1"
+      },
+      {
+        "outcomeId": 102146,
+        "outcomeName": "0"
+      }
+    ]
+  },
+  {
+    "marketId": 102206,
+    "marketLength": 2,
+    "marketName": "Over Under Team 1 First Half",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": 0.5,
+    "period": "p1",
+    "marketType": "teamtotals-team1",
+    "outcomes": [
+      {
+        "outcomeId": 102206,
+        "outcomeName": "Over"
+      },
+      {
+        "outcomeId": 102207,
+        "outcomeName": "Under"
+      }
+    ]
+  },
+  {
+    "marketId": 102208,
+    "marketLength": 2,
+    "marketName": "Over Under Team 1 First Half",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": 1.5,
+    "period": "p1",
+    "marketType": "teamtotals-team1",
+    "outcomes": [
+      {
+        "outcomeId": 102208,
+        "outcomeName": "Over"
+      },
+      {
+        "outcomeId": 102209,
+        "outcomeName": "Under"
+      }
+    ]
+  },
+  {
+    "marketId": 102210,
+    "marketLength": 2,
+    "marketName": "Over Under Team 1 First Half",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": 2.5,
+    "period": "p1",
+    "marketType": "teamtotals-team1",
+    "outcomes": [
+      {
+        "outcomeId": 102211,
+        "outcomeName": "Under"
+      },
+      {
+        "outcomeId": 102210,
+        "outcomeName": "Over"
+      }
+    ]
+  },
+  {
+    "marketId": 102212,
+    "marketLength": 2,
+    "marketName": "Over Under Team 1 First Half",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": 3.5,
+    "period": "p1",
+    "marketType": "teamtotals-team1",
+    "outcomes": [
+      {
+        "outcomeId": 102213,
+        "outcomeName": "Under"
+      },
+      {
+        "outcomeId": 102212,
+        "outcomeName": "Over"
+      }
+    ]
+  },
+  {
+    "marketId": 102220,
+    "marketLength": 2,
+    "marketName": "Over Under Team 2 First Half",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": 0.5,
+    "period": "p1",
+    "marketType": "teamtotals-team2",
+    "outcomes": [
+      {
+        "outcomeId": 102220,
+        "outcomeName": "Over"
+      },
+      {
+        "outcomeId": 102221,
+        "outcomeName": "Under"
+      }
+    ]
+  },
+  {
+    "marketId": 102222,
+    "marketLength": 2,
+    "marketName": "Over Under Team 2 First Half",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": 1.5,
+    "period": "p1",
+    "marketType": "teamtotals-team2",
+    "outcomes": [
+      {
+        "outcomeId": 102222,
+        "outcomeName": "Over"
+      },
+      {
+        "outcomeId": 102223,
+        "outcomeName": "Under"
+      }
+    ]
+  },
+  {
+    "marketId": 102462,
+    "marketLength": 0,
+    "marketName": "Correct Score First Half",
+    "playerProp": false,
+    "sportId": 10,
+    "handicap": 0.0,
+    "period": "p1",
+    "marketType": "correctscore",
+    "outcomes": [
+      {
+        "outcomeId": 102498,
+        "outcomeName": "4:4"
+      },
+      {
+        "outcomeId": 102470,
+        "outcomeName": "0:1"
+      },
+      {
+        "outcomeId": 102473,
+        "outcomeName": "3:1"
+      },
+      {
+        "outcomeId": 102465,
+        "outcomeName": "3:0"
+      },
+      {
+        "outcomeId": 102485,
+        "outcomeName": "7:2"
+      },
+      {
+        "outcomeId": 102515,
+        "outcomeName": "5:6"
+      },
+      {
+        "outcomeId": 102503,
+        "outcomeName": "1:5"
+      },
+      {
+        "outcomeId": 102487,
+        "outcomeName": "1:3"
+      },
+      {
+        "outcomeId": 102504,
+        "outcomeName": "2:5"
+      },
+      {
+        "outcomeId": 102507,
+        "outcomeName": "5:5"
+      },
+      {
+        "outcomeId": 102514,
+        "outcomeName": "4:6"
+      },
+      {
+        "outcomeId": 102478,
+        "outcomeName": "0:2"
+      },
+      {
+        "outcomeId": 102505,
+        "outcomeName": "3:5"
+      },
+      {
+        "outcomeId": 102508,
+        "outcomeName": "6:5"
+      },
+      {
+        "outcomeId": 102523,
+        "outcomeName": "5:7"
+      },
+      {
+        "outcomeId": 102464,
+        "outcomeName": "2:0"
+      },
+      {
+        "outcomeId": 102467,
+        "outcomeName": "5:0"
+      },
+      {
+        "outcomeId": 102518,
+        "outcomeName": "0:7"
+      },
+      {
+        "outcomeId": 102511,
+        "outcomeName": "1:6"
+      },
+      {
+        "outcomeId": 102522,
+        "outcomeName": "4:7"
+      },
+      {
+        "outcomeId": 102488,
+        "outcomeName": "2:3"
+      },
+      {
+        "outcomeId": 102477,
+        "outcomeName": "7:1"
+      },
+      {
+        "outcomeId": 102483,
+        "outcomeName": "5:2"
+      },
+      {
+        "outcomeId": 102481,
+        "outcomeName": "3:2"
+      },
+      {
+        "outcomeId": 102489,
+        "outcomeName": "3:3"
+      },
+      {
+        "outcomeId": 102476,
+        "outcomeName": "6:1"
+      },
+      {
+        "outcomeId": 102506,
+        "outcomeName": "4:5"
+      },
+      {
+        "outcomeId": 102475,
+        "outcomeName": "5:1"
+      },
+      {
+        "outcomeId": 102462,
+        "outcomeName": "0:0"
+      },
+      {
+        "outcomeId": 102520,
+        "outcomeName": "2:7"
+      },
+      {
+        "outcomeId": 102513,
+        "outcomeName": "3:6"
+      },
+      {
+        "outcomeId": 102500,
+        "outcomeName": "6:4"
+      },
+      {
+        "outcomeId": 102474,
+        "outcomeName": "4:1"
+      },
+      {
+        "outcomeId": 102492,
+        "outcomeName": "6:3"
+      },
+      {
+        "outcomeId": 102510,
+        "outcomeName": "0:6"
+      },
+      {
+        "outcomeId": 102512,
+        "outcomeName": "2:6"
+      },
+      {
+        "outcomeId": 102469,
+        "outcomeName": "7:0"
+      },
+      {
+        "outcomeId": 102472,
+        "outcomeName": "2:1"
+      },
+      {
+        "outcomeId": 102499,
+        "outcomeName": "5:4"
+      },
+      {
+        "outcomeId": 102501,
+        "outcomeName": "7:4"
+      },
+      {
+        "outcomeId": 102519,
+        "outcomeName": "1:7"
+      },
+      {
+        "outcomeId": 102524,
+        "outcomeName": "6:7"
+      },
+      {
+        "outcomeId": 102486,
+        "outcomeName": "0:3"
+      },
+      {
+        "outcomeId": 102517,
+        "outcomeName": "7:6"
+      },
+      {
+        "outcomeId": 102525,
+        "outcomeName": "7:7"
+      },
+      {
+        "outcomeId": 102468,
+        "outcomeName": "6:0"
+      },
+      {
+        "outcomeId": 102482,
+        "outcomeName": "4:2"
+      },
+      {
+        "outcomeId": 102463,
+        "outcomeName": "1:0"
+      },
+      {
+        "outcomeId": 102495,
+        "outcomeName": "1:4"
+      },
+      {
+        "outcomeId": 102494,
+        "outcomeName": "0:4"
+      },
+      {
+        "outcomeId": 102496,
+        "outcomeName": "2:4"
+      },
+      {
+        "outcomeId": 102497,
+        "outcomeName": "3:4"
+      },
+      {
+        "outcomeId": 102516,
+        "outcomeName": "6:6"
+      },
+      {
+        "outcomeId": 102521,
+        "outcomeName": "3:7"
+      },
+      {
+        "outcomeId": 102480,
+        "outcomeName": "2:2"
+      },
+      {
+        "outcomeId": 102471,
+        "outcomeName": "1:1"
+      },
+      {
+        "outcomeId": 102493,
+        "outcomeName": "7:3"
+      },
+      {
+        "outcomeId": 102466,
+        "outcomeName": "4:0"
+      },
+      {
+        "outcomeId": 102491,
+        "outcomeName": "5:3"
+      },
+      {
+        "outcomeId": 102509,
+        "outcomeName": "7:5"
+      },
+      {
+        "outcomeId": 102479,
+        "outcomeName": "1:2"
+      },
+      {
+        "outcomeId": 102490,
+        "outcomeName": "4:3"
+      },
+      {
+        "outcomeId": 102484,
+        "outcomeName": "6:2"
+      },
+      {
+        "outcomeId": 102502,
+        "outcomeName": "0:5"
+      }
+    ]
+  }
+]

@@ -1,0 +1,4958 @@
+{
+  "fixtureId": "id1000001872339852",
+  "participant1Id": 263,
+  "participant2Id": 5,
+  "sportId": 10,
+  "tournamentId": 18,
+  "seasonId": 140810,
+  "statusId": 0,
+  "hasOdds": true,
+  "startTime": "2026-09-20T12:30:00.000Z",
+  "trueStartTime": null,
+  "trueEndTime": null,
+  "updatedAt": "2026-09-17T22:55:40.296Z",
+  "statusName": "Pre-Game",
+  "participant1Name": "Norwich City",
+  "participant1ShortName": "Norwich",
+  "participant1Abbr": "NOR",
+  "participant2Name": "Bolton Wanderers",
+  "participant2ShortName": "Bolton",
+  "participant2Abbr": "BOL",
+  "sportName": "Soccer",
+  "tournamentSlug": "championship",
+  "categorySlug": "england",
+  "categoryName": "England",
+  "tournamentName": "Championship",
+  "bookmakerOdds": {
+    "draftkings": {
+      "bookmakerIsActive": true,
+      "bookmakerFixtureId": "34668061",
+      "fixturePath": "https://sportsbook.draftkings.com/event/34668061",
+      "suspended": false,
+      "markets": {
+        "10811": {
+          "bookmakerMarketId": "3_86374843",
+          "marketActive": true,
+          "outcomes": {
+            "10812": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.draftkings.com/event/34668061?outcomes=0OU86374843U1150_3",
+                  "bookmakerOutcomeId": "0OU86374843U1150_3",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-18T22:15:43.558Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 1.444,
+                  "priceAmerican": "-225",
+                  "priceFractional": "4/9",
+                  "mainLine": true,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "10811": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.draftkings.com/event/34668061?outcomes=0OU86374843O1150_1",
+                  "bookmakerOutcomeId": "0OU86374843O1150_1",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-18T22:15:43.558Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 2.6,
+                  "priceAmerican": "160",
+                  "priceFractional": "8/5",
+                  "mainLine": true,
+                  "exchangeMeta": null
+                }
+              }
+            }
+          }
+        },
+        "101436": {
+          "bookmakerMarketId": "3_86301451",
+          "marketActive": true,
+          "outcomes": {
+            "101436": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.draftkings.com/event/34668061?outcomes=0OU86301451O650_1",
+                  "bookmakerOutcomeId": "0OU86301451O650_1",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-18T22:15:43.558Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 2.1,
+                  "priceAmerican": "110",
+                  "priceFractional": "11/10",
+                  "mainLine": true,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "101437": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.draftkings.com/event/34668061?outcomes=0OU86301451U650_3",
+                  "bookmakerOutcomeId": "0OU86301451U650_3",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-18T22:15:43.558Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 1.645,
+                  "priceAmerican": "-155",
+                  "priceFractional": "20/31",
+                  "mainLine": true,
+                  "exchangeMeta": null
+                }
+              }
+            }
+          }
+        },
+        "101484": {
+          "bookmakerMarketId": "3_86301454",
+          "marketActive": true,
+          "outcomes": {
+            "101485": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.draftkings.com/event/34668061?outcomes=0OU86301454U350_3",
+                  "bookmakerOutcomeId": "0OU86301454U350_3",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-18T22:15:43.558Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 2.15,
+                  "priceAmerican": "115",
+                  "priceFractional": "23/20",
+                  "mainLine": true,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "101484": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.draftkings.com/event/34668061?outcomes=0OU86301454O350_1",
+                  "bookmakerOutcomeId": "0OU86301454O350_1",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-18T22:15:43.558Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 1.625,
+                  "priceAmerican": "-160",
+                  "priceFractional": "5/8",
+                  "mainLine": true,
+                  "exchangeMeta": null
+                }
+              }
+            }
+          }
+        },
+        "10803": {
+          "bookmakerMarketId": "3_86374843",
+          "marketActive": true,
+          "outcomes": {
+            "10803": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.draftkings.com/event/34668061?outcomes=0OU86374843O950_1",
+                  "bookmakerOutcomeId": "0OU86374843O950_1",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-18T22:15:43.558Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 1.625,
+                  "priceAmerican": "-160",
+                  "priceFractional": "5/8",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "10804": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.draftkings.com/event/34668061?outcomes=0OU86374843U950_3",
+                  "bookmakerOutcomeId": "0OU86374843U950_3",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-18T22:15:43.558Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 2.15,
+                  "priceAmerican": "115",
+                  "priceFractional": "23/20",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            }
+          }
+        },
+        "10815": {
+          "bookmakerMarketId": "3_86374843",
+          "marketActive": true,
+          "outcomes": {
+            "10815": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.draftkings.com/event/34668061?outcomes=0OU86374843O1250_1",
+                  "bookmakerOutcomeId": "0OU86374843O1250_1",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-18T22:15:43.558Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 3.5,
+                  "priceAmerican": "250",
+                  "priceFractional": "5/2",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "10816": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.draftkings.com/event/34668061?outcomes=0OU86374843U1250_3",
+                  "bookmakerOutcomeId": "0OU86374843U1250_3",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-18T22:15:43.558Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 1.263,
+                  "priceAmerican": "-380",
+                  "priceFractional": "5/19",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            }
+          }
+        },
+        "10799": {
+          "bookmakerMarketId": "3_86374843",
+          "marketActive": true,
+          "outcomes": {
+            "10799": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.draftkings.com/event/34668061?outcomes=0OU86374843O850_1",
+                  "bookmakerOutcomeId": "0OU86374843O850_1",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-19T20:53:56.538Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 1.364,
+                  "priceAmerican": "-275",
+                  "priceFractional": "4/11",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "10800": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.draftkings.com/event/34668061?outcomes=0OU86374843U850_3",
+                  "bookmakerOutcomeId": "0OU86374843U850_3",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-18T22:15:43.558Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 2.9,
+                  "priceAmerican": "190",
+                  "priceFractional": "19/10",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            }
+          }
+        },
+        "10807": {
+          "bookmakerMarketId": "3_86374843",
+          "marketActive": true,
+          "outcomes": {
+            "10807": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.draftkings.com/event/34668061?outcomes=0OU86374843O1050_1",
+                  "bookmakerOutcomeId": "0OU86374843O1050_1",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-18T22:15:43.558Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 2.0,
+                  "priceAmerican": "100",
+                  "priceFractional": "1/1",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "10808": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.draftkings.com/event/34668061?outcomes=0OU86374843U1050_3",
+                  "bookmakerOutcomeId": "0OU86374843U1050_3",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-18T22:15:43.558Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 1.714,
+                  "priceAmerican": "-140",
+                  "priceFractional": "5/7",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            }
+          }
+        },
+        "101798": {
+          "bookmakerMarketId": "2_86301445",
+          "marketActive": true,
+          "outcomes": {
+            "101799": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.draftkings.com/event/34668061?outcomes=0HC86301445P50_3",
+                  "bookmakerOutcomeId": "0HC86301445P50_3",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-18T22:15:43.558Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 2.15,
+                  "priceAmerican": "115",
+                  "priceFractional": "23/20",
+                  "mainLine": true,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "101798": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.draftkings.com/event/34668061?outcomes=0HC86301445N50_1",
+                  "bookmakerOutcomeId": "0HC86301445N50_1",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-18T22:15:43.558Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 1.606,
+                  "priceAmerican": "-165",
+                  "priceFractional": "20/33",
+                  "mainLine": true,
+                  "exchangeMeta": null
+                }
+              }
+            }
+          }
+        },
+        "101532": {
+          "bookmakerMarketId": "1_86374808",
+          "marketActive": true,
+          "outcomes": {
+            "101532": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.draftkings.com/event/34668061?outcomes=0ML86374808_1",
+                  "bookmakerOutcomeId": "0ML86374808_1",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-18T22:15:43.558Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 1.513,
+                  "priceAmerican": "-195",
+                  "priceFractional": "39/76",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "101534": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.draftkings.com/event/34668061?outcomes=0ML86374808_3",
+                  "bookmakerOutcomeId": "0ML86374808_3",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-18T22:15:43.558Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 3.55,
+                  "priceAmerican": "255",
+                  "priceFractional": "51/20",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "101533": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.draftkings.com/event/34668061?outcomes=0ML86374808_2",
+                  "bookmakerOutcomeId": "0ML86374808_2",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-18T22:15:43.558Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 4.7,
+                  "priceAmerican": "370",
+                  "priceFractional": "37/10",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            }
+          }
+        },
+        "101559": {
+          "bookmakerMarketId": "3_86374808",
+          "marketActive": true,
+          "outcomes": {
+            "101560": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.draftkings.com/event/34668061?outcomes=0OU86374808U650_3",
+                  "bookmakerOutcomeId": "0OU86374808U650_3",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-18T22:15:43.558Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 1.222,
+                  "priceAmerican": "-450",
+                  "priceFractional": "2/9",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "101559": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.draftkings.com/event/34668061?outcomes=0OU86374808O650_1",
+                  "bookmakerOutcomeId": "0OU86374808O650_1",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-18T22:15:43.558Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 3.85,
+                  "priceAmerican": "285",
+                  "priceFractional": "57/20",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            }
+          }
+        },
+        "101394": {
+          "bookmakerMarketId": "369725788",
+          "marketActive": true,
+          "outcomes": {
+            "101395": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.draftkings.com/event/34668061?outcomes=0QA369725788#2284130081_13L40817Q12Q22",
+                  "bookmakerOutcomeId": "0QA369725788#2284130081_13L40817Q12Q22",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-18T22:15:43.558Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 1.87,
+                  "priceAmerican": "-115",
+                  "priceFractional": "87/100",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "101394": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.draftkings.com/event/34668061?outcomes=0QA369725788#2284130028_13L40817Q11Q21",
+                  "bookmakerOutcomeId": "0QA369725788#2284130028_13L40817Q11Q21",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-18T22:15:43.558Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 1.909,
+                  "priceAmerican": "-110",
+                  "priceFractional": "10/11",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            }
+          }
+        },
+        "101744": {
+          "bookmakerMarketId": "3_86301445",
+          "marketActive": true,
+          "outcomes": {
+            "101744": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.draftkings.com/event/34668061?outcomes=0OU86301445O650_1",
+                  "bookmakerOutcomeId": "0OU86301445O650_1",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-18T22:15:43.558Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 2.8,
+                  "priceAmerican": "180",
+                  "priceFractional": "9/5",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "101745": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.draftkings.com/event/34668061?outcomes=0OU86301445U650_3",
+                  "bookmakerOutcomeId": "0OU86301445U650_3",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-18T22:15:43.558Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 1.385,
+                  "priceAmerican": "-260",
+                  "priceFractional": "5/13",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            }
+          }
+        },
+        "101717": {
+          "bookmakerMarketId": "1_86301445",
+          "marketActive": true,
+          "outcomes": {
+            "101718": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.draftkings.com/event/34668061?outcomes=0ML86301445_2",
+                  "bookmakerOutcomeId": "0ML86301445_2",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-18T22:15:43.558Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 5.0,
+                  "priceAmerican": "400",
+                  "priceFractional": "4/1",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "101717": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.draftkings.com/event/34668061?outcomes=0ML86301445_1",
+                  "bookmakerOutcomeId": "0ML86301445_1",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-18T22:15:43.558Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 1.571,
+                  "priceAmerican": "-175",
+                  "priceFractional": "4/7",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "101719": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.draftkings.com/event/34668061?outcomes=0ML86301445_3",
+                  "bookmakerOutcomeId": "0ML86301445_3",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-18T22:15:43.558Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 3.15,
+                  "priceAmerican": "215",
+                  "priceFractional": "43/20",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            }
+          }
+        },
+        "101609": {
+          "bookmakerMarketId": "2_86374808",
+          "marketActive": true,
+          "outcomes": {
+            "101610": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.draftkings.com/event/34668061?outcomes=0HC86374808P150_3",
+                  "bookmakerOutcomeId": "0HC86374808P150_3",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-18T22:15:43.558Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 1.625,
+                  "priceAmerican": "-160",
+                  "priceFractional": "5/8",
+                  "mainLine": true,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "101609": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.draftkings.com/event/34668061?outcomes=0HC86374808N150_1",
+                  "bookmakerOutcomeId": "0HC86374808N150_1",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-18T22:15:43.558Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 2.15,
+                  "priceAmerican": "115",
+                  "priceFractional": "23/20",
+                  "mainLine": true,
+                  "exchangeMeta": null
+                }
+              }
+            }
+          }
+        },
+        "10867": {
+          "bookmakerMarketId": "2_86374843",
+          "marketActive": true,
+          "outcomes": {
+            "10868": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.draftkings.com/event/34668061?outcomes=0HC86374843P250_3",
+                  "bookmakerOutcomeId": "0HC86374843P250_3",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-18T22:15:43.558Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 1.714,
+                  "priceAmerican": "-140",
+                  "priceFractional": "5/7",
+                  "mainLine": true,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "10867": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.draftkings.com/event/34668061?outcomes=0HC86374843N250_1",
+                  "bookmakerOutcomeId": "0HC86374843N250_1",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-18T22:15:43.558Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 2.0,
+                  "priceAmerican": "100",
+                  "priceFractional": "1/1",
+                  "mainLine": true,
+                  "exchangeMeta": null
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "fanduel": {
+      "bookmakerIsActive": true,
+      "bookmakerFixtureId": "36065400",
+      "fixturePath": "https://sportsbook.fanduel.com/soccer/e/e-v-e-36065400",
+      "suspended": false,
+      "markets": {
+        "10230": {
+          "bookmakerMarketId": "734.186051913",
+          "marketActive": true,
+          "outcomes": {
+            "10230": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051913&selectionId=7044482",
+                  "bookmakerOutcomeId": "7044482",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 5.1,
+                  "priceAmerican": "410",
+                  "priceFractional": "41/10",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "10231": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051913&selectionId=7044483",
+                  "bookmakerOutcomeId": "7044483",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 1.14,
+                  "priceAmerican": "-714",
+                  "priceFractional": "7/50",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            }
+          }
+        },
+        "1014": {
+          "bookmakerMarketId": "734.186051854",
+          "marketActive": true,
+          "outcomes": {
+            "1014": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051854&selectionId=1222346",
+                  "bookmakerOutcomeId": "1222346",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 4.2,
+                  "priceAmerican": "320",
+                  "priceFractional": "16/5",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "1015": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051854&selectionId=1222347",
+                  "bookmakerOutcomeId": "1222347",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 1.22,
+                  "priceAmerican": "-455",
+                  "priceFractional": "11/50",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            }
+          }
+        },
+        "106": {
+          "bookmakerMarketId": "734.186051871",
+          "marketActive": true,
+          "outcomes": {
+            "107": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051871&selectionId=5851482",
+                  "bookmakerOutcomeId": "5851482",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 16.0,
+                  "priceAmerican": "1500",
+                  "priceFractional": "15/1",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "106": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051871&selectionId=5851483",
+                  "bookmakerOutcomeId": "5851483",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 1.01,
+                  "priceAmerican": "-10000",
+                  "priceFractional": "1/100",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            }
+          }
+        },
+        "1028": {
+          "bookmakerMarketId": "734.186051921",
+          "marketActive": true,
+          "outcomes": {
+            "1028": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051921&selectionId=63251279",
+                  "bookmakerOutcomeId": "63251279",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 35.0,
+                  "priceAmerican": "3400",
+                  "priceFractional": "34/1",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            }
+          }
+        },
+        "10256": {
+          "bookmakerMarketId": "734.186051846",
+          "marketActive": true,
+          "outcomes": {
+            "10257": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051846&selectionId=12453942",
+                  "bookmakerOutcomeId": "12453942",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 3.9,
+                  "priceAmerican": "290",
+                  "priceFractional": "29/10",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "10256": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051846&selectionId=12453943",
+                  "bookmakerOutcomeId": "12453943",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 1.23,
+                  "priceAmerican": "-435",
+                  "priceFractional": "23/100",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            }
+          }
+        },
+        "10306": {
+          "bookmakerMarketId": "734.186051926",
+          "marketActive": true,
+          "outcomes": {
+            "10306": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051926&selectionId=48322",
+                  "bookmakerOutcomeId": "48322",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 2.94,
+                  "priceAmerican": "194",
+                  "priceFractional": "97/50",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            }
+          }
+        },
+        "10208": {
+          "bookmakerMarketId": "734.186051868",
+          "marketActive": true,
+          "outcomes": {
+            "10209": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051868&selectionId=151478",
+                  "bookmakerOutcomeId": "151478",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 2.5,
+                  "priceAmerican": "150",
+                  "priceFractional": "3/2",
+                  "mainLine": true,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "10208": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051868&selectionId=47998",
+                  "bookmakerOutcomeId": "47998",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 1.91,
+                  "priceAmerican": "-110",
+                  "priceFractional": "91/100",
+                  "mainLine": true,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "10210": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051868&selectionId=48322",
+                  "bookmakerOutcomeId": "48322",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 5.3,
+                  "priceAmerican": "430",
+                  "priceFractional": "43/10",
+                  "mainLine": true,
+                  "exchangeMeta": null
+                }
+              }
+            }
+          }
+        },
+        "10318": {
+          "bookmakerMarketId": "734.186051918",
+          "marketActive": true,
+          "outcomes": {
+            "10318": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051918&selectionId=48322",
+                  "bookmakerOutcomeId": "48322",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 12.6,
+                  "priceAmerican": "1160",
+                  "priceFractional": "58/5",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            }
+          }
+        },
+        "10234": {
+          "bookmakerMarketId": "734.186051876",
+          "marketActive": true,
+          "outcomes": {
+            "10234": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051876&selectionId=7044482",
+                  "bookmakerOutcomeId": "7044482",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 23.0,
+                  "priceAmerican": "2200",
+                  "priceFractional": "22/1",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            }
+          }
+        },
+        "1020": {
+          "bookmakerMarketId": "734.186051890",
+          "marketActive": true,
+          "outcomes": {
+            "1020": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051890&selectionId=1485573",
+                  "bookmakerOutcomeId": "1485573",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 31.0,
+                  "priceAmerican": "3000",
+                  "priceFractional": "30/1",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            }
+          }
+        },
+        "10308": {
+          "bookmakerMarketId": "734.186051829",
+          "marketActive": true,
+          "outcomes": {
+            "10308": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051829&selectionId=47998",
+                  "bookmakerOutcomeId": "47998",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 3.9,
+                  "priceAmerican": "290",
+                  "priceFractional": "29/10",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            }
+          }
+        },
+        "10258": {
+          "bookmakerMarketId": "734.186051833",
+          "marketActive": true,
+          "outcomes": {
+            "10259": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051833&selectionId=12453944",
+                  "bookmakerOutcomeId": "12453944",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 1.6,
+                  "priceAmerican": "-167",
+                  "priceFractional": "3/5",
+                  "mainLine": true,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "10258": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051833&selectionId=12453945",
+                  "bookmakerOutcomeId": "12453945",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 2.24,
+                  "priceAmerican": "124",
+                  "priceFractional": "31/25",
+                  "mainLine": true,
+                  "exchangeMeta": null
+                }
+              }
+            }
+          }
+        },
+        "10310": {
+          "bookmakerMarketId": "734.186051829",
+          "marketActive": true,
+          "outcomes": {
+            "10310": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051829&selectionId=48322",
+                  "bookmakerOutcomeId": "48322",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 25.0,
+                  "priceAmerican": "2400",
+                  "priceFractional": "24/1",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            }
+          }
+        },
+        "102146": {
+          "bookmakerMarketId": "734.186051910",
+          "marketActive": true,
+          "outcomes": {
+            "102155": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051910&selectionId=13847209",
+                  "bookmakerOutcomeId": "13847209",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 11.0,
+                  "priceAmerican": "1000",
+                  "priceFractional": "10/1",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "102147": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051910&selectionId=13847208",
+                  "bookmakerOutcomeId": "13847208",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 2.95,
+                  "priceAmerican": "195",
+                  "priceFractional": "39/20",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "102146": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051910&selectionId=13847207",
+                  "bookmakerOutcomeId": "13847207",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 1.48,
+                  "priceAmerican": "-208",
+                  "priceFractional": "12/25",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            }
+          }
+        },
+        "108": {
+          "bookmakerMarketId": "734.186051832",
+          "marketActive": true,
+          "outcomes": {
+            "108": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051832&selectionId=1221386",
+                  "bookmakerOutcomeId": "1221386",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 1.15,
+                  "priceAmerican": "-667",
+                  "priceFractional": "3/20",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "109": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051832&selectionId=1221385",
+                  "bookmakerOutcomeId": "1221385",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 5.3,
+                  "priceAmerican": "430",
+                  "priceFractional": "43/10",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            }
+          }
+        },
+        "10298": {
+          "bookmakerMarketId": "734.186051862",
+          "marketActive": true,
+          "outcomes": {
+            "10298": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051862&selectionId=48322",
+                  "bookmakerOutcomeId": "48322",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 5.5,
+                  "priceAmerican": "450",
+                  "priceFractional": "9/2",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            }
+          }
+        },
+        "102222": {
+          "bookmakerMarketId": "734.186051891",
+          "marketActive": true,
+          "outcomes": {
+            "102223": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051891&selectionId=7044483",
+                  "bookmakerOutcomeId": "7044483",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 1.03,
+                  "priceAmerican": "-3333",
+                  "priceFractional": "3/100",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "102222": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051891&selectionId=7044482",
+                  "bookmakerOutcomeId": "7044482",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 9.8,
+                  "priceAmerican": "880",
+                  "priceFractional": "44/5",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            }
+          }
+        },
+        "10246": {
+          "bookmakerMarketId": "734.186051905",
+          "marketActive": true,
+          "outcomes": {
+            "10246": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051905&selectionId=7044482",
+                  "bookmakerOutcomeId": "7044482",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 26.0,
+                  "priceAmerican": "2500",
+                  "priceFractional": "25/1",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            }
+          }
+        },
+        "10336": {
+          "bookmakerMarketId": "734.186051922",
+          "marketActive": true,
+          "outcomes": {
+            "10340": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051922&selectionId=526007",
+                  "bookmakerOutcomeId": "526007",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 21.0,
+                  "priceAmerican": "2000",
+                  "priceFractional": "20/1",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "10345": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051922&selectionId=3",
+                  "bookmakerOutcomeId": "3",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 9.0,
+                  "priceAmerican": "800",
+                  "priceFractional": "8/1",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "10382": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051922&selectionId=10943228",
+                  "bookmakerOutcomeId": "10943228",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 501.0,
+                  "priceAmerican": "50000",
+                  "priceFractional": "500/1",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "10370": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051922&selectionId=2795145",
+                  "bookmakerOutcomeId": "2795145",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 101.0,
+                  "priceAmerican": "10000",
+                  "priceFractional": "100/1",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "10364": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051922&selectionId=2795148",
+                  "bookmakerOutcomeId": "2795148",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 81.0,
+                  "priceAmerican": "8000",
+                  "priceFractional": "80/1",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "10348": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051922&selectionId=526012",
+                  "bookmakerOutcomeId": "526012",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 21.0,
+                  "priceAmerican": "2000",
+                  "priceFractional": "20/1",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "10344": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051922&selectionId=4",
+                  "bookmakerOutcomeId": "4",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 21.0,
+                  "priceAmerican": "2000",
+                  "priceFractional": "20/1",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "10350": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051922&selectionId=526014",
+                  "bookmakerOutcomeId": "526014",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 81.0,
+                  "priceAmerican": "8000",
+                  "priceFractional": "80/1",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "10361": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051922&selectionId=15",
+                  "bookmakerOutcomeId": "15",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 41.0,
+                  "priceAmerican": "4000",
+                  "priceFractional": "40/1",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "10394": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051922&selectionId=3694888",
+                  "bookmakerOutcomeId": "3694888",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 501.0,
+                  "priceAmerican": "50000",
+                  "priceFractional": "500/1",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "10392": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051922&selectionId=3316813",
+                  "bookmakerOutcomeId": "3316813",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 401.0,
+                  "priceAmerican": "40000",
+                  "priceFractional": "400/1",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "10351": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051922&selectionId=526015",
+                  "bookmakerOutcomeId": "526015",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 251.0,
+                  "priceAmerican": "25000",
+                  "priceFractional": "250/1",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "10343": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051922&selectionId=526010",
+                  "bookmakerOutcomeId": "526010",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 226.0,
+                  "priceAmerican": "22500",
+                  "priceFractional": "225/1",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "10385": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051922&selectionId=3316815",
+                  "bookmakerOutcomeId": "3316815",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 501.0,
+                  "priceAmerican": "50000",
+                  "priceFractional": "500/1",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "10375": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051922&selectionId=10943224",
+                  "bookmakerOutcomeId": "10943224",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 501.0,
+                  "priceAmerican": "50000",
+                  "priceFractional": "500/1",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "10395": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051922&selectionId=10943216",
+                  "bookmakerOutcomeId": "10943216",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 501.0,
+                  "priceAmerican": "50000",
+                  "priceFractional": "500/1",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "10367": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051922&selectionId=3704949",
+                  "bookmakerOutcomeId": "3704949",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 501.0,
+                  "priceAmerican": "50000",
+                  "priceFractional": "500/1",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "10373": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051922&selectionId=7597236",
+                  "bookmakerOutcomeId": "7597236",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 501.0,
+                  "priceAmerican": "50000",
+                  "priceFractional": "500/1",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "10360": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051922&selectionId=16",
+                  "bookmakerOutcomeId": "16",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 81.0,
+                  "priceAmerican": "8000",
+                  "priceFractional": "80/1",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "10354": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051922&selectionId=7",
+                  "bookmakerOutcomeId": "7",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 14.0,
+                  "priceAmerican": "1300",
+                  "priceFractional": "13/1",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "10341": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051922&selectionId=526008",
+                  "bookmakerOutcomeId": "526008",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 46.0,
+                  "priceAmerican": "4500",
+                  "priceFractional": "45/1",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "10338": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051922&selectionId=5",
+                  "bookmakerOutcomeId": "5",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 9.0,
+                  "priceAmerican": "800",
+                  "priceFractional": "8/1",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "10393": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051922&selectionId=3316816",
+                  "bookmakerOutcomeId": "3316816",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 401.0,
+                  "priceAmerican": "40000",
+                  "priceFractional": "400/1",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "10358": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051922&selectionId=3647907",
+                  "bookmakerOutcomeId": "3647907",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 151.0,
+                  "priceAmerican": "15000",
+                  "priceFractional": "150/1",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "10379": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051922&selectionId=3860643",
+                  "bookmakerOutcomeId": "3860643",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 501.0,
+                  "priceAmerican": "50000",
+                  "priceFractional": "500/1",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "10362": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051922&selectionId=14",
+                  "bookmakerOutcomeId": "14",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 41.0,
+                  "priceAmerican": "4000",
+                  "priceFractional": "40/1",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "10371": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051922&selectionId=1487459",
+                  "bookmakerOutcomeId": "1487459",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 126.0,
+                  "priceAmerican": "12500",
+                  "priceFractional": "125/1",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "10381": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051922&selectionId=7597237",
+                  "bookmakerOutcomeId": "7597237",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 501.0,
+                  "priceAmerican": "50000",
+                  "priceFractional": "500/1",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "10339": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051922&selectionId=10",
+                  "bookmakerOutcomeId": "10",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 13.0,
+                  "priceAmerican": "1200",
+                  "priceFractional": "12/1",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "10374": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051922&selectionId=10943215",
+                  "bookmakerOutcomeId": "10943215",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 501.0,
+                  "priceAmerican": "50000",
+                  "priceFractional": "500/1",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "10347": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051922&selectionId=11",
+                  "bookmakerOutcomeId": "11",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 11.0,
+                  "priceAmerican": "1000",
+                  "priceFractional": "10/1",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "10342": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051922&selectionId=526009",
+                  "bookmakerOutcomeId": "526009",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 101.0,
+                  "priceAmerican": "10000",
+                  "priceFractional": "100/1",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "10365": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051922&selectionId=3742046",
+                  "bookmakerOutcomeId": "3742046",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 176.0,
+                  "priceAmerican": "17500",
+                  "priceFractional": "175/1",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "10376": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051922&selectionId=3316811",
+                  "bookmakerOutcomeId": "3316811",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 501.0,
+                  "priceAmerican": "50000",
+                  "priceFractional": "500/1",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "10396": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051922&selectionId=10943213",
+                  "bookmakerOutcomeId": "10943213",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 401.0,
+                  "priceAmerican": "40000",
+                  "priceFractional": "400/1",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "10356": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051922&selectionId=2795147",
+                  "bookmakerOutcomeId": "2795147",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 31.0,
+                  "priceAmerican": "3000",
+                  "priceFractional": "30/1",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "10349": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051922&selectionId=526013",
+                  "bookmakerOutcomeId": "526013",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 41.0,
+                  "priceAmerican": "4000",
+                  "priceFractional": "40/1",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "10366": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051922&selectionId=3704948",
+                  "bookmakerOutcomeId": "3704948",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 251.0,
+                  "priceAmerican": "25000",
+                  "priceFractional": "250/1",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "10377": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051922&selectionId=3316814",
+                  "bookmakerOutcomeId": "3316814",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 401.0,
+                  "priceAmerican": "40000",
+                  "priceFractional": "400/1",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "10369": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051922&selectionId=2795144",
+                  "bookmakerOutcomeId": "2795144",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 126.0,
+                  "priceAmerican": "12500",
+                  "priceFractional": "125/1",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "10378": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051922&selectionId=3694886",
+                  "bookmakerOutcomeId": "3694886",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 501.0,
+                  "priceAmerican": "50000",
+                  "priceFractional": "500/1",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "10372": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051922&selectionId=2795149",
+                  "bookmakerOutcomeId": "2795149",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 226.0,
+                  "priceAmerican": "22500",
+                  "priceFractional": "225/1",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "10352": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051922&selectionId=9",
+                  "bookmakerOutcomeId": "9",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 36.0,
+                  "priceAmerican": "3500",
+                  "priceFractional": "35/1",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "10384": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051922&selectionId=3316812",
+                  "bookmakerOutcomeId": "3316812",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 501.0,
+                  "priceAmerican": "50000",
+                  "priceFractional": "500/1",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "10386": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051922&selectionId=3694887",
+                  "bookmakerOutcomeId": "3694887",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 501.0,
+                  "priceAmerican": "50000",
+                  "priceFractional": "500/1",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "10336": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051922&selectionId=1",
+                  "bookmakerOutcomeId": "1",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 20.0,
+                  "priceAmerican": "1900",
+                  "priceFractional": "19/1",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "10388": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051922&selectionId=4647684",
+                  "bookmakerOutcomeId": "4647684",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 501.0,
+                  "priceAmerican": "50000",
+                  "priceFractional": "500/1",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "10355": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051922&selectionId=12",
+                  "bookmakerOutcomeId": "12",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 20.0,
+                  "priceAmerican": "1900",
+                  "priceFractional": "19/1",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "10368": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051922&selectionId=2795143",
+                  "bookmakerOutcomeId": "2795143",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 251.0,
+                  "priceAmerican": "25000",
+                  "priceFractional": "250/1",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "10359": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051922&selectionId=3647908",
+                  "bookmakerOutcomeId": "3647908",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 351.0,
+                  "priceAmerican": "35000",
+                  "priceFractional": "350/1",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "10363": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051922&selectionId=13",
+                  "bookmakerOutcomeId": "13",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 46.0,
+                  "priceAmerican": "4500",
+                  "priceFractional": "45/1",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "10353": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051922&selectionId=8",
+                  "bookmakerOutcomeId": "8",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 17.0,
+                  "priceAmerican": "1600",
+                  "priceFractional": "16/1",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "10380": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051922&selectionId=2057256",
+                  "bookmakerOutcomeId": "2057256",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 501.0,
+                  "priceAmerican": "50000",
+                  "priceFractional": "500/1",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "10337": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051922&selectionId=2",
+                  "bookmakerOutcomeId": "2",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 9.0,
+                  "priceAmerican": "800",
+                  "priceFractional": "8/1",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "10357": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051922&selectionId=3647906",
+                  "bookmakerOutcomeId": "3647906",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 76.0,
+                  "priceAmerican": "7500",
+                  "priceFractional": "75/1",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "10346": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051922&selectionId=6",
+                  "bookmakerOutcomeId": "6",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 8.0,
+                  "priceAmerican": "700",
+                  "priceFractional": "7/1",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "10389": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051922&selectionId=5988645",
+                  "bookmakerOutcomeId": "5988645",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 501.0,
+                  "priceAmerican": "50000",
+                  "priceFractional": "500/1",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "10387": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051922&selectionId=3860644",
+                  "bookmakerOutcomeId": "3860644",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 501.0,
+                  "priceAmerican": "50000",
+                  "priceFractional": "500/1",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            }
+          }
+        },
+        "10214": {
+          "bookmakerMarketId": "734.186051906",
+          "marketActive": true,
+          "outcomes": {
+            "10214": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051906&selectionId=47998",
+                  "bookmakerOutcomeId": "47998",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 1.19,
+                  "priceAmerican": "-526",
+                  "priceFractional": "19/100",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "10215": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051906&selectionId=48322",
+                  "bookmakerOutcomeId": "48322",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 4.5,
+                  "priceAmerican": "350",
+                  "priceFractional": "7/2",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            }
+          }
+        },
+        "102206": {
+          "bookmakerMarketId": "734.186051933",
+          "marketActive": true,
+          "outcomes": {
+            "102207": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051933&selectionId=7044483",
+                  "bookmakerOutcomeId": "7044483",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 2.54,
+                  "priceAmerican": "154",
+                  "priceFractional": "77/50",
+                  "mainLine": true,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "102206": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051933&selectionId=7044482",
+                  "bookmakerOutcomeId": "7044482",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 1.48,
+                  "priceAmerican": "-208",
+                  "priceFractional": "12/25",
+                  "mainLine": true,
+                  "exchangeMeta": null
+                }
+              }
+            }
+          }
+        },
+        "10300": {
+          "bookmakerMarketId": "734.186051936",
+          "marketActive": true,
+          "outcomes": {
+            "10300": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051936&selectionId=30246",
+                  "bookmakerOutcomeId": "30246",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 3.6,
+                  "priceAmerican": "260",
+                  "priceFractional": "13/5",
+                  "mainLine": true,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "10301": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051936&selectionId=30247",
+                  "bookmakerOutcomeId": "30247",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 1.24,
+                  "priceAmerican": "-417",
+                  "priceFractional": "6/25",
+                  "mainLine": true,
+                  "exchangeMeta": null
+                }
+              }
+            }
+          }
+        },
+        "10232": {
+          "bookmakerMarketId": "734.186051867",
+          "marketActive": true,
+          "outcomes": {
+            "10233": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051867&selectionId=7044483",
+                  "bookmakerOutcomeId": "7044483",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 1.03,
+                  "priceAmerican": "-3333",
+                  "priceFractional": "3/100",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "10232": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051867&selectionId=7044482",
+                  "bookmakerOutcomeId": "7044482",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 10.2,
+                  "priceAmerican": "920",
+                  "priceFractional": "46/5",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            }
+          }
+        },
+        "1092": {
+          "bookmakerMarketId": "734.186051877",
+          "marketActive": true,
+          "outcomes": {
+            "1093": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051877&selectionId=62962258",
+                  "bookmakerOutcomeId": "62962258",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 23.0,
+                  "priceAmerican": "2200",
+                  "priceFractional": "22/1",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "1092": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051877&selectionId=63251277",
+                  "bookmakerOutcomeId": "63251277",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 1.01,
+                  "priceAmerican": "-10000",
+                  "priceFractional": "1/100",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            }
+          }
+        },
+        "102041": {
+          "bookmakerMarketId": "734.186051925",
+          "marketActive": true,
+          "outcomes": {
+            "102041": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051925&selectionId=7001984",
+                  "bookmakerOutcomeId": "7001984",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 3.0,
+                  "priceAmerican": "200",
+                  "priceFractional": "2/1",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "102042": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051925&selectionId=143789",
+                  "bookmakerOutcomeId": "143789",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 3.9,
+                  "priceAmerican": "290",
+                  "priceFractional": "29/10",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "102043": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051925&selectionId=7671548",
+                  "bookmakerOutcomeId": "7671548",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 2.06,
+                  "priceAmerican": "106",
+                  "priceFractional": "53/50",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            }
+          }
+        },
+        "1084": {
+          "bookmakerMarketId": "734.186051863",
+          "marketActive": true,
+          "outcomes": {
+            "1085": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051863&selectionId=62962254",
+                  "bookmakerOutcomeId": "62962254",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 9.0,
+                  "priceAmerican": "800",
+                  "priceFractional": "8/1",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "1084": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051863&selectionId=63251275",
+                  "bookmakerOutcomeId": "63251275",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 1.03,
+                  "priceAmerican": "-3333",
+                  "priceFractional": "3/100",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            }
+          }
+        },
+        "1012": {
+          "bookmakerMarketId": "734.186051931",
+          "marketActive": true,
+          "outcomes": {
+            "1013": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051931&selectionId=1222344",
+                  "bookmakerOutcomeId": "1222344",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 1.56,
+                  "priceAmerican": "-179",
+                  "priceFractional": "14/25",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "1012": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051931&selectionId=1222345",
+                  "bookmakerOutcomeId": "1222345",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 2.38,
+                  "priceAmerican": "138",
+                  "priceFractional": "69/50",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            }
+          }
+        },
+        "102462": {
+          "bookmakerMarketId": "734.186051937",
+          "marketActive": true,
+          "outcomes": {
+            "102478": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051937&selectionId=9",
+                  "bookmakerOutcomeId": "9",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 31.0,
+                  "priceAmerican": "3000",
+                  "priceFractional": "30/1",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "102494": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051937&selectionId=2795143",
+                  "bookmakerOutcomeId": "2795143",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 101.0,
+                  "priceAmerican": "10000",
+                  "priceFractional": "100/1",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "102467": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051937&selectionId=526008",
+                  "bookmakerOutcomeId": "526008",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 101.0,
+                  "priceAmerican": "10000",
+                  "priceFractional": "100/1",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "102463": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051937&selectionId=2",
+                  "bookmakerOutcomeId": "2",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 3.7,
+                  "priceAmerican": "270",
+                  "priceFractional": "27/10",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "102462": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051937&selectionId=1",
+                  "bookmakerOutcomeId": "1",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 3.8,
+                  "priceAmerican": "280",
+                  "priceFractional": "14/5",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "102464": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051937&selectionId=5",
+                  "bookmakerOutcomeId": "5",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 8.0,
+                  "priceAmerican": "700",
+                  "priceFractional": "7/1",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "102473": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051937&selectionId=11",
+                  "bookmakerOutcomeId": "11",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 41.0,
+                  "priceAmerican": "4000",
+                  "priceFractional": "40/1",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "102466": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051937&selectionId=526007",
+                  "bookmakerOutcomeId": "526007",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 71.0,
+                  "priceAmerican": "7000",
+                  "priceFractional": "70/1",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "102487": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051937&selectionId=15",
+                  "bookmakerOutcomeId": "15",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 101.0,
+                  "priceAmerican": "10000",
+                  "priceFractional": "100/1",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "102481": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051937&selectionId=12",
+                  "bookmakerOutcomeId": "12",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 101.0,
+                  "priceAmerican": "10000",
+                  "priceFractional": "100/1",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "102465": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051937&selectionId=10",
+                  "bookmakerOutcomeId": "10",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 23.0,
+                  "priceAmerican": "2200",
+                  "priceFractional": "22/1",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "102480": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051937&selectionId=7",
+                  "bookmakerOutcomeId": "7",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 51.0,
+                  "priceAmerican": "5000",
+                  "priceFractional": "50/1",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "102471": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051937&selectionId=3",
+                  "bookmakerOutcomeId": "3",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 7.5,
+                  "priceAmerican": "650",
+                  "priceFractional": "13/2",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "102479": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051937&selectionId=8",
+                  "bookmakerOutcomeId": "8",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 28.0,
+                  "priceAmerican": "2700",
+                  "priceFractional": "27/1",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "102502": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051937&selectionId=3316811",
+                  "bookmakerOutcomeId": "3316811",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 101.0,
+                  "priceAmerican": "10000",
+                  "priceFractional": "100/1",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "102472": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051937&selectionId=6",
+                  "bookmakerOutcomeId": "6",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 15.0,
+                  "priceAmerican": "1400",
+                  "priceFractional": "14/1",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "102470": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051937&selectionId=4",
+                  "bookmakerOutcomeId": "4",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 7.5,
+                  "priceAmerican": "650",
+                  "priceFractional": "13/2",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "102474": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051937&selectionId=526012",
+                  "bookmakerOutcomeId": "526012",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 101.0,
+                  "priceAmerican": "10000",
+                  "priceFractional": "100/1",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "102488": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051937&selectionId=14",
+                  "bookmakerOutcomeId": "14",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 101.0,
+                  "priceAmerican": "10000",
+                  "priceFractional": "100/1",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "102495": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051937&selectionId=2795144",
+                  "bookmakerOutcomeId": "2795144",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 101.0,
+                  "priceAmerican": "10000",
+                  "priceFractional": "100/1",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "102486": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051937&selectionId=16",
+                  "bookmakerOutcomeId": "16",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 101.0,
+                  "priceAmerican": "10000",
+                  "priceFractional": "100/1",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            }
+          }
+        },
+        "10242": {
+          "bookmakerMarketId": "734.186051903",
+          "marketActive": true,
+          "outcomes": {
+            "10242": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051903&selectionId=7044482",
+                  "bookmakerOutcomeId": "7044482",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 3.25,
+                  "priceAmerican": "225",
+                  "priceFractional": "9/4",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "10243": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051903&selectionId=7044483",
+                  "bookmakerOutcomeId": "7044483",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 1.31,
+                  "priceAmerican": "-323",
+                  "priceFractional": "31/100",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            }
+          }
+        },
+        "1010": {
+          "bookmakerMarketId": "734.186051838",
+          "marketActive": true,
+          "outcomes": {
+            "1010": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051838&selectionId=47973",
+                  "bookmakerOutcomeId": "47973",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 1.52,
+                  "priceAmerican": "-192",
+                  "priceFractional": "13/25",
+                  "mainLine": true,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "1011": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051838&selectionId=47972",
+                  "bookmakerOutcomeId": "47972",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 2.48,
+                  "priceAmerican": "148",
+                  "priceFractional": "37/25",
+                  "mainLine": true,
+                  "exchangeMeta": null
+                }
+              }
+            }
+          }
+        },
+        "10304": {
+          "bookmakerMarketId": "734.186051926",
+          "marketActive": true,
+          "outcomes": {
+            "10304": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051926&selectionId=47998",
+                  "bookmakerOutcomeId": "47998",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 1.26,
+                  "priceAmerican": "-385",
+                  "priceFractional": "13/50",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            }
+          }
+        },
+        "101919": {
+          "bookmakerMarketId": "734.186051908",
+          "marketActive": true,
+          "outcomes": {
+            "101927": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051908&selectionId=13777004",
+                  "bookmakerOutcomeId": "13777004",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 10.0,
+                  "priceAmerican": "900",
+                  "priceFractional": "9/1",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "101926": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051908&selectionId=379429",
+                  "bookmakerOutcomeId": "379429",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 17.0,
+                  "priceAmerican": "1600",
+                  "priceFractional": "16/1",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "101920": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051908&selectionId=13775956",
+                  "bookmakerOutcomeId": "13775956",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 17.0,
+                  "priceAmerican": "1600",
+                  "priceFractional": "16/1",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "101922": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051908&selectionId=13775954",
+                  "bookmakerOutcomeId": "13775954",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 4.7,
+                  "priceAmerican": "370",
+                  "priceFractional": "37/10",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "101924": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051908&selectionId=13777006",
+                  "bookmakerOutcomeId": "13777006",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 13.0,
+                  "priceAmerican": "1200",
+                  "priceFractional": "12/1",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "101923": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051908&selectionId=278154",
+                  "bookmakerOutcomeId": "278154",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 7.5,
+                  "priceAmerican": "650",
+                  "priceFractional": "13/2",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "101921": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051908&selectionId=15765789",
+                  "bookmakerOutcomeId": "15765789",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 46.0,
+                  "priceAmerican": "4500",
+                  "priceFractional": "45/1",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "101919": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051908&selectionId=13775955",
+                  "bookmakerOutcomeId": "13775955",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 2.2,
+                  "priceAmerican": "120",
+                  "priceFractional": "6/5",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "101925": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051908&selectionId=15765788",
+                  "bookmakerOutcomeId": "15765788",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 21.0,
+                  "priceAmerican": "2000",
+                  "priceFractional": "20/1",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            }
+          }
+        },
+        "1044": {
+          "bookmakerMarketId": "734.186051870",
+          "marketActive": true,
+          "outcomes": {
+            "1045": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051870&selectionId=62962252",
+                  "bookmakerOutcomeId": "62962252",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 1.06,
+                  "priceAmerican": "-1667",
+                  "priceFractional": "3/50",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "1044": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051870&selectionId=63251278",
+                  "bookmakerOutcomeId": "63251278",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 7.5,
+                  "priceAmerican": "650",
+                  "priceFractional": "13/2",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            }
+          }
+        },
+        "102220": {
+          "bookmakerMarketId": "734.186051902",
+          "marketActive": true,
+          "outcomes": {
+            "102221": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051902&selectionId=7044483",
+                  "bookmakerOutcomeId": "7044483",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 1.5,
+                  "priceAmerican": "-200",
+                  "priceFractional": "1/2",
+                  "mainLine": true,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "102220": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051902&selectionId=7044482",
+                  "bookmakerOutcomeId": "7044482",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 2.48,
+                  "priceAmerican": "148",
+                  "priceFractional": "37/25",
+                  "mainLine": true,
+                  "exchangeMeta": null
+                }
+              }
+            }
+          }
+        },
+        "101936": {
+          "bookmakerMarketId": "734.186051923",
+          "marketActive": true,
+          "outcomes": {
+            "101962": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051923&selectionId=13850931",
+                  "bookmakerOutcomeId": "13850931",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 10.0,
+                  "priceAmerican": "900",
+                  "priceFractional": "9/1",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "101941": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051923&selectionId=13850930",
+                  "bookmakerOutcomeId": "13850930",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 7.5,
+                  "priceAmerican": "650",
+                  "priceFractional": "13/2",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "101938": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051923&selectionId=5786851",
+                  "bookmakerOutcomeId": "5786851",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 5.3,
+                  "priceAmerican": "430",
+                  "priceFractional": "43/10",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "101936": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051923&selectionId=12359227",
+                  "bookmakerOutcomeId": "12359227",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 20.0,
+                  "priceAmerican": "1900",
+                  "priceFractional": "19/1",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "101950": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051923&selectionId=13846832",
+                  "bookmakerOutcomeId": "13846832",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 20.0,
+                  "priceAmerican": "1900",
+                  "priceFractional": "19/1",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "101940": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051923&selectionId=13850929",
+                  "bookmakerOutcomeId": "13850929",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 4.6,
+                  "priceAmerican": "360",
+                  "priceFractional": "18/5",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "101951": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051923&selectionId=13846833",
+                  "bookmakerOutcomeId": "13846833",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 56.0,
+                  "priceAmerican": "5500",
+                  "priceFractional": "55/1",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "101972": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051923&selectionId=13846834",
+                  "bookmakerOutcomeId": "13846834",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 101.0,
+                  "priceAmerican": "10000",
+                  "priceFractional": "100/1",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "101949": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051923&selectionId=13846831",
+                  "bookmakerOutcomeId": "13846831",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 8.0,
+                  "priceAmerican": "700",
+                  "priceFractional": "7/1",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "101939": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051923&selectionId=13850928",
+                  "bookmakerOutcomeId": "13850928",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 3.6,
+                  "priceAmerican": "260",
+                  "priceFractional": "13/5",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            }
+          }
+        },
+        "10262": {
+          "bookmakerMarketId": "734.186051915",
+          "marketActive": true,
+          "outcomes": {
+            "10263": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051915&selectionId=12453948",
+                  "bookmakerOutcomeId": "12453948",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 1.02,
+                  "priceAmerican": "-5000",
+                  "priceFractional": "1/50",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "10262": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051915&selectionId=12453949",
+                  "bookmakerOutcomeId": "12453949",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 12.0,
+                  "priceAmerican": "1100",
+                  "priceFractional": "11/1",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            }
+          }
+        },
+        "10216": {
+          "bookmakerMarketId": "734.186051896",
+          "marketActive": true,
+          "outcomes": {
+            "10216": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051896&selectionId=47998",
+                  "bookmakerOutcomeId": "47998",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 1.45,
+                  "priceAmerican": "-222",
+                  "priceFractional": "9/20",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "10218": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051896&selectionId=48322",
+                  "bookmakerOutcomeId": "48322",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 3.0,
+                  "priceAmerican": "200",
+                  "priceFractional": "2/1",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "10217": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051896&selectionId=5786852",
+                  "bookmakerOutcomeId": "5786852",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 19.0,
+                  "priceAmerican": "1800",
+                  "priceFractional": "18/1",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            }
+          }
+        },
+        "102131": {
+          "bookmakerMarketId": "734.186051910",
+          "marketActive": true,
+          "outcomes": {
+            "102140": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051910&selectionId=13851045",
+                  "bookmakerOutcomeId": "13851045",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 3.6,
+                  "priceAmerican": "260",
+                  "priceFractional": "13/5",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "102132": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051910&selectionId=13851044",
+                  "bookmakerOutcomeId": "13851044",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 2.3,
+                  "priceAmerican": "130",
+                  "priceFractional": "13/10",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "102131": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051910&selectionId=13851043",
+                  "bookmakerOutcomeId": "13851043",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 2.4,
+                  "priceAmerican": "140",
+                  "priceFractional": "7/5",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            }
+          }
+        },
+        "1060": {
+          "bookmakerMarketId": "734.186051924",
+          "marketActive": true,
+          "outcomes": {
+            "1060": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051924&selectionId=4302869",
+                  "bookmakerOutcomeId": "4302869",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 2.28,
+                  "priceAmerican": "128",
+                  "priceFractional": "32/25",
+                  "mainLine": true,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "1061": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051924&selectionId=4450468",
+                  "bookmakerOutcomeId": "4450468",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 1.56,
+                  "priceAmerican": "-179",
+                  "priceFractional": "14/25",
+                  "mainLine": true,
+                  "exchangeMeta": null
+                }
+              }
+            }
+          }
+        },
+        "10264": {
+          "bookmakerMarketId": "734.186051897",
+          "marketActive": true,
+          "outcomes": {
+            "10264": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051897&selectionId=12453951",
+                  "bookmakerOutcomeId": "12453951",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 31.0,
+                  "priceAmerican": "3000",
+                  "priceFractional": "30/1",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            }
+          }
+        },
+        "10226": {
+          "bookmakerMarketId": "734.186051875",
+          "marketActive": true,
+          "outcomes": {
+            "10226": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051875&selectionId=7044482",
+                  "bookmakerOutcomeId": "7044482",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 1.45,
+                  "priceAmerican": "-222",
+                  "priceFractional": "9/20",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "10227": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051875&selectionId=7044483",
+                  "bookmakerOutcomeId": "7044483",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 2.62,
+                  "priceAmerican": "162",
+                  "priceFractional": "81/50",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            }
+          }
+        },
+        "10266": {
+          "bookmakerMarketId": "734.186051887",
+          "marketActive": true,
+          "outcomes": {
+            "10266": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051887&selectionId=12942165",
+                  "bookmakerOutcomeId": "12942165",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 71.0,
+                  "priceAmerican": "7000",
+                  "priceFractional": "70/1",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            }
+          }
+        },
+        "104": {
+          "bookmakerMarketId": "734.186051920",
+          "marketActive": true,
+          "outcomes": {
+            "105": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051920&selectionId=110503",
+                  "bookmakerOutcomeId": "110503",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 2.28,
+                  "priceAmerican": "128",
+                  "priceFractional": "32/25",
+                  "mainLine": true,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "104": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051920&selectionId=30246",
+                  "bookmakerOutcomeId": "30246",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 1.61,
+                  "priceAmerican": "-164",
+                  "priceFractional": "61/100",
+                  "mainLine": true,
+                  "exchangeMeta": null
+                }
+              }
+            }
+          }
+        },
+        "101": {
+          "bookmakerMarketId": "734.186051828",
+          "marketActive": true,
+          "outcomes": {
+            "103": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051828&selectionId=48322",
+                  "bookmakerOutcomeId": "48322",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 5.5,
+                  "priceAmerican": "450",
+                  "priceFractional": "9/2",
+                  "mainLine": true,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "102": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051828&selectionId=58805",
+                  "bookmakerOutcomeId": "58805",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 4.5,
+                  "priceAmerican": "350",
+                  "priceFractional": "7/2",
+                  "mainLine": true,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "101": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051828&selectionId=47998",
+                  "bookmakerOutcomeId": "47998",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 1.48,
+                  "priceAmerican": "-208",
+                  "priceFractional": "12/25",
+                  "mainLine": true,
+                  "exchangeMeta": null
+                }
+              }
+            }
+          }
+        },
+        "10224": {
+          "bookmakerMarketId": "734.186051939",
+          "marketActive": true,
+          "outcomes": {
+            "10224": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051939&selectionId=7044482",
+                  "bookmakerOutcomeId": "7044482",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 1.07,
+                  "priceAmerican": "-1429",
+                  "priceFractional": "7/100",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "10225": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051939&selectionId=7044483",
+                  "bookmakerOutcomeId": "7044483",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 7.4,
+                  "priceAmerican": "640",
+                  "priceFractional": "32/5",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            }
+          }
+        },
+        "1018": {
+          "bookmakerMarketId": "734.186051935",
+          "marketActive": true,
+          "outcomes": {
+            "1018": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051935&selectionId=2542449",
+                  "bookmakerOutcomeId": "2542449",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 15.0,
+                  "priceAmerican": "1400",
+                  "priceFractional": "14/1",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "1019": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051935&selectionId=2542448",
+                  "bookmakerOutcomeId": "2542448",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 1.02,
+                  "priceAmerican": "-5000",
+                  "priceFractional": "1/50",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            }
+          }
+        },
+        "10240": {
+          "bookmakerMarketId": "734.186051883",
+          "marketActive": true,
+          "outcomes": {
+            "10241": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051883&selectionId=7044483",
+                  "bookmakerOutcomeId": "7044483",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 2.72,
+                  "priceAmerican": "172",
+                  "priceFractional": "43/25",
+                  "mainLine": true,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "10240": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051883&selectionId=7044482",
+                  "bookmakerOutcomeId": "7044482",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 1.43,
+                  "priceAmerican": "-233",
+                  "priceFractional": "43/100",
+                  "mainLine": true,
+                  "exchangeMeta": null
+                }
+              }
+            }
+          }
+        },
+        "102208": {
+          "bookmakerMarketId": "734.186051934",
+          "marketActive": true,
+          "outcomes": {
+            "102208": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051934&selectionId=7044482",
+                  "bookmakerOutcomeId": "7044482",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 3.7,
+                  "priceAmerican": "270",
+                  "priceFractional": "27/10",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "102209": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051934&selectionId=7044483",
+                  "bookmakerOutcomeId": "7044483",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 1.25,
+                  "priceAmerican": "-400",
+                  "priceFractional": "1/4",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            }
+          }
+        },
+        "102212": {
+          "bookmakerMarketId": "734.186051860",
+          "marketActive": true,
+          "outcomes": {
+            "102213": {
+              "players": {
+                "0": {
+                  "active": false,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051860&selectionId=7044483",
+                  "bookmakerOutcomeId": "7044483",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-12T20:42:43.580Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 1.002,
+                  "priceAmerican": "-50000",
+                  "priceFractional": "0/1",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "102212": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051860&selectionId=7044482",
+                  "bookmakerOutcomeId": "7044482",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 29.0,
+                  "priceAmerican": "2800",
+                  "priceFractional": "28/1",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            }
+          }
+        },
+        "1016": {
+          "bookmakerMarketId": "734.186051932",
+          "marketActive": true,
+          "outcomes": {
+            "1016": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051932&selectionId=1485568",
+                  "bookmakerOutcomeId": "1485568",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 8.0,
+                  "priceAmerican": "700",
+                  "priceFractional": "7/1",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "1017": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051932&selectionId=1485567",
+                  "bookmakerOutcomeId": "1485567",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 1.07,
+                  "priceAmerican": "-1429",
+                  "priceFractional": "7/100",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            }
+          }
+        },
+        "102210": {
+          "bookmakerMarketId": "734.186051859",
+          "marketActive": true,
+          "outcomes": {
+            "102210": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051859&selectionId=7044482",
+                  "bookmakerOutcomeId": "7044482",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 10.2,
+                  "priceAmerican": "920",
+                  "priceFractional": "46/5",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "102211": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051859&selectionId=7044483",
+                  "bookmakerOutcomeId": "7044483",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 1.03,
+                  "priceAmerican": "-3333",
+                  "priceFractional": "3/100",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            }
+          }
+        },
+        "102095": {
+          "bookmakerMarketId": "734.186051857",
+          "marketActive": true,
+          "outcomes": {
+            "102095": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051857&selectionId=13847131",
+                  "bookmakerOutcomeId": "13847131",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 2.55,
+                  "priceAmerican": "155",
+                  "priceFractional": "31/20",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "102096": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051857&selectionId=13847132",
+                  "bookmakerOutcomeId": "13847132",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 2.4,
+                  "priceAmerican": "140",
+                  "priceFractional": "7/5",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "102109": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051857&selectionId=13847135",
+                  "bookmakerOutcomeId": "13847135",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 34.0,
+                  "priceAmerican": "3300",
+                  "priceFractional": "33/1",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "102097": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051857&selectionId=13847133",
+                  "bookmakerOutcomeId": "13847133",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 4.5,
+                  "priceAmerican": "350",
+                  "priceFractional": "7/2",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "102098": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051857&selectionId=13847134",
+                  "bookmakerOutcomeId": "13847134",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 13.0,
+                  "priceAmerican": "1200",
+                  "priceFractional": "12/1",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            }
+          }
+        },
+        "10260": {
+          "bookmakerMarketId": "734.186051874",
+          "marketActive": true,
+          "outcomes": {
+            "10260": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051874&selectionId=12453947",
+                  "bookmakerOutcomeId": "12453947",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 5.1,
+                  "priceAmerican": "410",
+                  "priceFractional": "41/10",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "10261": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051874&selectionId=12453946",
+                  "bookmakerOutcomeId": "12453946",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 1.14,
+                  "priceAmerican": "-714",
+                  "priceFractional": "7/50",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            }
+          }
+        },
+        "10316": {
+          "bookmakerMarketId": "734.186051918",
+          "marketActive": true,
+          "outcomes": {
+            "10316": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051918&selectionId=47998",
+                  "bookmakerOutcomeId": "47998",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 3.0,
+                  "priceAmerican": "200",
+                  "priceFractional": "2/1",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            }
+          }
+        },
+        "1022": {
+          "bookmakerMarketId": "734.186051881",
+          "marketActive": true,
+          "outcomes": {
+            "1022": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051881&selectionId=2407529",
+                  "bookmakerOutcomeId": "2407529",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 66.0,
+                  "priceAmerican": "6500",
+                  "priceFractional": "65/1",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            }
+          }
+        },
+        "10296": {
+          "bookmakerMarketId": "734.186051862",
+          "marketActive": true,
+          "outcomes": {
+            "10296": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051862&selectionId=47998",
+                  "bookmakerOutcomeId": "47998",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 2.16,
+                  "priceAmerican": "116",
+                  "priceFractional": "29/25",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            }
+          }
+        },
+        "102074": {
+          "bookmakerMarketId": "734.186051857",
+          "marketActive": true,
+          "outcomes": {
+            "102075": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051857&selectionId=13850984",
+                  "bookmakerOutcomeId": "13850984",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 3.4,
+                  "priceAmerican": "240",
+                  "priceFractional": "12/5",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "102076": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051857&selectionId=13850985",
+                  "bookmakerOutcomeId": "13850985",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 3.2,
+                  "priceAmerican": "220",
+                  "priceFractional": "11/5",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "102074": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051857&selectionId=13850983",
+                  "bookmakerOutcomeId": "13850983",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 8.0,
+                  "priceAmerican": "700",
+                  "priceFractional": "7/1",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "102088": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051857&selectionId=13850987",
+                  "bookmakerOutcomeId": "13850987",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 5.3,
+                  "priceAmerican": "430",
+                  "priceFractional": "43/10",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "102077": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051857&selectionId=13850986",
+                  "bookmakerOutcomeId": "13850986",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 4.5,
+                  "priceAmerican": "350",
+                  "priceFractional": "7/2",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            }
+          }
+        },
+        "1052": {
+          "bookmakerMarketId": "734.186051865",
+          "marketActive": true,
+          "outcomes": {
+            "1052": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051865&selectionId=63251271",
+                  "bookmakerOutcomeId": "63251271",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 4.4,
+                  "priceAmerican": "340",
+                  "priceFractional": "17/5",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "1053": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051865&selectionId=4250492",
+                  "bookmakerOutcomeId": "4250492",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 1.18,
+                  "priceAmerican": "-556",
+                  "priceFractional": "9/50",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            }
+          }
+        },
+        "10228": {
+          "bookmakerMarketId": "734.186051831",
+          "marketActive": true,
+          "outcomes": {
+            "10228": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051831&selectionId=7044482",
+                  "bookmakerOutcomeId": "7044482",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 2.58,
+                  "priceAmerican": "158",
+                  "priceFractional": "79/50",
+                  "mainLine": true,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "10229": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051831&selectionId=7044483",
+                  "bookmakerOutcomeId": "7044483",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 1.47,
+                  "priceAmerican": "-213",
+                  "priceFractional": "47/100",
+                  "mainLine": true,
+                  "exchangeMeta": null
+                }
+              }
+            }
+          }
+        },
+        "10244": {
+          "bookmakerMarketId": "734.186051938",
+          "marketActive": true,
+          "outcomes": {
+            "10245": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051938&selectionId=7044483",
+                  "bookmakerOutcomeId": "7044483",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 1.05,
+                  "priceAmerican": "-2000",
+                  "priceFractional": "1/20",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "10244": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051938&selectionId=7044482",
+                  "bookmakerOutcomeId": "7044482",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 9.0,
+                  "priceAmerican": "800",
+                  "priceFractional": "8/1",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            }
+          }
+        },
+        "101902": {
+          "bookmakerMarketId": "734.186051904",
+          "marketActive": true,
+          "outcomes": {
+            "101904": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051904&selectionId=13469798",
+                  "bookmakerOutcomeId": "13469798",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 2.5,
+                  "priceAmerican": "150",
+                  "priceFractional": "3/2",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "101903": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051904&selectionId=17279907",
+                  "bookmakerOutcomeId": "17279907",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 1.2,
+                  "priceAmerican": "-500",
+                  "priceFractional": "1/5",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "101902": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051904&selectionId=13460393",
+                  "bookmakerOutcomeId": "13460393",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 1.14,
+                  "priceAmerican": "-714",
+                  "priceFractional": "7/50",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            }
+          }
+        },
+        "10761": {
+          "bookmakerMarketId": "734.186051882",
+          "marketActive": true,
+          "outcomes": {
+            "10762": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051882&selectionId=151478",
+                  "bookmakerOutcomeId": "151478",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 4.5,
+                  "priceAmerican": "350",
+                  "priceFractional": "7/2",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "10763": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051882&selectionId=48322",
+                  "bookmakerOutcomeId": "48322",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 5.1,
+                  "priceAmerican": "410",
+                  "priceFractional": "41/10",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "10761": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051882&selectionId=47998",
+                  "bookmakerOutcomeId": "47998",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 1.43,
+                  "priceAmerican": "-233",
+                  "priceFractional": "43/100",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            }
+          }
+        },
+        "1036": {
+          "bookmakerMarketId": "734.186051919",
+          "marketActive": true,
+          "outcomes": {
+            "1037": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051919&selectionId=62962261",
+                  "bookmakerOutcomeId": "62962261",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 1.02,
+                  "priceAmerican": "-5000",
+                  "priceFractional": "1/50",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            },
+            "1036": {
+              "players": {
+                "0": {
+                  "active": true,
+                  "betslip": "https://sportsbook.fanduel.com/addToBetslip?marketId=734.186051919&selectionId=63251259",
+                  "bookmakerOutcomeId": "63251259",
+                  "bookmakerChangedAt": null,
+                  "changedAt": "2026-09-15T21:14:31.462Z",
+                  "limit": null,
+                  "playerName": null,
+                  "price": 10.8,
+                  "priceAmerican": "980",
+                  "priceFractional": "49/5",
+                  "mainLine": false,
+                  "exchangeMeta": null
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
