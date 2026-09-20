@@ -551,6 +551,33 @@ class OddsPapiTests(unittest.TestCase):
         self.assertEqual(query["tournamentId"], ["8"])
         self.assertEqual(self.client().config.code, "E1")
 
+    def test_sp1_verified_aliases(self):
+        for name, expected in (("Valencia CF", "Valencia"),
+                               ("Real Sociedad San Sebastian", "Sociedad")):
+            with self.subTest(name=name):
+                self.assertEqual(provider.normalize_team(name, {"Valencia", "Sociedad"}, "SP1"), expected)
+
+    def test_sp1_unknown_names_fail_explicitly(self):
+        for name in ("Unknown FC", "Valencia C.F.", "Real Sociedad"):
+            with self.subTest(name=name), self.assertRaisesRegex(
+                provider.OddsPapiError, "No exact or verified SP1 historical identity"
+            ):
+                provider.normalize_team(name, {"Valencia", "Sociedad"}, "SP1")
+
+    def test_sp1_aliases_require_historical_identity(self):
+        for name in ("Valencia CF", "Real Sociedad San Sebastian"):
+            with self.subTest(name=name), self.assertRaisesRegex(
+                provider.OddsPapiError, "SP1 historical identity"
+            ):
+                provider.normalize_team(name, {"Test Home"}, "SP1")
+
+    def test_e1_does_not_reuse_sp1_aliases(self):
+        for name in ("Valencia CF", "Real Sociedad San Sebastian"):
+            with self.subTest(name=name), self.assertRaisesRegex(
+                provider.OddsPapiError, "E1 historical identity"
+            ):
+                provider.normalize_team(name, {"Valencia", "Sociedad"}, "E1")
+
     def test_sp1_does_not_reuse_e1_aliases(self):
         self.assertEqual(provider.normalize_team("Test Home", {"Test Home"}, "SP1"), "Test Home")
         with self.assertRaisesRegex(provider.OddsPapiError, "SP1 historical identity"):

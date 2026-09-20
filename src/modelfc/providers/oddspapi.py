@@ -54,8 +54,11 @@ class Competition:
 
 COMPETITIONS = MappingProxyType({
     "E1": Competition("E1", 18, "championship", "england", tuple(TEAM_ALIASES.items())),
-    # SP1 identifiers supplied for VPS validation; no unverified team aliases.
-    "SP1": Competition("SP1", 8, "laliga", "spain"),
+    # Team-name differences verified against SP1_2627.csv during live validation.
+    "SP1": Competition("SP1", 8, "laliga", "spain", (
+        ("Valencia CF", "Valencia"),
+        ("Real Sociedad San Sebastian", "Sociedad"),
+    )),
 })
 
 
