@@ -417,7 +417,12 @@ class OddsPapiTests(unittest.TestCase):
         with patch.object(client._opener, "open", side_effect=[self.response(self.metadata), self.response(self.payload)]) as opened, patch.object(provider, "_now", return_value=NOW):
             quotes = client.quotes(self.fixtures[0])
         self.assertEqual(len(quotes.selections), 33)
-        url = urlsplit(opened.call_args.args[0])
+        request = opened.call_args.args[0]
+        url = urlsplit(request.full_url)
+        self.assertEqual(request.get_header("User-agent"), provider.USER_AGENT)
+        self.assertEqual(request.get_header("Accept"), "application/json")
+        self.assertIsNone(request.get_header("Authorization"))
+        self.assertNotIn("offline-test-key", repr(request.header_items()))
         self.assertEqual((url.scheme, url.netloc, url.path), ("https", "api.oddspapi.io", "/v4/odds"))
         params = parse_qs(url.query)
         self.assertEqual(params["apiKey"], ["offline-test-key"])
@@ -431,7 +436,7 @@ class OddsPapiTests(unittest.TestCase):
         with patch.object(client._opener, "open", return_value=self.response(self.fixtures)) as opened, patch.object(provider, "_now", return_value=NOW):
             fixtures = client.fixtures(NOW.date())
         self.assertEqual(len(fixtures), 2)
-        query = parse_qs(urlsplit(opened.call_args.args[0]).query)
+        query = parse_qs(urlsplit(opened.call_args.args[0].full_url).query)
         self.assertEqual(query["tournamentId"], ["18"])
         self.assertEqual(query["statusId"], ["0"])
 
@@ -510,6 +515,96 @@ class OddsPapiTests(unittest.TestCase):
         self.fixtures[0]["participant2Id"] = self.fixtures[0]["participant1Id"]
         with self.assertRaisesRegex(provider.OddsPapiError, "Ambiguous"):
             self.normalize()
+
+    def sp1_fixture(self):
+        # Configuration-routing scenario, not claimed to be a live La Liga capture.
+        return dict(self.fixtures[0], tournamentId=8, tournamentSlug="laliga",
+                    categorySlug="spain", participant1Name="Test Home", participant2Name="Test Away")
+
+    def test_competition_config_is_immutable(self):
+        self.assertEqual(provider.COMPETITIONS["E1"].tournament_id, 18)
+        self.assertEqual(provider.COMPETITIONS["SP1"].tournament_id, 8)
+        with self.assertRaises(TypeError):
+            provider.COMPETITIONS["OTHER"] = provider.COMPETITIONS["E1"]
+        from dataclasses import FrozenInstanceError
+        with self.assertRaises(FrozenInstanceError):
+            provider.COMPETITIONS["SP1"].tournament_id = 18
+
+    def test_sp1_fixture_validation(self):
+        fixture = self.sp1_fixture()
+        provider.validate_fixture(fixture, NOW, "SP1")
+        with self.assertRaises(provider.OddsPapiError):
+            provider.validate_fixture(fixture, NOW)  # Default remains E1.
+        with self.assertRaises(provider.OddsPapiError):
+            provider.validate_fixture(self.fixtures[0], NOW, "SP1")
+        for field, bad in (("tournamentId", 18), ("tournamentSlug", "championship"), ("categorySlug", "england")):
+            with self.subTest(field=field), self.assertRaises(provider.OddsPapiError):
+                provider.validate_fixture(dict(fixture, **{field: bad}), NOW, "SP1")
+
+    def test_sp1_request_uses_tournament_8(self):
+        with patch.dict(os.environ, {"ODDSPAPI_API_KEY": "offline-test-key"}):
+            client = provider.OddsPapiClient("SP1")
+        fixture = self.sp1_fixture()
+        with patch.object(client._opener, "open", return_value=self.response([fixture])) as opened:
+            self.assertEqual(client.fixtures(NOW.date()), [fixture])
+        query = parse_qs(urlsplit(opened.call_args.args[0].full_url).query)
+        self.assertEqual(query["tournamentId"], ["8"])
+        self.assertEqual(self.client().config.code, "E1")
+
+    def test_sp1_does_not_reuse_e1_aliases(self):
+        self.assertEqual(provider.normalize_team("Test Home", {"Test Home"}, "SP1"), "Test Home")
+        with self.assertRaisesRegex(provider.OddsPapiError, "SP1 historical identity"):
+            provider.normalize_team("Wolverhampton Wanderers", {"Wolves"}, "SP1")
+
+    def test_sp1_cli_routes_history_and_capabilities(self):
+        from contextlib import nullcontext
+        fixture = self.sp1_fixture()
+        payload = dict(self.payload, **fixture)
+        with patch.dict(os.environ, {"ODDSPAPI_API_KEY": "offline-test-key"}):
+            client = provider.OddsPapiClient("SP1")
+        history = [SimpleNamespace(team=t, match_date=date(2026, 9, 12))
+                   for t in ("Test Home", "Test Away")]
+        config = SimpleNamespace(max_age_days=14)
+        responses = [self.response([fixture]), self.response(self.metadata), self.response(payload)]
+        with patch.object(provider, "OddsPapiClient", return_value=client) as constructor, patch.object(client._opener, "open", side_effect=responses), patch.object(provider.time, "sleep"), patch.object(provider, "load_data_config", return_value=config), patch.object(provider, "configured_history_lock", return_value=nullcontext()), patch.object(provider, "configured_history", return_value=history) as load_history, patch.object(provider, "supported_markets_for", wraps=provider.supported_markets_for) as capabilities, patch.object(provider, "analyze_corner_markets", side_effect=ValueError("history gate unchanged")) as analyze, redirect_stdout(StringIO()) as output:
+            self.assertEqual(provider.main(["--competition", "SP1", "--fixture-id", fixture["fixtureId"],
+                                            "--analyze", "--data-config", "corner_data.json"]), 1)
+        constructor.assert_called_once_with("SP1")
+        load_history.assert_called_once_with(config, "SP1")
+        capabilities.assert_called_once_with("SP1")
+        self.assertEqual(analyze.call_args.kwargs["available_market_types"], provider.supported_markets_for("SP1"))
+        self.assertEqual(json.loads(output.getvalue())["quotes"]["competition"], "SP1")
+
+    def test_cli_default_competition_is_e1(self):
+        client = self.client()
+        with patch.object(provider, "OddsPapiClient", return_value=client) as constructor, patch.object(client, "fixtures", return_value=[]), redirect_stdout(StringIO()):
+            self.assertEqual(provider.main([]), 0)
+        constructor.assert_called_once_with("E1")
+
+    def test_cloudflare_diagnostic_does_not_expose_response_or_key(self):
+        client = self.client()
+        error = HTTPError("https://example.invalid/?apiKey=offline-test-key", 403,
+                          "offline-test-key", {"Content-Type": "text/html", "Server": "cloudflare"},
+                          BytesIO(b"<html>Cloudflare error 1010 offline-test-key private-body</html>"))
+        with patch.object(client._opener, "open", side_effect=error) as opened:
+            with self.assertRaises(provider.OddsPapiError) as caught:
+                client._get("fixtures")
+        message = str(caught.exception)
+        for expected in ("403", "Cloudflare", "1010", "HTML"):
+            self.assertIn(expected, message)
+        for forbidden in ("offline-test-key", "private-body", "apiKey=", "<html>"):
+            self.assertNotIn(forbidden, message)
+        self.assertEqual(opened.call_count, 1)
+
+    def test_query_encoding_and_redirect_policy(self):
+        client = self.client()
+        client._key = "offline+key&value=?"
+        with patch.object(client._opener, "open", return_value=self.response([])) as opened:
+            client._get("fixtures", bookmakers="draftkings,fanduel")
+        request = opened.call_args.args[0]
+        self.assertEqual(parse_qs(urlsplit(request.full_url).query)["apiKey"], [client._key])
+        self.assertEqual(request.get_method(), "GET")
+        self.assertIsNone(provider._NoRedirect().redirect_request(request, None, 302, "redirect", {}, "https://example.invalid"))
 
 
 if __name__ == "__main__":
