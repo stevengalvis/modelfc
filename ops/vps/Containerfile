@@ -1,0 +1,9 @@
+# Supply an approved immutable docker.io/library/python@sha256:... base at build time.
+ARG PYTHON_BASE
+FROM ${PYTHON_BASE}
+# All imported Model FC capture modules use the standard library. No PR requirements.
+COPY validate_capture.py /trusted/validate_capture.py
+RUN chmod 0555 /trusted /trusted/validate_capture.py
+WORKDIR /output
+ENV PYTHONDONTWRITEBYTECODE=1
+ENTRYPOINT ["python3", "-I", "-B", "/trusted/validate_capture.py"]
