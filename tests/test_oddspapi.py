@@ -440,6 +440,50 @@ class OddsPapiTests(unittest.TestCase):
         self.assertEqual(query["tournamentId"], ["18"])
         self.assertEqual(query["statusId"], ["0"])
 
+    def fixture_http_error(self, body, status=404):
+        return HTTPError("https://example.invalid/?apiKey=offline-test-key", status,
+                         "offline-test-key", {"Content-Type": "application/json"}, BytesIO(body))
+
+    def test_fixture_discovery_not_found_is_empty(self):
+        client = self.client()
+        error = self.fixture_http_error(b'{"error":{"code":"FIXTURE_NOT_FOUND","message":"offline-test-key"}}')
+        with patch.object(client._opener, "open", side_effect=error) as opened:
+            self.assertEqual(client.fixtures(NOW.date()), [])
+        self.assertEqual(opened.call_count, 1)
+        self.assertTrue(error.fp.closed)
+
+    def test_other_fixture_errors_remain_errors_without_credentials(self):
+        for status, body in (
+            (404, b'{"error":{"code":"OTHER","message":"offline-test-key"}}'),
+            (404, b'{"error":{"code":"fixture_not_found"}}'),
+            (404, b'{"code":"FIXTURE_NOT_FOUND"}'),
+            (404, b'{"error":["FIXTURE_NOT_FOUND"]}'),
+            (404, b'[]'), (404, b'null'),
+            (404, b'<html>offline-test-key</html>'), (404, b'\xff'),
+            (500, b'{"error":{"code":"FIXTURE_NOT_FOUND"}}'),
+        ):
+            with self.subTest(status=status, body=body):
+                client = self.client()
+                with patch.object(client._opener, "open", side_effect=self.fixture_http_error(body, status)) as opened:
+                    with self.assertRaises(provider.OddsPapiError) as caught:
+                        client.fixtures(NOW.date())
+                self.assertIn(str(status), str(caught.exception))
+                for forbidden in ("offline-test-key", "apiKey", "https://"):
+                    self.assertNotIn(forbidden, str(caught.exception))
+                self.assertEqual(opened.call_count, 1)
+
+    def test_not_found_on_odds_markets_or_fixture_lookup_is_error(self):
+        for endpoint in ("odds", "markets", "fixture", "fixtures"):
+            with self.subTest(endpoint=endpoint):
+                client = self.client()
+                body = b'{"error":{"code":"FIXTURE_NOT_FOUND","message":"offline-test-key"}}'
+                with patch.object(client._opener, "open", side_effect=self.fixture_http_error(body)):
+                    with self.assertRaises(provider.OddsPapiError) as caught:
+                        client._get(endpoint, fixtureId="test-fixture")
+                self.assertIn("404", str(caught.exception))
+                self.assertNotIn("offline-test-key", str(caught.exception))
+                self.assertNotIn("apiKey", str(caught.exception))
+
     def test_http_errors_never_retry_or_leak_key(self):
         for code in (401, 403, 429, 500, 302):
             client = self.client()

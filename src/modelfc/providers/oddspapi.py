@@ -427,7 +427,7 @@ class OddsPapiClient:
         self.requests = 0
         self.usage_headers = {}
 
-    def _get(self, endpoint, **params):
+    def _get(self, endpoint, *, _fixture_discovery=False, **params):
         if self._last_request is not None:
             time.sleep(max(0, 2.1 - (time.monotonic() - self._last_request)))
         self._last_request = time.monotonic()
@@ -444,9 +444,19 @@ class OddsPapiClient:
             # Classify safely; never print the response body, URL or Location header.
             content_type = error.headers.get("Content-Type", "").lower() if error.headers else ""
             try:
-                body = error.read(8192).lower()
+                body = error.read(8192)
             except OSError:
                 body = b""
+            if _fixture_discovery and endpoint == "fixtures" and status == 404:
+                try:
+                    payload = json.loads(body)
+                except (ValueError, UnicodeError):
+                    payload = None
+                if (isinstance(payload, dict) and isinstance(payload.get("error"), dict)
+                        and payload["error"].get("code") == "FIXTURE_NOT_FOUND"):
+                    error.close()
+                    return []
+            body = body.lower()
             cloudflare = b"cloudflare" in body or (error.headers and "cloudflare" in error.headers.get("Server", "").lower())
             diagnostic = ("; Cloudflare response" if cloudflare else "")
             diagnostic += "; error 1010" if b"1010" in body and cloudflare else ""
@@ -461,7 +471,7 @@ class OddsPapiClient:
 
     def fixtures(self, day):
         now = _now()
-        payload = self._get("fixtures", tournamentId=self.config.tournament_id, statusId=0,
+        payload = self._get("fixtures", _fixture_discovery=True, tournamentId=self.config.tournament_id, statusId=0,
                             language="en", bookmakers=",".join(BOOKMAKERS),
                             **{"from": f"{day}T00:00:00Z", "to": f"{day + timedelta(days=1)}T00:00:00Z"})
         fixtures = []
