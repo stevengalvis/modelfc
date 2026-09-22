@@ -274,5 +274,35 @@ class CornerApiTests(unittest.TestCase):
         )
 
 
+class PublicationGuardTests(unittest.TestCase):
+    def test_guard_runs_after_fsync_and_before_exclusive_link(self):
+        from modelfc import ledger_storage as storage
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "capture.json"
+            events = []
+            link = storage.os.link
+            def publish(source, destination):
+                events.append("link")
+                link(source, destination)
+            with patch.object(storage.os, "fsync", side_effect=lambda _: events.append("fsync")), patch.object(storage.os, "link", side_effect=publish):
+                storage.write_new_record(path, {"value": 1}, before_publish=lambda: events.append("guard"))
+            self.assertEqual(events, ["fsync", "guard", "link"])
+            self.assertEqual(json.loads(path.read_text()), {"value": 1})
+            with self.assertRaisesRegex(storage.LedgerError, "overwrite"):
+                storage.write_new_record(path, {"value": 2})
+            self.assertEqual(json.loads(path.read_text()), {"value": 1})
+
+    def test_failed_guard_cleans_temporary_file_without_publishing(self):
+        from modelfc import ledger_storage as storage
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "capture.json"
+            def reject():
+                raise ValueError("publication rejected")
+            with patch.object(storage.os, "link") as link, self.assertRaisesRegex(ValueError, "publication rejected"):
+                storage.write_new_record(path, {"value": 1}, before_publish=reject)
+            link.assert_not_called()
+            self.assertEqual(list(Path(directory).iterdir()), [])
+
+
 if __name__ == "__main__":
     unittest.main()

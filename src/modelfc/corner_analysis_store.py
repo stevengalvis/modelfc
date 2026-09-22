@@ -5,7 +5,7 @@ from datetime import date
 import hashlib
 import json
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 import uuid
 
 from modelfc.corner_analysis import (
@@ -171,15 +171,59 @@ def analyze_and_store(
         "model": model,
         "markets": [asdict(item) for item in market_items],
     }
+
+    def build_response(analysis_id):
+        config = load_data_config(Path(data_config_path))
+        with configured_history_lock(config):
+            paths = configured_history_paths(config, competition)
+            observations = configured_history(config, competition)
+            analysis = analyze_corner_markets(
+                observations, UpcomingFixture(fixture_date, home_team, away_team),
+                market_items, model=model, min_history=min_history,
+                min_venue_history=min_venue_history,
+                smoothing_matches=smoothing_matches, max_age_days=config.max_age_days,
+                available_market_types=supported_markets_for(competition),
+            )
+            forecast_id = uuid.uuid4().hex
+            created_at = utc_timestamp()
+            response = analysis_response(
+                analysis, analysis_id=analysis_id, forecast_id=forecast_id,
+                created_at=created_at, competition=competition, sources=paths,
+            )
+            response["forecast"]["configuration"]["min_history"] = min_history
+            response["forecast"]["configuration"]["min_venue_history"] = min_venue_history
+        return response
+
+    return store_analysis_capture(
+        state_dir=state_dir, request=request, build_response=build_response,
+    )
+
+
+def store_analysis_capture(
+    *, state_dir: str | Path, request: dict[str, Any],
+    build_response: Callable[[str], dict[str, Any]],
+    before_publish: Callable[[], None] | None = None,
+) -> tuple[dict[str, Any], bool]:
+    """Persist the existing analysis envelope; build only on a cache miss.
+
+    The builder must assemble model output and hashes under its history lock.
+    A publication guard runs inside the writer, after its temporary file fsync.
+    """
+    key = request.get("idempotency_key")
+    if not isinstance(key, str) or not key.strip():
+        raise ValueError("idempotency_key must be non-empty text")
+    # Freeze caller-owned metadata so validation, hashing and serialization agree.
+    request = json.loads(json.dumps(request, allow_nan=False))
+    request["idempotency_key"] = key.strip()
     request_hash = _canonical_hash(request)
     state = Path(state_dir)
     ensure_directory(state, "Model FC state directory")
     analysis_id = uuid.uuid5(
-        uuid.NAMESPACE_URL, f"POST:/api/v1/analyses:{normalized_key}",
+        uuid.NAMESPACE_URL, f"POST:/api/v1/analyses:{key.strip()}",
     ).hex
     analysis_path = _analysis_path(state, analysis_id)
 
-    def replay() -> dict[str, Any] | None:
+    def replay():
         if not analysis_path.exists():
             return None
         saved = _load_analysis_record(state, analysis_id)
@@ -191,26 +235,7 @@ def analyze_and_store(
         existing = replay()
         if existing is not None:
             return existing, False
-
-    config = load_data_config(Path(data_config_path))
-    with configured_history_lock(config):
-        paths = configured_history_paths(config, competition)
-        observations = configured_history(config, competition)
-        analysis = analyze_corner_markets(
-            observations, UpcomingFixture(fixture_date, home_team, away_team),
-            market_items, model=model, min_history=min_history,
-            min_venue_history=min_venue_history,
-            smoothing_matches=smoothing_matches, max_age_days=config.max_age_days,
-            available_market_types=supported_markets_for(competition),
-        )
-        forecast_id = uuid.uuid4().hex
-        created_at = utc_timestamp()
-        response = analysis_response(
-            analysis, analysis_id=analysis_id, forecast_id=forecast_id,
-            created_at=created_at, competition=competition, sources=paths,
-        )
-        response["forecast"]["configuration"]["min_history"] = min_history
-        response["forecast"]["configuration"]["min_venue_history"] = min_venue_history
+    response = build_response(analysis_id)
 
     record = {
         "schema_version": 1, "analysis_id": analysis_id,
@@ -222,5 +247,5 @@ def analyze_and_store(
         existing = replay()
         if existing is not None:
             return existing, False
-        write_new_record(analysis_path, record)
+        write_new_record(analysis_path, record, before_publish=before_publish)
     return response, True
