@@ -9,7 +9,7 @@ import os
 from pathlib import Path
 import subprocess
 import tempfile
-from typing import Any, Iterable, Iterator
+from typing import Any, Callable, Iterable, Iterator
 
 
 class LedgerError(ValueError):
@@ -57,7 +57,9 @@ def ensure_directory(path: Path, label: str) -> None:
         ) from error
 
 
-def write_new_record(path: Path, record: dict[str, Any]) -> None:
+def write_new_record(
+    path: Path, record: dict[str, Any], *, before_publish: Callable[[], None] | None = None,
+) -> None:
     """Atomically create a complete JSON record without replacing a file."""
     try:
         serialized = json.dumps(record, indent=2, sort_keys=True, allow_nan=False) + "\n"
@@ -73,6 +75,9 @@ def write_new_record(path: Path, record: dict[str, Any]) -> None:
             output.write(serialized)
             output.flush()
             os.fsync(output.fileno())
+        # Run after serialization/fsync, immediately before exclusive publication.
+        if before_publish is not None:
+            before_publish()
         os.link(temporary_path, path)
     except FileExistsError as error:
         raise LedgerError(f"refusing to overwrite existing record: {path}") from error

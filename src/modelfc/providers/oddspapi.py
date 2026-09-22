@@ -1,13 +1,15 @@
-"""E1/SP1 pre-match OddsPapi v4 boundary, with a read-only analysis CLI.
+"""E1/SP1 pre-match OddsPapi v4 boundary, with optional immutable pre-match captures.
 
 List: python -m modelfc.providers.oddspapi --date YYYY-MM-DD
 Quotes: add --fixture-id ID. Analysis: add --analyze --data-config corner_data.json.
-No retries, saved odds, or ledger writes. Recorded schema examples: tests/test_oddspapi.py.
+Save: add --state-dir PATH --capture-key KEY to --analyze. No retries.
+Replay: --state-dir PATH --replay-analysis ID (offline, including after kickoff).
 Endpoint documentation: https://oddspapi.io/us/docs (v4).
 """
 
 import argparse
-from dataclasses import asdict, dataclass
+from copy import deepcopy
+from dataclasses import asdict, dataclass, replace
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 import json
@@ -15,6 +17,7 @@ import os
 from pathlib import Path
 from types import MappingProxyType
 import time
+import uuid
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import HTTPRedirectHandler, Request, build_opener
@@ -22,14 +25,19 @@ from urllib.request import HTTPRedirectHandler, Request, build_opener
 from modelfc.corner_analysis import (
     MAX_MARKETS_PER_ANALYSIS, CornerMarketRequest, analyze_corner_markets,
 )
+from modelfc.corner_analysis_store import analysis_response, load_analysis, store_analysis_capture
 from modelfc.corner_capabilities import supported_markets_for
-from modelfc.corner_data import configured_history, configured_history_lock, load_data_config
+from modelfc.corner_data import (
+    configured_history, configured_history_lock, configured_history_paths, load_data_config,
+)
+from modelfc.ledger_storage import utc_timestamp
 from modelfc.corner_markets import american_odds_terms
 from modelfc.matches import UpcomingFixture
 
 
 BASE_URL = "https://api.oddspapi.io/v4"
 BOOKMAKERS = ("draftkings", "fanduel")
+MAX_QUOTE_AGE_SECONDS = 300
 USER_AGENT = "ModelFC/1.0 (OddsPapi integration)"
 FAMILIES = {
     "totals-corners": ("MATCH_TOTAL", None),
@@ -213,7 +221,7 @@ def _normalize_odds(payload, metadata, fixture, retrieved_at, now, competition):
     if any(payload.get(k) != fixture.get(k) for k in identity):
         raise OddsPapiError("Odds response does not match the selected fixture")
     age = (now - _timestamp(retrieved_at)).total_seconds()
-    if not 0 <= age <= 300:
+    if not 0 <= age <= MAX_QUOTE_AGE_SECONDS:
         raise OddsPapiError("Stale or future retrieval timestamp; fetch current odds")
     dictionary = {}
     for entry in _array(metadata):
@@ -308,13 +316,19 @@ def _normalize_odds(payload, metadata, fixture, retrieved_at, now, competition):
     return OddsPapiQuotes(dict(fixture), tuple(selections), availability, competition)
 
 
-def analyze_quotes(quotes, observations, *, max_age_days=14):
-    """Delegate forecasting/pricing and capability decisions to Model FC."""
+def _validate_current_quotes(quotes):
     now = _now()
     validate_fixture(quotes.fixture, now, quotes.competition)
-    if any(not 0 <= (now - _timestamp(s.retrieved_at)).total_seconds() <= 300
+    if any(not 0 <= (now - _timestamp(s.retrieved_at)).total_seconds() <= MAX_QUOTE_AGE_SECONDS
            for s in quotes.selections):
-        raise OddsPapiError("Stale or future quote snapshot; fetch current odds before analysis")
+        raise OddsPapiError("Stale or future quote snapshot; fetch current odds")
+
+
+def analyze_quotes(quotes, observations, *, max_age_days=14,
+                   model="venue-opponent-negative-binomial", min_history=100,
+                   min_venue_history=5, smoothing_matches=5.0):
+    """Delegate forecasting/pricing and capability decisions to Model FC."""
+    _validate_current_quotes(quotes)
     observations = tuple(observations)
     day = _timestamp(quotes.fixture["startTime"]).date()
     names = {o.team for o in observations if o.match_date < day}
@@ -324,7 +338,74 @@ def analyze_quotes(quotes, observations, *, max_age_days=14):
     return tuple(analyze_corner_markets(
         observations, fixture, requests[offset:offset + MAX_MARKETS_PER_ANALYSIS],
         available_market_types=supported_markets_for(quotes.competition), max_age_days=max_age_days,
+        model=model, min_history=min_history, min_venue_history=min_venue_history,
+        smoothing_matches=smoothing_matches,
     ) for offset in range(0, len(requests), MAX_MARKETS_PER_ANALYSIS))
+
+
+def capture_quotes(quotes, *, data_config_path, state_dir, capture_key,
+                   model="venue-opponent-negative-binomial", min_history=100,
+                   min_venue_history=5, smoothing_matches=5.0):
+    """Save one quote observation using the authoritative analysis store.
+
+    Identical snapshots replay before clock/history checks. A fresh retrieval is
+    a different observation and must use a different capture key.
+    """
+    quotes = deepcopy(quotes)
+    if not quotes.selections:
+        raise OddsPapiError("No usable corner selections to capture")
+    ids = [s.request.client_market_id for s in quotes.selections]
+    if len(ids) != len(set(ids)) or any(s.fixture_id != quotes.fixture.get("fixtureId")
+                                      for s in quotes.selections):
+        raise OddsPapiError("Duplicate selection or inconsistent fixture identity")
+    config = load_data_config(Path(data_config_path))
+    settings = dict(model=model, min_history=min_history,
+                    min_venue_history=min_venue_history, smoothing_matches=smoothing_matches,
+                    max_age_days=config.max_age_days)
+    # Allowlist fixture metadata: never persist a raw HTTP payload or request URL.
+    fixture = {k: quotes.fixture.get(k) for k in (
+        "fixtureId", "sportId", "tournamentId", "tournamentSlug", "categorySlug",
+        "participant1Id", "participant2Id", "participant1Name", "participant2Name",
+        "startTime", "statusId",
+    )}
+    request = {
+        "idempotency_key": capture_key, "competition": quotes.competition,
+        "configuration": settings,
+        "prematch": {"provider": "oddspapi", "fixture": fixture,
+                     "max_quote_age_seconds": MAX_QUOTE_AGE_SECONDS,
+                     "availability": quotes.availability,
+                     "selections": [asdict(s) for s in quotes.selections]},
+    }
+    key = os.environ.get("ODDSPAPI_API_KEY", "").strip()
+    if key and key in json.dumps(request):
+        raise OddsPapiError("Refusing capture containing authentication material")
+
+    def build_response(analysis_id):
+        _validate_current_quotes(quotes)
+        with configured_history_lock(config):
+            observations = configured_history(config, quotes.competition)
+            batches = analyze_quotes(quotes, observations, **settings)
+            combined = replace(
+                batches[0], markets=tuple(m for b in batches for m in b.markets),
+                warnings=tuple(dict.fromkeys(w for b in batches for w in b.warnings)),
+            )
+            response = analysis_response(
+                combined, analysis_id=analysis_id, forecast_id=uuid.uuid4().hex,
+                created_at=utc_timestamp(), competition=quotes.competition,
+                sources=configured_history_paths(config, quotes.competition),
+            )
+            response["warnings"] = [asdict(w) for w in combined.warnings]
+            response["fixture"]["kickoff_at"] = _timestamp(fixture["startTime"]).isoformat()
+            response["pick_logging"] = {"status": "DISABLED", "reason": "PICK_LOGGING_NOT_ENABLED"}
+            response["forecast"]["configuration"].update(
+                min_history=min_history, min_venue_history=min_venue_history,
+            )
+            return response
+
+    return store_analysis_capture(
+        state_dir=state_dir, request=request, build_response=build_response,
+        before_publish=lambda: _validate_current_quotes(quotes),
+    )
 
 
 class _NoRedirect(HTTPRedirectHandler):
@@ -346,7 +427,7 @@ class OddsPapiClient:
         self.requests = 0
         self.usage_headers = {}
 
-    def _get(self, endpoint, **params):
+    def _get(self, endpoint, *, _fixture_discovery=False, **params):
         if self._last_request is not None:
             time.sleep(max(0, 2.1 - (time.monotonic() - self._last_request)))
         self._last_request = time.monotonic()
@@ -363,9 +444,19 @@ class OddsPapiClient:
             # Classify safely; never print the response body, URL or Location header.
             content_type = error.headers.get("Content-Type", "").lower() if error.headers else ""
             try:
-                body = error.read(8192).lower()
+                body = error.read(8192)
             except OSError:
                 body = b""
+            if _fixture_discovery and endpoint == "fixtures" and status == 404:
+                try:
+                    payload = json.loads(body)
+                except (ValueError, UnicodeError):
+                    payload = None
+                if (isinstance(payload, dict) and isinstance(payload.get("error"), dict)
+                        and payload["error"].get("code") == "FIXTURE_NOT_FOUND"):
+                    error.close()
+                    return []
+            body = body.lower()
             cloudflare = b"cloudflare" in body or (error.headers and "cloudflare" in error.headers.get("Server", "").lower())
             diagnostic = ("; Cloudflare response" if cloudflare else "")
             diagnostic += "; error 1010" if b"1010" in body and cloudflare else ""
@@ -380,7 +471,7 @@ class OddsPapiClient:
 
     def fixtures(self, day):
         now = _now()
-        payload = self._get("fixtures", tournamentId=self.config.tournament_id, statusId=0,
+        payload = self._get("fixtures", _fixture_discovery=True, tournamentId=self.config.tournament_id, statusId=0,
                             language="en", bookmakers=",".join(BOOKMAKERS),
                             **{"from": f"{day}T00:00:00Z", "to": f"{day + timedelta(days=1)}T00:00:00Z"})
         fixtures = []
@@ -412,13 +503,26 @@ def main(argv=None):
     parser.add_argument("--fixture-id")
     parser.add_argument("--analyze", action="store_true")
     parser.add_argument("--data-config", type=Path)
+    parser.add_argument("--state-dir", type=Path)
+    parser.add_argument("--capture-key")
+    parser.add_argument("--replay-analysis", help="Load an existing analysis ID without API calls")
     args = parser.parse_args(argv)
+    if args.capture_key is not None and (not args.analyze or not args.state_dir):
+        parser.error("--capture-key requires --analyze and --state-dir")
+    if args.replay_analysis and (not args.state_dir or args.capture_key is not None or args.analyze or args.fixture_id):
+        parser.error("--replay-analysis requires --state-dir and cannot fetch/analyze a fixture")
+    if args.state_dir and args.capture_key is None and not args.replay_analysis:
+        parser.error("--state-dir requires --capture-key or --replay-analysis")
     if args.analyze and (not args.fixture_id or not args.data_config):
         parser.error("--analyze requires --fixture-id and --data-config")
     client = None
     output = {}
     code = 0
     try:
+        if args.replay_analysis:
+            print(json.dumps({"analysis": load_analysis(args.state_dir, args.replay_analysis),
+                              "created": False}, indent=2))
+            return 0
         client = OddsPapiClient(args.competition)
         fixtures = client.fixtures(args.date)
         if not args.fixture_id:
@@ -428,7 +532,12 @@ def main(argv=None):
             fixture = select_fixture(fixtures, args.fixture_id, _now(), args.competition)
             quotes = client.quotes(fixture)
             output["quotes"] = asdict(quotes)
-            if args.analyze and quotes.selections:
+            if args.capture_key is not None:
+                output["analysis"], output["created"] = capture_quotes(
+                    quotes, data_config_path=args.data_config, state_dir=args.state_dir,
+                    capture_key=args.capture_key,
+                )
+            elif args.analyze and quotes.selections:
                 config = load_data_config(args.data_config)
                 with configured_history_lock(config):
                     history = configured_history(config, args.competition)

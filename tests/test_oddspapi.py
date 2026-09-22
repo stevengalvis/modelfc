@@ -440,6 +440,50 @@ class OddsPapiTests(unittest.TestCase):
         self.assertEqual(query["tournamentId"], ["18"])
         self.assertEqual(query["statusId"], ["0"])
 
+    def fixture_http_error(self, body, status=404):
+        return HTTPError("https://example.invalid/?apiKey=offline-test-key", status,
+                         "offline-test-key", {"Content-Type": "application/json"}, BytesIO(body))
+
+    def test_fixture_discovery_not_found_is_empty(self):
+        client = self.client()
+        error = self.fixture_http_error(b'{"error":{"code":"FIXTURE_NOT_FOUND","message":"offline-test-key"}}')
+        with patch.object(client._opener, "open", side_effect=error) as opened:
+            self.assertEqual(client.fixtures(NOW.date()), [])
+        self.assertEqual(opened.call_count, 1)
+        self.assertTrue(error.fp.closed)
+
+    def test_other_fixture_errors_remain_errors_without_credentials(self):
+        for status, body in (
+            (404, b'{"error":{"code":"OTHER","message":"offline-test-key"}}'),
+            (404, b'{"error":{"code":"fixture_not_found"}}'),
+            (404, b'{"code":"FIXTURE_NOT_FOUND"}'),
+            (404, b'{"error":["FIXTURE_NOT_FOUND"]}'),
+            (404, b'[]'), (404, b'null'),
+            (404, b'<html>offline-test-key</html>'), (404, b'\xff'),
+            (500, b'{"error":{"code":"FIXTURE_NOT_FOUND"}}'),
+        ):
+            with self.subTest(status=status, body=body):
+                client = self.client()
+                with patch.object(client._opener, "open", side_effect=self.fixture_http_error(body, status)) as opened:
+                    with self.assertRaises(provider.OddsPapiError) as caught:
+                        client.fixtures(NOW.date())
+                self.assertIn(str(status), str(caught.exception))
+                for forbidden in ("offline-test-key", "apiKey", "https://"):
+                    self.assertNotIn(forbidden, str(caught.exception))
+                self.assertEqual(opened.call_count, 1)
+
+    def test_not_found_on_odds_markets_or_fixture_lookup_is_error(self):
+        for endpoint in ("odds", "markets", "fixture", "fixtures"):
+            with self.subTest(endpoint=endpoint):
+                client = self.client()
+                body = b'{"error":{"code":"FIXTURE_NOT_FOUND","message":"offline-test-key"}}'
+                with patch.object(client._opener, "open", side_effect=self.fixture_http_error(body)):
+                    with self.assertRaises(provider.OddsPapiError) as caught:
+                        client._get(endpoint, fixtureId="test-fixture")
+                self.assertIn("404", str(caught.exception))
+                self.assertNotIn("offline-test-key", str(caught.exception))
+                self.assertNotIn("apiKey", str(caught.exception))
+
     def test_http_errors_never_retry_or_leak_key(self):
         for code in (401, 403, 429, 500, 302):
             client = self.client()
@@ -632,6 +676,220 @@ class OddsPapiTests(unittest.TestCase):
         self.assertEqual(parse_qs(urlsplit(request.full_url).query)["apiKey"], [client._key])
         self.assertEqual(request.get_method(), "GET")
         self.assertIsNone(provider._NoRedirect().redirect_request(request, None, 302, "redirect", {}, "https://example.invalid"))
+
+
+class PrematchCaptureTests(unittest.TestCase):
+    def setUp(self):
+        from pathlib import Path
+        from tempfile import TemporaryDirectory
+        self.directory = TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.root = Path(self.directory.name)
+        self.state = self.root / "state"
+        self.config = self.root / "corner_data.json"
+        self.config.write_text(json.dumps({"data_directory": ".", "leagues": ["E1"], "max_age_days": 14}))
+        self.history = self.root / "E1_2627.csv"
+        # Synthetic history exercises real production math; odds remain recorded.
+        rows = ["Div,Date,HomeTeam,AwayTeam,HC,AC"]
+        for i in range(110):
+            day = (NOW - timedelta(days=111-i)).strftime("%d/%m/%Y")
+            rows.append(f"E1,{day},Wolves,West Brom,{3+i%6},{2+i%4}")
+        self.history.write_text("\n".join(rows) + "\n")
+        self.clock = patch.object(provider, "_now", return_value=NOW).start()
+        self.addCleanup(patch.stopall)
+        patch("urllib.request.OpenerDirector.open", side_effect=AssertionError("Live HTTP forbidden")).start()
+        patch.object(provider, "utc_timestamp", side_effect=lambda: provider._now().isoformat()).start()
+        self.quotes = provider.normalize_odds(
+            recorded("wolves-west-brom-odds"), recorded("odds-markets"),
+            recorded("odds-fixtures")[0], retrieved_at=NOW.isoformat(), now=NOW,
+        )
+
+    def capture(self, quotes=None, **kwargs):
+        return provider.capture_quotes(
+            quotes or self.quotes, data_config_path=self.config, state_dir=self.state,
+            capture_key="capture-1", **kwargs,
+        )
+
+    def saved(self):
+        paths = list((self.state / "analyses").glob("*.json"))
+        self.assertEqual(len(paths), 1)
+        return json.loads(paths[0].read_text())
+
+    def assert_unpublished(self):
+        self.assertEqual(list((self.state / "analyses").glob("*.json")), [])
+        self.assertEqual(list((self.state / "analyses").glob(".record-*")), [])
+
+    def test_one_capture_contains_33_selections_and_full_provenance(self):
+        import hashlib
+        from modelfc.corner_analysis import analyze_corner_markets
+        from modelfc.corner_api import AnalysisResponse
+        with patch.object(provider, "analyze_corner_markets", wraps=analyze_corner_markets) as analyze:
+            response, created = self.capture()
+        self.assertTrue(created)
+        self.assertEqual([len(c.args[2]) for c in analyze.call_args_list], [32, 1])
+        self.assertIs(analyze.call_args_list[0].args[0], analyze.call_args_list[1].args[0])
+        for call in analyze.call_args_list:
+            self.assertEqual(call.kwargs["available_market_types"], ("TEAM_TOTAL",))
+        self.assertEqual(len(response["markets"]), 33)
+        self.assertEqual(provider._timestamp(response["fixture"]["kickoff_at"]), provider._timestamp(self.quotes.fixture["startTime"]))
+        self.assertLess(provider._timestamp(response["created_at"]), provider._timestamp(response["fixture"]["kickoff_at"]))
+        self.assertEqual(response["fixture"]["home_team"], "Wolves")
+        self.assertEqual(response["forecast"]["source_data_hashes"][0]["sha256"], hashlib.sha256(self.history.read_bytes()).hexdigest())
+        saved = self.saved()
+        self.assertEqual(saved["response"], response)
+        context = saved["request"]["prematch"]
+        self.assertEqual(context["fixture"], self.quotes.fixture)
+        self.assertEqual(context["availability"], self.quotes.availability)
+        self.assertEqual(context["provider"], "oddspapi")
+        self.assertEqual(context["max_quote_age_seconds"], 300)
+        from dataclasses import asdict
+        self.assertEqual(context["selections"], [asdict(s) for s in self.quotes.selections])
+        self.assertEqual(saved["request"]["configuration"], dict(
+            model="venue-opponent-negative-binomial", min_history=100,
+            min_venue_history=5, smoothing_matches=5.0, max_age_days=14))
+        for m in response["markets"]:
+            if m["market_type"] == "TEAM_TOTAL":
+                for field in ("model_probability", "implied_probability", "probability_edge", "expected_profit", "push_probability", "expected_corners"):
+                    self.assertIsNotNone(m[field])
+            else:
+                self.assertEqual(m["unsupported_reason"], "HISTORICAL_EVALUATION_REQUIRED")
+                self.assertIsNone(m["model_probability"])
+        # No API response schema changes are needed for stored captures.
+        AnalysisResponse(**response)
+        self.assertFalse(any(w["code"] == "UNTRUSTED_KICKOFF" for w in response["warnings"]))
+
+    def test_exact_replay_after_kickoff_does_not_load_history_or_predict(self):
+        response, _ = self.capture()
+        original = next((self.state / "analyses").glob("*.json")).read_bytes()
+        self.clock.return_value = NOW + timedelta(days=1)
+        self.history.unlink()
+        with patch.object(provider, "configured_history", side_effect=AssertionError("recomputed")):
+            replay, created = self.capture()
+        self.assertFalse(created)
+        self.assertEqual(replay, response)
+        self.assertEqual(next((self.state / "analyses").glob("*.json")).read_bytes(), original)
+
+    def test_changed_observation_or_settings_conflict(self):
+        from copy import deepcopy
+        from modelfc.ledger_storage import LedgerError
+        self.capture()
+        mutations = [
+            replace(self.quotes, selections=(replace(self.quotes.selections[0], decimal_odds=2.5), *self.quotes.selections[1:])),
+            replace(self.quotes, selections=(replace(self.quotes.selections[0], retrieved_at=(NOW+timedelta(seconds=1)).isoformat()), *self.quotes.selections[1:])),
+        ]
+        for field, value in (("startTime", "2026-09-20T12:00:00Z"), ("participant1Id", 999), ("tournamentId", 8)):
+            q = deepcopy(self.quotes)
+            q.fixture[field] = value
+            mutations.append(q)
+        for q in mutations:
+            with self.subTest(q=q.fixture), self.assertRaisesRegex(LedgerError, "IDEMPOTENCY_CONFLICT"):
+                self.capture(q)
+        for settings in ({"smoothing_matches": 6}, {"min_history": 99}, {"model": "poisson"}):
+            with self.subTest(settings=settings), self.assertRaisesRegex(LedgerError, "IDEMPOTENCY_CONFLICT"):
+                self.capture(**settings)
+        self.config.write_text(json.dumps({"data_directory": ".", "leagues": ["E1"], "max_age_days": 10}))
+        with self.assertRaisesRegex(LedgerError, "IDEMPOTENCY_CONFLICT"):
+            self.capture()
+        self.saved()
+
+    def test_publication_checks_after_disk_flush_at_and_after_kickoff(self):
+        from modelfc import ledger_storage
+        for delta in (0, 1):
+            self.clock.return_value = NOW
+            def cross_kickoff(_):
+                self.clock.return_value = provider._timestamp(self.quotes.fixture["startTime"]) + timedelta(seconds=delta)
+            with patch.object(ledger_storage.os, "fsync", side_effect=cross_kickoff), self.assertRaisesRegex(provider.OddsPapiError, "pre-match"):
+                self.capture()
+            self.assert_unpublished()
+
+    def test_publication_rejects_quote_expiry_during_disk_flush(self):
+        from modelfc import ledger_storage
+        with patch.object(ledger_storage.os, "fsync", side_effect=lambda _: setattr(self.clock, "return_value", NOW + timedelta(seconds=301))):
+            with self.assertRaisesRegex(provider.OddsPapiError, "Stale"):
+                self.capture()
+        self.assert_unpublished()
+
+    def test_invalid_or_stale_start_never_analyzes(self):
+        for now in (NOW + timedelta(minutes=6), provider._timestamp(self.quotes.fixture["startTime"])):
+            self.clock.return_value = now
+            with patch.object(provider, "analyze_quotes", side_effect=AssertionError("must not analyze")), self.assertRaises(provider.OddsPapiError):
+                self.capture()
+            self.assert_unpublished()
+
+    def test_failure_in_second_batch_leaves_no_partial_capture(self):
+        original = provider.analyze_corner_markets
+        calls = []
+        def fail_second(*args, **kwargs):
+            calls.append(1)
+            if len(calls) == 2:
+                raise ValueError("second batch failed")
+            return original(*args, **kwargs)
+        with patch.object(provider, "analyze_corner_markets", side_effect=fail_second), self.assertRaisesRegex(ValueError, "second batch"):
+            self.capture()
+        self.assert_unpublished()
+
+    def test_history_loading_analysis_and_hashing_share_lock(self):
+        from contextlib import contextmanager
+        from modelfc import corner_analysis_store as store
+        active = False
+        @contextmanager
+        def lock(_):
+            nonlocal active
+            active = True
+            try:
+                yield
+            finally:
+                active = False
+        def checked(fn):
+            def call(*a, **kw):
+                self.assertTrue(active)
+                return fn(*a, **kw)
+            return call
+        with patch.object(provider, "configured_history_lock", lock), patch.object(provider, "configured_history", side_effect=checked(provider.configured_history)), patch.object(provider, "analyze_quotes", side_effect=checked(provider.analyze_quotes)), patch.object(store, "source_records", side_effect=checked(store.source_records)):
+            self.capture()
+
+    def test_credentials_and_unrelated_payload_fields_are_not_saved(self):
+        self.quotes.fixture["apiKey"] = "offline-private-key"
+        self.quotes.fixture["url"] = "https://example.invalid/?apiKey=offline-private-key"
+        with patch.dict(os.environ, {"ODDSPAPI_API_KEY": "offline-private-key"}):
+            self.capture()
+        self.assertNotIn("offline-private-key", json.dumps(self.saved()))
+        self.assertNotIn("apiKey", json.dumps(self.saved()))
+
+    def test_credential_in_retained_field_is_rejected(self):
+        self.quotes.availability["draftkings"]["issues"].append({"reason": "offline-private-key"})
+        with patch.dict(os.environ, {"ODDSPAPI_API_KEY": "offline-private-key"}), self.assertRaisesRegex(provider.OddsPapiError, "authentication"):
+            self.capture()
+        self.assert_unpublished()
+
+    def test_empty_or_duplicate_capture_is_rejected(self):
+        for selections in ((), (self.quotes.selections[0], self.quotes.selections[0])):
+            with self.assertRaises(provider.OddsPapiError):
+                self.capture(replace(self.quotes, selections=selections))
+        self.assert_unpublished()
+
+    def test_offline_cli_replay_needs_no_api_key_or_history(self):
+        response, _ = self.capture()
+        self.clock.return_value = NOW + timedelta(days=1)
+        self.config.unlink()
+        self.history.unlink()
+        with patch.dict(os.environ, {"ODDSPAPI_API_KEY": ""}), patch.object(provider, "OddsPapiClient", side_effect=AssertionError("API client forbidden")), redirect_stdout(StringIO()) as output:
+            code = provider.main(["--state-dir", str(self.state), "--replay-analysis", response["analysis_id"]])
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(output.getvalue()), {"analysis": response, "created": False})
+
+    def test_cli_capture_wires_real_storage(self):
+        client = Mock()
+        client.fixtures.return_value = [self.quotes.fixture]
+        client.quotes.return_value = self.quotes
+        client.requests = 3
+        client.usage_headers = {}
+        with patch.object(provider, "OddsPapiClient", return_value=client), redirect_stdout(StringIO()) as output:
+            code = provider.main(["--competition", "E1", "--date", "2026-09-20",
+                "--fixture-id", self.quotes.fixture["fixtureId"], "--analyze",
+                "--data-config", str(self.config), "--state-dir", str(self.state), "--capture-key", "cli-1"])
+        self.assertEqual(code, 0, output.getvalue())
+        self.assertEqual(self.saved()["response"], json.loads(output.getvalue())["analysis"])
 
 
 if __name__ == "__main__":
