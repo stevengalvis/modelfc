@@ -228,6 +228,12 @@ def _chain(state, analysis_id):
     return records, tip
 
 
+def load_outcome_chain(state_dir, analysis_id):
+    """Read and validate the immutable revision inventory without consulting CSVs."""
+    with ledger_lock(Path(state_dir)):
+        return _chain(state_dir, analysis_id)
+
+
 def record_outcome(*, state_dir, analysis_id, data_config_path, idempotency_key,
                    supersedes_outcome_id=None, correction_reason=None):
     """Record all saved supported team selections atomically; corrections append."""
