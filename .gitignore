@@ -51,3 +51,8 @@ coverage.xml
 # Local append-only forecast ledgers
 /live-forecast-ledger/
 /corner-ledger/
+
+# Next.js frontend dependencies and build artifacts
+/web/node_modules/
+/web/.next/
+/web/tsconfig.tsbuildinfo
