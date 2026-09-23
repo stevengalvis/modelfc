@@ -196,6 +196,10 @@ class ControllerTests(unittest.TestCase):
                     output = controller.worker(self.config, self.run, 7, SHA)
                 self.assertEqual((output["result"], output["reason"]), (result, reason))
                 self.assertEqual(output["cleanup_status"], "COMPLETE")
+                if reason == "TIMEOUT":
+                    self.assertIsNone(output["credential_leakage_check"])
+                else:
+                    self.assertIs(output["credential_leakage_check"], True)
                 clean.assert_called_once_with(self.run)
 
     def test_abandoned_sweep_does_not_prune_other_resources(self):
@@ -243,7 +247,50 @@ class ControllerTests(unittest.TestCase):
             report = controller.worker(self.config, self.run, 7, SHA)
         popen.assert_not_called()
         self.assertEqual(report["reason"], "SECURITY_ERROR")
-        self.assertFalse(report["credential_leakage_check"])
+        self.assertIs(report["credential_leakage_check"], False)
+
+    def test_early_provider_failure_uses_host_reason_and_unattested_status(self):
+        from contextlib import nullcontext
+        for status in (0, 1):
+            for endpoint in ("fixtures", "markets", "odds"):
+                with self.subTest(status=status, endpoint=endpoint):
+                    relay = controller.Relay(SECRET, Mock(return_value=(403, b'{"message":"private account detail"}')))
+                    relay.fixtures["known"] = {}
+                    query = RelayTests().query(endpoint, **(dict(fixtureId="known", bookmakers="draftkings,fanduel",
+                        verbosity="3", oddsFormat="american") if endpoint == "odds" else {}))
+                    relay.get(query)
+                    child = harness.blank_report(SHA, "FAIL", "PROVIDER_ERROR")
+                    child["credential_leakage_check"] = True  # Not trusted.
+                    process = Mock(stdout=io.BytesIO(json.dumps(child).encode()))
+                    process.wait.return_value = status
+                    with patch.object(controller, "verify_remote"), patch.object(controller, "export_source"), patch.object(controller, "snapshot_history"), patch.object(controller, "Relay", return_value=relay), patch.object(controller, "serving_relay", return_value=nullcontext()), patch.object(controller.subprocess, "Popen", return_value=nullcontext(process)), patch.object(controller, "cleanup", side_effect=lambda run: run.rmdir()):
+                        report = controller.worker(self.config, self.run, 7, SHA)
+                    self.assertEqual(report["reason"], f"PROVIDER_{endpoint.upper()}_AUTH")
+                    self.assertEqual(report["result"], "FAIL")
+                    self.assertEqual(report["api_request_count"], 1)
+                    self.assertIsNone(report["credential_leakage_check"])
+                    self.assertEqual(report["cleanup_status"], "COMPLETE")
+                    self.assertEqual(harness.checked_report(report, SHA, SECRET), report)
+                    for forbidden in (SECRET, "private", "account", "apiKey", "https://", "known"):
+                        self.assertNotIn(forbidden, json.dumps(report))
+
+    def test_credential_attestation_accepts_only_nullable_boolean(self):
+        for value in (None, True, False):
+            report = dict(harness.blank_report(SHA), credential_leakage_check=value)
+            self.assertEqual(harness.checked_report(report, SHA, SECRET), report)
+        for value in (0, 1, "passed", [], {}):
+            with self.assertRaisesRegex(ValueError, "INVALID_REPORT"):
+                harness.checked_report(dict(harness.blank_report(SHA), credential_leakage_check=value), SHA, SECRET)
+
+    def test_controller_rejects_credential_in_worker_report(self):
+        from contextlib import redirect_stdout
+        report = dict(harness.blank_report(SHA), home_team=SECRET)
+        with patch.object(sys, "argv", ["validator", "--repository", controller.REPOSITORY, "--pr", "53", "--sha", SHA]), patch.object(controller, "configuration", return_value=self.config), patch.object(controller, "command", return_value=json.dumps(report).encode()), patch.object(controller, "cleanup"), redirect_stdout(io.StringIO()) as output:
+            controller.main()
+        result = json.loads(output.getvalue())
+        self.assertEqual(result["reason"], "SECURITY_ERROR")
+        self.assertIs(result["credential_leakage_check"], False)
+        self.assertNotIn(SECRET, output.getvalue())
 
 
 class RelayTests(unittest.TestCase):
@@ -306,13 +353,56 @@ class RelayTests(unittest.TestCase):
             relay.get(self.query())
         self.assertEqual(fetch.call_count, 1)
 
+    def test_endpoint_and_http_failure_categories_are_allowlisted(self):
+        for endpoint in ("fixtures", "markets", "odds"):
+            for status, category in ((401, "AUTH"), (403, "AUTH"), (404, "NOT_FOUND"),
+                                     (429, "RATE_LIMIT"), (500, "SERVER"), (503, "SERVER"), (400, "OTHER")):
+                with self.subTest(endpoint=endpoint, status=status):
+                    fetch = Mock(return_value=(status, b'{"message":"private provider text","accountId":"private-id"}'))
+                    relay = controller.Relay(SECRET, fetch)
+                    relay.fixtures["known"] = {}
+                    target = self.query(endpoint, **(dict(fixtureId="known", bookmakers="draftkings,fanduel",
+                        verbosity="3", oddsFormat="american") if endpoint == "odds" else {}))
+                    self.assertEqual(relay.get(target), (status, b'{"error": {"code": "PROVIDER_ERROR"}}'))
+                    self.assertEqual(relay.failure, f"PROVIDER_{endpoint.upper()}_{category}")
+                    self.assertIn(relay.failure, harness.REASONS)
+                    with self.assertRaises(controller.Failure):
+                        relay.get(target)
+                    self.assertEqual(fetch.call_count, 1)
+
+    def test_malformed_success_identifies_endpoint_without_body(self):
+        for endpoint in ("fixtures", "markets", "odds"):
+            for body in (b'<html>private provider text</html>', b'{broken', b'\xff', b'{"value":NaN}'):
+                with self.subTest(endpoint=endpoint, body=body):
+                    relay = controller.Relay(SECRET, Mock(return_value=(200, body)))
+                    relay.fixtures["known"] = {}
+                    target = self.query(endpoint, **(dict(fixtureId="known", bookmakers="draftkings,fanduel",
+                        verbosity="3", oddsFormat="american") if endpoint == "odds" else {}))
+                    expected = f"PROVIDER_{endpoint.upper()}_MALFORMED"
+                    with self.assertRaisesRegex(controller.Failure, expected):
+                        relay.get(target)
+                    self.assertEqual(relay.failure, expected)
+
+    def test_transport_failure_is_sanitized_other(self):
+        relay = controller.Relay(SECRET, Mock(side_effect=controller.Failure("PROVIDER_ERROR")))
+        with self.assertRaisesRegex(controller.Failure, "PROVIDER_FIXTURES_OTHER"):
+            relay.get(self.query())
+        self.assertEqual(relay.failure, "PROVIDER_FIXTURES_OTHER")
+
+    def test_security_violation_is_not_hidden_by_prior_provider_error(self):
+        relay = controller.Relay(SECRET, Mock(return_value=(403, b'{}')))
+        relay.get(self.query())
+        with self.assertRaisesRegex(controller.Failure, "SECURITY_ERROR"):
+            relay.get(self.query(apiKey="forbidden"))
+        self.assertEqual(relay.failure, "SECURITY_ERROR")
+
     def test_empty_discovery_is_normal_and_other_404_is_error(self):
         fetch = Mock(return_value=(404, b'{"error":{"code":"FIXTURE_NOT_FOUND"}}'))
         relay = controller.Relay(SECRET, fetch)
         relay.get(self.query())
         self.assertIsNone(relay.failure)
         relay.get(self.query("markets"))
-        self.assertEqual(relay.failure, "PROVIDER_ERROR")
+        self.assertEqual(relay.failure, "PROVIDER_MARKETS_NOT_FOUND")
 
     def test_arbitrary_hosts_endpoints_filters_and_secret_echo_rejected(self):
         fetch = Mock(return_value=(200, b"[]"))
@@ -404,7 +494,7 @@ class HarnessTests(unittest.TestCase):
             original = getattr(owner, name)
             self.addCleanup(setattr, owner, name, original)
 
-    def execute(self, fixture=True, failure=None, quotes=None):
+    def execute(self, fixture=True, failure=None, quotes=None, empty_404=False):
         from tests.test_oddspapi import recorded
         class Clock(datetime):
             @staticmethod
@@ -417,6 +507,8 @@ class HarnessTests(unittest.TestCase):
             self.assertEqual(parse_qs(urlsplit(url).query)["apiKey"], [SECRET])
             path = urlsplit(url).path
             if path.endswith("/fixtures"):
+                if empty_404:
+                    return 404, b'{"error":{"code":"FIXTURE_NOT_FOUND"}}'
                 value = [recorded("odds-fixtures")[0]] if fixture else []
             elif path.endswith("/markets"):
                 value = recorded("odds-markets")
@@ -452,7 +544,7 @@ class HarnessTests(unittest.TestCase):
         self.assertEqual(report["api_request_count"], 3)
         self.assertEqual(report["replay_api_request_count"], 0)
         self.assertTrue(report["immutable_capture_verified"])
-        self.assertFalse(report["credential_leakage_check"])  # Only the host can attest this.
+        self.assertIsNone(report["credential_leakage_check"])  # Only the host can attest this.
         self.assertEqual(harness.checked_report(report, SHA, SECRET), report)
 
     def test_factory_skips_constructor_and_contains_no_secret(self):
@@ -482,6 +574,11 @@ class HarnessTests(unittest.TestCase):
     def test_no_fixture_blocked_not_pass(self):
         report = self.execute(fixture=False)
         self.assertEqual((report["result"], report["reason"]), ("BLOCKED", "NO_ELIGIBLE_FIXTURE"))
+
+    def test_expected_discovery_404_still_blocks_without_failure(self):
+        report = self.execute(empty_404=True)
+        self.assertEqual((report["result"], report["reason"]), ("BLOCKED", "NO_ELIGIBLE_FIXTURE"))
+        self.assertEqual(report["api_request_count"], 1)
 
     def test_no_team_totals_blocked(self):
         quotes = replace(self.case.quotes, selections=tuple(s for s in self.case.quotes.selections if s.request.market_type == "MATCH_TOTAL"))

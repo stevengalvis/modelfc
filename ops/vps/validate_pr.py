@@ -208,6 +208,22 @@ class Relay:
         self.fixtures = {}
 
     def get(self, target, headers=None):
+        try:
+            return self._get(target, headers)
+        except Failure as error:
+            reason = str(error)
+            if reason == "PROVIDER_ERROR":
+                reason = self.provider_reason(target, "OTHER")
+            self.failure = reason if reason == "SECURITY_ERROR" else self.failure or reason
+            raise Failure(self.failure) from None
+
+    @staticmethod
+    def provider_reason(target, category):
+        # Only fixed endpoint names enter diagnostics, never URLs or query values.
+        endpoint = {"/v4/fixtures": "FIXTURES", "/v4/markets": "MARKETS", "/v4/odds": "ODDS"}.get(urlsplit(target).path)
+        return f"PROVIDER_{endpoint}_{category}" if endpoint else "PROVIDER_ERROR"
+
+    def _get(self, target, headers=None):
         # Local transport headers are not an upstream-header interface.
         for name, value in (headers or {}).items():
             if (name.lower(), value) not in {("host", "localhost"), ("accept-encoding", "identity")}:
@@ -251,25 +267,30 @@ class Relay:
             value = json.loads(body)
         except (ValueError, UnicodeError):
             if status == 200:
-                raise Failure("PROVIDER_ERROR") from None
+                raise Failure(self.provider_reason(target, "MALFORMED")) from None
             value = None
         reject_credentials(value, (self.secret,))
         empty = (status == 404 and endpoint == "/v4/fixtures" and isinstance(value, dict)
                  and isinstance(value.get("error"), dict)
                  and value["error"].get("code") == "FIXTURE_NOT_FOUND")
         if status != 200 and not empty:
-            self.failure = "PROVIDER_ERROR"  # Includes 429: never retry upstream.
+            category = ("AUTH" if status in (401, 403) else "NOT_FOUND" if status == 404 else
+                        "RATE_LIMIT" if status == 429 else "SERVER" if 500 <= status <= 599 else "OTHER")
+            self.failure = self.provider_reason(target, category)  # Never retry upstream.
         if status != 200:
             code = "FIXTURE_NOT_FOUND" if empty else "PROVIDER_ERROR"
             return status, json.dumps({"error": {"code": code}}).encode()
         if endpoint == "/v4/fixtures" and status == 200:
             if not isinstance(value, list):
-                raise Failure("PROVIDER_ERROR")
+                raise Failure(self.provider_reason(target, "MALFORMED"))
             for fixture in value:
                 if not isinstance(fixture, dict) or not isinstance(fixture.get("fixtureId"), str):
-                    raise Failure("PROVIDER_ERROR")
+                    raise Failure(self.provider_reason(target, "MALFORMED"))
                 self.fixtures[fixture["fixtureId"]] = fixture
-        return status, json.dumps(value, allow_nan=False).encode()
+        try:
+            return status, json.dumps(value, allow_nan=False).encode()
+        except ValueError:
+            raise Failure(self.provider_reason(target, "MALFORMED")) from None
 
 
 def reject_credentials(value, secrets):
@@ -300,7 +321,7 @@ def serving_relay(directory, relay):
             try:
                 status, body = relay.get(self.path, self.headers)
             except Exception as error:
-                relay.failure = str(error) if isinstance(error, Failure) else "PROVIDER_ERROR"
+                relay.failure = relay.failure or (str(error) if isinstance(error, Failure) else "PROVIDER_ERROR")
                 status, body = 502, b'{"error":{"code":"VALIDATION_REJECTED"}}'
             self.send_response(status)
             self.send_header("Content-Type", "application/json")
@@ -389,7 +410,7 @@ def worker(config, run, pr, sha):
             reject_credentials(value, (secret, token))
             report = checked_report(value, sha, secret)
             # Disregard the untrusted process's claim; only the host sets this flag.
-            report["credential_leakage_check"] = False
+            report["credential_leakage_check"] = None
             report["api_request_count"] = relay.count
             if relay.failure:
                 raise Failure(relay.failure)
@@ -397,7 +418,12 @@ def worker(config, run, pr, sha):
     except Exception as error:
         reason = (str(error) if isinstance(error, Failure) or (isinstance(error, ValueError) and str(error) in REASONS) else
                   "TIMEOUT" if isinstance(error, subprocess.TimeoutExpired) else "EXECUTION_ERROR")
+        # A provider rejection can terminate the process before it emits a report.
+        if "relay" in locals() and relay.failure and reason != "SECURITY_ERROR":
+            reason = relay.failure
         report = blank_report(sha, result="BLOCKED" if reason == "HISTORY_UNAVAILABLE" else "FAIL", reason=reason)
+        if reason == "SECURITY_ERROR":
+            report["credential_leakage_check"] = False
         if "relay" in locals():
             report["api_request_count"] = relay.count
     finally:
@@ -455,8 +481,11 @@ def main():
                 secret = Path(config["provider_key_file"]).read_text().strip()
                 report = checked_report(json.loads(raw), args.sha, secret)
             except Exception as error:
-                reason = str(error) if isinstance(error, Failure) else "INVALID_REPORT"
+                reason = str(error) if (isinstance(error, Failure) or
+                    isinstance(error, ValueError) and str(error) == "SECURITY_ERROR") else "INVALID_REPORT"
                 report = blank_report(args.sha, reason=reason)
+                if reason == "SECURITY_ERROR":
+                    report["credential_leakage_check"] = False
             try:
                 cleanup(run)
                 report["cleanup_status"] = "COMPLETE"
@@ -467,6 +496,8 @@ def main():
             # ExecStopPost must signal cleanup failure without producing another report.
             raise SystemExit(1) from None
         report.update(result="FAIL", reason=str(error) if isinstance(error, Failure) else "INVALID_CONFIGURATION")
+        if report["reason"] == "SECURITY_ERROR":
+            report["credential_leakage_check"] = False
     print(json.dumps(report))
 
 

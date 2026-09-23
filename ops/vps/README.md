@@ -95,6 +95,18 @@ the container's assertion. This flag does not claim a container-side scan agains
 the real key or a memory-forensics attestation. No raw error or subprocess stderr
 is returned.
 
+Provider failures use fixed `PROVIDER_{FIXTURES|MARKETS|ODDS}_{category}` reasons.
+Categories are `AUTH` (401/403), `NOT_FOUND` (unexpected 404), `RATE_LIMIT` (429),
+`SERVER` (5xx), `MALFORMED` (unusable successful JSON), and `OTHER` (other HTTP
+or transport failures). Relay/security rejections remain `SECURITY_ERROR`.
+Expected fixture-discovery `404 / FIXTURE_NOT_FOUND` remains an empty result.
+No diagnostic includes a URL, query value, body, header or provider message.
+
+`credential_leakage_check` is tri-state: `true` means host boundary checks
+completed; `false` means a security violation was detected (not necessarily an
+exfiltrated credential); `null` means final attestation was not completed.
+An early provider failure therefore reports `null`, not a detected leak.
+
 PASS means a real fixture with usable TEAM_TOTAL quotes produced one complete
 capture, valid hashes/provenance, supported team probabilities/edge/EV, gated match
 totals, and identical offline replay without another provider call. BLOCKED means
