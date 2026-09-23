@@ -13,6 +13,7 @@ import hashlib
 import json
 import math
 from pathlib import Path
+import re
 import uuid
 from zoneinfo import ZoneInfo
 
@@ -140,6 +141,9 @@ def _evidence(config_path, fixture, kickoff):
             _require(not (other_date or reversed_venue or (rows and not {home, away} <= names)))
             raise OutcomeError("RESULT_NOT_AVAILABLE")
         number, row = candidates[0]
+        # Legacy int() parsing also accepts underscores, signs and Unicode digits.
+        for field in ("FTHG", "FTAG", "HC", "AC"):
+            _require(re.fullmatch(r"[0-9]+", (row.get(field) or "").strip()) is not None)
         try:
             matches = [m for m in load_matches(path)
                        if (m.match_date, m.home_team, m.away_team) == (day, home, away)]

@@ -134,6 +134,39 @@ class OutcomeTests(unittest.TestCase):
                 self.write_rows(f"E1,20/09/2026,Wolves,West Brom,{cells}\n")
                 self.assert_abstains("REVIEW_REQUIRED")
 
+    def assert_noncanonical_numeric_rejected(self, field):
+        for value in ("1_0", "+10", "-0", "١٠", "１０", "10.0", "1e1", "NaN", "Infinity", "", " "):
+            with self.subTest(field=field, value=value):
+                cells = {"FTHG": "2", "FTAG": "1", "HC": "6", "AC": "3"}
+                cells[field] = value
+                result = "A" if field == "FTAG" else "H"
+                self.write_rows(f"E1,20/09/2026,Wolves,West Brom,{cells['FTHG']},{cells['FTAG']},{result},{cells['HC']},{cells['AC']}\n")
+                with patch.object(outcomes, "load_matches", wraps=outcomes.load_matches) as scores, \
+                     patch.object(outcomes, "load_corner_observations", wraps=outcomes.load_corner_observations) as corners:
+                    self.assert_abstains("REVIEW_REQUIRED")
+                scores.assert_not_called()
+                corners.assert_not_called()
+                self.assertEqual(self.capture_path.read_bytes(), self.original)
+
+    def test_noncanonical_home_score_rejected(self):
+        self.assert_noncanonical_numeric_rejected("FTHG")
+
+    def test_noncanonical_away_score_rejected(self):
+        self.assert_noncanonical_numeric_rejected("FTAG")
+
+    def test_noncanonical_home_corners_rejected(self):
+        self.assert_noncanonical_numeric_rejected("HC")
+
+    def test_noncanonical_away_corners_rejected(self):
+        self.assert_noncanonical_numeric_rejected("AC")
+
+    def test_ascii_zero_and_multidigit_counts_remain_valid(self):
+        self.write_rows("E1,20/09/2026,Wolves,West Brom, 10 ,0,H, 10 ,0\n")
+        record, created = self.record()
+        self.assertTrue(created)
+        self.assertEqual(record["result"], {"home_corners": 10, "away_corners": 0})
+        self.assertEqual(record["source"]["row"]["HC"], " 10 ")
+
     def test_source_date_disagreement_not_rematched(self):
         self.write_rows("E1,21/09/2026,Wolves,West Brom,2,1,H,6,3\n")
         self.assert_abstains("REVIEW_REQUIRED")
