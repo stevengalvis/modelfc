@@ -25,16 +25,19 @@ REASONS = {
     "SOURCE_ERROR", "INVALID_REPORT", "HISTORY_UNAVAILABLE",
     "CLIENT_INTERFACE_CHANGED",
 }
+REASONS.update(f"PROVIDER_{endpoint}_{category}"
+               for endpoint in ("FIXTURES", "MARKETS", "ODDS")
+               for category in ("AUTH", "NOT_FOUND", "RATE_LIMIT", "SERVER", "MALFORMED", "OTHER"))
 COUNTS = ("api_request_count", "selection_count", "team_total_count",
           "supported_team_total_count", "match_total_count", "gated_match_total_count",
           "analysis_batch_count", "replay_api_request_count")
-FLAGS = ("immutable_capture_verified", "offline_replay_identical", "credential_leakage_check")
+FLAGS = ("immutable_capture_verified", "offline_replay_identical")
 
 
 def blank_report(sha, result="FAIL", reason="EXECUTION_ERROR"):
     return dict(result=result, commit_sha=sha, competition=None, fixture_id=None,
                 home_team=None, away_team=None, kickoff_utc=None, capture_hash=None,
-                cleanup_status="PENDING", reason=reason,
+                cleanup_status="PENDING", reason=reason, credential_leakage_check=None,
                 **{k: 0 for k in COUNTS}, **{k: False for k in FLAGS})
 
 
@@ -55,6 +58,8 @@ def checked_report(value, sha, secret):
     for k in FLAGS:
         if type(value[k]) is not bool:
             raise ValueError("INVALID_REPORT")
+    if value["credential_leakage_check"] is not None and type(value["credential_leakage_check"]) is not bool:
+        raise ValueError("INVALID_REPORT")
     for k in ("fixture_id", "home_team", "away_team", "kickoff_utc", "capture_hash"):
         if value[k] is not None and (not isinstance(value[k], str) or len(value[k]) > 160
                                    or any(ord(c) < 32 for c in value[k])):
