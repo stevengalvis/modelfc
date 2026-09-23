@@ -257,7 +257,10 @@ class Relay:
         if self.count >= BUDGET:
             raise Failure("REQUEST_BUDGET_EXCEEDED")
         if self.last is not None:
-            self.sleep(max(0, 2.1 - (time.monotonic() - self.last)))
+            interval = 3.0 if endpoint == "/v4/fixtures" else 2.1
+            remaining = interval - (time.monotonic() - self.last)
+            if remaining > 0:
+                self.sleep(remaining)
         self.last = time.monotonic()
         self.count += 1
         status, body = self.fetch("https://api.oddspapi.io" + endpoint + "?" + urlencode(dict(params, apiKey=self.secret)),

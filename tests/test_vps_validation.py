@@ -353,6 +353,62 @@ class RelayTests(unittest.TestCase):
             relay.get(self.query())
         self.assertEqual(fetch.call_count, 1)
 
+    def test_fixture_pacing_with_empty_results_and_bounded_budget(self):
+        clock, starts = [100.0], []
+        def sleep(seconds):
+            clock[0] += seconds
+        def fetch(*args):
+            starts.append(clock[0])
+            clock[0] += 0.25  # Time spent receiving the response counts toward spacing.
+            return 404, b'{"error":{"code":"FIXTURE_NOT_FOUND"}}'
+        sleeper = Mock(side_effect=sleep)
+        relay = controller.Relay(SECRET, fetch, sleeper)
+        with patch.object(controller.time, "monotonic", side_effect=lambda: clock[0]):
+            for index in range(controller.BUDGET):
+                status, body = relay.get(self.query())
+                self.assertEqual(status, 404)
+                self.assertEqual(json.loads(body)["error"]["code"], "FIXTURE_NOT_FOUND")
+                self.assertIsNone(relay.failure)
+                self.assertEqual(sleeper.call_count, index)  # No first-request or trailing sleep.
+                self.assertEqual(clock[0], starts[-1] + 0.25)
+            with self.assertRaisesRegex(controller.Failure, "REQUEST_BUDGET_EXCEEDED"):
+                relay.get(self.query())
+        self.assertTrue(all(b - a >= 3.0 for a, b in zip(starts, starts[1:])))
+        self.assertEqual(len(starts), controller.BUDGET)
+        self.assertEqual(sleeper.call_count, controller.BUDGET - 1)
+
+    def test_mixed_endpoint_pacing_preserves_markets_and_odds_interval(self):
+        clock, starts = [100.0], []
+        def sleep(seconds):
+            clock[0] += seconds
+        def fetch(*args):
+            starts.append(clock[0])
+            return 200, b'[]'
+        sleeper = Mock(side_effect=sleep)
+        relay = controller.Relay(SECRET, fetch, sleeper)
+        relay.fixtures["known"] = {}
+        odds = self.query("odds", fixtureId="known", bookmakers="draftkings,fanduel", verbosity="3", oddsFormat="american")
+        with patch.object(controller.time, "monotonic", side_effect=lambda: clock[0]):
+            for target in (self.query(), self.query("markets"), odds, self.query()):
+                relay.get(target)
+            self.assertEqual([call.args[0] for call in sleeper.call_args_list], [2.1, 2.1, 3.0])
+            clock[0] += 4.0
+            relay.get(self.query())
+            self.assertEqual(sleeper.call_count, 3)  # Already spaced; no sleep(0).
+        self.assertEqual(len(starts), 5)
+
+    def test_fixture_rate_limit_keeps_diagnostic_and_never_retries_or_sleeps(self):
+        fetch = Mock(return_value=(429, b'{"error":{"code":"RATE_LIMITED"}}'))
+        sleeper = Mock()
+        relay = controller.Relay(SECRET, fetch, sleeper)
+        with patch.object(controller.time, "monotonic", return_value=100.0):
+            self.assertEqual(relay.get(self.query())[0], 429)
+            self.assertEqual(relay.failure, "PROVIDER_FIXTURES_RATE_LIMIT")
+            with self.assertRaisesRegex(controller.Failure, "PROVIDER_FIXTURES_RATE_LIMIT"):
+                relay.get(self.query())
+        fetch.assert_called_once()
+        sleeper.assert_not_called()
+
     def test_endpoint_and_http_failure_categories_are_allowlisted(self):
         for endpoint in ("fixtures", "markets", "odds"):
             for status, category in ((401, "AUTH"), (403, "AUTH"), (404, "NOT_FOUND"),
