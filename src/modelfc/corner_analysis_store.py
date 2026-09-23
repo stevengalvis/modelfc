@@ -149,6 +149,11 @@ def load_analysis(state_dir: str | Path, analysis_id: str) -> dict[str, Any]:
     return _load_analysis_record(state_dir, analysis_id)["response"]
 
 
+def load_analysis_capture(state_dir: str | Path, analysis_id: str) -> dict[str, Any]:
+    """Read the validated immutable envelope, including request provenance."""
+    return _load_analysis_record(state_dir, analysis_id)
+
+
 def analyze_and_store(
     *, data_config_path: str | Path, state_dir: str | Path,
     idempotency_key: str, competition: str, fixture_date: date,
