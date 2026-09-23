@@ -144,6 +144,41 @@ class _Client(provider.OddsPapiClient):
         self.tokens = count
         _save(self.path, self.control)
 
+    @staticmethod
+    def _validate_market_metadata(metadata):
+        # The provider normalizer mixes metadata and fixture errors. Check the
+        # shared dictionary before fetching odds so structural errors cannot be
+        # mistaken for an isolated fixture failure. No pricing/analysis here.
+        try:
+            ids = set()
+            for entry in provider._array(metadata):
+                entry = provider._object(entry)
+                mid = entry.get("marketId")
+                if type(mid) is not int or mid in ids:
+                    raise ValueError
+                ids.add(mid)
+                if (entry.get("marketType") not in provider.FAMILIES
+                        or entry.get("period") != "fulltime" or entry.get("sportId") != 10
+                        or entry.get("playerProp") is not False):
+                    continue
+                line = entry.get("handicap")
+                if (type(line) not in (int, float) or not math.isfinite(line)
+                        or line < 0 or line * 2 != int(line * 2)):
+                    raise ValueError
+                outcomes = provider._array(entry.get("outcomes"))
+                outcome_ids, directions = set(), []
+                for outcome in outcomes:
+                    outcome = provider._object(outcome)
+                    oid = outcome.get("outcomeId")
+                    if type(oid) is not int or oid in outcome_ids:
+                        raise ValueError
+                    outcome_ids.add(oid)
+                    directions.append(outcome.get("outcomeName"))
+                if len(directions) != 2 or "Over" not in directions or "Under" not in directions:
+                    raise ValueError
+        except (ValueError, TypeError, OverflowError):
+            raise RunnerError("MARKET_METADATA_INVALID") from None
+
     def _get(self, endpoint, **params):
         if self.tokens <= 0 or endpoint not in ("fixtures", "markets", "odds"):
             raise RunnerError("REQUEST_BUDGET")
@@ -160,7 +195,10 @@ class _Client(provider.OddsPapiClient):
         # The persisted runner guard replaces the instance-only sleep.
         self._last_request = None
         try:
-            return super()._get(endpoint, **params)
+            payload = super()._get(endpoint, **params)
+            if endpoint == "markets":
+                self._validate_market_metadata(payload)
+            return payload
         except provider.OddsPapiError:
             raise RunnerError("PROVIDER_FAILURE") from None
         finally:

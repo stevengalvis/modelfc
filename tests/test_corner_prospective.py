@@ -31,6 +31,7 @@ class PilotTests(unittest.TestCase):
         self.fixtures = [recorded.recorded("odds-fixtures")[0]]
         self.payload = recorded.recorded("wolves-west-brom-odds")
         self.error = None
+        self.metadata = recorded.recorded("odds-markets")
         self.opened = patch("urllib.request.OpenerDirector.open", side_effect=self.http).start()
         runner.initialize_period(self.state, date(2026, 9, 1), date(2026, 10, 1))
         self.path = self.state / "prospective" / "control.json"
@@ -55,7 +56,7 @@ class PilotTests(unittest.TestCase):
         if endpoint == "fixtures":
             value = deepcopy(self.fixtures)
         elif endpoint == "markets":
-            value = recorded.recorded("odds-markets")
+            value = deepcopy(self.metadata)
         else:
             fixture = next(f for f in self.fixtures if f["fixtureId"] == params["fixtureId"][0])
             value = dict(deepcopy(self.payload), **fixture)
@@ -453,6 +454,94 @@ class PilotTests(unittest.TestCase):
         self.assertEqual(result["captures_created"], 0)
         self.assertEqual(result["reasons"], ["CAPTURE_WINDOW_CLOSED"])
         self.assertFalse(self.capture_paths())
+
+    def test_malformed_shared_metadata_stops_before_odds_and_next_fixture(self):
+        valid = recorded.recorded("odds-markets")
+        corner = next(m for m in valid if m["marketType"] == "totals-corners")
+        cases = [None, {"message": "offline-secret"}, [None], valid + [valid[0]],
+                 [dict(corner, marketId="bad")], [dict(corner, handicap="offline-secret")],
+                 [dict(corner, handicap=float("inf"))], [dict(corner, outcomes=None)],
+                 [dict(corner, outcomes=[None])],
+                 [dict(corner, outcomes=[{"outcomeId": 1, "outcomeName": "Over"}])],
+                 [dict(corner, outcomes=[{"outcomeId": 1, "outcomeName": "Over"},
+                                        {"outcomeId": 1, "outcomeName": "Under"}])],
+                 [dict(corner, outcomes=[{"outcomeId": 1, "outcomeName": "Over"},
+                                        {"outcomeId": 2, "outcomeName": "offline-secret"}])]]
+        self.fixtures = [dict(self.fixtures[0], fixtureId="first"),
+                         dict(self.fixtures[0], fixtureId="second")]
+        for metadata in cases:
+            with self.subTest(metadata=type(metadata).__name__):
+                self.write_control(lambda c: c.update(discovery=None, attempts={}))
+                before_reserved = self.control()["period"]["reserved"]
+                self.metadata = metadata
+                self.calls.clear()
+                result = self.run_pilot()
+                self.assertEqual([name for name, _ in self.calls], ["fixtures", "markets"])
+                self.assertEqual(result["provider_requests"], 2)
+                self.assertEqual(result["reasons"], ["MARKET_METADATA_INVALID"])
+                self.assertEqual(result["status"], "PARTIAL")
+                self.assertEqual(result["review_required"], 0)
+                control = self.control()
+                self.assertEqual(control["period"]["reserved"], before_reserved + 3)
+                self.assertEqual(list(control["attempts"]), ["first"])
+                self.assertEqual(control["attempts"]["first"]["state"], "RESERVED")
+                self.assertFalse(self.capture_paths())
+                for forbidden in ("offline-secret", "https://", "apiKey", "headers"):
+                    self.assertNotIn(forbidden, json.dumps(result))
+
+    def test_genuine_fixture_odds_structure_failure_is_isolated(self):
+        self.fixtures = [dict(self.fixtures[0], fixtureId="first"),
+                         dict(self.fixtures[0], fixtureId="second")]
+        original = self.http
+        def malformed_odds(request, **kwargs):
+            response = original(request, **kwargs)
+            parts = urlsplit(request.full_url)
+            if parts.path.endswith("/odds") and parse_qs(parts.query)["fixtureId"] == ["first"]:
+                payload = json.loads(response.read())
+                response.close()
+                payload["bookmakerOdds"]["draftkings"]["markets"] = "offline-secret"
+                response = BytesIO(json.dumps(payload).encode())
+                response.headers = {}
+            return response
+        self.opened.side_effect = malformed_odds
+        result = self.run_pilot()
+        self.assertEqual([name for name, _ in self.calls], ["fixtures", "markets", "odds", "markets", "odds"])
+        self.assertEqual(result["review_required"], 1)
+        self.assertEqual(result["captures_created"], 1)
+        self.assertEqual(result["reasons"], ["FIXTURE_REVIEW"])
+        self.assertNotIn("offline-secret", json.dumps(result))
+
+    def test_metadata_failure_preserves_completed_capture_and_reservations(self):
+        self.fixtures = [dict(self.fixtures[0], fixtureId=f"fixture-{i}") for i in range(3)]
+        original = self.http
+        def fail_second_metadata(request, **kwargs):
+            if urlsplit(request.full_url).path.endswith("/markets") and any(name == "odds" for name, _ in self.calls):
+                self.metadata = [{"marketId": 1}, {"marketId": 1}]
+            return original(request, **kwargs)
+        self.opened.side_effect = fail_second_metadata
+        result = self.run_pilot()
+        self.assertEqual(result["captures_created"], 1)
+        self.assertEqual(result["provider_requests"], 4)
+        self.assertEqual(result["reasons"], ["MARKET_METADATA_INVALID"])
+        self.assertEqual(self.control()["period"]["reserved"], 5)
+        self.assertEqual(len(self.control()["attempts"]), 2)
+        self.assertEqual(len(self.capture_paths()), 1)
+        capture = runner.load_analysis_capture(self.state, self.capture_paths()[0].stem)
+        self.assertEqual(capture["request"]["prematch"]["fixture"]["fixtureId"], "fixture-0")
+
+    def test_metadata_failure_preserves_completed_settlement(self):
+        self.run_pilot()
+        original = self.capture_paths()[0].read_bytes()
+        self.after_kickoff()
+        self.fixtures = [dict(self.fixtures[0], fixtureId="later", startTime="2026-09-20T18:00:00Z")]
+        self.write_control(lambda c: c.update(discovery=None))
+        self.metadata = None
+        result = self.run_pilot()
+        self.assertEqual(result["outcomes_created"], 1)
+        self.assertEqual(result["provider_requests"], 2)
+        self.assertEqual(result["reasons"], ["MARKET_METADATA_INVALID"])
+        self.assertEqual(self.capture_paths()[0].read_bytes(), original)
+        self.assertEqual(len(list((self.state/"analysis-outcomes").rglob("*.json"))), 1)
 
     def test_cli_one_json_summary(self):
         with redirect_stdout(StringIO()) as output:
