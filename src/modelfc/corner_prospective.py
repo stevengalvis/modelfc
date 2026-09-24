@@ -21,12 +21,8 @@ import uuid
 from modelfc.corner_analysis_store import load_analysis_capture
 from modelfc.corner_analysis_outcomes import OutcomeError, load_outcome_chain, record_outcome
 from modelfc.ledger_storage import LedgerError, ledger_lock
-from modelfc.providers import oddspapi as provider
-
-FIXTURE_FIELDS = ("fixtureId", "sportId", "tournamentId", "tournamentSlug", "categorySlug",
-                  "participant1Id", "participant2Id", "participant1Name", "participant2Name",
-                  "startTime", "statusId")
-
+from modelfc.corner_market_data import MarketDataError, MarketDataSource
+from modelfc.providers.oddspapi import OddsPapiMarketData
 
 class RunnerError(ValueError):
     pass
@@ -34,6 +30,13 @@ class RunnerError(ValueError):
 
 def _now():
     return datetime.now(timezone.utc)
+
+
+def _timestamp(value):
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        raise ValueError("timestamp must have a time zone")
+    return parsed.astimezone(timezone.utc)
 
 
 def _require(condition):
@@ -73,7 +76,7 @@ def _save(path, control):
             temporary.unlink(missing_ok=True)
 
 
-def _load(path):
+def _load(path, market_data_type=OddsPapiMarketData):
     if not path.exists():
         raise RunnerError("CONTROL_MISSING")
     try:
@@ -93,7 +96,7 @@ def _load(path):
             _require(set(attempt) == {"count", "state", "at"})
             _require(type(attempt["count"]) is int and attempt["count"] in (1, 2))
             _require(attempt["state"] in ("RESERVED", "NO_TEAM_TOTAL", "DONE", "REVIEW", "HISTORY"))
-            provider._timestamp(attempt["at"])
+            _timestamp(attempt["at"])
         discovery = control["discovery"]
         if discovery is not None:
             _require(set(discovery) == {"date", "status", "fixtures"})
@@ -103,10 +106,10 @@ def _load(path):
             _require(discovery["status"] == "DONE" or not discovery["fixtures"])
             ids = set()
             for fixture in discovery["fixtures"]:
-                _require(set(fixture) == set(FIXTURE_FIELDS))
-                kickoff = provider.validate_fixture(fixture, datetime.combine(day, datetime.min.time(), timezone.utc) - timedelta(seconds=1), "E1")
-                _require(kickoff.date() == day and fixture["fixtureId"] not in ids)
-                ids.add(fixture["fixtureId"])
+                normalized = market_data_type.cached_fixture(
+                    fixture, datetime.combine(day, datetime.min.time(), timezone.utc) - timedelta(seconds=1), "E1")
+                _require(normalized.kickoff_utc.date() == day and normalized.provider_fixture_id not in ids)
+                ids.add(normalized.provider_fixture_id)
         return control
     except (ValueError, TypeError, KeyError, AttributeError):
         raise RunnerError("CONTROL_INVALID") from None
@@ -126,10 +129,9 @@ def initialize_period(state_dir, start, end, allowance=180):
         _save(path, control)
 
 
-class _Client(provider.OddsPapiClient):
-    """Runner-only pacing and prepaid requests; production HTTP stays unchanged."""
+class _RequestBudgetGuard:
+    """Persist bounded reservations and pacing across runner invocations."""
     def __init__(self, path, control, summary):
-        super().__init__("E1")
         self.path, self.control, self.summary = path, control, summary
         self.reserved = self.tokens = 0
 
@@ -144,46 +146,11 @@ class _Client(provider.OddsPapiClient):
         self.tokens = count
         _save(self.path, self.control)
 
-    @staticmethod
-    def _validate_market_metadata(metadata):
-        # The provider normalizer mixes metadata and fixture errors. Check the
-        # shared dictionary before fetching odds so structural errors cannot be
-        # mistaken for an isolated fixture failure. No pricing/analysis here.
-        try:
-            ids = set()
-            for entry in provider._array(metadata):
-                entry = provider._object(entry)
-                mid = entry.get("marketId")
-                if type(mid) is not int or mid in ids:
-                    raise ValueError
-                ids.add(mid)
-                if (entry.get("marketType") not in provider.FAMILIES
-                        or entry.get("period") != "fulltime" or entry.get("sportId") != 10
-                        or entry.get("playerProp") is not False):
-                    continue
-                line = entry.get("handicap")
-                if (type(line) not in (int, float) or not math.isfinite(line)
-                        or line < 0 or line * 2 != int(line * 2)):
-                    raise ValueError
-                outcomes = provider._array(entry.get("outcomes"))
-                outcome_ids, directions = set(), []
-                for outcome in outcomes:
-                    outcome = provider._object(outcome)
-                    oid = outcome.get("outcomeId")
-                    if type(oid) is not int or oid in outcome_ids:
-                        raise ValueError
-                    outcome_ids.add(oid)
-                    directions.append(outcome.get("outcomeName"))
-                if len(directions) != 2 or "Over" not in directions or "Under" not in directions:
-                    raise ValueError
-        except (ValueError, TypeError, OverflowError):
-            raise RunnerError("MARKET_METADATA_INVALID") from None
-
-    def _get(self, endpoint, **params):
-        if self.tokens <= 0 or endpoint not in ("fixtures", "markets", "odds"):
+    def before_request(self, kind):
+        if self.tokens <= 0 or kind not in ("FIXTURE_DISCOVERY", "MARKET_METADATA", "FIXTURE_ODDS"):
             raise RunnerError("REQUEST_BUDGET")
         last = self.control["last_request"]
-        interval = 3.0 if endpoint == "fixtures" else 2.1
+        interval = 3.0 if kind == "FIXTURE_DISCOVERY" else 2.1
         if last is not None:
             delay = last + interval - _now().timestamp()
             if delay > 0:
@@ -192,18 +159,10 @@ class _Client(provider.OddsPapiClient):
         _save(self.path, self.control)
         self.tokens -= 1
         self.summary["provider_requests"] += 1
-        # The persisted runner guard replaces the instance-only sleep.
-        self._last_request = None
-        try:
-            payload = super()._get(endpoint, **params)
-            if endpoint == "markets":
-                self._validate_market_metadata(payload)
-            return payload
-        except provider.OddsPapiError:
-            raise RunnerError("PROVIDER_FAILURE") from None
-        finally:
-            self.control["last_request"] = _now().timestamp()
-            _save(self.path, self.control)
+
+    def after_request(self):
+        self.control["last_request"] = _now().timestamp()
+        _save(self.path, self.control)
 
 
 def _reason(summary, code):
@@ -213,7 +172,7 @@ def _reason(summary, code):
         summary["status"] = "PARTIAL"
 
 
-def _inventory(state, config, summary):
+def _inventory(state, config, summary, market_data_type):
     captured = set()
     for path in sorted((state / "analyses").glob("*.json")):
         if path.stem != uuid.UUID(path.stem).hex or path.is_symlink():
@@ -221,14 +180,17 @@ def _inventory(state, config, summary):
         capture = load_analysis_capture(state, path.stem)
         request, response = capture["request"], capture["response"]
         prematch = request.get("prematch")
-        if not prematch or prematch.get("provider") != "oddspapi" or request.get("competition") != "E1":
+        if (not prematch or prematch.get("provider") != market_data_type.provider_name
+                or request.get("competition") != "E1"):
             continue
         fixture = prematch["fixture"]
-        kickoff = provider.validate_fixture(fixture, provider._timestamp(response["created_at"]), "E1")
-        if (provider._timestamp(response["fixture"]["kickoff_at"]) != kickoff
+        normalized = market_data_type.fixture_from_provenance(
+            fixture, _timestamp(response["created_at"]), "E1")
+        kickoff = normalized.kickoff_utc
+        if (_timestamp(response["fixture"]["kickoff_at"]) != kickoff
                 or response["fixture"]["competition"] != "E1"):
             raise LedgerError("Invalid capture identity")
-        captured.add(fixture["fixtureId"])
+        captured.add(normalized.provider_fixture_id)
         _, tip = load_outcome_chain(state, path.stem)
         if tip is not None:
             reference = tip["capture"]
@@ -259,31 +221,34 @@ def _inventory(state, config, summary):
     return captured
 
 
-def _provider_work(path, control, state, config, summary, captured):
-    client = None
+def _provider_work(path, control, state, config, summary, captured, market_data_type):
+    client = guard = None
     def get_client():
-        nonlocal client
+        nonlocal client, guard
         if client is None:
+            guard = _RequestBudgetGuard(path, control, summary)
             try:
-                client = _Client(path, control, summary)
-            except provider.OddsPapiError:
-                raise RunnerError("PROVIDER_CONFIGURATION") from None
+                client = market_data_type("E1", guard)
+            except MarketDataError as error:
+                raise RunnerError(str(error)) from None
         return client
 
     day = _now().date().isoformat()
     discovery = control["discovery"]
     if discovery is None or discovery["date"] != day:
         client = get_client()
-        client.reserve(1)
+        guard.reserve(1)
         discovery = {"date": day, "status": "RESERVED", "fixtures": []}
         control["discovery"] = discovery
         _save(path, control)
         try:
-            fixtures = client.fixtures(date.fromisoformat(day))
-            discovery["fixtures"] = [{key: f[key] for key in FIXTURE_FIELDS} for f in fixtures]
+            fixtures = client.discover_fixtures("E1", date.fromisoformat(day))
+            discovery["fixtures"] = [market_data_type.cache_fixture(f) for f in fixtures]
             discovery["status"] = "DONE"
             _save(path, control)
-        except provider.OddsPapiError:
+        except MarketDataError as error:
+            if str(error) != "DISCOVERY_INVALID":
+                raise RunnerError(str(error)) from None
             discovery["status"] = "FAILED"
             _save(path, control)
             raise RunnerError("DISCOVERY_INVALID") from None
@@ -291,42 +256,49 @@ def _provider_work(path, control, state, config, summary, captured):
         _reason(summary, "DISCOVERY_INCOMPLETE")
         return
     summary["fixtures_discovered"] = len(discovery["fixtures"])
-    for fixture in sorted(discovery["fixtures"], key=lambda f: (f["startTime"], f["fixtureId"])):
-        fid = fixture["fixtureId"]
-        seconds = (provider._timestamp(fixture["startTime"]) - _now()).total_seconds()
+    fixtures = [market_data_type.cached_fixture(
+        raw, datetime.combine(date.fromisoformat(day), datetime.min.time(), timezone.utc) - timedelta(seconds=1), "E1")
+        for raw in discovery["fixtures"]]
+    for fixture in sorted(fixtures, key=lambda f: (f.kickoff_utc, f.provider_fixture_id)):
+        fid = fixture.provider_fixture_id
+        seconds = (fixture.kickoff_utc - _now()).total_seconds()
         if fid in captured or not 900 < seconds <= 21600:
             continue
         previous = control["attempts"].get(fid)
         if previous and not (previous["count"] == 1 and previous["state"] == "NO_TEAM_TOTAL"
-                             and seconds <= 3600 and _now() > provider._timestamp(previous["at"])):
+                             and seconds <= 3600 and _now() > _timestamp(previous["at"])):
             if previous["state"] == "RESERVED":
                 _reason(summary, "ATTEMPT_INCOMPLETE")
             continue
         # Recheck evidence immediately before quotes, including manual captures.
         with ledger_lock(state):
             for existing in (state / "analyses").glob("*.json"):
-                saved = load_analysis_capture(state, existing.stem)["request"]
-                pm = saved.get("prematch", {})
-                if saved.get("competition") == "E1" and pm.get("provider") == "oddspapi" and pm["fixture"]["fixtureId"] == fid:
+                saved = load_analysis_capture(state, existing.stem)
+                request = saved["request"]
+                pm = request.get("prematch", {})
+                if (request.get("competition") == "E1" and pm.get("provider") == fixture.provider
+                        and market_data_type.fixture_from_provenance(
+                            pm["fixture"], _timestamp(saved["response"]["created_at"]), "E1"
+                        ).provider_fixture_id == fid):
                     captured.add(fid)
         if fid in captured:
             continue
         client = get_client()
-        client.reserve(2)
+        guard.reserve(2)
         attempt = {"count": 1 if previous is None else 2, "state": "RESERVED", "at": _now().isoformat()}
         control["attempts"][fid] = attempt
         _save(path, control)
         try:
-            quotes = client.quotes(fixture)
+            quotes = client.get_corner_markets(fixture)
             if not any(s.request.market_type == "TEAM_TOTAL" for s in quotes.selections):
                 attempt["state"] = "NO_TEAM_TOTAL"
                 summary["captures_skipped_no_team_totals"] += 1
-            elif (provider._timestamp(fixture["startTime"]) - _now()).total_seconds() <= 900:
+            elif (fixture.kickoff_utc - _now()).total_seconds() <= 900:
                 attempt["state"] = "DONE"
                 _reason(summary, "CAPTURE_WINDOW_CLOSED")
             else:
-                response, created = provider.capture_quotes(quotes, data_config_path=config,
-                    state_dir=state, capture_key=f"prospective:v1:oddspapi:E1:{fid}")
+                response, created = client.capture(quotes, data_config_path=config,
+                    state_dir=state, capture_key=f"prospective:v1:{fixture.provider}:E1:{fid}")
                 captured.add(fid)
                 attempt["state"] = "DONE"
                 summary["captures_created"] += int(created)
@@ -336,7 +308,9 @@ def _provider_work(path, control, state, config, summary, captured):
                     "STALE_DATA", "TEAM_HISTORY_AGE", "TEAM_VENUE_HISTORY_AGE"}))
         except RunnerError:
             raise
-        except provider.OddsPapiError:
+        except MarketDataError as error:
+            if str(error) != "FIXTURE_REVIEW":
+                raise RunnerError(str(error)) from None
             attempt["state"] = "REVIEW"
             summary["review_required"] += 1
             _reason(summary, "FIXTURE_REVIEW")
@@ -351,7 +325,7 @@ def _provider_work(path, control, state, config, summary, captured):
         _save(path, control)
 
 
-def run_once(*, state_dir, data_config_path):
+def run_once(*, state_dir, data_config_path, market_data_type: type[MarketDataSource] = OddsPapiMarketData):
     summary = {"status": "OK", **dict.fromkeys(("fixtures_discovered", "captures_created",
         "captures_existing", "captures_skipped_no_team_totals", "captures_with_history_warnings",
         "captures_awaiting_kickoff", "outcomes_created", "outcomes_pending", "outcomes_settled",
@@ -359,9 +333,9 @@ def run_once(*, state_dir, data_config_path):
     control = None
     try:
         with _lock(state_dir) as path:
-            control = _load(path)
-            captured = _inventory(Path(state_dir), data_config_path, summary)
-            _provider_work(path, control, Path(state_dir), data_config_path, summary, captured)
+            control = _load(path, market_data_type)
+            captured = _inventory(Path(state_dir), data_config_path, summary, market_data_type)
+            _provider_work(path, control, Path(state_dir), data_config_path, summary, captured, market_data_type)
     except RunnerError as error:
         code = str(error)  # Only fixed internal codes cross this boundary.
         summary["status"] = "BUSY" if code == "BUSY" else "FAIL" if code in (

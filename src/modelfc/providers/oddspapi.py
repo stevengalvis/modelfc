@@ -13,6 +13,7 @@ from dataclasses import asdict, dataclass, replace
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 import json
+import math
 import os
 from pathlib import Path
 from types import MappingProxyType
@@ -24,6 +25,10 @@ from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from modelfc.corner_analysis import (
     MAX_MARKETS_PER_ANALYSIS, CornerMarketRequest, analyze_corner_markets,
+)
+from modelfc.corner_market_data import (
+    CornerMarketObservation, MarketDataError, MarketFixture,
+    MarketSelection as OddsPapiSelection, RequestGuard,
 )
 from modelfc.corner_analysis_store import analysis_response, load_analysis, store_analysis_capture
 from modelfc.corner_capabilities import supported_markets_for
@@ -176,21 +181,6 @@ def select_fixture(fixtures, fixture_id, now, competition="E1"):
         raise OddsPapiError("Ambiguous fixture ID in provider response")
     validate_fixture(matches[0], now, competition)
     return matches[0]
-
-
-@dataclass(frozen=True)
-class OddsPapiSelection:
-    request: CornerMarketRequest
-    fixture_id: str
-    bookmaker: str
-    market_id: str
-    outcome_id: str
-    market_name: str
-    decimal_odds: float
-    main_line: bool | None
-    changed_at: str | None
-    bookmaker_changed_at: str | None
-    retrieved_at: str
 
 
 @dataclass(frozen=True)
@@ -494,6 +484,138 @@ class OddsPapiClient:
                             bookmakers=",".join(BOOKMAKERS), verbosity=3,
                             language="en", oddsFormat="american")
         return normalize_odds(payload, metadata, fixture, retrieved_at=_now().isoformat(), competition=self.config.code)
+
+
+class OddsPapiMarketData(OddsPapiClient):
+    """Existing OddsPapi boundary presented as normalized corner capabilities.
+
+    A future search can reuse shared market metadata inside this adapter; the
+    current runner still fetches it once per fixture as before.
+    """
+
+    provider_name = "oddspapi"
+    _cache_fields = ("fixtureId", "sportId", "tournamentId", "tournamentSlug",
+                     "categorySlug", "participant1Id", "participant2Id",
+                     "participant1Name", "participant2Name", "startTime", "statusId")
+
+    def __init__(self, competition="E1", request_guard: RequestGuard | None = None):
+        try:
+            super().__init__(competition)
+        except OddsPapiError:
+            raise MarketDataError("PROVIDER_CONFIGURATION") from None
+        self.request_guard = request_guard
+
+    @staticmethod
+    def fixture_from_provenance(raw: dict, as_of: datetime, competition="E1") -> MarketFixture:
+        try:
+            kickoff = validate_fixture(raw, as_of, competition)
+            aliases = dict(COMPETITIONS[competition].aliases)
+            return MarketFixture(
+                competition, aliases.get(raw["participant1Name"], raw["participant1Name"]),
+                aliases.get(raw["participant2Name"], raw["participant2Name"]),
+                kickoff, "oddspapi", raw["fixtureId"], dict(raw),
+            )
+        except (OddsPapiError, KeyError, TypeError):
+            raise MarketDataError("FIXTURE_REVIEW") from None
+
+    @classmethod
+    def cache_fixture(cls, fixture: MarketFixture) -> dict:
+        if fixture.provider != cls.provider_name:
+            raise MarketDataError("FIXTURE_REVIEW")
+        try:
+            return {key: fixture.provenance[key] for key in cls._cache_fields}
+        except (KeyError, TypeError):
+            raise MarketDataError("FIXTURE_REVIEW") from None
+
+    @classmethod
+    def cached_fixture(cls, raw: dict, as_of: datetime, competition="E1") -> MarketFixture:
+        if not isinstance(raw, dict) or set(raw) != set(cls._cache_fields):
+            raise MarketDataError("FIXTURE_REVIEW")
+        return cls.fixture_from_provenance(raw, as_of, competition)
+
+    def discover_fixtures(self, competition: str, day: date) -> tuple[MarketFixture, ...]:
+        if competition != self.config.code:
+            raise MarketDataError("DISCOVERY_INVALID")
+        try:
+            return tuple(self.fixture_from_provenance(raw, _now(), competition)
+                         for raw in self.fixtures(day))
+        except OddsPapiError:
+            raise MarketDataError("DISCOVERY_INVALID") from None
+
+    def get_corner_markets(self, fixture: MarketFixture) -> CornerMarketObservation:
+        if fixture.provider != self.provider_name or fixture.competition != self.config.code:
+            raise MarketDataError("FIXTURE_REVIEW")
+        try:
+            quotes = self.quotes(fixture.provenance)
+            return CornerMarketObservation(fixture, quotes.selections, quotes.availability, quotes)
+        except OddsPapiError:
+            raise MarketDataError("FIXTURE_REVIEW") from None
+
+    def capture(self, observation: CornerMarketObservation, *, data_config_path,
+                state_dir, capture_key: str) -> tuple[dict, bool]:
+        if (observation.fixture.provider != self.provider_name
+                or not isinstance(observation.provenance, OddsPapiQuotes)):
+            raise MarketDataError("FIXTURE_REVIEW")
+        try:
+            return capture_quotes(observation.provenance, data_config_path=data_config_path,
+                                  state_dir=state_dir, capture_key=capture_key)
+        except OddsPapiError:
+            raise MarketDataError("FIXTURE_REVIEW") from None
+
+    @staticmethod
+    def _validate_market_metadata(metadata):
+        # The normalizer combines shared metadata and fixture odds errors.
+        # Validate shared structure before requesting a fixture's odds.
+        try:
+            ids = set()
+            for entry in _array(metadata):
+                entry = _object(entry)
+                mid = entry.get("marketId")
+                if type(mid) is not int or mid in ids:
+                    raise ValueError
+                ids.add(mid)
+                if (entry.get("marketType") not in FAMILIES
+                        or entry.get("period") != "fulltime" or entry.get("sportId") != 10
+                        or entry.get("playerProp") is not False):
+                    continue
+                line = entry.get("handicap")
+                if (type(line) not in (int, float) or not math.isfinite(line)
+                        or line < 0 or line * 2 != int(line * 2)):
+                    raise ValueError
+                outcomes = _array(entry.get("outcomes"))
+                outcome_ids, directions = set(), []
+                for outcome in outcomes:
+                    outcome = _object(outcome)
+                    oid = outcome.get("outcomeId")
+                    if type(oid) is not int or oid in outcome_ids:
+                        raise ValueError
+                    outcome_ids.add(oid)
+                    directions.append(outcome.get("outcomeName"))
+                if len(directions) != 2 or "Over" not in directions or "Under" not in directions:
+                    raise ValueError
+        except (ValueError, TypeError, OverflowError):
+            raise MarketDataError("MARKET_METADATA_INVALID") from None
+
+    def _get(self, endpoint, **params):
+        kind = {"fixtures": "FIXTURE_DISCOVERY", "markets": "MARKET_METADATA",
+                "odds": "FIXTURE_ODDS"}.get(endpoint)
+        if kind is None:
+            raise MarketDataError("REQUEST_BUDGET")
+        guard = self.request_guard
+        if guard is not None:
+            guard.before_request(kind)
+            # The durable runner guard already applied host spacing.
+            self._last_request = None
+        try:
+            payload = super()._get(endpoint, **params)
+            if endpoint == "markets":
+                self._validate_market_metadata(payload)
+            return payload
+        except OddsPapiError:
+            raise MarketDataError("PROVIDER_FAILURE") from None
+        finally:
+            if guard is not None:
+                guard.after_request()
 
 
 def main(argv=None):

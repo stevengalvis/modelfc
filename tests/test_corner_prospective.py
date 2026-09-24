@@ -3,15 +3,20 @@ from contextlib import redirect_stdout
 from copy import deepcopy
 from datetime import date, datetime, timedelta, timezone
 from io import BytesIO, StringIO
+import inspect
 import json
 import os
 import unittest
 from unittest.mock import patch
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit, parse_qs
+import uuid
 
 from modelfc import corner_prospective as runner
 from modelfc import corner_analysis_outcomes as outcomes
+from modelfc.corner_market_data import (
+    CornerMarketObservation, MarketDataError, MarketFixture, MarketSelection,
+)
 from modelfc.providers import oddspapi as provider
 from tests import test_oddspapi as recorded
 
@@ -81,6 +86,100 @@ class PilotTests(unittest.TestCase):
     def no_team_totals(self):
         for book in self.payload["bookmakerOdds"].values():
             book["markets"] = {k: v for k, v in book["markets"].items() if k == "10799"}
+
+    def adapter_client(self):
+        control = self.control()
+        guard = runner._RequestBudgetGuard(self.path, control, {"provider_requests": 0})
+        guard.reserve(2)
+        control["attempts"][self.fixtures[0]["fixtureId"]] = {
+            "count": 1, "state": "RESERVED", "at": self.now.isoformat(),
+        }
+        runner._save(self.path, control)
+        return provider.OddsPapiMarketData("E1", guard)
+
+    def test_adapter_exposes_normalized_fixture_and_exact_market_provenance(self):
+        fixture = provider.OddsPapiMarketData.fixture_from_provenance(self.fixtures[0], self.now)
+        self.assertIsInstance(fixture, MarketFixture)
+        self.assertEqual((fixture.competition, fixture.home_team, fixture.away_team),
+                         ("E1", "Wolves", "West Brom"))
+        self.assertEqual(fixture.provider_fixture_id, self.fixtures[0]["fixtureId"])
+        self.assertEqual(fixture.kickoff_utc, provider._timestamp(self.fixtures[0]["startTime"]))
+        self.assertEqual(provider.OddsPapiMarketData.cache_fixture(fixture), self.fixtures[0])
+        client = self.adapter_client()
+        observation = client.get_corner_markets(fixture)
+        self.assertIsInstance(observation, CornerMarketObservation)
+        self.assertEqual([call[0] for call in self.calls], ["markets", "odds"])
+        self.assertEqual(observation.fixture, fixture)
+        self.assertEqual(len(observation.selections), len(observation.provenance.selections))
+        self.assertEqual(observation.availability, observation.provenance.availability)
+        self.assertTrue(all(isinstance(s, MarketSelection) for s in observation.selections))
+        self.assertEqual(observation.selections, observation.provenance.selections)
+        for s in observation.selections:
+            self.assertEqual(observation.team_for(s),
+                             (fixture.home_team if s.request.team_side == "HOME" else
+                              fixture.away_team if s.request.team_side == "AWAY" else None))
+            self.assertEqual(s.fixture_id, fixture.provider_fixture_id)
+        by_id = {s.request.client_market_id: s for s in observation.selections}
+        dk = by_id[f"oddspapi:{fixture.provider_fixture_id}:draftkings:101432:101432"]
+        self.assertEqual((dk.bookmaker, dk.request.market_type, dk.request.team_side,
+                          dk.request.side, dk.request.line, dk.request.american_odds,
+                          dk.market_id, dk.outcome_id, dk.decimal_odds, dk.main_line),
+                         ("draftkings", "TEAM_TOTAL", "HOME", "OVER", 5.5, -115,
+                          "101432", "101432", 1.87, True))
+        self.assertEqual(dk.retrieved_at, self.now.isoformat())
+        self.assertTrue(dk.changed_at)
+        self.assertEqual(by_id[f"oddspapi:{fixture.provider_fixture_id}:fanduel:101420:101420"].request.line, 2.5)
+        self.assertEqual(by_id[f"oddspapi:{fixture.provider_fixture_id}:fanduel:101496:101496"].request.line, 6.5)
+
+    def test_adapter_capture_matches_existing_immutable_evidence_bytes(self):
+        fixture = provider.OddsPapiMarketData.fixture_from_provenance(self.fixtures[0], self.now)
+        client = self.adapter_client()
+        observation = client.get_corner_markets(fixture)
+        self.assertEqual(len(self.calls), 2)
+        alternate_state = self.setup.root / "other-state"
+        with patch.object(provider.uuid, "uuid4", return_value=uuid.UUID(int=42)):
+            direct, _ = provider.capture_quotes(observation.provenance, data_config_path=self.config,
+                state_dir=self.state, capture_key="same-key")
+            adapted, _ = client.capture(observation, data_config_path=self.config,
+                state_dir=alternate_state, capture_key="same-key")
+        self.assertEqual(direct, adapted)
+        self.assertEqual(next((self.state / "analyses").glob("*.json")).read_bytes(),
+                         next((alternate_state / "analyses").glob("*.json")).read_bytes())
+
+    def test_orchestration_uses_only_market_data_capabilities(self):
+        # A thin facade exposes no HTTP, URL or endpoint methods to the runner.
+        class Facade:
+            provider_name = "oddspapi"
+            fixture_from_provenance = staticmethod(provider.OddsPapiMarketData.fixture_from_provenance)
+            cache_fixture = staticmethod(provider.OddsPapiMarketData.cache_fixture)
+            cached_fixture = staticmethod(provider.OddsPapiMarketData.cached_fixture)
+
+            def __init__(self, competition, guard):
+                self.source = provider.OddsPapiMarketData(competition, guard)
+
+            def discover_fixtures(self, competition, day):
+                return self.source.discover_fixtures(competition, day)
+
+            def get_corner_markets(self, fixture):
+                return self.source.get_corner_markets(fixture)
+
+            def capture(self, observation, **kwargs):
+                return self.source.capture(observation, **kwargs)
+
+        report = runner.run_once(state_dir=self.state, data_config_path=self.config,
+                                 market_data_type=Facade)
+        self.assertEqual((report["captures_created"], report["provider_requests"]), (1, 3))
+        source = inspect.getsource(runner)
+        for detail in ("/v4/", "tournamentId", "fixtureId", "apiKey", ".quotes(", ".fixtures(", "._get("):
+            self.assertNotIn(detail, source)
+
+    def test_provider_boundary_rejects_unexpected_error_text(self):
+        with patch.object(provider.OddsPapiMarketData, "get_corner_markets",
+                          side_effect=MarketDataError("apiKey=offline-secret")):
+            result = self.run_pilot()
+        self.assertEqual(result["reasons"], ["PROVIDER_FAILURE"])
+        self.assertEqual(result["provider_requests"], 1)
+        self.assertNotIn("offline-secret", json.dumps(result))
 
     def after_kickoff(self):
         self.now = self.now.replace(hour=16)
@@ -192,11 +291,12 @@ class PilotTests(unittest.TestCase):
         with runner._lock(self.state) as path:
             control = runner._load(path)
             summary = {"provider_requests": 0}
-            client = runner._Client(path, control, summary)
-            client.reserve(1)
+            guard = runner._RequestBudgetGuard(path, control, summary)
+            client = runner.OddsPapiMarketData("E1", guard)
+            guard.reserve(1)
             control["discovery"]["status"] = "RESERVED"
             runner._save(path, control)
-            client.fixtures(self.now.date())
+            client.discover_fixtures("E1", self.now.date())
         self.assertGreaterEqual((self.calls[-1][1] - self.calls[-2][1]).total_seconds(), 3)
         self.assertEqual(len(self.sleeps), 3)
 
