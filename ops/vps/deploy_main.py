@@ -4,6 +4,7 @@ The SSH forced command supplies only SSH_ORIGINAL_COMMAND. A separate, fixed
 systemd unit invokes --run-tests inside a networkless, state-inaccessible mount
 namespace. Never execute this controller from the incoming Git checkout.
 """
+import ctypes
 import fcntl
 import hashlib
 import json
@@ -12,6 +13,7 @@ from pathlib import Path
 import pwd
 import re
 import subprocess
+import tempfile
 import sys
 
 
@@ -107,47 +109,86 @@ def boundary(state=STATE, service=SERVICE):
     try:
         properties = command(["systemctl", "show", service,
                               "-p", "PrivateNetwork", "-p", "InaccessiblePaths",
-                              "-p", "User", "-p", "ExecStart"], timeout=15)
+                              "-p", "User", "-p", "ExecStart", "-p", "ProtectSystem",
+                              "-p", "ReadOnlyPaths", "-p", "ReadWritePaths",
+                              "-p", "BindPaths", "-p", "TemporaryFileSystem"], timeout=15)
     except Failure:
         raise Failure("STATE_BOUNDARY_FAILED") from None
     fields = dict(line.split("=", 1) for line in properties.splitlines() if "=" in line)
     if (fields.get("PrivateNetwork") != "yes"
             or str(state) not in fields.get("InaccessiblePaths", "").split()
+            or fields.get("ProtectSystem") != "strict"
+            or str(CHECKOUT) not in fields.get("ReadOnlyPaths", "").split()
+            or fields.get("ReadWritePaths") not in ("", str(CONTROL))
+            or fields.get("BindPaths") not in (None, "")
+            or fields.get("TemporaryFileSystem") not in (None, "")
             or fields.get("User") != "modelfc-deploy"
             or str(TRUSTED) not in fields.get("ExecStart", "")):
         raise Failure("STATE_BOUNDARY_FAILED")
 
 
+def exchange_directories(left, right):
+    """Atomically swap two same-filesystem directories on the Linux VPS."""
+    libc = ctypes.CDLL(None, use_errno=True)
+    if libc.renameat2(-100, os.fsencode(left), -100, os.fsencode(right), 2) != 0:
+        raise OSError(ctypes.get_errno(), "atomic virtualenv exchange failed")
+
+
+def relocate_venv_scripts(staged, target):
+    """Fix venv activation and installed console-script paths before publication."""
+    old, new = os.fsencode(staged), os.fsencode(target)
+    for path in [staged / "pyvenv.cfg", *(staged / "bin").iterdir()]:
+        if path.is_symlink() or not path.is_file():
+            continue
+        content = path.read_bytes()
+        if old in content:
+            path.write_bytes(content.replace(old, new))
+
+
 def dependencies(checkout, stamp):
-    expected = hashlib.sha256((checkout / "requirements.txt").read_bytes()).hexdigest()
-    if (checkout / ".venv").is_symlink() or stamp.is_symlink() or stamp.with_suffix(".tmp").is_symlink():
+    venv = checkout / ".venv"
+    install_env = {"PATH": "/usr/bin:/bin", "HOME": str(CONTROL),
+                   "PIP_DISABLE_PIP_VERSION_CHECK": "1"}
+    if (venv.is_symlink() or stamp.is_symlink() or stamp.with_suffix(".tmp").is_symlink()
+            or (venv.exists() and not venv.is_dir())):
         raise Failure("DEPENDENCY_SYNC_FAILED")
-    python = checkout / ".venv/bin/python"
+    python = venv / "bin/python"
     if python.is_symlink() and not python.resolve().is_file():
         raise Failure("DEPENDENCY_SYNC_FAILED")
     try:
+        expected = hashlib.sha256((checkout / "requirements.txt").read_bytes()).hexdigest()
         if sys.version_info[:2] != (3, 12):
             raise Failure("DEPENDENCY_SYNC_FAILED")
         if python.is_file() and command([str(python), "-c",
                                          "import sys; print('%d.%d' % sys.version_info[:2])"],
-                                        timeout=15).strip() != "3.12":
+                                        env=install_env, timeout=15).strip() != "3.12":
             raise Failure("DEPENDENCY_SYNC_FAILED")
         if stamp.exists() and stamp.read_text().strip() == expected and python.is_file():
             return "SKIPPED"
-        # A failed partial install must never leave even a previously valid
-        # stamp behind: a later revert could otherwise reuse a modified venv.
-        stamp.unlink(missing_ok=True)
-        if not python.is_file():
-            command(["/usr/bin/python3", "-m", "venv", str(checkout / ".venv")], timeout=120)
-            if command([str(python), "-c", "import sys; print('%d.%d' % sys.version_info[:2])"],
-                       timeout=15).strip() != "3.12":
+        # Stage outside the checkout on the same filesystem. A failed build
+        # never changes the existing .venv or its successful hash stamp.
+        if os.stat(CONTROL).st_dev != os.stat(checkout).st_dev:
+            raise Failure("DEPENDENCY_SYNC_FAILED")
+        with tempfile.TemporaryDirectory(prefix="venv-", dir=CONTROL) as directory:
+            staged = Path(directory) / "new"
+            command(["/usr/bin/python3", "-m", "venv", str(staged)],
+                    env=install_env, timeout=120)
+            staged_python = staged / "bin/python"
+            if command([str(staged_python), "-c",
+                        "import sys; print('%d.%d' % sys.version_info[:2])"],
+                       env=install_env, timeout=15).strip() != "3.12":
                 raise Failure("DEPENDENCY_SYNC_FAILED")
-        command([str(python), "-m", "pip", "install", "-r", str(checkout / "requirements.txt")],
-                cwd=checkout, env={"PATH": "/usr/bin:/bin", "HOME": str(CONTROL),
-                                   "PIP_DISABLE_PIP_VERSION_CHECK": "1"}, timeout=300)
-        tmp = stamp.with_suffix(".tmp")
-        tmp.write_text(expected + "\n")
-        os.replace(tmp, stamp)
+            command([str(staged_python), "-m", "pip", "install", "-r",
+                     str(checkout / "requirements.txt")], cwd=checkout,
+                    env=install_env, timeout=300)
+            command([str(staged_python), "-m", "pip", "check"],
+                    env=install_env, timeout=30)
+            relocate_venv_scripts(staged, venv)
+            (staged / stamp.name).write_text(expected + "\n")
+            if venv.exists():
+                exchange_directories(staged, venv)
+            else:
+                os.replace(staged, venv)
         return "INSTALLED"
     except (Failure, OSError):
         raise Failure("DEPENDENCY_SYNC_FAILED") from None

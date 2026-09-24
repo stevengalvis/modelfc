@@ -185,6 +185,15 @@ class DeploymentTest(unittest.TestCase):
                          ("DEPENDENCY_SYNC_FAILED", self.b))
         self.assertFalse(self.tests_called)
 
+    def test_boundary_failure_never_starts_test_service(self):
+        result = deploy.deploy(self.b, checkout=self.checkout, control=self.control,
+                               stamp=self.stamp, remote=str(self.remote),
+                               check_boundary=lambda: (_ for _ in ()).throw(
+                                   deploy.Failure("STATE_BOUNDARY_FAILED")), test_runner=deploy.tests)
+        self.assertEqual(result["reason"], "STATE_BOUNDARY_FAILED")
+        self.assertFalse(self.tests_called)
+        self.assertEqual(cmd("git", "rev-parse", "HEAD", cwd=self.checkout), self.a)
+
     def test_test_failure_no_rollback(self):
         with patch.object(deploy, "tests", side_effect=deploy.Failure("TESTS_FAILED", 532)):
             result = self.run_deploy(self.b)
@@ -251,37 +260,119 @@ class DependencyAndBoundaryTest(unittest.TestCase):
         self.python = self.root / ".venv/bin/python"
         self.python.write_text("placeholder")
         self.stamp = self.root / ".venv/.modelfc-requirements.sha256"
+        self.control = self.root / "control"
+        self.control.mkdir()
+
+    def fake_command(self, args, **kwargs):
+        if args[:3] == ["/usr/bin/python3", "-m", "venv"]:
+            staged = Path(args[3])
+            (staged / "bin").mkdir(parents=True)
+            (staged / "bin/python").write_text("replacement python")
+            (staged / "bin/example").write_text(f"#!{staged}/bin/python\n")
+            (staged / "bin/activate").write_text(f'VIRTUAL_ENV="{staged}"\n')
+            (staged / "pyvenv.cfg").write_text(f"command = venv {staged}\n")
+        return "3.12"
 
     def test_dependency_install_then_matching_hash_skips(self):
-        with patch.object(deploy, "command", return_value="3.12") as run:
+        with patch.dict(os.environ, {"ODDSPAPI_API_KEY": "offline-secret"}), patch.object(
+                deploy, "CONTROL", self.control), patch.object(
+                deploy, "command", side_effect=self.fake_command) as run:
             self.assertEqual(deploy.dependencies(self.root, self.stamp), "INSTALLED")
-            self.assertEqual(run.call_count, 2)
+            self.assertEqual(run.call_count, 5)
+            for call in run.call_args_list:
+                self.assertNotIn("ODDSPAPI_API_KEY", call.kwargs["env"])
+            self.assertEqual(self.stamp.read_text().strip(), hashlib.sha256(
+                (self.root / "requirements.txt").read_bytes()).hexdigest())
+            self.assertEqual(self.python.read_text(), "replacement python")
+            self.assertIn(str(self.root / ".venv/bin/python"),
+                          (self.root / ".venv/bin/example").read_text())
+            self.assertNotIn(str(self.control), (self.root / ".venv/bin/activate").read_text())
+            self.assertEqual(list(self.control.iterdir()), [])
             self.assertEqual(deploy.dependencies(self.root, self.stamp), "SKIPPED")
+            self.assertEqual(run.call_count, 6)
+            (self.root / ".venv/old-only-package").write_text("obsolete")
         (self.root / "requirements.txt").write_text("fastapi>=0.115,<1\nhttpx>=0.27,<1\n")
-        with patch.object(deploy, "command", return_value="3.12") as run:
+        with patch.object(deploy, "CONTROL", self.control), patch.object(
+                deploy, "command", side_effect=self.fake_command) as run:
             self.assertEqual(deploy.dependencies(self.root, self.stamp), "INSTALLED")
-            self.assertEqual(run.call_count, 2)
+            self.assertEqual(run.call_count, 5)
+        self.assertFalse((self.root / ".venv/old-only-package").exists())
+        self.assertEqual(self.stamp.read_text().strip(), hashlib.sha256(
+            (self.root / "requirements.txt").read_bytes()).hexdigest())
+        self.assertEqual(list(self.control.iterdir()), [])
 
     def test_failed_install_does_not_write_stamp(self):
-        with patch.object(deploy, "command", side_effect=deploy.Failure("CHECKOUT_INVALID")):
+        with patch.object(deploy, "CONTROL", self.control), patch.object(
+                deploy, "command", side_effect=deploy.Failure("CHECKOUT_INVALID")):
             with self.assertRaisesRegex(deploy.Failure, "DEPENDENCY_SYNC_FAILED"):
                 deploy.dependencies(self.root, self.stamp)
         self.assertFalse(self.stamp.exists())
+        self.assertEqual(self.python.read_text(), "placeholder")
+        self.assertEqual(list(self.control.iterdir()), [])
 
-    def test_old_stamp_removed_before_failed_changed_requirements_install(self):
+    def test_failed_changed_requirements_preserves_old_environment_and_stamp(self):
         self.stamp.write_text(hashlib.sha256(b"old requirements").hexdigest() + "\n")
-        with patch.object(deploy, "command", side_effect=["3.12", deploy.Failure("CHECKOUT_INVALID")]):
+        def fail_install(args, **kwargs):
+            self.fake_command(args, **kwargs)
+            if args[1:3] == ["-m", "pip"] and args[3] == "install":
+                raise deploy.Failure("CHECKOUT_INVALID")
+            return "3.12"
+        with patch.object(deploy, "CONTROL", self.control), patch.object(
+                deploy, "command", side_effect=fail_install):
             with self.assertRaisesRegex(deploy.Failure, "DEPENDENCY_SYNC_FAILED"):
                 deploy.dependencies(self.root, self.stamp)
-        self.assertFalse(self.stamp.exists())
+        self.assertEqual(self.python.read_text(), "placeholder")
+        self.assertEqual(self.stamp.read_text().strip(), hashlib.sha256(b"old requirements").hexdigest())
+        self.assertEqual(list(self.control.iterdir()), [])
 
     def test_missing_venv_creates_venv_not_system_install(self):
         self.python.unlink()
-        with patch.object(deploy, "command", return_value="3.12") as run:
+        (self.root / ".venv/bin").rmdir()
+        (self.root / ".venv").rmdir()
+        with patch.object(deploy, "CONTROL", self.control), patch.object(
+                deploy, "command", side_effect=self.fake_command) as run:
             deploy.dependencies(self.root, self.stamp)
             self.assertEqual(run.call_args_list[0].args[0][:3], ["/usr/bin/python3", "-m", "venv"])
-            self.assertEqual(run.call_args_list[1].args[0][0], str(self.python))
-            self.assertEqual(run.call_args_list[2].args[0][:3], [str(self.python), "-m", "pip"])
+            self.assertEqual(run.call_args_list[1].args[0][0],
+                             str(Path(run.call_args_list[0].args[0][3]) / "bin/python"))
+            self.assertEqual(run.call_args_list[2].args[0][1:3], ["-m", "pip"])
+        self.assertTrue(self.python.is_file())
+        self.assertEqual(list(self.control.iterdir()), [])
+
+    def test_wrong_python_version_fails_without_publishing(self):
+        self.python.unlink()
+        (self.root / ".venv/bin").rmdir()
+        (self.root / ".venv").rmdir()
+        with patch.object(deploy, "CONTROL", self.control), patch.object(
+                deploy, "command", side_effect=lambda args, **kwargs: (
+                    self.fake_command(args, **kwargs) if args[0] == "/usr/bin/python3" else "3.11")):
+            with self.assertRaisesRegex(deploy.Failure, "DEPENDENCY_SYNC_FAILED"):
+                deploy.dependencies(self.root, self.stamp)
+        self.assertFalse((self.root / ".venv").exists())
+        self.assertEqual(list(self.control.iterdir()), [])
+
+    def test_venv_creation_failure_leaves_canonical_absent(self):
+        self.python.unlink()
+        (self.root / ".venv/bin").rmdir()
+        (self.root / ".venv").rmdir()
+        with patch.object(deploy, "CONTROL", self.control), patch.object(
+                deploy, "command", side_effect=deploy.Failure("CHECKOUT_INVALID")):
+            with self.assertRaisesRegex(deploy.Failure, "DEPENDENCY_SYNC_FAILED"):
+                deploy.dependencies(self.root, self.stamp)
+        self.assertFalse((self.root / ".venv").exists())
+        self.assertEqual(list(self.control.iterdir()), [])
+
+    def test_failed_atomic_exchange_keeps_previous_venv_and_stamp(self):
+        old = hashlib.sha256(b"previous requirements").hexdigest()
+        self.stamp.write_text(old + "\n")
+        with patch.object(deploy, "CONTROL", self.control), patch.object(
+                deploy, "command", side_effect=self.fake_command), patch.object(
+                deploy, "exchange_directories", side_effect=OSError("failed swap")):
+            with self.assertRaisesRegex(deploy.Failure, "DEPENDENCY_SYNC_FAILED"):
+                deploy.dependencies(self.root, self.stamp)
+        self.assertEqual(self.python.read_text(), "placeholder")
+        self.assertEqual(self.stamp.read_text().strip(), old)
+        self.assertEqual(list(self.control.iterdir()), [])
 
     def test_symlink_venv_cannot_redirect_install(self):
         self.python.unlink()
@@ -293,25 +384,43 @@ class DependencyAndBoundaryTest(unittest.TestCase):
 
     def test_service_boundary_enforces_user_network_and_state(self):
         properties = ("PrivateNetwork=yes\nInaccessiblePaths=/root/modelfc-state\n"
+                      "ProtectSystem=strict\nReadOnlyPaths=/root/dev/modelfc\n"
+                      "ReadWritePaths=/var/lib/modelfc-deploy\nBindPaths=\nTemporaryFileSystem=\n"
                       "User=modelfc-deploy\nExecStart=/usr/bin/python3 -I "
                       "/opt/modelfc-deploy/deploy_main.py --run-tests\n")
+        identity = type("Person", (), {"pw_name": "modelfc-deploy"})()
         with patch.object(deploy.os, "geteuid", return_value=1001), patch.object(
-                deploy.pwd, "getpwuid", return_value=type("Person", (), {"pw_name": "modelfc-deploy"})()), patch.object(
-                deploy.os, "access", return_value=False), patch.object(deploy, "command", return_value=properties):
-            deploy.boundary()
-        with patch.object(deploy.os, "geteuid", return_value=1001), patch.object(
-                deploy.pwd, "getpwuid", return_value=type("Person", (), {"pw_name": "modelfc-deploy"})()), patch.object(
-                deploy.os, "access", return_value=False), patch.object(
-                deploy, "command", return_value=properties.replace("PrivateNetwork=yes", "PrivateNetwork=no")):
-            with self.assertRaisesRegex(deploy.Failure, "STATE_BOUNDARY_FAILED"):
+                deploy.pwd, "getpwuid", return_value=identity), patch.object(
+                deploy.os, "access", return_value=False):
+            with patch.object(deploy, "command", return_value=properties) as service:
                 deploy.boundary()
+                self.assertIn("ProtectSystem", service.call_args.args[0])
+                self.assertIn("ReadOnlyPaths", service.call_args.args[0])
+            for changed in (
+                properties.replace("ProtectSystem=strict\n", ""),
+                properties.replace("ProtectSystem=strict", "ProtectSystem=full"),
+                properties.replace("ReadOnlyPaths=/root/dev/modelfc\n", ""),
+                properties.replace("ReadOnlyPaths=/root/dev/modelfc", "ReadOnlyPaths=/root/dev"),
+                properties.replace("ReadWritePaths=/var/lib/modelfc-deploy",
+                                   "ReadWritePaths=/var/lib/modelfc-deploy /root/dev/modelfc"),
+                properties.replace("BindPaths=", "BindPaths=/tmp:/root/dev/modelfc"),
+                properties.replace("TemporaryFileSystem=", "TemporaryFileSystem=/root/dev/modelfc"),
+                properties.replace("PrivateNetwork=yes", "PrivateNetwork=no"),
+                properties.replace("InaccessiblePaths=/root/modelfc-state", "InaccessiblePaths=/tmp"),
+                properties.replace("User=modelfc-deploy", "User=root"),
+                properties.replace("/opt/modelfc-deploy/deploy_main.py", "/tmp/deploy_main.py"),
+            ):
+                with self.subTest(changed=changed), patch.object(deploy, "command", return_value=changed):
+                    with self.assertRaisesRegex(deploy.Failure, "STATE_BOUNDARY_FAILED"):
+                        deploy.boundary()
 
     def test_committed_service_is_offline_and_state_inaccessible(self):
         unit = (SOURCE.parents[2] / "deploy/modelfc-postmerge-tests.service").read_text()
         for expected in ("User=modelfc-deploy", "PrivateNetwork=yes", "PrivateTmp=yes",
                          "InaccessiblePaths=/root/modelfc-state",
                          "InaccessiblePaths=/etc/modelfc-validator",
-                         "ReadOnlyPaths=/root/dev/modelfc", "NoNewPrivileges=yes"):
+                         "ProtectSystem=strict", "ReadOnlyPaths=/root/dev/modelfc",
+                         "NoNewPrivileges=yes"):
             self.assertIn(expected, unit)
 
     def test_test_runner_strips_all_secrets_and_requires_private_network(self):

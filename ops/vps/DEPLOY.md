@@ -11,7 +11,8 @@ outcomes. Merging this PR **does not install or activate** the VPS side.
    `/root/dev/modelfc`, `.git`, the ignored historical CSVs, `.venv`, and
    `/root/modelfc-state`. Create `modelfc-deploy` with no sudo shell or other
    groups. Give it traversal of the parent directories and write access to the
-   canonical checkout and virtual environment, **without granting access to
+   canonical checkout and the entire existing virtualenv (including permission
+   to remove its old contents after replacement), **without granting access to
    `/root/modelfc-state` or the validator credential files**. Historical CSVs
    live in the checkout root; inspect their ownership and protect them when
    assigning checkout permissions. Stop installation if these boundaries cannot
@@ -81,12 +82,18 @@ only `/root/dev/modelfc` as a safe directory for this controller's isolated
 invocations; no global or wildcard trust setting is installed. It never
 resets, stashes or cleans. Ignored `.venv`, managed historical CSVs, refresh
 files and Python caches are accounted for, not removed. Unknown ignored files
-and normal untracked/modified files block deployment. `.venv` gets a successful
-requirements SHA stamp only after pip succeeds.
+and normal untracked/modified files block deployment. When requirements change,
+the controller builds a clean virtualenv under `/var/lib/modelfc-deploy` (which
+must share the checkout's filesystem), installs and checks dependencies, then
+atomically swaps it into `.venv`. The successful requirements hash travels with
+the validated replacement. A failed build preserves the previous `.venv` and
+its stamp; no packages are installed into the old environment.
 
 The installed systemd unit runs trusted `--run-tests` code outside the Git
-checkout. Its own `User`, `PrivateNetwork`, `InaccessiblePaths`, and readonly
-checkout properties are checked by the controller. The unit has no provider,
+checkout. The controller checks the **installed effective** `User`,
+`PrivateNetwork`, `InaccessiblePaths`, `ProtectSystem=strict`, and canonical
+`ReadOnlyPaths` properties before starting tests. It rejects writable path or
+bind overrides; only its fixed report directory may be writable. The unit has no provider,
 GitHub or SSH credentials. Its child test process gets a fresh allowlisted
 environment. The test unit is **not enabled**, scheduled, or started except by
 the trusted controller. A failure leaves the already fast-forwarded checkout
