@@ -95,6 +95,33 @@ class DeploymentTest(unittest.TestCase):
         self.assertEqual(self.run_deploy(self.b)["reason"], "CHECKOUT_DIRTY")
         self.assertEqual(cmd("git", "rev-parse", "HEAD", cwd=self.checkout), self.a)
 
+    def test_assume_unchanged_cannot_hide_modified_tracked_file(self):
+        cmd("git", "update-index", "--assume-unchanged", "example.txt", cwd=self.checkout)
+        (self.checkout / "example.txt").write_text("hidden local change\n")
+        self.assertEqual(cmd("git", "status", "--porcelain=v1", cwd=self.checkout), "")
+        report = self.run_deploy(self.b)
+        self.assertEqual((report["status"], report["reason"]), ("FAIL", "CHECKOUT_DIRTY"))
+        self.assertFalse(self.tests_called)
+        self.assertEqual(cmd("git", "rev-parse", "HEAD", cwd=self.checkout), self.a)
+
+    def test_skip_worktree_cannot_hide_modified_tracked_file(self):
+        cmd("git", "update-index", "--skip-worktree", "example.txt", cwd=self.checkout)
+        (self.checkout / "example.txt").write_text("hidden local change\n")
+        self.assertEqual(cmd("git", "status", "--porcelain=v1", cwd=self.checkout), "")
+        report = self.run_deploy(self.b)
+        self.assertEqual((report["status"], report["reason"]), ("FAIL", "CHECKOUT_DIRTY"))
+        self.assertFalse(self.tests_called)
+        self.assertEqual(cmd("git", "rev-parse", "HEAD", cwd=self.checkout), self.a)
+
+    def test_hidden_flag_created_during_tests_cannot_pass_final_clean_check(self):
+        def hide_after_tests(checkout, sha):
+            cmd("git", "update-index", "--assume-unchanged", "requirements.txt", cwd=checkout)
+            (checkout / "requirements.txt").write_text("hidden after tests\n")
+            return 532
+        with patch.object(deploy, "tests", side_effect=hide_after_tests):
+            report = self.run_deploy(self.b)
+        self.assertEqual((report["status"], report["reason"]), ("FAIL", "CHECKOUT_DIRTY"))
+
     def test_unexpected_untracked_and_ignored(self):
         (self.checkout / "mystery.txt").write_text("local")
         self.assertEqual(self.run_deploy(self.b)["reason"], "CHECKOUT_DIRTY")
@@ -458,6 +485,33 @@ class DependencyAndBoundaryTest(unittest.TestCase):
             self.assertFalse(deploy.run_tests())
         result = json.loads(output.read_text())
         self.assertEqual((result["tests_status"], result["tests_run"]), ("FAIL", 0))
+
+    def test_unittest_final_stderr_summary_is_authoritative(self):
+        output = self.root / "test-result.json"
+        class Stat:
+            def __init__(self, inode):
+                self.st_ino = inode
+        fake_stdout = b"Ran 999 tests in 0.01s\n\nOK\n"
+        cases = (
+            (fake_stdout, b"no final unittest summary\n", 0, "FAIL", 0),
+            (fake_stdout, b"Ran 0 tests in 0.01s\n\nOK\n", 0, "FAIL", 0),
+            (fake_stdout, b"Ran 3 tests in 0.01s\n\nOK\n", 0, "PASS", 3),
+            (fake_stdout, b"Ran 3 tests in 0.01s\n\nFAILED (failures=1)\n", 1, "FAIL", 3),
+            (fake_stdout, b"Ran 99 tests in 0.01s\n\nOK\n"
+                          b"Ran 2 tests in 0.02s\n\nFAILED (errors=1)\n", 0, "FAIL", 2),
+            (fake_stdout, b"Ran 3 tests in 0.01s\n\nOK\ntrailing output\n", 0, "FAIL", 0),
+        )
+        for stdout, stderr, exit_code, status, count in cases:
+            with self.subTest(stderr=stderr), patch.object(deploy, "CHECKOUT", self.root), patch.object(
+                    deploy, "TEST_OUTPUT", output), patch.object(deploy, "CONTROL", self.root), patch.object(
+                    deploy.os, "access", return_value=False), patch.object(
+                    deploy.os, "stat", side_effect=[Stat(1), Stat(2)]), patch.object(
+                    deploy, "git", return_value="a" * 40), patch.object(
+                    deploy.subprocess, "run", return_value=subprocess.CompletedProcess(
+                        [], exit_code, stdout, stderr)):
+                self.assertEqual(deploy.run_tests(), status == "PASS")
+                result = json.loads(output.read_text())
+                self.assertEqual((result["tests_status"], result["tests_run"]), (status, count))
 
     def test_trusted_controller_rejects_false_zero_test_attestation(self):
         output = self.root / "test-result.json"

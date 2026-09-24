@@ -79,6 +79,12 @@ def identity(checkout, *, expected_root=CHECKOUT, remote=REMOTE):
 
 
 def clean(checkout):
+    # status ignores tracked paths whose index flags hide worktree changes.
+    # Refuse those flags entirely before accepting either cleanliness check.
+    tracked = git(checkout, "ls-files", "-v", "-z")
+    if not tracked or not tracked.endswith("\0") or any(
+            not entry.startswith("H ") for entry in tracked[:-1].split("\0")):
+        return False
     if git(checkout, "status", "--porcelain=v1", "--untracked-files=all"):
         return False
     ignored = git(checkout, "ls-files", "--others", "--ignored", "--exclude-standard", "--directory")
@@ -313,12 +319,16 @@ def run_tests():
         process = subprocess.run([str(CHECKOUT / ".venv/bin/python"), "-B", "-m", "unittest",
                                   "discover", "-s", "tests"], cwd=CHECKOUT, env=env,
                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=300)
-        output = (process.stdout + process.stderr)[-131072:].decode("utf-8", errors="replace")
-        match = re.search(r"Ran ([0-9]+) tests? in [0-9.]+s", output)
+        # Only unittest's final stderr summary attests to the discovery run.
+        # Test-produced stdout may contain convincing but irrelevant summaries.
+        stderr = process.stderr[-131072:].decode("utf-8", errors="replace")
+        match = re.search(
+            r"(?m)^Ran ([0-9]+) tests? in [0-9]+(?:\.[0-9]+)?s\r?\n\r?\n"
+            r"(OK(?: \([^\r\n]*\))?|FAILED(?: \([^\r\n]*\))?)\r?\n*\Z", stderr)
         if match:
             value["tests_run"] = int(match.group(1))
-        if (process.returncode == 0 and value["tests_run"] > 0 and match
-                and re.search(r"(?m)^OK(?: \(skipped=[0-9]+\))?$", output)):
+        if (process.returncode == 0 and match and value["tests_run"] > 0
+                and match.group(2).startswith("OK")):
             value["tests_status"] = "PASS"
     except (Failure, OSError, subprocess.SubprocessError):
         pass
