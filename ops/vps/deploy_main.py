@@ -93,9 +93,17 @@ def clean(checkout):
     for name in ignored.splitlines():
         if (name in (".venv/", "data/", "data/corner-refresh/")
                 or re.fullmatch(r"(?:E0|E1|SP1|I1|D1|F1|P1)_[0-9]{4}\.csv", name)
-                or name.endswith("/__pycache__/") or name == ".pytest_cache/"):
+                or name == ".pytest_cache/"):
             continue
         raise Failure("CHECKOUT_DIRTY")
+    # --directory can collapse managed data and other allowed ignored folders.
+    # Inspect their contents for bytecode too; the validated venv is separate.
+    ignored_files = git(checkout, "ls-files", "--others", "--ignored",
+                        "--exclude-standard", "-z", "--", ".", ":(exclude).venv/**")
+    if ignored_files and (not ignored_files.endswith("\0") or any(
+            "__pycache__" in Path(name).parts or name.endswith((".pyc", ".pyo"))
+            for name in ignored_files[:-1].split("\0"))):
+        return False
     return True
 
 

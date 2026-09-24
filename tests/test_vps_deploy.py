@@ -39,7 +39,7 @@ class DeploymentTest(unittest.TestCase):
         cmd("git", "config", "user.email", "offline@example.invalid", cwd=self.seed)
         cmd("git", "config", "user.name", "Offline Tester", cwd=self.seed)
         cmd("git", "remote", "add", "origin", str(self.remote), cwd=self.seed)
-        (self.seed / ".gitignore").write_text(".venv/\ndata/corner-refresh/\n/*.csv\n__pycache__/\n")
+        (self.seed / ".gitignore").write_text(".venv/\ndata/corner-refresh/\n/*.csv\n__pycache__/\n*.pyc\n")
         (self.seed / "requirements.txt").write_text("example>=1\n")
         (self.seed / "example.txt").write_text("one\n")
         cmd("git", "add", ".", cwd=self.seed)
@@ -131,15 +131,58 @@ class DeploymentTest(unittest.TestCase):
             file.write(".env\n")
         self.assertEqual(self.run_deploy(self.b)["reason"], "CHECKOUT_DIRTY")
 
+    def test_ignored_importable_bytecode_cache_rejected_without_deletion(self):
+        cache = self.checkout / "src/modelfc/__pycache__/forecast.cpython-312.pyc"
+        cache.parent.mkdir(parents=True)
+        cache.write_bytes(b"ignored bytecode")
+        self.assertEqual(cmd("git", "status", "--porcelain=v1", cwd=self.checkout), "")
+        report = self.run_deploy(self.b)
+        self.assertEqual((report["status"], report["reason"]), ("FAIL", "CHECKOUT_DIRTY"))
+        self.assertTrue(cache.is_file())
+        self.assertEqual(cache.read_bytes(), b"ignored bytecode")
+        self.assertFalse(self.tests_called)
+        self.assertEqual(cmd("git", "rev-parse", "HEAD", cwd=self.checkout), self.a)
+
+    def test_ignored_pyc_file_rejected_without_deletion(self):
+        bytecode = self.checkout / "example.pyc"
+        bytecode.write_bytes(b"ignored direct bytecode")
+        self.assertEqual(cmd("git", "status", "--porcelain=v1", cwd=self.checkout), "")
+        self.assertEqual(self.run_deploy(self.b)["reason"], "CHECKOUT_DIRTY")
+        self.assertTrue(bytecode.is_file())
+        self.assertFalse(self.tests_called)
+
+    def test_ignored_bytecode_in_allowed_data_folder_rejected(self):
+        cache = self.checkout / "data/corner-refresh/__pycache__/module.pyc"
+        cache.parent.mkdir(parents=True)
+        cache.write_bytes(b"ignored managed bytecode")
+        self.assertEqual(cmd("git", "status", "--porcelain=v1", cwd=self.checkout), "")
+        self.assertEqual(self.run_deploy(self.b)["reason"], "CHECKOUT_DIRTY")
+        self.assertTrue(cache.is_file())
+
+    def test_bytecode_created_during_tests_prevents_pass_and_remains(self):
+        cache = self.checkout / "src/modelfc/__pycache__/module.pyc"
+        def create_cache(checkout, sha):
+            cache.parent.mkdir(parents=True)
+            cache.write_bytes(b"post-test cache")
+            return 532
+        with patch.object(deploy, "tests", side_effect=create_cache):
+            report = self.run_deploy(self.b)
+        self.assertEqual((report["status"], report["reason"]), ("FAIL", "CHECKOUT_DIRTY"))
+        self.assertEqual(cache.read_bytes(), b"post-test cache")
+
     def test_expected_ignored_runtime_and_history_are_accepted(self):
         (self.checkout / ".venv").mkdir()
         (self.checkout / ".venv/bin").mkdir()
         (self.checkout / ".venv/bin/python").write_text("mock")
+        trusted_venv_cache = self.checkout / ".venv/lib/python3.12/site-packages/pkg/__pycache__/module.pyc"
+        trusted_venv_cache.parent.mkdir(parents=True)
+        trusted_venv_cache.write_bytes(b"installed package bytecode")
         (self.checkout / "E1_2627.csv").write_text("history")
         (self.checkout / "data/corner-refresh").mkdir(parents=True)
         (self.checkout / "data/corner-refresh/status.json").write_text("{}")
         self.assertEqual(self.run_deploy(self.b)["status"], "PASS")
         self.assertTrue((self.checkout / "E1_2627.csv").exists())
+        self.assertTrue(trusted_venv_cache.is_file())
 
     def test_wrong_branch(self):
         cmd("git", "checkout", "-b", "another", cwd=self.checkout)
