@@ -168,6 +168,7 @@ def dependency_boundary(release, *, releases=None):
     instance = DEPENDENCY_SERVICE.format(release.name)
     try:
         properties = command(["systemctl", "show", instance, "-p", "User", "-p", "ExecStart",
+                              "-p", "Group", "-p", "SupplementaryGroups",
                               "-p", "ProtectSystem", "-p", "ReadOnlyPaths",
                               "-p", "ReadWritePaths", "-p", "InaccessiblePaths",
                               "-p", "PrivateTmp", "-p", "PrivateDevices",
@@ -178,6 +179,8 @@ def dependency_boundary(release, *, releases=None):
     fields = dict(line.split("=", 1) for line in properties.splitlines() if "=" in line)
     hidden = fields.get("InaccessiblePaths", "").split()
     if (fields.get("User") != "modelfc-deploy"
+            or fields.get("Group") != "modelfc-deploy"
+            or fields.get("SupplementaryGroups") != ""
             or fields.get("ProtectSystem") != "strict"
             or str(releases) not in fields.get("ReadOnlyPaths", "").split()
             or fields.get("ReadWritePaths") != str(release / ".venv")

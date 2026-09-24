@@ -359,8 +359,8 @@ class IsolatedBoundaryTest(unittest.TestCase):
         with self.assertRaisesRegex(deploy.Failure, "DEPENDENCY_SYNC_FAILED"):
             deploy.dependencies(self.release)
 
-    def test_dependency_service_effective_write_boundary(self):
-        properties = ("User=modelfc-deploy\nProtectSystem=strict\n"
+    def dependency_properties(self):
+        return ("User=modelfc-deploy\nGroup=modelfc-deploy\nSupplementaryGroups=\nProtectSystem=strict\n"
                       f"ReadOnlyPaths={self.releases}\n"
                       f"ReadWritePaths={self.release / '.venv'}\n"
                       "InaccessiblePaths=/root/modelfc-state /root/dev/modelfc "
@@ -369,11 +369,20 @@ class IsolatedBoundaryTest(unittest.TestCase):
                       "BindPaths=\nTemporaryFileSystem=\n"
                       "ExecStart=/usr/bin/python3 -I /opt/modelfc-deploy/deploy_main.py "
                       f"--install-dependencies {self.release.name}\n")
+
+    def test_dependency_service_effective_write_boundary(self):
+        properties = self.dependency_properties()
         with patch.object(deploy, "command", return_value=properties) as show:
             deploy.dependency_boundary(self.release, releases=self.releases)
             self.assertEqual(show.call_args.args[0][2],
                              deploy.DEPENDENCY_SERVICE.format(self.release.name))
+            self.assertIn("Group", show.call_args.args[0])
+            self.assertIn("SupplementaryGroups", show.call_args.args[0])
         for old, new in (("User=modelfc-deploy", "User=root"),
+                         ("\nGroup=modelfc-deploy\n", "\nGroup=root\n"),
+                         ("\nGroup=modelfc-deploy\n", "\n"),
+                         ("SupplementaryGroups=\n", "SupplementaryGroups=docker\n"),
+                         ("SupplementaryGroups=\n", ""),
                          ("ProtectSystem=strict", "ProtectSystem=full"),
                          (f"ReadOnlyPaths={self.releases}", "ReadOnlyPaths=/tmp"),
                          (f"ReadWritePaths={self.release / '.venv'}",
@@ -403,6 +412,28 @@ class IsolatedBoundaryTest(unittest.TestCase):
                          "InaccessiblePaths=/root/dev/modelfc", "NoNewPrivileges=yes",
                          "PrivateDevices=yes"):
             self.assertIn(required, unit)
+
+    def test_dependency_group_failure_prevents_install_service_start(self):
+        for index, (old, new) in enumerate((
+                ("\nGroup=modelfc-deploy\n", "\nGroup=root\n"),
+                ("SupplementaryGroups=\n", "SupplementaryGroups=docker\n"))):
+            candidate = self.releases / (self.sha + f"-{index:012x}")
+            candidate.mkdir()
+            properties = self.dependency_properties().replace(str(self.release), str(candidate))
+            properties = properties.replace(self.release.name, candidate.name).replace(old, new)
+            def fake_command(args, **kwargs):
+                if args[:3] == ["/usr/bin/python3", "-m", "venv"]:
+                    (candidate / ".venv/bin").mkdir(parents=True)
+                    (candidate / ".venv/bin/python").write_text("fresh runtime")
+                    return ""
+                if args[:2] == ["systemctl", "show"]:
+                    return properties
+                self.fail("Dependency installation must not start after a group boundary failure")
+            with self.subTest(group=new), patch.object(deploy, "command", side_effect=fake_command) as run:
+                with self.assertRaisesRegex(deploy.Failure, "STATE_BOUNDARY_FAILED"):
+                    deploy.dependencies(candidate, check_boundary=lambda release:
+                        deploy.dependency_boundary(release, releases=self.releases))
+                self.assertEqual(run.call_count, 2)
 
     def test_dependency_entrypoint_keeps_build_code_in_sandbox(self):
         (self.release / ".venv/bin").mkdir(parents=True)
