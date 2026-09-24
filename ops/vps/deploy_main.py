@@ -5,6 +5,7 @@ the installed systemd unit invokes --run-tests against one candidate release.
 """
 
 import fcntl
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -12,6 +13,7 @@ import pwd
 import re
 import secrets
 import shutil
+import stat
 import subprocess
 import sys
 
@@ -25,6 +27,7 @@ STATE = Path("/root/modelfc-state")
 HISTORY = Path("/root/dev/modelfc")
 TRUSTED = Path("/opt/modelfc-deploy/deploy_main.py")
 SERVICE = "modelfc-postmerge-tests.service"
+DEPENDENCY_SERVICE = "modelfc-postmerge-dependencies@{}.service"
 REQUEST = CONTROL / "test-request.json"
 TEST_OUTPUT = CONTROL / "test-result.json"
 SHA = re.compile(r"[0-9a-f]{40}\Z")
@@ -130,7 +133,8 @@ def boundary(*, root=ROOT, releases=RELEASES, control=CONTROL, state=STATE,
                               "-p", "PrivateNetwork", "-p", "InaccessiblePaths",
                               "-p", "User", "-p", "ExecStart", "-p", "ProtectSystem",
                               "-p", "ReadOnlyPaths", "-p", "ReadWritePaths",
-                              "-p", "BindPaths", "-p", "TemporaryFileSystem"], timeout=15)
+                              "-p", "BindPaths", "-p", "TemporaryFileSystem",
+                              "-p", "MemoryMax", "-p", "TasksMax"], timeout=15)
     except Failure:
         raise Failure("STATE_BOUNDARY_FAILED") from None
     fields = dict(line.split("=", 1) for line in properties.splitlines() if "=" in line)
@@ -143,7 +147,40 @@ def boundary(*, root=ROOT, releases=RELEASES, control=CONTROL, state=STATE,
             or fields.get("BindPaths") not in (None, "")
             or fields.get("TemporaryFileSystem") not in (None, "")
             or fields.get("User") != "modelfc-deploy"
+            or fields.get("MemoryMax") != str(2 * 1024**3)
+            or fields.get("TasksMax") != "64"
             or str(TRUSTED) not in fields.get("ExecStart", "")):
+        raise Failure("STATE_BOUNDARY_FAILED")
+
+
+def dependency_boundary(release, *, releases=None):
+    releases = RELEASES if releases is None else releases
+    if release.parent != releases or release_path(release.name, releases=releases) != release:
+        raise Failure("STATE_BOUNDARY_FAILED")
+    instance = DEPENDENCY_SERVICE.format(release.name)
+    try:
+        properties = command(["systemctl", "show", instance, "-p", "User", "-p", "ExecStart",
+                              "-p", "ProtectSystem", "-p", "ReadOnlyPaths",
+                              "-p", "ReadWritePaths", "-p", "InaccessiblePaths",
+                              "-p", "PrivateTmp", "-p", "PrivateDevices",
+                              "-p", "NoNewPrivileges",
+                              "-p", "BindPaths", "-p", "TemporaryFileSystem"], timeout=15)
+    except Failure:
+        raise Failure("STATE_BOUNDARY_FAILED") from None
+    fields = dict(line.split("=", 1) for line in properties.splitlines() if "=" in line)
+    hidden = fields.get("InaccessiblePaths", "").split()
+    if (fields.get("User") != "modelfc-deploy"
+            or fields.get("ProtectSystem") != "strict"
+            or str(releases) not in fields.get("ReadOnlyPaths", "").split()
+            or fields.get("ReadWritePaths") != str(release / ".venv")
+            or str(STATE) not in hidden or str(HISTORY) not in hidden
+            or fields.get("PrivateTmp") != "yes"
+            or fields.get("PrivateDevices") != "yes"
+            or fields.get("NoNewPrivileges") != "yes"
+            or fields.get("BindPaths") not in (None, "")
+            or fields.get("TemporaryFileSystem") not in (None, "")
+            or f"--install-dependencies {release.name}" not in fields.get("ExecStart", "")
+            or fields.get("ExecStart", "").count(str(TRUSTED)) != 1):
         raise Failure("STATE_BOUNDARY_FAILED")
 
 
@@ -183,25 +220,91 @@ def checkout_release(release, sha):
         raise Failure("SOURCE_INVALID")
 
 
-def dependencies(release):
+def verify_source(release, sha):
+    """Read every tracked file; never accept a modified file hidden by index flags."""
+    if head(release) != sha or git(release, "rev-parse", "--show-object-format") != "sha1":
+        raise Failure("SOURCE_INVALID")
+    entries = git(release, "ls-tree", "-r", "-z", "--full-tree", sha)
+    if not entries or not entries.endswith("\0"):
+        raise Failure("SOURCE_INVALID")
+    try:
+        for entry in entries[:-1].split("\0"):
+            meta, name = entry.split("\t", 1)
+            mode, kind, oid = meta.split(" ")
+            relative = Path(name)
+            if (kind != "blob" or mode not in ("100644", "100755", "120000")
+                    or len(oid) != 40 or relative.is_absolute()
+                    or not name or any(part in (".", "..", ".git") for part in relative.parts)):
+                raise Failure("SOURCE_INVALID")
+            path = release / relative
+            for parent in relative.parents:
+                if parent == Path("."):
+                    break
+                if (release / parent).is_symlink():
+                    raise Failure("SOURCE_INVALID")
+            status = path.lstat()
+            if mode == "120000":
+                if not stat.S_ISLNK(status.st_mode):
+                    raise Failure("SOURCE_INVALID")
+                contents = os.fsencode(os.readlink(path))
+            else:
+                if (not stat.S_ISREG(status.st_mode)
+                        or bool(status.st_mode & 0o111) != (mode == "100755")):
+                    raise Failure("SOURCE_INVALID")
+                contents = path.read_bytes()
+            digest = hashlib.sha1(b"blob " + str(len(contents)).encode() + b"\0" + contents).hexdigest()
+            if digest != oid:
+                raise Failure("SOURCE_INVALID")
+    except (OSError, ValueError, UnicodeError):
+        raise Failure("SOURCE_INVALID") from None
+    if (git(release, "status", "--porcelain=v1", "--untracked-files=all")
+            or git(release, "ls-files", "--others", "--ignored", "--exclude-standard",
+                   "-z", "--", ".", ":(exclude).venv/**")):
+        raise Failure("SOURCE_INVALID")
+
+
+def dependencies(release, *, check_boundary=dependency_boundary):
+    """Host creates only the venv; package/build execution runs in systemd."""
     env = {"PATH": "/usr/bin:/bin", "HOME": str(CONTROL),
-           "PIP_DISABLE_PIP_VERSION_CHECK": "1", "PIP_CONFIG_FILE": "/dev/null",
            "PYTHONNOUSERSITE": "1"}
-    python = release / ".venv/bin/python"
     try:
         if sys.version_info[:2] != (3, 12) or (release / ".venv").exists():
             raise Failure("DEPENDENCY_SYNC_FAILED")
         command(["/usr/bin/python3", "-m", "venv", str(release / ".venv")],
                 env=env, timeout=120)
-        if command([str(python), "-c", "import sys; print('%d.%d' % sys.version_info[:2])"],
-                   env=env, timeout=15) != "3.12":
-            raise Failure("DEPENDENCY_SYNC_FAILED")
-        command([str(python), "-m", "pip", "install", "-r", str(release / "requirements.txt")],
-                cwd=release, env=env, timeout=300)
-        command([str(python), "-m", "pip", "check"], env=env, timeout=30)
-        return "INSTALLED"
     except (Failure, OSError):
         raise Failure("DEPENDENCY_SYNC_FAILED") from None
+    if (release / ".venv").is_symlink() or not (release / ".venv/bin/python").is_file():
+        raise Failure("DEPENDENCY_SYNC_FAILED")
+    check_boundary(release)
+    try:
+        command(["sudo", "-n", "/usr/bin/systemctl", "start", "--wait",
+                 DEPENDENCY_SERVICE.format(release.name)], timeout=390)
+    except Failure:
+        raise Failure("DEPENDENCY_SYNC_FAILED") from None
+    return "INSTALLED"
+
+
+def run_dependency_install(release_id):
+    """Trusted entrypoint in the candidate-only systemd write namespace."""
+    try:
+        release = release_path(release_id)
+        if (not release.is_dir() or release.name[:40] != head(release)
+                or (release / ".venv").is_symlink()):
+            raise Failure("DEPENDENCY_SYNC_FAILED")
+        env = {"PATH": "/usr/bin:/bin", "HOME": "/nonexistent",
+               "PIP_DISABLE_PIP_VERSION_CHECK": "1", "PIP_CONFIG_FILE": "/dev/null",
+               "PIP_NO_CACHE_DIR": "1", "PYTHONNOUSERSITE": "1"}
+        python = str(release / ".venv/bin/python")
+        if command([python, "-c", "import sys; print('%d.%d' % sys.version_info[:2])"],
+                   env=env, timeout=15) != "3.12":
+            raise Failure("DEPENDENCY_SYNC_FAILED")
+        command([python, "-m", "pip", "install", "--no-cache-dir", "-r",
+                 str(release / "requirements.txt")], cwd="/", env=env, timeout=300)
+        command([python, "-m", "pip", "check"], cwd="/", env=env, timeout=30)
+        return True
+    except (Failure, OSError):
+        return False
 
 
 def write_json(path, value):
@@ -319,12 +422,12 @@ def deploy(sha, *, root=ROOT, releases=RELEASES, current=CURRENT, control=CONTRO
                 return value
             checkout_release(candidate, sha)
             value["dependency_sync"] = dependencies(candidate)
+            verify_source(candidate, sha)
             value["tests_run"] = test_runner(candidate, sha)
             if type(value["tests_run"]) is not int or value["tests_run"] <= 0:
                 raise Failure("TESTS_FAILED")
             value["tests_status"] = "PASS"
-            if head(candidate) != sha:
-                raise Failure("FINAL_SHA_MISMATCH")
+            verify_source(candidate, sha)
             promote(candidate, sha, current=current, releases=releases)
             value.update(status="PASS", reason="OK", final_sha=sha,
                          promotion_status="PROMOTED")
@@ -392,6 +495,9 @@ def run_tests():
 
 
 def main():
+    if (len(sys.argv) == 3 and sys.argv[1] == "--install-dependencies"
+            and "SSH_ORIGINAL_COMMAND" not in os.environ):
+        return 0 if run_dependency_install(sys.argv[2]) else 1
     if len(sys.argv) == 2 and sys.argv[1] == "--run-tests" and "SSH_ORIGINAL_COMMAND" not in os.environ:
         return 0 if run_tests() else 1
     requested = os.environ.get("SSH_ORIGINAL_COMMAND", "")

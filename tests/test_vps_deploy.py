@@ -216,6 +216,48 @@ class FreshReleaseTest(unittest.TestCase):
         self.assertEqual(list(self.releases.iterdir()), [previous])
         self.assertTrue((previous / ".venv/bin/python").exists())
 
+    def test_dependency_backend_cannot_modify_reviewed_source_and_pass(self):
+        self.run_deploy(self.a)
+        previous = self.created[0]
+        for hidden_flag in (None, "--assume-unchanged", "--skip-worktree"):
+            with self.subTest(hidden_flag=hidden_flag):
+                def mutate(release):
+                    self.fake_dependencies(release)
+                    (release / "example.txt").write_text("changed by package build\n")
+                    if hidden_flag:
+                        cmd("git", "update-index", hidden_flag, "example.txt", cwd=release)
+                    return "INSTALLED"
+                with patch.object(deploy, "dependencies", side_effect=mutate):
+                    result = self.run_deploy(self.b)
+                self.assertEqual((result["status"], result["reason"]), ("FAIL", "SOURCE_INVALID"))
+                self.assertEqual(os.readlink(self.current), str(previous))
+                self.assertEqual(list(self.releases.iterdir()), [previous])
+                self.assertEqual(len(self.tested), 1)
+
+    def test_source_checked_again_after_tests_and_before_promotion(self):
+        self.run_deploy(self.a)
+        previous = self.created[0]
+        def mutate_in_test(release, sha):
+            (release / "example.txt").write_text("tampered during testing\n")
+            return 600
+        with patch.object(deploy, "tests", side_effect=mutate_in_test):
+            result = self.run_deploy(self.b)
+        self.assertEqual((result["status"], result["reason"]), ("FAIL", "SOURCE_INVALID"))
+        self.assertEqual(os.readlink(self.current), str(previous))
+
+    def test_dependency_backend_cannot_inject_ignored_importable_source(self):
+        def inject(release):
+            self.fake_dependencies(release)
+            cache = release / "src/modelfc/__pycache__/payload.pyc"
+            cache.parent.mkdir(parents=True)
+            cache.write_bytes(b"unreviewed bytecode")
+            return "INSTALLED"
+        with patch.object(deploy, "dependencies", side_effect=inject):
+            result = self.run_deploy(self.b)
+        self.assertEqual((result["status"], result["reason"]), ("FAIL", "SOURCE_INVALID"))
+        self.assertFalse(self.current.exists())
+        self.assertFalse(self.tested)
+
     def test_failed_tests_and_zero_tests_never_promote(self):
         self.run_deploy(self.a)
         previous = self.created[0]
@@ -289,14 +331,84 @@ class IsolatedBoundaryTest(unittest.TestCase):
             return "3.12"
         with patch.object(deploy, "CONTROL", self.control), patch.object(
                 deploy, "command", side_effect=fake_command) as run:
-            self.assertEqual(deploy.dependencies(self.release), "INSTALLED")
-            self.assertEqual(run.call_count, 4)
+            self.assertEqual(deploy.dependencies(self.release, check_boundary=lambda _: None), "INSTALLED")
+            self.assertEqual(run.call_count, 2)
+            self.assertEqual(run.call_args.args[0], [
+                "sudo", "-n", "/usr/bin/systemctl", "start", "--wait",
+                deploy.DEPENDENCY_SERVICE.format(self.release.name)])
             for call in run.call_args_list:
-                self.assertNotIn("ODDSPAPI_API_KEY", call.kwargs["env"])
-                self.assertNotIn("GITHUB_TOKEN", call.kwargs["env"])
+                if "env" in call.kwargs:
+                    self.assertNotIn("ODDSPAPI_API_KEY", call.kwargs["env"])
+                    self.assertNotIn("GITHUB_TOKEN", call.kwargs["env"])
         self.assertTrue((self.release / ".venv/bin/python").exists())
         with self.assertRaisesRegex(deploy.Failure, "DEPENDENCY_SYNC_FAILED"):
             deploy.dependencies(self.release)
+
+    def test_dependency_service_effective_write_boundary(self):
+        properties = ("User=modelfc-deploy\nProtectSystem=strict\n"
+                      f"ReadOnlyPaths={self.releases}\n"
+                      f"ReadWritePaths={self.release / '.venv'}\n"
+                      "InaccessiblePaths=/root/modelfc-state /root/dev/modelfc\n"
+                      "PrivateTmp=yes\nPrivateDevices=yes\nNoNewPrivileges=yes\n"
+                      "BindPaths=\nTemporaryFileSystem=\n"
+                      "ExecStart=/usr/bin/python3 -I /opt/modelfc-deploy/deploy_main.py "
+                      f"--install-dependencies {self.release.name}\n")
+        with patch.object(deploy, "command", return_value=properties) as show:
+            deploy.dependency_boundary(self.release, releases=self.releases)
+            self.assertEqual(show.call_args.args[0][2],
+                             deploy.DEPENDENCY_SERVICE.format(self.release.name))
+        for old, new in (("User=modelfc-deploy", "User=root"),
+                         ("ProtectSystem=strict", "ProtectSystem=full"),
+                         (f"ReadOnlyPaths={self.releases}", "ReadOnlyPaths=/tmp"),
+                         (f"ReadWritePaths={self.release / '.venv'}",
+                          f"ReadWritePaths={self.releases}"),
+                         (f"ReadWritePaths={self.release / '.venv'}",
+                          f"ReadWritePaths={self.release / '.venv'} {self.releases.parent / 'current'}"),
+                         (f"ReadWritePaths={self.release / '.venv'}\n", ""),
+                         ("/root/modelfc-state", "/tmp"),
+                         ("/root/dev/modelfc", "/tmp"),
+                         ("PrivateTmp=yes", "PrivateTmp=no"),
+                         ("PrivateDevices=yes", "PrivateDevices=no"),
+                         ("NoNewPrivileges=yes", "NoNewPrivileges=no"),
+                         ("BindPaths=", "BindPaths=/tmp:/srv/modelfc/current"),
+                         ("TemporaryFileSystem=", "TemporaryFileSystem=/srv/modelfc"),
+                         ("/opt/modelfc-deploy/deploy_main.py", "/tmp/evil.py"),
+                         (f"--install-dependencies {self.release.name}", "--install-dependencies other")):
+            with self.subTest(old=old), patch.object(deploy, "command",
+                                                     return_value=properties.replace(old, new)):
+                with self.assertRaisesRegex(deploy.Failure, "STATE_BOUNDARY_FAILED"):
+                    deploy.dependency_boundary(self.release, releases=self.releases)
+        unit = (SOURCE.parents[2] / "deploy/modelfc-postmerge-dependencies@.service").read_text()
+        for required in ("ProtectSystem=strict", "ReadOnlyPaths=/srv/modelfc/releases",
+                         "ReadWritePaths=/srv/modelfc/releases/%i/.venv",
+                         "InaccessiblePaths=/root/modelfc-state",
+                         "InaccessiblePaths=/root/dev/modelfc", "NoNewPrivileges=yes",
+                         "PrivateDevices=yes"):
+            self.assertIn(required, unit)
+
+    def test_dependency_entrypoint_keeps_build_code_in_sandbox(self):
+        (self.release / ".venv/bin").mkdir(parents=True)
+        (self.release / ".venv/bin/python").write_text("new")
+        (self.release / "requirements.txt").write_text("fastapi>=0.115,<1\n")
+        with patch.object(deploy, "RELEASES", self.releases), patch.object(
+                deploy, "head", return_value=self.sha), patch.object(
+                deploy, "command", return_value="3.12") as execute, patch.dict(
+                os.environ, {"ODDSPAPI_API_KEY": "offline-secret", "GITHUB_TOKEN": "secret"}):
+            self.assertTrue(deploy.run_dependency_install(self.release.name))
+            self.assertEqual(execute.call_count, 3)
+            pip_install = execute.call_args_list[1]
+            self.assertEqual(pip_install.args[0][:5], [
+                str(self.release / ".venv/bin/python"), "-m", "pip", "install", "--no-cache-dir"])
+            self.assertEqual(pip_install.kwargs["cwd"], "/")
+            self.assertEqual(pip_install.kwargs["env"]["PIP_NO_CACHE_DIR"], "1")
+            self.assertNotIn("ODDSPAPI_API_KEY", pip_install.kwargs["env"])
+            self.assertNotIn("GITHUB_TOKEN", pip_install.kwargs["env"])
+        with patch.object(deploy, "RELEASES", self.releases), patch.object(
+                deploy, "head", return_value=self.sha), patch.object(
+                deploy, "command", side_effect=deploy.Failure("INTERNAL_ERROR")):
+            self.assertFalse(deploy.run_dependency_install(self.release.name))
+        with patch.object(deploy, "RELEASES", self.releases):
+            self.assertFalse(deploy.run_dependency_install("../../current"))
 
     def test_failed_dependency_install_keeps_failed_candidate_unpromoted(self):
         (self.release / "requirements.txt").write_text("other\n")
@@ -310,6 +422,7 @@ class IsolatedBoundaryTest(unittest.TestCase):
                       "/root/dev/modelfc /etc/modelfc-validator\nProtectSystem=strict\n"
                       f"ReadOnlyPaths={self.releases}\nReadWritePaths="
                       f"{self.control}\nBindPaths=\nTemporaryFileSystem=\n"
+                      "MemoryMax=2147483648\nTasksMax=64\n"
                       "User=modelfc-deploy\nExecStart=/usr/bin/python3 -I "
                       "/opt/modelfc-deploy/deploy_main.py --run-tests\n")
         identity = type("Person", (), {"pw_name": "modelfc-deploy"})()
@@ -331,6 +444,12 @@ class IsolatedBoundaryTest(unittest.TestCase):
                          ("/root/modelfc-state", "/tmp"),
                          ("/root/dev/modelfc", "/tmp"),
                          ("User=modelfc-deploy", "User=root"),
+                         ("MemoryMax=2147483648", "MemoryMax=infinity"),
+                         ("MemoryMax=2147483648", "MemoryMax=4294967296"),
+                         ("MemoryMax=2147483648\n", ""),
+                         ("TasksMax=64", "TasksMax=infinity"),
+                         ("TasksMax=64", "TasksMax=1024"),
+                         ("TasksMax=64\n", ""),
                          ("/opt/modelfc-deploy/deploy_main.py", "/tmp/evil.py"),
                          ("BindPaths=", "BindPaths=/tmp:/srv/modelfc/releases"),
                          (f"ReadWritePaths={self.control}", "ReadWritePaths=/srv/modelfc")):
@@ -343,6 +462,7 @@ class IsolatedBoundaryTest(unittest.TestCase):
                     deploy.boundary(root=self.root, releases=self.releases, control=self.control)
         unit = (SOURCE.parents[2] / "deploy/modelfc-postmerge-tests.service").read_text()
         for required in ("PrivateNetwork=yes", "ProtectSystem=strict",
+                         "MemoryMax=2G", "TasksMax=64",
                          "ReadOnlyPaths=/srv/modelfc/releases",
                          "InaccessiblePaths=/root/modelfc-state",
                          "InaccessiblePaths=/root/dev/modelfc", "KillMode=control-group"):

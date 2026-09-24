@@ -26,13 +26,17 @@ or the systemd unit. This PR only provides source; it does not install anything.
    ```
 
 2. From a specifically reviewed merged SHA, install the controller **outside**
-   releases and the fixed systemd test unit, owned by root. Install future
+   releases and both fixed systemd units, owned by root. Install future
    reviewed controller changes intentionally after review. The installed unit,
    not the repository copy, determines test isolation; verify its effective
-   `systemctl show` properties. It must have `PrivateNetwork=yes`,
+   `systemctl show` properties. The test unit must have `PrivateNetwork=yes`,
    `ProtectSystem=strict`, `ReadOnlyPaths=/srv/modelfc/releases`,
    `InaccessiblePaths=/root/modelfc-state /root/dev/modelfc`, the fixed
-   `User=modelfc-deploy` and trusted `ExecStart`. It writes only a bounded
+   `User=modelfc-deploy`, `MemoryMax=2G`, `TasksMax=64`, and trusted `ExecStart`.
+   The dependency unit has `ProtectSystem=strict` and grants write access only
+   to the instance's fresh `.venv`; package builds can use its private `/tmp`.
+   It cannot write other releases, `current`, history or state. It writes no
+   dependency report. The test unit writes only a bounded
    test report under `/var/lib/modelfc-deploy`; tests receive an allowlisted
    environment with no API, GitHub, SSH or application credential.
 
@@ -42,8 +46,11 @@ or the systemd unit. This PR only provides source; it does not install anything.
      | install -o root -g root -m 0555 /dev/stdin /opt/modelfc-deploy/deploy_main.py
    git -C /root/dev/modelfc show "${REVIEWED_SHA}:deploy/modelfc-postmerge-tests.service" \
      | install -o root -g root -m 0644 /dev/stdin /etc/systemd/system/modelfc-postmerge-tests.service
+   git -C /root/dev/modelfc show "${REVIEWED_SHA}:deploy/modelfc-postmerge-dependencies@.service" \
+     | install -o root -g root -m 0644 /dev/stdin '/etc/systemd/system/modelfc-postmerge-dependencies@.service'
    systemctl daemon-reload
    systemd-analyze verify /etc/systemd/system/modelfc-postmerge-tests.service
+   systemd-analyze verify '/etc/systemd/system/modelfc-postmerge-dependencies@.service'
    ```
 
 3. Create a dedicated SSH keypair. Bind its public key to the controller in
@@ -55,7 +62,10 @@ or the systemd unit. This PR only provides source; it does not install anything.
 
    `restrict` disables PTY, forwarding, X11 and user rc. The account only
    needs narrow passwordless sudo permission for `/usr/bin/systemctl start
-   --wait modelfc-postmerge-tests.service`, without SETENV; it never gets an
+   --wait modelfc-postmerge-tests.service` and the fixed
+   `modelfc-postmerge-dependencies@<validated-release-id>.service` instances,
+   without SETENV. The trusted controller validates the release ID, and the
+   installed dependency unit validates it again. The account never gets an
    unrestricted root shell. The fixed service is not enabled by a timer.
    Verify a login attempt without a valid `deploy stevengalvis/modelfc <sha>`
    request produces `INVALID_REQUEST`.
@@ -109,7 +119,10 @@ Git HEAD, initializes a new repository, fetches fixed `origin/main` with
 isolated Git config, proves the requested SHA is on that fetched branch, and
 rejects moving a verified active release backward. It checks out the exact
 SHA, installs requirements into a fresh `.venv` at the candidate's permanent
-path, and runs the complete offline tests in the installed systemd sandbox.
+path through the narrowly writable dependency service, verifies every tracked
+source blob against the reviewed Git commit, and runs the complete offline
+tests in the installed systemd sandbox. It verifies tracked source again before
+promotion. Package installation has no production state or provider credential.
 Successful tests must produce a positive final unittest count on stderr.
 Promotion creates a temporary absolute symlink and atomically replaces
 `/srv/modelfc/current`. The old successful release remains on disk. A failed
