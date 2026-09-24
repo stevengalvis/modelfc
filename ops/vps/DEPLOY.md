@@ -1,121 +1,137 @@
-# Reviewed main to VPS checkout sync
+# Fresh release deployment after merge
 
-This is separate from the rootless PR validator. It synchronizes an already
-merged `main` revision into `/root/dev/modelfc` and runs offline tests. It does
-not restart services, access OddsPapi, refresh history, or write captures or
-outcomes. Merging this PR **does not install or activate** the VPS side.
+This deployment path is separate from the trusted PR validator. A push to
+`main`, after GitHub CI succeeds, requests exactly that push's SHA. The reviewed
+controller installed at `/opt/modelfc-deploy/deploy_main.py` creates a new,
+independent Git repository under `/srv/modelfc/releases/<sha>-<nonce>/`, installs
+a fresh `.venv` there, and runs offline tests. Only a passing release is pointed
+to by `/srv/modelfc/current`. The incoming release never supplies the controller
+or the systemd unit. This PR only provides source; it does not install anything.
 
-## One-time VPS installation, after review and merge
+## One-time VPS installation after review and merge
 
-1. On the real VPS host, inspect ownership and access for `/root`, `/root/dev`,
-   `/root/dev/modelfc`, `.git`, the ignored historical CSVs, `.venv`, and
-   `/root/modelfc-state`. Create `modelfc-deploy` with no sudo shell or other
-   groups. Give it traversal of the parent directories and write access to the
-   canonical checkout and the entire existing virtualenv (including permission
-   to remove its old contents after replacement), **without granting access to
-   `/root/modelfc-state` or the validator credential files**. Historical CSVs
-   live in the checkout root; inspect their ownership and protect them when
-   assigning checkout permissions. Stop installation if these boundaries cannot
-   be established. Do not recursively chmod/chown `/root` or the state directory.
-   A writable directory permits unlinking a read-only file. If historical CSVs
-   stay in the checkout root, simply chowning the whole checkout to the deploy
-   user is **not** safe for that data. One possible targeted layout is a
-   root-owned, sticky checkout root with a write ACL for `modelfc-deploy`,
-   deploy-owned tracked files/directories and `.git`, and root-owned historical
-   CSVs. Verify with a harmless disposable file that the deploy user cannot
-   replace a root-owned CSV before allowing automatic fetches. The refresh
-   service can continue writing those CSVs as root.
-   The account creation itself is one-time administrator work:
+1. Inspect actual VPS ownership and permissions. Create `modelfc-deploy` with no
+   interactive deployment shell, Docker access, production credential access or
+   access to `/root/modelfc-state`. Give the account ownership of **only** the
+   new `/srv/modelfc` tree and its own `/var/lib/modelfc-deploy` directory.
+   Traversal of `/root` is unnecessary. Keep `/root/dev/modelfc` and its
+   historical CSVs, refresh metadata and locks under their existing ownership.
+   Do not recursively change ownership of `/root`, existing history, or state.
 
    ```sh
    useradd --create-home --shell /bin/sh modelfc-deploy
    passwd -l modelfc-deploy
+   install -d -o modelfc-deploy -g modelfc-deploy -m 0755 /srv/modelfc /srv/modelfc/releases
+   install -d -o modelfc-deploy -g modelfc-deploy -m 0700 /var/lib/modelfc-deploy
    ```
 
-   Apply checkout ownership/ACL changes only after inspecting the real host.
-   The controller deliberately refuses a checkout whose `origin` URL is not
-   exactly `https://github.com/stevengalvis/modelfc.git`.
-2. As administrator, install `deploy_main.py` from a specifically reviewed main
-   SHA under `/opt/modelfc-deploy/deploy_main.py`, owned by root, mode 0555;
-   install this service under `/etc/systemd/system/`, root-owned mode 0644;
-   `systemctl daemon-reload`. Never run the controller from the incoming
-   checkout. Later reviewed controller changes require another explicit install.
-   Example with `REVIEWED_SHA` set to the exact approved main revision:
+2. From a specifically reviewed merged SHA, install the controller **outside**
+   releases and the fixed systemd test unit, owned by root. Install future
+   reviewed controller changes intentionally after review. The installed unit,
+   not the repository copy, determines test isolation; verify its effective
+   `systemctl show` properties. It must have `PrivateNetwork=yes`,
+   `ProtectSystem=strict`, `ReadOnlyPaths=/srv/modelfc/releases`,
+   `InaccessiblePaths=/root/modelfc-state /root/dev/modelfc`, the fixed
+   `User=modelfc-deploy` and trusted `ExecStart`. It writes only a bounded
+   test report under `/var/lib/modelfc-deploy`; tests receive an allowlisted
+   environment with no API, GitHub, SSH or application credential.
 
    ```sh
    install -d -o root -g root -m 0755 /opt/modelfc-deploy
-   install -d -o modelfc-deploy -g modelfc-deploy -m 0700 /var/lib/modelfc-deploy
    git -C /root/dev/modelfc show "${REVIEWED_SHA}:ops/vps/deploy_main.py" \
      | install -o root -g root -m 0555 /dev/stdin /opt/modelfc-deploy/deploy_main.py
    git -C /root/dev/modelfc show "${REVIEWED_SHA}:deploy/modelfc-postmerge-tests.service" \
      | install -o root -g root -m 0644 /dev/stdin /etc/systemd/system/modelfc-postmerge-tests.service
    systemctl daemon-reload
+   systemd-analyze verify /etc/systemd/system/modelfc-postmerge-tests.service
    ```
-3. Create `/var/lib/modelfc-deploy` owned `modelfc-deploy`, mode 0700. Create a
-   dedicated SSH keypair. In the deploy user's `authorized_keys`, bind its
-   public key to the installed controller with a forced command:
+
+3. Create a dedicated SSH keypair. Bind its public key to the controller in
+   `modelfc-deploy`'s `authorized_keys`:
 
    ```text
    restrict,command="/usr/bin/python3 -I /opt/modelfc-deploy/deploy_main.py" ssh-ed25519 AAAA... modelfc-postmerge
    ```
 
-   `restrict` disables PTY, port and agent forwarding, X11 and user rc.
-   A normal interactive SSH login is not needed. Restrict this account's sudo
-   permission to **only** `/usr/bin/systemctl start --wait
-   modelfc-postmerge-tests.service`, with no SETENV. The unit executes as
-   `modelfc-deploy`; the controller itself is not run as root.
-4. Independently verify and pin the VPS's SSH host public key. Do not obtain it
-   with `ssh-keyscan` inside the deployment workflow as a trust decision. Set
-   GitHub environment `production` to allow only `main`, with no approval gate
-   if deployments should be automatic. Configure repository/environment:
-   `MODELFC_DEPLOY_SSH_KEY` (private key secret), `MODELFC_DEPLOY_HOST` (host
-   variable), and `MODELFC_DEPLOY_HOST_KEY` (complete known_hosts line variable).
-   The provider key, validator GitHub token and app secrets never go to Actions.
+   `restrict` disables PTY, forwarding, X11 and user rc. The account only
+   needs narrow passwordless sudo permission for `/usr/bin/systemctl start
+   --wait modelfc-postmerge-tests.service`, without SETENV; it never gets an
+   unrestricted root shell. The fixed service is not enabled by a timer.
+   Verify a login attempt without a valid `deploy stevengalvis/modelfc <sha>`
+   request produces `INVALID_REQUEST`.
 
-The controller accepts only `deploy stevengalvis/modelfc <40 lowercase hex>`
-as `SSH_ORIGINAL_COMMAND`. It checks a clean canonical `main` checkout, fetches
-only from the fixed public repository, checks both the requested SHA and
-current checkout SHA are reachable from the fetched main tip, and merges only
-the requested SHA with `--ff-only`. A clean local-only commit fails with
-`LOCAL_SHA_NOT_ON_MAIN`, even when it descends from the requested SHA. Git marks
-only `/root/dev/modelfc` as a safe directory for this controller's isolated
-invocations; no global or wildcard trust setting is installed. It never
-resets, stashes or cleans. Ignored `.venv`, managed historical CSVs, refresh
-files and Python caches are accounted for, not removed. Unknown ignored files
-and normal untracked/modified files block deployment. When requirements change,
-the controller builds a clean virtualenv under `/var/lib/modelfc-deploy` (which
-must share the checkout's filesystem), installs and checks dependencies, then
-atomically swaps it into `.venv`. The successful requirements hash travels with
-the validated replacement. A failed build preserves the previous `.venv` and
-its stamp; no packages are installed into the old environment.
+4. Independently verify and pin the VPS SSH host key. Set GitHub environment
+   `production` to accept `main`; configure `MODELFC_DEPLOY_SSH_KEY` (secret),
+   `MODELFC_DEPLOY_HOST` and `MODELFC_DEPLOY_HOST_KEY` (variables containing
+   host and known_hosts line). Never put OddsPapi keys, validator tokens, state
+   contents or other production secrets in GitHub Actions.
 
-The installed systemd unit runs trusted `--run-tests` code outside the Git
-checkout. The controller checks the **installed effective** `User`,
-`PrivateNetwork`, `InaccessiblePaths`, `ProtectSystem=strict`, and canonical
-`ReadOnlyPaths` properties before starting tests. It rejects writable path or
-bind overrides; only its fixed report directory may be writable. The unit has no provider,
-GitHub or SSH credentials. Its child test process gets a fresh allowlisted
-environment. The test unit is **not enabled**, scheduled, or started except by
-the trusted controller. A failure leaves the already fast-forwarded checkout
-at the merged SHA; no automatic rollback or service restart occurs.
+## Runtime and historical-data wiring
 
-## Acceptance checks before enabling the GitHub secret
+Deployments do not move or copy historical CSVs. Their current location remains
+`/root/dev/modelfc`; refreshing those CSVs and acquiring `data/corner-refresh/
+refresh.lock` remain separate operations. The release's committed
+`corner_data.json` still resolves `data_directory: "."` relative to that file.
+Production commands must instead use a separately maintained runtime config
+outside releases, containing the same `leagues` and `max_age_days` as the
+reviewed configuration and an **absolute** `data_directory` of
+`/root/dev/modelfc`. Confirm actual history file and refresh lock locations on
+the host before creating that config. Do not put the config in Git; keep it
+root/admin managed. The configuration parser accepts an absolute directory.
 
-- Verify the deploy user cannot list/read/write `/root/modelfc-state` and
-  cannot read `/etc/modelfc-validator`. Confirm the unit's actual
-  `PrivateNetwork=yes` and `InaccessiblePaths` properties on the host.
-- Confirm the host SSH invocation can fetch in the **real host context**. A
-  restricted coding-agent mount of `.git` does not establish host behavior.
-- Run a reviewed SHA using the forced-command key, confirm its JSON contains
-  the exact requested/final SHAs and a nonzero test count, and check the state
-  directory remains untouched. Then retry the same SHA.
-- Check that an invalid SHA, wrong branch, dirty tracked file, unexpected
-  untracked/ignored file, older already deployed SHA, failed pip install,
-  failed tests and concurrent call produce fixed outcomes without removing work.
-- Verify the systemd test process cannot reach an external network or read
-  `/root/modelfc-state`; inspect the host journal locally if a test fails.
+Before switching any runtime command to `/srv/modelfc/current`, verify its
+service account can traverse and read the historical data and write the
+existing refresh lock, while the `modelfc-deploy` account still cannot modify
+history or state. Existing state configuration must continue to point to
+`/root/modelfc-state`; the deploy controller does not inspect its contents.
+Model FC's `git_commit_sha()` resolves the code path through the `current`
+symlink and reads the independent `.git` retained in each release. Use an
+absolute runtime `--data-config` pointing to the external history config.
 
-GitHub sees only a sanitized JSON report. Raw test output, filesystem contents,
-credentials and command stderr never cross the SSH reporting channel. Neither
-the post-merge workflow nor the installed controller replaces the separate PR
-validator or constitutes approval to merge unreviewed code.
+Audit installed services and manual commands before enabling automatic
+deployment. Repository examples hardcode `/root/dev/modelfc`, notably
+`deploy/modelfc-corner-refresh.service` and `DATA_REFRESH.md`; the refresh
+service currently runs code from the old checkout and uses its existing config.
+Plan its separate migration explicitly: execute refreshed code through
+`/srv/modelfc/current` while retaining `/root/dev/modelfc` as the data
+directory, and pass the external config. Audit OddsPapi and prospective runner
+commands and any locally installed services or scripts for their working
+directory, `PYTHONPATH`, virtualenv Python and config paths. This PR does not
+change or restart those installed services, modify their configuration, or
+migrate any data. Until that separate wiring is completed, promoting `current`
+does not itself switch the old running commands to the new code.
+
+## Deployment and acceptance
+
+The controller accepts only `deploy stevengalvis/modelfc <40 lowercase hex>`.
+It locks the host deployment path, verifies any current release's independent
+Git HEAD, initializes a new repository, fetches fixed `origin/main` with
+isolated Git config, proves the requested SHA is on that fetched branch, and
+rejects moving a verified active release backward. It checks out the exact
+SHA, installs requirements into a fresh `.venv` at the candidate's permanent
+path, and runs the complete offline tests in the installed systemd sandbox.
+Successful tests must produce a positive final unittest count on stderr.
+Promotion creates a temporary absolute symlink and atomically replaces
+`/srv/modelfc/current`. The old successful release remains on disk. A failed
+candidate never becomes current and is removed only if it was created by that
+run; abandoned candidates after a crash may be inspected and pruned manually.
+There is no automatic rollback: failures before promotion leave `current`
+pointing to the previous successful release. A repeated request for the
+already current SHA returns `ALREADY_CURRENT` without rebuilding; a superseded
+push reports `SUPERSEDED` without moving `current` backward.
+
+Before enabling the GitHub secret, exercise a reviewed main SHA through the
+forced SSH command on the actual VPS, verify the reported exact SHA and
+nonzero tests, verify the current symlink's direct target and retained `.git`,
+then retry that SHA. Test invalid SHA, an older event, dependency failure and
+test failure in a controlled acceptance environment. Confirm historical CSVs,
+refresh locks and `/root/modelfc-state` remain unchanged; confirm the installed
+systemd test process cannot read them or reach the network. Inspect local VPS
+journal if tests fail; GitHub receives only the fixed JSON report. The normal
+host execution context is used, independent of coding-agent mount restrictions.
+
+Release retention and the one-time runtime path migration are administrator
+tasks. Never delete a release still referenced by `current`; keep previous
+successful releases until a separate retention policy is reviewed. This system
+does not restart Model FC services, call providers, refresh history, settle
+outcomes, or replace the trusted PR validator.

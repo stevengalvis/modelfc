@@ -1,23 +1,25 @@
 [Unit]
-Description=Offline post-merge Model FC regression suite
+Description=Offline Model FC fresh release regression suite
 
 [Service]
 Type=oneshot
 User=modelfc-deploy
 Group=modelfc-deploy
-WorkingDirectory=/root/dev/modelfc
+WorkingDirectory=/var/lib/modelfc-deploy
 ExecStart=/usr/bin/python3 -I /opt/modelfc-deploy/deploy_main.py --run-tests
 TimeoutStartSec=330
 PrivateNetwork=yes
 PrivateTmp=yes
 NoNewPrivileges=yes
 ProtectSystem=strict
-ReadOnlyPaths=/root/dev/modelfc
+ReadOnlyPaths=/srv/modelfc/releases
 ReadWritePaths=/var/lib/modelfc-deploy
 InaccessiblePaths=/root/modelfc-state
+InaccessiblePaths=/root/dev/modelfc
 InaccessiblePaths=/etc/modelfc-validator
 Environment=PYTHONDONTWRITEBYTECODE=1
 UnsetEnvironment=ODDSPAPI_API_KEY GITHUB_TOKEN SSH_AUTH_SOCK
+KillMode=control-group
 
 [Install]
 # Intentionally not enabled or started by a timer.

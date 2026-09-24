@@ -38,7 +38,7 @@ jobs:
       group: modelfc-vps-deployment
       cancel-in-progress: false
     steps:
-      - name: Synchronize reviewed main on VPS
+      - name: Build and activate reviewed release on VPS
         env:
           DEPLOY_KEY: ${{ secrets.MODELFC_DEPLOY_SSH_KEY }}
           DEPLOY_HOST: ${{ vars.MODELFC_DEPLOY_HOST }}
@@ -71,30 +71,44 @@ jobs:
           try:
               value = json.loads(Path(sys.argv[1]).read_text())
               fields = {"status", "requested_sha", "previous_sha", "final_sha", "fetch_verified",
-                        "fast_forward", "dependency_sync", "tests_status", "tests_run",
-                        "checkout_clean", "state_boundary_enforced", "reason"}
-              reasons = {"OK", "SUPERSEDED", "CHECKOUT_DIRTY", "WRONG_BRANCH",
-                         "FETCH_FAILED", "SHA_NOT_ON_MAIN", "LOCAL_SHA_NOT_ON_MAIN", "NON_FAST_FORWARD",
-                         "DEPENDENCY_SYNC_FAILED", "TESTS_FAILED", "DEPLOYMENT_BUSY",
-                         "FINAL_SHA_MISMATCH", "INVALID_REQUEST", "STATE_BOUNDARY_FAILED",
-                         "CHECKOUT_INVALID"}
+                        "release_created", "dependency_sync", "tests_status", "tests_run",
+                        "promotion_status", "state_boundary_enforced", "reason"}
+              reasons = {"OK", "ALREADY_CURRENT", "SUPERSEDED", "INVALID_REQUEST",
+                         "DEPLOYMENT_BUSY", "STATE_BOUNDARY_FAILED", "SOURCE_INVALID",
+                         "FETCH_FAILED", "SHA_NOT_ON_MAIN", "ACTIVE_SHA_NOT_ON_MAIN",
+                         "DEPENDENCY_SYNC_FAILED", "TESTS_FAILED", "FINAL_SHA_MISMATCH",
+                         "PROMOTION_FAILED", "INTERNAL_ERROR"}
               if (set(value) != fields or value["status"] not in {"PASS", "FAIL", "SUPERSEDED"}
                   or value["requested_sha"] != sys.argv[2] or value["reason"] not in reasons
-                  or value["fast_forward"] not in {"NOT_ATTEMPTED", "UPDATED", "ALREADY_CURRENT"}
-                  or value["dependency_sync"] not in {"NOT_ATTEMPTED", "INSTALLED", "SKIPPED"}
+                  or value["promotion_status"] not in {"NOT_ATTEMPTED", "PROMOTED",
+                                                      "ALREADY_CURRENT", "SUPERSEDED"}
+                  or value["dependency_sync"] not in {"NOT_ATTEMPTED", "INSTALLED"}
                   or value["tests_status"] not in {"NOT_RUN", "PASS", "FAIL"}
                   or type(value["tests_run"]) is not int or value["tests_run"] < 0
                   or any(type(value[k]) is not bool for k in
-                         ("fetch_verified", "checkout_clean", "state_boundary_enforced"))
+                         ("fetch_verified", "release_created", "state_boundary_enforced"))
                   or any(value[k] is not None and
                          (type(value[k]) is not str or len(value[k]) != 40 or
                           any(c not in "0123456789abcdef" for c in value[k]))
                          for k in ("previous_sha", "final_sha"))):
                   raise ValueError
-              if value["status"] == "PASS" and (value["final_sha"] != sys.argv[2]
-                                                   or value["tests_status"] != "PASS"
-                                                   or value["tests_run"] <= 0
-                                                   or value["state_boundary_enforced"] is not True):
+              if value["status"] == "PASS" and value["final_sha"] != sys.argv[2]:
+                  raise ValueError
+              if value["status"] == "PASS" and value["reason"] == "OK" and (
+                  value["tests_status"] != "PASS" or value["tests_run"] <= 0
+                  or value["promotion_status"] != "PROMOTED"
+                  or value["release_created"] is not True or value["fetch_verified"] is not True
+                  or value["dependency_sync"] != "INSTALLED"):
+                  raise ValueError
+              if value["status"] == "PASS" and value["reason"] == "ALREADY_CURRENT" and (
+                  value["promotion_status"] != "ALREADY_CURRENT" or value["tests_status"] != "NOT_RUN"
+                  or value["tests_run"] != 0 or value["release_created"] is not False):
+                  raise ValueError
+              if value["status"] == "SUPERSEDED" and (
+                  value["reason"] != "SUPERSEDED" or value["fetch_verified"] is not True
+                  or value["promotion_status"] != "SUPERSEDED" or value["final_sha"] is None):
+                  raise ValueError
+              if value["status"] in {"PASS", "SUPERSEDED"} and value["state_boundary_enforced"] is not True:
                   raise ValueError
               print(json.dumps(value, sort_keys=True))
               sys.exit(0 if value["status"] in {"PASS", "SUPERSEDED"} else 1)

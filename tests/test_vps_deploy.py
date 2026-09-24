@@ -1,6 +1,6 @@
-"""Offline tests for the separately installed post-merge deployment controller."""
+"""Offline, isolated Git and subprocess tests of trusted fresh-release deployment."""
+
 import fcntl
-import hashlib
 import importlib.util
 import json
 import os
@@ -20,560 +20,427 @@ spec.loader.exec_module(deploy)
 
 
 def cmd(*args, cwd=None):
-    return subprocess.run(args, cwd=cwd, check=True, stdout=subprocess.PIPE,
-                          stderr=subprocess.PIPE).stdout.decode().strip()
+    return subprocess.run(args, cwd=cwd, check=True, capture_output=True,
+                          text=True).stdout.strip()
 
 
-class DeploymentTest(unittest.TestCase):
+class FreshReleaseTest(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         self.remote = self.root / "origin.git"
         self.seed = self.root / "seed"
-        self.checkout = self.root / "checkout"
+        self.deploy_root = self.root / "deployment"
+        self.releases = self.deploy_root / "releases"
+        self.releases.mkdir(parents=True)
+        self.current = self.deploy_root / "current"
         self.control = self.root / "control"
         self.control.mkdir()
+        self.legacy = self.root / "old-checkout"
+        self.legacy.mkdir()
+        (self.legacy / "E1_2627.csv").write_text("historical evidence unchanged\n")
+        self.state = self.root / "state"
+        self.state.mkdir()
+        (self.state / "capture.json").write_text("immutable evidence\n")
         cmd("git", "init", "--bare", "--initial-branch=main", str(self.remote))
         cmd("git", "init", "--initial-branch=main", str(self.seed))
         cmd("git", "config", "user.email", "offline@example.invalid", cwd=self.seed)
         cmd("git", "config", "user.name", "Offline Tester", cwd=self.seed)
         cmd("git", "remote", "add", "origin", str(self.remote), cwd=self.seed)
-        (self.seed / ".gitignore").write_text(".venv/\ndata/corner-refresh/\n/*.csv\n__pycache__/\n*.pyc\n")
+        (self.seed / ".gitignore").write_text(".venv/\n__pycache__/\n*.pyc\n")
         (self.seed / "requirements.txt").write_text("example>=1\n")
         (self.seed / "example.txt").write_text("one\n")
+        package = self.seed / "src/modelfc"
+        package.mkdir(parents=True)
+        (package / "__init__.py").write_text("")
+        (package / "ledger_storage.py").write_bytes(
+            (SOURCE.parents[2] / "src/modelfc/ledger_storage.py").read_bytes())
         cmd("git", "add", ".", cwd=self.seed)
         cmd("git", "commit", "-m", "initial", cwd=self.seed)
         cmd("git", "push", "-u", "origin", "main", cwd=self.seed)
-        cmd("git", "clone", str(self.remote), str(self.checkout))
-        self.a = cmd("git", "rev-parse", "HEAD", cwd=self.checkout)
+        self.a = cmd("git", "rev-parse", "HEAD", cwd=self.seed)
         (self.seed / "example.txt").write_text("two\n")
-        cmd("git", "add", "example.txt", cwd=self.seed)
+        cmd("git", "add", ".", cwd=self.seed)
         cmd("git", "commit", "-m", "second", cwd=self.seed)
         cmd("git", "push", "origin", "main", cwd=self.seed)
         self.b = cmd("git", "rev-parse", "HEAD", cwd=self.seed)
-        self.stamp = self.checkout / ".venv/.modelfc-requirements.sha256"
-        self.tests_called = []
-        self.dependencies_called = []
-        self.patches = [patch.object(deploy, "dependencies", side_effect=self.fake_dependencies),
+        self.created = []
+        self.tested = []
+        self.patches = [patch.object(deploy, "CONTROL", self.control),
+                        patch.object(deploy, "dependencies", side_effect=self.fake_dependencies),
                         patch.object(deploy, "tests", side_effect=self.fake_tests)]
         for item in self.patches:
             item.start()
             self.addCleanup(item.stop)
 
-    def fake_dependencies(self, checkout, stamp):
-        self.dependencies_called.append((checkout, stamp))
-        return "SKIPPED"
+    def fake_dependencies(self, release):
+        self.created.append(release)
+        (release / ".venv/bin").mkdir(parents=True)
+        (release / ".venv/bin/python").write_text("fresh runtime")
+        return "INSTALLED"
 
-    def fake_tests(self, checkout, sha):
-        self.tests_called.append(sha)
-        return 532
+    def fake_tests(self, release, sha):
+        self.tested.append((release, sha))
+        return 600
 
     def run_deploy(self, sha):
-        return deploy.deploy(sha, checkout=self.checkout, control=self.control,
-                             stamp=self.stamp, remote=str(self.remote),
-                             check_boundary=lambda: None, test_runner=deploy.tests)
+        return deploy.deploy(sha, root=self.deploy_root, releases=self.releases,
+                             current=self.current, control=self.control,
+                             remote=str(self.remote), check_boundary=lambda: None,
+                             test_runner=deploy.tests)
 
-    def test_exact_sha_then_same_sha_retry(self):
-        first = self.run_deploy(self.b)
-        self.assertEqual((first["status"], first["final_sha"], first["fast_forward"]),
-                         ("PASS", self.b, "UPDATED"))
-        self.assertEqual(first["tests_run"], 532)
-        again = self.run_deploy(self.b)
-        self.assertEqual((again["status"], again["fast_forward"], len(self.tests_called)),
-                         ("PASS", "ALREADY_CURRENT", 2))
-
-    def test_old_sha_cannot_move_newer_checkout_backwards(self):
-        self.run_deploy(self.b)
-        report = self.run_deploy(self.a)
-        self.assertEqual((report["status"], report["reason"], report["final_sha"]),
-                         ("SUPERSEDED", "SUPERSEDED", self.b))
-        self.assertEqual(len(self.tests_called), 1)
-
-    def test_dirty_tracked_file(self):
-        (self.checkout / "example.txt").write_text("uncommitted")
-        self.assertEqual(self.run_deploy(self.b)["reason"], "CHECKOUT_DIRTY")
-        self.assertEqual(cmd("git", "rev-parse", "HEAD", cwd=self.checkout), self.a)
-
-    def test_assume_unchanged_cannot_hide_modified_tracked_file(self):
-        cmd("git", "update-index", "--assume-unchanged", "example.txt", cwd=self.checkout)
-        (self.checkout / "example.txt").write_text("hidden local change\n")
-        self.assertEqual(cmd("git", "status", "--porcelain=v1", cwd=self.checkout), "")
-        report = self.run_deploy(self.b)
-        self.assertEqual((report["status"], report["reason"]), ("FAIL", "CHECKOUT_DIRTY"))
-        self.assertFalse(self.tests_called)
-        self.assertEqual(cmd("git", "rev-parse", "HEAD", cwd=self.checkout), self.a)
-
-    def test_skip_worktree_cannot_hide_modified_tracked_file(self):
-        cmd("git", "update-index", "--skip-worktree", "example.txt", cwd=self.checkout)
-        (self.checkout / "example.txt").write_text("hidden local change\n")
-        self.assertEqual(cmd("git", "status", "--porcelain=v1", cwd=self.checkout), "")
-        report = self.run_deploy(self.b)
-        self.assertEqual((report["status"], report["reason"]), ("FAIL", "CHECKOUT_DIRTY"))
-        self.assertFalse(self.tests_called)
-        self.assertEqual(cmd("git", "rev-parse", "HEAD", cwd=self.checkout), self.a)
-
-    def test_hidden_flag_created_during_tests_cannot_pass_final_clean_check(self):
-        def hide_after_tests(checkout, sha):
-            cmd("git", "update-index", "--assume-unchanged", "requirements.txt", cwd=checkout)
-            (checkout / "requirements.txt").write_text("hidden after tests\n")
-            return 532
-        with patch.object(deploy, "tests", side_effect=hide_after_tests):
-            report = self.run_deploy(self.b)
-        self.assertEqual((report["status"], report["reason"]), ("FAIL", "CHECKOUT_DIRTY"))
-
-    def test_unexpected_untracked_and_ignored(self):
-        (self.checkout / "mystery.txt").write_text("local")
-        self.assertEqual(self.run_deploy(self.b)["reason"], "CHECKOUT_DIRTY")
-        (self.checkout / "mystery.txt").unlink()
-        (self.checkout / ".env").write_text("ignored later")
-        with (self.checkout / ".git/info/exclude").open("a") as file:
-            file.write(".env\n")
-        self.assertEqual(self.run_deploy(self.b)["reason"], "CHECKOUT_DIRTY")
-
-    def test_ignored_importable_bytecode_cache_rejected_without_deletion(self):
-        cache = self.checkout / "src/modelfc/__pycache__/forecast.cpython-312.pyc"
-        cache.parent.mkdir(parents=True)
-        cache.write_bytes(b"ignored bytecode")
-        self.assertEqual(cmd("git", "status", "--porcelain=v1", cwd=self.checkout), "")
-        report = self.run_deploy(self.b)
-        self.assertEqual((report["status"], report["reason"]), ("FAIL", "CHECKOUT_DIRTY"))
-        self.assertTrue(cache.is_file())
-        self.assertEqual(cache.read_bytes(), b"ignored bytecode")
-        self.assertFalse(self.tests_called)
-        self.assertEqual(cmd("git", "rev-parse", "HEAD", cwd=self.checkout), self.a)
-
-    def test_ignored_pyc_file_rejected_without_deletion(self):
-        bytecode = self.checkout / "example.pyc"
-        bytecode.write_bytes(b"ignored direct bytecode")
-        self.assertEqual(cmd("git", "status", "--porcelain=v1", cwd=self.checkout), "")
-        self.assertEqual(self.run_deploy(self.b)["reason"], "CHECKOUT_DIRTY")
-        self.assertTrue(bytecode.is_file())
-        self.assertFalse(self.tests_called)
-
-    def test_ignored_bytecode_in_allowed_data_folder_rejected(self):
-        cache = self.checkout / "data/corner-refresh/__pycache__/module.pyc"
-        cache.parent.mkdir(parents=True)
-        cache.write_bytes(b"ignored managed bytecode")
-        self.assertEqual(cmd("git", "status", "--porcelain=v1", cwd=self.checkout), "")
-        self.assertEqual(self.run_deploy(self.b)["reason"], "CHECKOUT_DIRTY")
-        self.assertTrue(cache.is_file())
-
-    def test_bytecode_created_during_tests_prevents_pass_and_remains(self):
-        cache = self.checkout / "src/modelfc/__pycache__/module.pyc"
-        def create_cache(checkout, sha):
-            cache.parent.mkdir(parents=True)
-            cache.write_bytes(b"post-test cache")
-            return 532
-        with patch.object(deploy, "tests", side_effect=create_cache):
-            report = self.run_deploy(self.b)
-        self.assertEqual((report["status"], report["reason"]), ("FAIL", "CHECKOUT_DIRTY"))
-        self.assertEqual(cache.read_bytes(), b"post-test cache")
-
-    def test_expected_ignored_runtime_and_history_are_accepted(self):
-        (self.checkout / ".venv").mkdir()
-        (self.checkout / ".venv/bin").mkdir()
-        (self.checkout / ".venv/bin/python").write_text("mock")
-        trusted_venv_cache = self.checkout / ".venv/lib/python3.12/site-packages/pkg/__pycache__/module.pyc"
-        trusted_venv_cache.parent.mkdir(parents=True)
-        trusted_venv_cache.write_bytes(b"installed package bytecode")
-        (self.checkout / "E1_2627.csv").write_text("history")
-        (self.checkout / "data/corner-refresh").mkdir(parents=True)
-        (self.checkout / "data/corner-refresh/status.json").write_text("{}")
-        self.assertEqual(self.run_deploy(self.b)["status"], "PASS")
-        self.assertTrue((self.checkout / "E1_2627.csv").exists())
-        self.assertTrue(trusted_venv_cache.is_file())
-
-    def test_wrong_branch(self):
-        cmd("git", "checkout", "-b", "another", cwd=self.checkout)
-        self.assertEqual(self.run_deploy(self.b)["reason"], "WRONG_BRANCH")
-
-    def test_invalid_sha(self):
-        for sha in ("ABCD", "a" * 39, "A" * 40, "a" * 41, "a" * 40 + " && id"):
-            self.assertEqual(self.run_deploy(sha)["reason"], "INVALID_REQUEST")
-        self.assertFalse(self.tests_called)
-
-    def test_sha_not_on_main(self):
-        self.assertEqual(self.run_deploy("a" * 40)["reason"], "SHA_NOT_ON_MAIN")
-
-    def test_local_only_divergence_fails_even_when_checkout_is_clean(self):
-        cmd("git", "config", "user.email", "offline@example.invalid", cwd=self.checkout)
-        cmd("git", "config", "user.name", "Offline Tester", cwd=self.checkout)
-        (self.checkout / "example.txt").write_text("diverged")
-        cmd("git", "commit", "-am", "local commit", cwd=self.checkout)
-        local = cmd("git", "rev-parse", "HEAD", cwd=self.checkout)
+    def test_exact_sha_creates_independent_git_and_promotes_atomically(self):
         result = self.run_deploy(self.b)
-        self.assertEqual((result["status"], result["reason"], result["final_sha"]),
-                         ("FAIL", "LOCAL_SHA_NOT_ON_MAIN", local))
-        self.assertFalse(self.tests_called)
+        self.assertEqual((result["status"], result["reason"], result["final_sha"],
+                          result["promotion_status"], result["tests_run"]),
+                         ("PASS", "OK", self.b, "PROMOTED", 600))
+        release = self.created[0]
+        self.assertTrue(self.current.is_symlink())
+        self.assertEqual(os.readlink(self.current), str(release))
+        self.assertEqual(release.parent, self.releases)
+        self.assertTrue((release / ".git/objects").is_dir())
+        self.assertEqual(cmd("git", "rev-parse", "--git-dir", cwd=release), ".git")
+        self.assertEqual(cmd("git", "rev-parse", "HEAD", cwd=release), self.b)
+        self.assertFalse((release / "E1_2627.csv").exists())
+        self.assertEqual((self.legacy / "E1_2627.csv").read_text(), "historical evidence unchanged\n")
+        self.assertEqual((self.state / "capture.json").read_text(), "immutable evidence\n")
 
-    def test_local_only_descendant_cannot_supersede_requested_sha(self):
-        cmd("git", "config", "user.email", "offline@example.invalid", cwd=self.checkout)
-        cmd("git", "config", "user.name", "Offline Tester", cwd=self.checkout)
-        cmd("git", "commit", "--allow-empty", "-m", "local descendant", cwd=self.checkout)
-        local = cmd("git", "rev-parse", "HEAD", cwd=self.checkout)
+    def test_same_sha_does_not_rebuild_or_test(self):
+        self.run_deploy(self.b)
+        release = self.created[0]
+        result = self.run_deploy(self.b)
+        self.assertEqual((result["status"], result["reason"], result["tests_run"],
+                          result["release_created"], os.readlink(self.current)),
+                         ("PASS", "ALREADY_CURRENT", 0, False, str(release)))
+        self.assertEqual(len(self.created), 1)
+        self.assertEqual(len(self.tested), 1)
+
+    def test_older_main_event_superseded_without_switching(self):
+        self.run_deploy(self.b)
+        release = self.created[0]
         result = self.run_deploy(self.a)
-        self.assertEqual((result["status"], result["reason"], result["previous_sha"],
-                          result["final_sha"], result["fetch_verified"]),
-                         ("FAIL", "LOCAL_SHA_NOT_ON_MAIN", local, local, True))
-        self.assertFalse(self.tests_called)
-        self.assertEqual(cmd("git", "rev-parse", "HEAD", cwd=self.checkout), local)
+        self.assertEqual((result["status"], result["reason"], result["final_sha"]),
+                         ("SUPERSEDED", "SUPERSEDED", self.b))
+        self.assertEqual(os.readlink(self.current), str(release))
+        self.assertEqual(list(self.releases.iterdir()), [release])
+        self.assertEqual(len(self.tested), 1)
 
-    def test_non_fast_forward_still_has_fixed_reason(self):
-        # A defensive regression for the incomparable-history branch, which is
-        # unreachable in this linear test origin without a real merge graph.
-        with patch.object(deploy, "ancestor", side_effect=[True, True, False, False]):
-            self.assertEqual(self.run_deploy(self.b)["reason"], "NON_FAST_FORWARD")
+    def test_wrong_sha_rejected_before_checkout(self):
+        result = self.run_deploy("d" * 40)
+        self.assertEqual(result["reason"], "SHA_NOT_ON_MAIN")
+        self.assertFalse(self.current.exists())
+        self.assertEqual(list(self.releases.iterdir()), [])
+        self.assertEqual(self.created, [])
 
-    def test_fetch_failure(self):
-        original = deploy.git
-        with patch.object(deploy, "git") as git_mock:
-            def fail_fetch(checkout, *args, **kwargs):
-                if args[0] == "fetch":
-                    raise deploy.Failure("FETCH_FAILED")
-                return original(checkout, *args, **kwargs)
-            git_mock.side_effect = fail_fetch
-            self.assertEqual(self.run_deploy(self.b)["reason"], "FETCH_FAILED")
-
-    def test_final_sha_mismatch(self):
-        original = deploy.git
-        call = 0
-        def wrong_final(checkout, *args, **kwargs):
-            nonlocal call
-            if args == ("rev-parse", "HEAD"):
-                call += 1
-                if call == 2:
-                    return self.a
-            return original(checkout, *args, **kwargs)
-        with patch.object(deploy, "git", side_effect=wrong_final):
-            self.assertEqual(self.run_deploy(self.b)["reason"], "FINAL_SHA_MISMATCH")
-
-    def test_dependency_failure_preserves_fast_forward_and_state(self):
-        with patch.object(deploy, "dependencies", side_effect=deploy.Failure("DEPENDENCY_SYNC_FAILED")):
-            result = self.run_deploy(self.b)
-        self.assertEqual((result["reason"], result["final_sha"]),
-                         ("DEPENDENCY_SYNC_FAILED", self.b))
-        self.assertFalse(self.tests_called)
-
-    def test_boundary_failure_never_starts_test_service(self):
-        result = deploy.deploy(self.b, checkout=self.checkout, control=self.control,
-                               stamp=self.stamp, remote=str(self.remote),
-                               check_boundary=lambda: (_ for _ in ()).throw(
-                                   deploy.Failure("STATE_BOUNDARY_FAILED")), test_runner=deploy.tests)
-        self.assertEqual(result["reason"], "STATE_BOUNDARY_FAILED")
-        self.assertFalse(self.tests_called)
-        self.assertEqual(cmd("git", "rev-parse", "HEAD", cwd=self.checkout), self.a)
-
-    def test_test_failure_no_rollback(self):
-        with patch.object(deploy, "tests", side_effect=deploy.Failure("TESTS_FAILED", 532)):
-            result = self.run_deploy(self.b)
-        self.assertEqual((result["reason"], result["tests_status"], result["final_sha"], result["tests_run"]),
-                         ("TESTS_FAILED", "FAIL", self.b, 532))
-
-    def test_zero_test_count_cannot_pass_deployment(self):
-        with patch.object(deploy, "tests", return_value=0):
-            result = self.run_deploy(self.b)
-        self.assertEqual((result["status"], result["reason"], result["tests_status"],
-                          result["tests_run"], result["final_sha"]),
-                         ("FAIL", "TESTS_FAILED", "FAIL", 0, self.b))
-
-    def test_git_marks_only_canonical_checkout_safe(self):
-        with patch.object(deploy, "command", return_value="ok") as call:
-            self.assertEqual(deploy.git(self.checkout, "rev-parse", "HEAD"), "ok")
-        args = call.call_args.args[0]
-        self.assertEqual(args[:3], ["git", "-c", f"safe.directory={deploy.CHECKOUT}"])
-        self.assertNotIn("safe.directory=*", args)
-        self.assertNotIn(f"safe.directory={self.checkout}", args)
-        self.assertEqual(call.call_args.kwargs["env"]["GIT_CONFIG_GLOBAL"], "/dev/null")
-
-    def test_github_report_rejects_zero_tests_and_accepts_positive_count(self):
-        workflow = (SOURCE.parents[2] / ".github/workflows/tests.yml").read_text()
-        script = textwrap.dedent(workflow.split("<<'PY'\n", 1)[1].split("\n          PY", 1)[0])
-        payload = deploy.report(self.b)
-        payload.update(status="PASS", previous_sha=self.b, final_sha=self.b,
-                       fetch_verified=True, fast_forward="ALREADY_CURRENT",
-                       dependency_sync="SKIPPED", tests_status="PASS", tests_run=0,
-                       checkout_clean=True, state_boundary_enforced=True, reason="OK")
-        file = self.root / "github-report.json"
-        for count, expected in ((0, 1), (1, 0)):
-            payload["tests_run"] = count
-            file.write_text(json.dumps(payload))
-            result = subprocess.run([sys.executable, "-c", script, str(file), self.b],
-                                    capture_output=True, text=True)
-            self.assertEqual(result.returncode, expected, result.stderr)
-            if expected:
-                self.assertIn("INVALID_DEPLOYMENT_REPORT", result.stdout)
-
-    def test_host_lock_busy(self):
+    def test_invalid_sha_and_lock_busy(self):
+        self.assertEqual(self.run_deploy("../bad")["reason"], "INVALID_REQUEST")
         with (self.control / "deploy.lock").open("a+") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             self.assertEqual(self.run_deploy(self.b)["reason"], "DEPLOYMENT_BUSY")
 
-    def test_no_arbitrary_error_text_or_secrets_in_report(self):
-        with patch.object(deploy, "tests", side_effect=RuntimeError("apiKey=offline-secret")):
+    def test_active_sha_must_belong_to_fetched_main(self):
+        self.run_deploy(self.a)
+        release = self.created[0]
+        (release / "example.txt").write_text("local-only change\n")
+        cmd("git", "-c", "user.email=offline@example.invalid", "-c",
+            "user.name=Offline Tester", "commit", "-am", "local", cwd=release)
+        self.assertEqual(self.run_deploy(self.b)["reason"], "SOURCE_INVALID")
+        self.assertEqual(os.readlink(self.current), str(release))
+
+    def test_local_only_active_commit_is_not_superseded_successfully(self):
+        self.run_deploy(self.a)
+        release = self.created[0]
+        (release / "example.txt").write_text("local-only change\n")
+        cmd("git", "-c", "user.email=offline@example.invalid", "-c",
+            "user.name=Offline Tester", "commit", "-am", "local", cwd=release)
+        local_sha = cmd("git", "rev-parse", "HEAD", cwd=release)
+        renamed = release.with_name(local_sha + release.name[40:])
+        release.rename(renamed)
+        self.current.unlink()
+        self.current.symlink_to(renamed)
+        result = self.run_deploy(self.a)
+        self.assertEqual((result["status"], result["reason"], result["final_sha"]),
+                         ("FAIL", "ACTIVE_SHA_NOT_ON_MAIN", local_sha))
+        self.assertEqual(os.readlink(self.current), str(renamed))
+        self.assertEqual(list(self.releases.iterdir()), [renamed])
+
+    def test_release_id_collision_never_deletes_preexisting_release(self):
+        preexisting = self.releases / (self.b + "-000000000000")
+        preexisting.mkdir()
+        (preexisting / "note").write_text("keep")
+        with patch.object(deploy.secrets, "token_hex", return_value="000000000000"):
+            result = self.run_deploy(self.b)
+        self.assertEqual(result["status"], "FAIL")
+        self.assertEqual((preexisting / "note").read_text(), "keep")
+
+    def test_source_from_existing_checkout_never_copied(self):
+        (self.legacy / ".venv").mkdir()
+        (self.legacy / ".venv/old-package").write_text("obsolete")
+        (self.legacy / "__pycache__").mkdir()
+        (self.legacy / "__pycache__/payload.pyc").write_bytes(b"ignored")
+        (self.legacy / ".git").mkdir()
+        (self.legacy / ".git/config").write_text("untrusted config")
+        self.run_deploy(self.b)
+        release = self.created[0]
+        self.assertFalse((release / ".venv/old-package").exists())
+        self.assertFalse((release / "__pycache__").exists())
+        self.assertNotEqual((release / ".git/config").read_text(), "untrusted config")
+        self.assertTrue((self.legacy / "__pycache__/payload.pyc").exists())
+
+    def test_fetch_failure_and_broken_current_fail_without_mutating_legacy(self):
+        original = deploy.git
+        def fail_fetch(release, *args, **kwargs):
+            if args[0] == "fetch":
+                raise deploy.Failure("FETCH_FAILED")
+            return original(release, *args, **kwargs)
+        with patch.object(deploy, "git", side_effect=fail_fetch):
+            result = self.run_deploy(self.b)
+        self.assertEqual(result["reason"], "FETCH_FAILED")
+        self.assertFalse(self.current.exists())
+        self.assertEqual(list(self.releases.iterdir()), [])
+        self.assertEqual((self.legacy / "E1_2627.csv").read_text(), "historical evidence unchanged\n")
+
+    def test_dependency_failure_does_not_promote_or_reuse_old_venv(self):
+        self.run_deploy(self.a)
+        previous = self.created[0]
+        def fail(release):
+            self.assertNotEqual(release, previous)
+            (release / ".venv").mkdir()
+            raise deploy.Failure("DEPENDENCY_SYNC_FAILED")
+        with patch.object(deploy, "dependencies", side_effect=fail):
+            result = self.run_deploy(self.b)
+        self.assertEqual((result["reason"], result["dependency_sync"]),
+                         ("DEPENDENCY_SYNC_FAILED", "NOT_ATTEMPTED"))
+        self.assertEqual(os.readlink(self.current), str(previous))
+        self.assertEqual(list(self.releases.iterdir()), [previous])
+        self.assertTrue((previous / ".venv/bin/python").exists())
+
+    def test_failed_tests_and_zero_tests_never_promote(self):
+        self.run_deploy(self.a)
+        previous = self.created[0]
+        for failure in (deploy.Failure("TESTS_FAILED", 31), 0):
+            with self.subTest(failure=failure):
+                with patch.object(deploy, "tests", side_effect=(
+                        [failure] if isinstance(failure, Exception) else None),
+                        return_value=failure if isinstance(failure, int) else None):
+                    result = self.run_deploy(self.b)
+                self.assertEqual(result["reason"], "TESTS_FAILED")
+                self.assertEqual(result["tests_status"], "FAIL")
+                self.assertEqual(os.readlink(self.current), str(previous))
+                self.assertEqual(list(self.releases.iterdir()), [previous])
+
+    def test_failed_candidate_retry_gets_new_clean_release(self):
+        with patch.object(deploy, "tests", side_effect=deploy.Failure("TESTS_FAILED")):
             first = self.run_deploy(self.b)
-        self.assertEqual(first["reason"], "CHECKOUT_INVALID")
-        self.assertNotIn("offline-secret", json.dumps(first))
-        with patch.object(deploy, "tests", side_effect=deploy.Failure("PROVIDER apiKey=offline-secret")):
+        self.assertEqual(first["status"], "FAIL")
+        self.assertEqual(list(self.releases.iterdir()), [])
+        second = self.run_deploy(self.b)
+        self.assertEqual(second["status"], "PASS")
+
+    def test_promotion_keeps_previous_and_checks_target(self):
+        self.run_deploy(self.a)
+        previous = self.created[0]
+        self.run_deploy(self.b)
+        self.assertEqual(set(self.releases.iterdir()), set(self.created))
+        self.assertEqual(os.readlink(self.current), str(self.created[1]))
+        self.assertTrue(previous.is_dir())
+        self.current.unlink()
+        self.current.symlink_to(self.legacy, target_is_directory=True)
+        self.assertEqual(self.run_deploy(self.b)["reason"], "SOURCE_INVALID")
+
+    def test_provenance_resolves_through_current_symlink(self):
+        self.run_deploy(self.b)
+        code = "from modelfc.ledger_storage import git_commit_sha; print(git_commit_sha())"
+        env = dict(os.environ, PYTHONPATH=str(self.current / "src"))
+        observed = subprocess.run([sys.executable, "-c", code], cwd=self.current,
+                                  env=env, capture_output=True, text=True, check=True).stdout.strip()
+        self.assertEqual(observed, self.b)
+
+    def test_fixed_report_is_sanitized(self):
+        with patch.object(deploy, "tests", side_effect=RuntimeError("apiKey=offline-secret")):
             value = self.run_deploy(self.b)
+        self.assertEqual(value["reason"], "INTERNAL_ERROR")
         self.assertEqual(set(value), set(deploy.FIELDS))
         self.assertNotIn("offline-secret", json.dumps(value))
+        self.assertEqual(list(self.releases.iterdir()), [])
 
 
-class DependencyAndBoundaryTest(unittest.TestCase):
+class IsolatedBoundaryTest(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
-        (self.root / "requirements.txt").write_text("fastapi>=0.115,<1\n")
-        (self.root / ".venv/bin").mkdir(parents=True)
-        self.python = self.root / ".venv/bin/python"
-        self.python.write_text("placeholder")
-        self.stamp = self.root / ".venv/.modelfc-requirements.sha256"
         self.control = self.root / "control"
         self.control.mkdir()
+        self.releases = self.root / "releases"
+        self.releases.mkdir()
+        self.sha = "a" * 40
+        self.release = self.releases / (self.sha + "-123456789abc")
+        self.release.mkdir()
 
-    def fake_command(self, args, **kwargs):
-        if args[:3] == ["/usr/bin/python3", "-m", "venv"]:
-            staged = Path(args[3])
-            (staged / "bin").mkdir(parents=True)
-            (staged / "bin/python").write_text("replacement python")
-            (staged / "bin/example").write_text(f"#!{staged}/bin/python\n")
-            (staged / "bin/activate").write_text(f'VIRTUAL_ENV="{staged}"\n')
-            (staged / "pyvenv.cfg").write_text(f"command = venv {staged}\n")
-        return "3.12"
-
-    def test_dependency_install_then_matching_hash_skips(self):
-        with patch.dict(os.environ, {"ODDSPAPI_API_KEY": "offline-secret"}), patch.object(
-                deploy, "CONTROL", self.control), patch.object(
-                deploy, "command", side_effect=self.fake_command) as run:
-            self.assertEqual(deploy.dependencies(self.root, self.stamp), "INSTALLED")
-            self.assertEqual(run.call_count, 5)
-            for call in run.call_args_list:
-                self.assertNotIn("ODDSPAPI_API_KEY", call.kwargs["env"])
-            self.assertEqual(self.stamp.read_text().strip(), hashlib.sha256(
-                (self.root / "requirements.txt").read_bytes()).hexdigest())
-            self.assertEqual(self.python.read_text(), "replacement python")
-            self.assertIn(str(self.root / ".venv/bin/python"),
-                          (self.root / ".venv/bin/example").read_text())
-            self.assertNotIn(str(self.control), (self.root / ".venv/bin/activate").read_text())
-            self.assertEqual(list(self.control.iterdir()), [])
-            self.assertEqual(deploy.dependencies(self.root, self.stamp), "SKIPPED")
-            self.assertEqual(run.call_count, 6)
-            (self.root / ".venv/old-only-package").write_text("obsolete")
-        (self.root / "requirements.txt").write_text("fastapi>=0.115,<1\nhttpx>=0.27,<1\n")
-        with patch.object(deploy, "CONTROL", self.control), patch.object(
-                deploy, "command", side_effect=self.fake_command) as run:
-            self.assertEqual(deploy.dependencies(self.root, self.stamp), "INSTALLED")
-            self.assertEqual(run.call_count, 5)
-        self.assertFalse((self.root / ".venv/old-only-package").exists())
-        self.assertEqual(self.stamp.read_text().strip(), hashlib.sha256(
-            (self.root / "requirements.txt").read_bytes()).hexdigest())
-        self.assertEqual(list(self.control.iterdir()), [])
-
-    def test_failed_install_does_not_write_stamp(self):
-        with patch.object(deploy, "CONTROL", self.control), patch.object(
-                deploy, "command", side_effect=deploy.Failure("CHECKOUT_INVALID")):
-            with self.assertRaisesRegex(deploy.Failure, "DEPENDENCY_SYNC_FAILED"):
-                deploy.dependencies(self.root, self.stamp)
-        self.assertFalse(self.stamp.exists())
-        self.assertEqual(self.python.read_text(), "placeholder")
-        self.assertEqual(list(self.control.iterdir()), [])
-
-    def test_failed_changed_requirements_preserves_old_environment_and_stamp(self):
-        self.stamp.write_text(hashlib.sha256(b"old requirements").hexdigest() + "\n")
-        def fail_install(args, **kwargs):
-            self.fake_command(args, **kwargs)
-            if args[1:3] == ["-m", "pip"] and args[3] == "install":
-                raise deploy.Failure("CHECKOUT_INVALID")
+    def test_fresh_venv_at_permanent_release_path(self):
+        (self.release / "requirements.txt").write_text("fastapi>=0.115,<1\n")
+        def fake_command(args, **kwargs):
+            if args[:3] == ["/usr/bin/python3", "-m", "venv"]:
+                self.assertEqual(args[3], str(self.release / ".venv"))
+                (self.release / ".venv/bin").mkdir(parents=True)
+                (self.release / ".venv/bin/python").write_text("new")
             return "3.12"
         with patch.object(deploy, "CONTROL", self.control), patch.object(
-                deploy, "command", side_effect=fail_install):
-            with self.assertRaisesRegex(deploy.Failure, "DEPENDENCY_SYNC_FAILED"):
-                deploy.dependencies(self.root, self.stamp)
-        self.assertEqual(self.python.read_text(), "placeholder")
-        self.assertEqual(self.stamp.read_text().strip(), hashlib.sha256(b"old requirements").hexdigest())
-        self.assertEqual(list(self.control.iterdir()), [])
-
-    def test_missing_venv_creates_venv_not_system_install(self):
-        self.python.unlink()
-        (self.root / ".venv/bin").rmdir()
-        (self.root / ".venv").rmdir()
-        with patch.object(deploy, "CONTROL", self.control), patch.object(
-                deploy, "command", side_effect=self.fake_command) as run:
-            deploy.dependencies(self.root, self.stamp)
-            self.assertEqual(run.call_args_list[0].args[0][:3], ["/usr/bin/python3", "-m", "venv"])
-            self.assertEqual(run.call_args_list[1].args[0][0],
-                             str(Path(run.call_args_list[0].args[0][3]) / "bin/python"))
-            self.assertEqual(run.call_args_list[2].args[0][1:3], ["-m", "pip"])
-        self.assertTrue(self.python.is_file())
-        self.assertEqual(list(self.control.iterdir()), [])
-
-    def test_wrong_python_version_fails_without_publishing(self):
-        self.python.unlink()
-        (self.root / ".venv/bin").rmdir()
-        (self.root / ".venv").rmdir()
-        with patch.object(deploy, "CONTROL", self.control), patch.object(
-                deploy, "command", side_effect=lambda args, **kwargs: (
-                    self.fake_command(args, **kwargs) if args[0] == "/usr/bin/python3" else "3.11")):
-            with self.assertRaisesRegex(deploy.Failure, "DEPENDENCY_SYNC_FAILED"):
-                deploy.dependencies(self.root, self.stamp)
-        self.assertFalse((self.root / ".venv").exists())
-        self.assertEqual(list(self.control.iterdir()), [])
-
-    def test_venv_creation_failure_leaves_canonical_absent(self):
-        self.python.unlink()
-        (self.root / ".venv/bin").rmdir()
-        (self.root / ".venv").rmdir()
-        with patch.object(deploy, "CONTROL", self.control), patch.object(
-                deploy, "command", side_effect=deploy.Failure("CHECKOUT_INVALID")):
-            with self.assertRaisesRegex(deploy.Failure, "DEPENDENCY_SYNC_FAILED"):
-                deploy.dependencies(self.root, self.stamp)
-        self.assertFalse((self.root / ".venv").exists())
-        self.assertEqual(list(self.control.iterdir()), [])
-
-    def test_failed_atomic_exchange_keeps_previous_venv_and_stamp(self):
-        old = hashlib.sha256(b"previous requirements").hexdigest()
-        self.stamp.write_text(old + "\n")
-        with patch.object(deploy, "CONTROL", self.control), patch.object(
-                deploy, "command", side_effect=self.fake_command), patch.object(
-                deploy, "exchange_directories", side_effect=OSError("failed swap")):
-            with self.assertRaisesRegex(deploy.Failure, "DEPENDENCY_SYNC_FAILED"):
-                deploy.dependencies(self.root, self.stamp)
-        self.assertEqual(self.python.read_text(), "placeholder")
-        self.assertEqual(self.stamp.read_text().strip(), old)
-        self.assertEqual(list(self.control.iterdir()), [])
-
-    def test_symlink_venv_cannot_redirect_install(self):
-        self.python.unlink()
-        (self.root / ".venv/bin").rmdir()
-        (self.root / ".venv").rmdir()
-        (self.root / ".venv").symlink_to(self.root)
+                deploy, "command", side_effect=fake_command) as run:
+            self.assertEqual(deploy.dependencies(self.release), "INSTALLED")
+            self.assertEqual(run.call_count, 4)
+            for call in run.call_args_list:
+                self.assertNotIn("ODDSPAPI_API_KEY", call.kwargs["env"])
+                self.assertNotIn("GITHUB_TOKEN", call.kwargs["env"])
+        self.assertTrue((self.release / ".venv/bin/python").exists())
         with self.assertRaisesRegex(deploy.Failure, "DEPENDENCY_SYNC_FAILED"):
-            deploy.dependencies(self.root, self.stamp)
+            deploy.dependencies(self.release)
 
-    def test_service_boundary_enforces_user_network_and_state(self):
-        properties = ("PrivateNetwork=yes\nInaccessiblePaths=/root/modelfc-state\n"
-                      "ProtectSystem=strict\nReadOnlyPaths=/root/dev/modelfc\n"
-                      "ReadWritePaths=/var/lib/modelfc-deploy\nBindPaths=\nTemporaryFileSystem=\n"
+    def test_failed_dependency_install_keeps_failed_candidate_unpromoted(self):
+        (self.release / "requirements.txt").write_text("other\n")
+        with patch.object(deploy, "command", side_effect=deploy.Failure("INTERNAL_ERROR")):
+            with self.assertRaisesRegex(deploy.Failure, "DEPENDENCY_SYNC_FAILED"):
+                deploy.dependencies(self.release)
+        self.assertFalse((self.root / "current").exists())
+
+    def test_effective_service_properties_enforced(self):
+        properties = ("PrivateNetwork=yes\nInaccessiblePaths=/root/modelfc-state "
+                      "/root/dev/modelfc /etc/modelfc-validator\nProtectSystem=strict\n"
+                      f"ReadOnlyPaths={self.releases}\nReadWritePaths="
+                      f"{self.control}\nBindPaths=\nTemporaryFileSystem=\n"
                       "User=modelfc-deploy\nExecStart=/usr/bin/python3 -I "
                       "/opt/modelfc-deploy/deploy_main.py --run-tests\n")
         identity = type("Person", (), {"pw_name": "modelfc-deploy"})()
+        real_stat = os.stat
+        def owned_stat(path, *args, **kwargs):
+            result = real_stat(path, *args, **kwargs)
+            if str(path) == str(self.control):
+                return type("Owned", (), {"st_uid": 1001, "st_mode": result.st_mode})()
+            return result
         with patch.object(deploy.os, "geteuid", return_value=1001), patch.object(
                 deploy.pwd, "getpwuid", return_value=identity), patch.object(
-                deploy.os, "access", return_value=False):
-            with patch.object(deploy, "command", return_value=properties) as service:
-                deploy.boundary()
-                self.assertIn("ProtectSystem", service.call_args.args[0])
-                self.assertIn("ReadOnlyPaths", service.call_args.args[0])
-            for changed in (
-                properties.replace("ProtectSystem=strict\n", ""),
-                properties.replace("ProtectSystem=strict", "ProtectSystem=full"),
-                properties.replace("ReadOnlyPaths=/root/dev/modelfc\n", ""),
-                properties.replace("ReadOnlyPaths=/root/dev/modelfc", "ReadOnlyPaths=/root/dev"),
-                properties.replace("ReadWritePaths=/var/lib/modelfc-deploy",
-                                   "ReadWritePaths=/var/lib/modelfc-deploy /root/dev/modelfc"),
-                properties.replace("BindPaths=", "BindPaths=/tmp:/root/dev/modelfc"),
-                properties.replace("TemporaryFileSystem=", "TemporaryFileSystem=/root/dev/modelfc"),
-                properties.replace("PrivateNetwork=yes", "PrivateNetwork=no"),
-                properties.replace("InaccessiblePaths=/root/modelfc-state", "InaccessiblePaths=/tmp"),
-                properties.replace("User=modelfc-deploy", "User=root"),
-                properties.replace("/opt/modelfc-deploy/deploy_main.py", "/tmp/deploy_main.py"),
-            ):
-                with self.subTest(changed=changed), patch.object(deploy, "command", return_value=changed):
-                    with self.assertRaisesRegex(deploy.Failure, "STATE_BOUNDARY_FAILED"):
-                        deploy.boundary()
-
-    def test_committed_service_is_offline_and_state_inaccessible(self):
-        unit = (SOURCE.parents[2] / "deploy/modelfc-postmerge-tests.service").read_text()
-        for expected in ("User=modelfc-deploy", "PrivateNetwork=yes", "PrivateTmp=yes",
-                         "InaccessiblePaths=/root/modelfc-state",
-                         "InaccessiblePaths=/etc/modelfc-validator",
-                         "ProtectSystem=strict", "ReadOnlyPaths=/root/dev/modelfc",
-                         "NoNewPrivileges=yes"):
-            self.assertIn(expected, unit)
-
-    def test_test_runner_strips_all_secrets_and_requires_private_network(self):
-        output = self.root / "test-result.json"
-        class Stat:
-            def __init__(self, inode):
-                self.st_ino = inode
-        def fake_stat(path):
-            return Stat(1 if "self" in path else 2)
-        with patch.object(deploy, "CHECKOUT", self.root), patch.object(deploy, "TEST_OUTPUT", output), patch.object(
-                deploy, "CONTROL", self.root), patch.object(deploy.os, "access", return_value=False), patch.object(
-                deploy.os, "stat", side_effect=fake_stat), patch.object(
-                deploy, "git", return_value="a" * 40), patch.object(
-                deploy.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, b"", b"Ran 2 tests in 0.01s\n\nOK\n")) as run, patch.dict(
-                os.environ, {"ODDSPAPI_API_KEY": "offline-secret", "GITHUB_TOKEN": "offline-github", "SSH_AUTH_SOCK": "/secret"}):
-            self.assertTrue(deploy.run_tests())
-            passed = run.call_args.kwargs["env"]
-            self.assertFalse({"ODDSPAPI_API_KEY", "GITHUB_TOKEN", "SSH_AUTH_SOCK"} & passed.keys())
-            self.assertEqual(json.loads(output.read_text())["tests_run"], 2)
-        with patch.object(deploy, "TEST_OUTPUT", output), patch.object(
                 deploy.os, "access", return_value=False), patch.object(
-                deploy.os, "stat", return_value=Stat(1)):
-            self.assertFalse(deploy.run_tests())
-
-    def test_systemd_zero_tests_ok_is_failure(self):
-        output = self.root / "test-result.json"
-        class Stat:
-            st_ino = 1
-        with patch.object(deploy, "CHECKOUT", self.root), patch.object(deploy, "TEST_OUTPUT", output), patch.object(
-                deploy.os, "access", return_value=False), patch.object(
-                deploy.os, "stat", side_effect=[Stat(), type("Stat", (), {"st_ino": 2})()]), patch.object(
-                deploy, "git", return_value="a" * 40), patch.object(
-                deploy.subprocess, "run", return_value=subprocess.CompletedProcess(
-                    [], 0, b"", b"Ran 0 tests in 0.01s\n\nOK\n")):
-            self.assertFalse(deploy.run_tests())
-        result = json.loads(output.read_text())
-        self.assertEqual((result["tests_status"], result["tests_run"]), ("FAIL", 0))
-
-    def test_unittest_final_stderr_summary_is_authoritative(self):
-        output = self.root / "test-result.json"
-        class Stat:
-            def __init__(self, inode):
-                self.st_ino = inode
-        fake_stdout = b"Ran 999 tests in 0.01s\n\nOK\n"
-        cases = (
-            (fake_stdout, b"no final unittest summary\n", 0, "FAIL", 0),
-            (fake_stdout, b"Ran 0 tests in 0.01s\n\nOK\n", 0, "FAIL", 0),
-            (fake_stdout, b"Ran 3 tests in 0.01s\n\nOK\n", 0, "PASS", 3),
-            (fake_stdout, b"Ran 3 tests in 0.01s\n\nFAILED (failures=1)\n", 1, "FAIL", 3),
-            (fake_stdout, b"Ran 99 tests in 0.01s\n\nOK\n"
-                          b"Ran 2 tests in 0.02s\n\nFAILED (errors=1)\n", 0, "FAIL", 2),
-            (fake_stdout, b"Ran 3 tests in 0.01s\n\nOK\ntrailing output\n", 0, "FAIL", 0),
-        )
-        for stdout, stderr, exit_code, status, count in cases:
-            with self.subTest(stderr=stderr), patch.object(deploy, "CHECKOUT", self.root), patch.object(
-                    deploy, "TEST_OUTPUT", output), patch.object(deploy, "CONTROL", self.root), patch.object(
+                deploy.os, "stat", side_effect=owned_stat), patch.object(
+                deploy, "command", return_value=properties):
+            deploy.boundary(root=self.root, releases=self.releases, control=self.control)
+        for old, new in (("ProtectSystem=strict", "ProtectSystem=full"),
+                         (f"ReadOnlyPaths={self.releases}", "ReadOnlyPaths=/tmp"),
+                         ("PrivateNetwork=yes", "PrivateNetwork=no"),
+                         ("/root/modelfc-state", "/tmp"),
+                         ("/root/dev/modelfc", "/tmp"),
+                         ("User=modelfc-deploy", "User=root"),
+                         ("/opt/modelfc-deploy/deploy_main.py", "/tmp/evil.py"),
+                         ("BindPaths=", "BindPaths=/tmp:/srv/modelfc/releases"),
+                         (f"ReadWritePaths={self.control}", "ReadWritePaths=/srv/modelfc")):
+            with self.subTest(old=old), patch.object(deploy.os, "geteuid", return_value=1001), patch.object(
+                    deploy.pwd, "getpwuid", return_value=identity), patch.object(
                     deploy.os, "access", return_value=False), patch.object(
-                    deploy.os, "stat", side_effect=[Stat(1), Stat(2)]), patch.object(
-                    deploy, "git", return_value="a" * 40), patch.object(
-                    deploy.subprocess, "run", return_value=subprocess.CompletedProcess(
-                        [], exit_code, stdout, stderr)):
-                self.assertEqual(deploy.run_tests(), status == "PASS")
-                result = json.loads(output.read_text())
-                self.assertEqual((result["tests_status"], result["tests_run"]), (status, count))
+                    deploy.os, "stat", side_effect=owned_stat), patch.object(
+                    deploy, "command", return_value=properties.replace(old, new)):
+                with self.assertRaisesRegex(deploy.Failure, "STATE_BOUNDARY_FAILED"):
+                    deploy.boundary(root=self.root, releases=self.releases, control=self.control)
+        unit = (SOURCE.parents[2] / "deploy/modelfc-postmerge-tests.service").read_text()
+        for required in ("PrivateNetwork=yes", "ProtectSystem=strict",
+                         "ReadOnlyPaths=/srv/modelfc/releases",
+                         "InaccessiblePaths=/root/modelfc-state",
+                         "InaccessiblePaths=/root/dev/modelfc", "KillMode=control-group"):
+            self.assertIn(required, unit)
 
-    def test_trusted_controller_rejects_false_zero_test_attestation(self):
-        output = self.root / "test-result.json"
-        def write_zero(*args, **kwargs):
-            output.write_text(json.dumps({"sha": "a" * 40, "tests_status": "PASS",
-                                          "tests_run": 0, "state_boundary_enforced": True}))
+    def test_candidate_request_is_fixed_and_report_requires_positive_tests(self):
+        request = self.control / "test-request.json"
+        output = self.control / "test-result.json"
+        def fake_service(args, **kwargs):
+            self.assertEqual(json.loads(request.read_text()),
+                             {"release_id": self.release.name, "sha": self.sha})
+            output.write_text(json.dumps({"sha": self.sha, "release_id": self.release.name,
+                                          "tests_status": "PASS", "tests_run": 2,
+                                          "state_boundary_enforced": True}))
             return ""
-        with patch.object(deploy, "command", side_effect=write_zero):
-            with self.assertRaisesRegex(deploy.Failure, "TESTS_FAILED"):
-                deploy.tests(self.root, "a" * 40, output=output, service="fixed-service")
+        with patch.object(deploy, "command", side_effect=fake_service):
+            self.assertEqual(deploy.tests(self.release, self.sha, request=request, output=output), 2)
+        self.assertFalse(request.exists())
         self.assertFalse(output.exists())
+        def zero(*args, **kwargs):
+            fake_service(*args, **kwargs)
+            value = json.loads(output.read_text())
+            value["tests_run"] = 0
+            output.write_text(json.dumps(value))
+            return ""
+        with patch.object(deploy, "command", side_effect=zero):
+            with self.assertRaisesRegex(deploy.Failure, "TESTS_FAILED"):
+                deploy.tests(self.release, self.sha, request=request, output=output)
+        def failed_unit(*args, **kwargs):
+            fake_service(*args, **kwargs)
+            raise deploy.Failure("INTERNAL_ERROR")
+        with patch.object(deploy, "command", side_effect=failed_unit):
+            with self.assertRaisesRegex(deploy.Failure, "STATE_BOUNDARY_FAILED"):
+                deploy.tests(self.release, self.sha, request=request, output=output)
 
-    def test_ssh_request_is_fixed_and_invalid_request_is_sanitized(self):
-        with patch.dict(os.environ, {"SSH_ORIGINAL_COMMAND": "deploy other/repo " + "a" * 40}):
+    def test_run_tests_uses_sanitized_env_and_final_stderr(self):
+        request = self.control / "test-request.json"
+        output = self.control / "test-result.json"
+        request.write_text(json.dumps({"release_id": self.release.name, "sha": self.sha}))
+        class Stat:
+            def __init__(self, ino):
+                self.st_ino = ino
+        cases = ((b"Ran 999 tests in 0.01s\n\nOK\n", b"no summary\n", 0, False, 0),
+                 (b"", b"Ran 0 tests in 0.01s\n\nOK\n", 0, False, 0),
+                 (b"", b"Ran 3 tests in 0.01s\n\nOK\n", 0, True, 3),
+                 (b"", b"Ran 3 tests in 0.01s\n\nFAILED (errors=1)\n", 1, False, 3))
+        for stdout, stderr, code, expected, count in cases:
+            real_stat = os.stat
+            def proc_stat(path, *args, **kwargs):
+                if str(path) == "/proc/self/ns/net":
+                    return Stat(1)
+                if str(path) == "/proc/1/ns/net":
+                    return Stat(2)
+                return real_stat(path, *args, **kwargs)
+            with self.subTest(stderr=stderr), patch.object(deploy, "RELEASES", self.releases), patch.object(
+                    deploy, "REQUEST", request), patch.object(deploy, "TEST_OUTPUT", output), patch.object(
+                    deploy, "head", return_value=self.sha), patch.object(
+                    deploy.os, "access", return_value=False), patch.object(
+                    deploy.os, "stat", side_effect=proc_stat), patch.object(
+                    deploy.subprocess, "run", return_value=subprocess.CompletedProcess(
+                        [], code, stdout, stderr)) as run, patch.dict(
+                    os.environ, {"ODDSPAPI_API_KEY": "offline-secret", "GITHUB_TOKEN": "secret",
+                                 "SSH_AUTH_SOCK": "/secret"}):
+                self.assertEqual(deploy.run_tests(), expected)
+                result = json.loads(output.read_text())
+                self.assertEqual(result["tests_run"], count)
+                self.assertNotIn("ODDSPAPI_API_KEY", run.call_args.kwargs["env"])
+                self.assertNotIn("GITHUB_TOKEN", run.call_args.kwargs["env"])
+                self.assertNotIn("SSH_AUTH_SOCK", run.call_args.kwargs["env"])
+                self.assertEqual(run.call_args.kwargs["cwd"], self.release)
+        with self.assertRaisesRegex(deploy.Failure, "SOURCE_INVALID"):
+            deploy.release_path("../../etc", releases=self.releases)
+
+    def test_github_report_enforces_new_fields_and_positive_test_count(self):
+        workflow = (SOURCE.parents[2] / ".github/workflows/tests.yml").read_text()
+        script = textwrap.dedent(workflow.split("<<'PY'\n", 1)[1].split("\n          PY", 1)[0])
+        report = deploy.report(self.sha)
+        report.update(status="PASS", previous_sha=None, final_sha=self.sha,
+                      fetch_verified=True, release_created=True, dependency_sync="INSTALLED",
+                      tests_status="PASS", tests_run=2, promotion_status="PROMOTED",
+                      state_boundary_enforced=True, reason="OK")
+        file = self.root / "report.json"
+        for patch_fields, valid in (({}, True), ({"tests_run": 0}, False),
+                                    ({"promotion_status": "NOT_ATTEMPTED"}, False),
+                                    ({"requested_sha": "b" * 40}, False)):
+            with self.subTest(fields=patch_fields):
+                file.write_text(json.dumps({**report, **patch_fields}))
+                process = subprocess.run([sys.executable, "-c", script, str(file), self.sha],
+                                         capture_output=True, text=True)
+                self.assertEqual(process.returncode, 0 if valid else 1)
+
+    def test_ssh_request_is_fixed(self):
+        with patch.dict(os.environ, {"SSH_ORIGINAL_COMMAND": "deploy other/repo " + self.sha}):
             with patch.object(deploy, "deploy", return_value=deploy.report("")) as called, patch(
-                    "sys.stdout", new_callable=__import__("io").StringIO) as stdout:
+                    "sys.stdout", new_callable=__import__("io").StringIO) as output:
                 self.assertEqual(deploy.main(), 0)
                 self.assertEqual(called.call_args.args, ("",))
-                self.assertEqual(json.loads(stdout.getvalue())["reason"], "INVALID_REQUEST")
+                self.assertEqual(json.loads(output.getvalue())["reason"], "INVALID_REQUEST")
 
 
 if __name__ == "__main__":
