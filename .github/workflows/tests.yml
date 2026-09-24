@@ -26,3 +26,78 @@ jobs:
 
       - name: Compile Python sources and tests
         run: python3 -m compileall -q src tests
+
+  deploy:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    environment: production
+    concurrency:
+      group: modelfc-vps-deployment
+      cancel-in-progress: false
+    steps:
+      - name: Synchronize reviewed main on VPS
+        env:
+          DEPLOY_KEY: ${{ secrets.MODELFC_DEPLOY_SSH_KEY }}
+          DEPLOY_HOST: ${{ vars.MODELFC_DEPLOY_HOST }}
+          DEPLOY_HOST_KEY: ${{ vars.MODELFC_DEPLOY_HOST_KEY }}
+          EXPECTED_SHA: ${{ github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ -n "$DEPLOY_KEY" && -n "$DEPLOY_HOST" && -n "$DEPLOY_HOST_KEY" ]]
+          umask 077
+          key_file="$(mktemp)"
+          hosts_file="$(mktemp)"
+          report_file="$(mktemp)"
+          trap 'rm -f "$key_file" "$hosts_file" "$report_file"' EXIT
+          printf '%s\n' "$DEPLOY_KEY" > "$key_file"
+          printf '%s\n' "$DEPLOY_HOST_KEY" > "$hosts_file"
+          if ! ssh -T -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="$hosts_file" -o ForwardAgent=no \
+            -o ClearAllForwardings=yes -i "$key_file" \
+            "modelfc-deploy@$DEPLOY_HOST" "deploy stevengalvis/modelfc $EXPECTED_SHA" > "$report_file" 2>/dev/null; then
+            printf '%s\n' '{"status":"FAIL","reason":"SSH_TRANSPORT_FAILED"}'
+            exit 1
+          fi
+          python3 - "$report_file" "$EXPECTED_SHA" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          try:
+              value = json.loads(Path(sys.argv[1]).read_text())
+              fields = {"status", "requested_sha", "previous_sha", "final_sha", "fetch_verified",
+                        "fast_forward", "dependency_sync", "tests_status", "tests_run",
+                        "checkout_clean", "state_boundary_enforced", "reason"}
+              reasons = {"OK", "SUPERSEDED", "CHECKOUT_DIRTY", "WRONG_BRANCH",
+                         "FETCH_FAILED", "SHA_NOT_ON_MAIN", "NON_FAST_FORWARD",
+                         "DEPENDENCY_SYNC_FAILED", "TESTS_FAILED", "DEPLOYMENT_BUSY",
+                         "FINAL_SHA_MISMATCH", "INVALID_REQUEST", "STATE_BOUNDARY_FAILED",
+                         "CHECKOUT_INVALID"}
+              if (set(value) != fields or value["status"] not in {"PASS", "FAIL", "SUPERSEDED"}
+                  or value["requested_sha"] != sys.argv[2] or value["reason"] not in reasons
+                  or value["fast_forward"] not in {"NOT_ATTEMPTED", "UPDATED", "ALREADY_CURRENT"}
+                  or value["dependency_sync"] not in {"NOT_ATTEMPTED", "INSTALLED", "SKIPPED"}
+                  or value["tests_status"] not in {"NOT_RUN", "PASS", "FAIL"}
+                  or type(value["tests_run"]) is not int or value["tests_run"] < 0
+                  or any(type(value[k]) is not bool for k in
+                         ("fetch_verified", "checkout_clean", "state_boundary_enforced"))
+                  or any(value[k] is not None and
+                         (type(value[k]) is not str or len(value[k]) != 40 or
+                          any(c not in "0123456789abcdef" for c in value[k]))
+                         for k in ("previous_sha", "final_sha"))):
+                  raise ValueError
+              if value["status"] == "PASS" and (value["final_sha"] != sys.argv[2]
+                                                   or value["tests_status"] != "PASS"
+                                                   or value["state_boundary_enforced"] is not True):
+                  raise ValueError
+              print(json.dumps(value, sort_keys=True))
+              sys.exit(0 if value["status"] in {"PASS", "SUPERSEDED"} else 1)
+          except (OSError, ValueError, KeyError, TypeError):
+              print('{"status":"FAIL","reason":"INVALID_DEPLOYMENT_REPORT"}')
+              sys.exit(1)
+          PY
