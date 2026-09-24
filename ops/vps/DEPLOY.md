@@ -73,8 +73,12 @@ outcomes. Merging this PR **does not install or activate** the VPS side.
 
 The controller accepts only `deploy stevengalvis/modelfc <40 lowercase hex>`
 as `SSH_ORIGINAL_COMMAND`. It checks a clean canonical `main` checkout, fetches
-only from the fixed public repository, checks the requested SHA is reachable
-from the fetched main tip, and merges only that SHA with `--ff-only`. It never
+only from the fixed public repository, checks both the requested SHA and
+current checkout SHA are reachable from the fetched main tip, and merges only
+the requested SHA with `--ff-only`. A clean local-only commit fails with
+`LOCAL_SHA_NOT_ON_MAIN`, even when it descends from the requested SHA. Git marks
+only `/root/dev/modelfc` as a safe directory for this controller's isolated
+invocations; no global or wildcard trust setting is installed. It never
 resets, stashes or cleans. Ignored `.venv`, managed historical CSVs, refresh
 files and Python caches are accounted for, not removed. Unknown ignored files
 and normal untracked/modified files block deployment. `.venv` gets a successful

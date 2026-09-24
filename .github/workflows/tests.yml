@@ -74,7 +74,7 @@ jobs:
                         "fast_forward", "dependency_sync", "tests_status", "tests_run",
                         "checkout_clean", "state_boundary_enforced", "reason"}
               reasons = {"OK", "SUPERSEDED", "CHECKOUT_DIRTY", "WRONG_BRANCH",
-                         "FETCH_FAILED", "SHA_NOT_ON_MAIN", "NON_FAST_FORWARD",
+                         "FETCH_FAILED", "SHA_NOT_ON_MAIN", "LOCAL_SHA_NOT_ON_MAIN", "NON_FAST_FORWARD",
                          "DEPENDENCY_SYNC_FAILED", "TESTS_FAILED", "DEPLOYMENT_BUSY",
                          "FINAL_SHA_MISMATCH", "INVALID_REQUEST", "STATE_BOUNDARY_FAILED",
                          "CHECKOUT_INVALID"}
@@ -93,6 +93,7 @@ jobs:
                   raise ValueError
               if value["status"] == "PASS" and (value["final_sha"] != sys.argv[2]
                                                    or value["tests_status"] != "PASS"
+                                                   or value["tests_run"] <= 0
                                                    or value["state_boundary_enforced"] is not True):
                   raise ValueError
               print(json.dumps(value, sort_keys=True))

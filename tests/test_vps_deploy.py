@@ -6,7 +6,9 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
+import textwrap
 import unittest
 from unittest.mock import patch
 
@@ -124,12 +126,34 @@ class DeploymentTest(unittest.TestCase):
     def test_sha_not_on_main(self):
         self.assertEqual(self.run_deploy("a" * 40)["reason"], "SHA_NOT_ON_MAIN")
 
-    def test_non_fast_forward(self):
+    def test_local_only_divergence_fails_even_when_checkout_is_clean(self):
         cmd("git", "config", "user.email", "offline@example.invalid", cwd=self.checkout)
         cmd("git", "config", "user.name", "Offline Tester", cwd=self.checkout)
         (self.checkout / "example.txt").write_text("diverged")
         cmd("git", "commit", "-am", "local commit", cwd=self.checkout)
-        self.assertEqual(self.run_deploy(self.b)["reason"], "NON_FAST_FORWARD")
+        local = cmd("git", "rev-parse", "HEAD", cwd=self.checkout)
+        result = self.run_deploy(self.b)
+        self.assertEqual((result["status"], result["reason"], result["final_sha"]),
+                         ("FAIL", "LOCAL_SHA_NOT_ON_MAIN", local))
+        self.assertFalse(self.tests_called)
+
+    def test_local_only_descendant_cannot_supersede_requested_sha(self):
+        cmd("git", "config", "user.email", "offline@example.invalid", cwd=self.checkout)
+        cmd("git", "config", "user.name", "Offline Tester", cwd=self.checkout)
+        cmd("git", "commit", "--allow-empty", "-m", "local descendant", cwd=self.checkout)
+        local = cmd("git", "rev-parse", "HEAD", cwd=self.checkout)
+        result = self.run_deploy(self.a)
+        self.assertEqual((result["status"], result["reason"], result["previous_sha"],
+                          result["final_sha"], result["fetch_verified"]),
+                         ("FAIL", "LOCAL_SHA_NOT_ON_MAIN", local, local, True))
+        self.assertFalse(self.tests_called)
+        self.assertEqual(cmd("git", "rev-parse", "HEAD", cwd=self.checkout), local)
+
+    def test_non_fast_forward_still_has_fixed_reason(self):
+        # A defensive regression for the incomparable-history branch, which is
+        # unreachable in this linear test origin without a real merge graph.
+        with patch.object(deploy, "ancestor", side_effect=[True, True, False, False]):
+            self.assertEqual(self.run_deploy(self.b)["reason"], "NON_FAST_FORWARD")
 
     def test_fetch_failure(self):
         original = deploy.git
@@ -166,6 +190,40 @@ class DeploymentTest(unittest.TestCase):
             result = self.run_deploy(self.b)
         self.assertEqual((result["reason"], result["tests_status"], result["final_sha"], result["tests_run"]),
                          ("TESTS_FAILED", "FAIL", self.b, 532))
+
+    def test_zero_test_count_cannot_pass_deployment(self):
+        with patch.object(deploy, "tests", return_value=0):
+            result = self.run_deploy(self.b)
+        self.assertEqual((result["status"], result["reason"], result["tests_status"],
+                          result["tests_run"], result["final_sha"]),
+                         ("FAIL", "TESTS_FAILED", "FAIL", 0, self.b))
+
+    def test_git_marks_only_canonical_checkout_safe(self):
+        with patch.object(deploy, "command", return_value="ok") as call:
+            self.assertEqual(deploy.git(self.checkout, "rev-parse", "HEAD"), "ok")
+        args = call.call_args.args[0]
+        self.assertEqual(args[:3], ["git", "-c", f"safe.directory={deploy.CHECKOUT}"])
+        self.assertNotIn("safe.directory=*", args)
+        self.assertNotIn(f"safe.directory={self.checkout}", args)
+        self.assertEqual(call.call_args.kwargs["env"]["GIT_CONFIG_GLOBAL"], "/dev/null")
+
+    def test_github_report_rejects_zero_tests_and_accepts_positive_count(self):
+        workflow = (SOURCE.parents[2] / ".github/workflows/tests.yml").read_text()
+        script = textwrap.dedent(workflow.split("<<'PY'\n", 1)[1].split("\n          PY", 1)[0])
+        payload = deploy.report(self.b)
+        payload.update(status="PASS", previous_sha=self.b, final_sha=self.b,
+                       fetch_verified=True, fast_forward="ALREADY_CURRENT",
+                       dependency_sync="SKIPPED", tests_status="PASS", tests_run=0,
+                       checkout_clean=True, state_boundary_enforced=True, reason="OK")
+        file = self.root / "github-report.json"
+        for count, expected in ((0, 1), (1, 0)):
+            payload["tests_run"] = count
+            file.write_text(json.dumps(payload))
+            result = subprocess.run([sys.executable, "-c", script, str(file), self.b],
+                                    capture_output=True, text=True)
+            self.assertEqual(result.returncode, expected, result.stderr)
+            if expected:
+                self.assertIn("INVALID_DEPLOYMENT_REPORT", result.stdout)
 
     def test_host_lock_busy(self):
         with (self.control / "deploy.lock").open("a+") as lock:
@@ -277,6 +335,31 @@ class DependencyAndBoundaryTest(unittest.TestCase):
                 deploy.os, "access", return_value=False), patch.object(
                 deploy.os, "stat", return_value=Stat(1)):
             self.assertFalse(deploy.run_tests())
+
+    def test_systemd_zero_tests_ok_is_failure(self):
+        output = self.root / "test-result.json"
+        class Stat:
+            st_ino = 1
+        with patch.object(deploy, "CHECKOUT", self.root), patch.object(deploy, "TEST_OUTPUT", output), patch.object(
+                deploy.os, "access", return_value=False), patch.object(
+                deploy.os, "stat", side_effect=[Stat(), type("Stat", (), {"st_ino": 2})()]), patch.object(
+                deploy, "git", return_value="a" * 40), patch.object(
+                deploy.subprocess, "run", return_value=subprocess.CompletedProcess(
+                    [], 0, b"", b"Ran 0 tests in 0.01s\n\nOK\n")):
+            self.assertFalse(deploy.run_tests())
+        result = json.loads(output.read_text())
+        self.assertEqual((result["tests_status"], result["tests_run"]), ("FAIL", 0))
+
+    def test_trusted_controller_rejects_false_zero_test_attestation(self):
+        output = self.root / "test-result.json"
+        def write_zero(*args, **kwargs):
+            output.write_text(json.dumps({"sha": "a" * 40, "tests_status": "PASS",
+                                          "tests_run": 0, "state_boundary_enforced": True}))
+            return ""
+        with patch.object(deploy, "command", side_effect=write_zero):
+            with self.assertRaisesRegex(deploy.Failure, "TESTS_FAILED"):
+                deploy.tests(self.root, "a" * 40, output=output, service="fixed-service")
+        self.assertFalse(output.exists())
 
     def test_ssh_request_is_fixed_and_invalid_request_is_sanitized(self):
         with patch.dict(os.environ, {"SSH_ORIGINAL_COMMAND": "deploy other/repo " + "a" * 40}):

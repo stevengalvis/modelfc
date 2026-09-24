@@ -29,7 +29,7 @@ FIELDS = ("status", "requested_sha", "previous_sha", "final_sha", "fetch_verifie
           "fast_forward", "dependency_sync", "tests_status", "tests_run",
           "checkout_clean", "state_boundary_enforced", "reason")
 REASONS = {"OK", "SUPERSEDED", "CHECKOUT_DIRTY", "WRONG_BRANCH", "FETCH_FAILED",
-           "SHA_NOT_ON_MAIN", "NON_FAST_FORWARD", "DEPENDENCY_SYNC_FAILED",
+           "SHA_NOT_ON_MAIN", "LOCAL_SHA_NOT_ON_MAIN", "NON_FAST_FORWARD", "DEPENDENCY_SYNC_FAILED",
            "TESTS_FAILED", "DEPLOYMENT_BUSY", "FINAL_SHA_MISMATCH",
            "INVALID_REQUEST", "STATE_BOUNDARY_FAILED", "CHECKOUT_INVALID"}
 
@@ -56,7 +56,10 @@ def git(checkout, *args, failure="CHECKOUT_INVALID"):
            "GIT_TERMINAL_PROMPT": "0", "GIT_CONFIG_NOSYSTEM": "1",
            "GIT_CONFIG_GLOBAL": "/dev/null"}
     try:
-        return command(["git", "-c", "core.hooksPath=/dev/null", "-C", str(checkout), *args],
+        # Git's safe.directory is protected configuration. Trust only the
+        # canonical checkout, which can remain root-owned on the VPS.
+        return command(["git", "-c", f"safe.directory={CHECKOUT}",
+                        "-c", "core.hooksPath=/dev/null", "-C", str(checkout), *args],
                        env=env, timeout=90).strip()
     except Failure:
         raise Failure(failure) from None
@@ -168,6 +171,8 @@ def tests(checkout, sha, output=TEST_OUTPUT, service=SERVICE):
         raise Failure("STATE_BOUNDARY_FAILED") from None
     finally:
         output.unlink(missing_ok=True)
+    if result["tests_status"] == "PASS" and result["tests_run"] == 0:
+        raise Failure("TESTS_FAILED")
     if result["tests_status"] != "PASS":
         raise Failure("TESTS_FAILED", result["tests_run"])
     return result["tests_run"]
@@ -208,6 +213,8 @@ def deploy(sha, *, checkout=CHECKOUT, control=CONTROL, stamp=STAMP, remote=REMOT
             if not ancestor(checkout, sha, tip):
                 raise Failure("SHA_NOT_ON_MAIN")
             value["fetch_verified"] = True
+            if not ancestor(checkout, value["previous_sha"], tip):
+                raise Failure("LOCAL_SHA_NOT_ON_MAIN")
             if sha != value["previous_sha"]:
                 if ancestor(checkout, sha, value["previous_sha"]):
                     value.update(status="SUPERSEDED", reason="SUPERSEDED")
@@ -223,6 +230,8 @@ def deploy(sha, *, checkout=CHECKOUT, control=CONTROL, stamp=STAMP, remote=REMOT
                 raise Failure("FINAL_SHA_MISMATCH")
             value["dependency_sync"] = dependencies(checkout, stamp)
             value["tests_run"] = test_runner(checkout, sha)
+            if type(value["tests_run"]) is not int or value["tests_run"] <= 0:
+                raise Failure("TESTS_FAILED")
             value["tests_status"] = "PASS"
             if git(checkout, "rev-parse", "HEAD") != sha:
                 raise Failure("FINAL_SHA_MISMATCH")
@@ -267,7 +276,8 @@ def run_tests():
         match = re.search(r"Ran ([0-9]+) tests? in [0-9.]+s", output)
         if match:
             value["tests_run"] = int(match.group(1))
-        if process.returncode == 0 and match and re.search(r"(?m)^OK(?: \(skipped=[0-9]+\))?$", output):
+        if (process.returncode == 0 and value["tests_run"] > 0 and match
+                and re.search(r"(?m)^OK(?: \(skipped=[0-9]+\))?$", output)):
             value["tests_status"] = "PASS"
     except (Failure, OSError, subprocess.SubprocessError):
         pass
