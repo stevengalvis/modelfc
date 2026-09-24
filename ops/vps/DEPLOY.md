@@ -23,6 +23,7 @@ or the systemd unit. This PR only provides source; it does not install anything.
    passwd -l modelfc-deploy
    install -d -o modelfc-deploy -g modelfc-deploy -m 0755 /srv/modelfc /srv/modelfc/releases
    install -d -o modelfc-deploy -g modelfc-deploy -m 0700 /var/lib/modelfc-deploy
+   install -d -o modelfc-deploy -g modelfc-deploy -m 0700 /var/lib/modelfc-deploy/reports
    ```
 
 2. From a specifically reviewed merged SHA, install the controller **outside**
@@ -33,11 +34,18 @@ or the systemd unit. This PR only provides source; it does not install anything.
    `ProtectSystem=strict`, `ReadOnlyPaths=/srv/modelfc/releases`,
    `InaccessiblePaths=/root/modelfc-state /root/dev/modelfc`, the fixed
    `User=modelfc-deploy`, `MemoryMax=2G`, `TasksMax=64`, and trusted `ExecStart`.
-   The dependency unit has `ProtectSystem=strict` and grants write access only
-   to the instance's fresh `.venv`; package builds can use its private `/tmp`.
+   The test unit mounts `/var/lib/modelfc-deploy` read-only and grants write
+   access only to its `reports/` child for the sanitized result. Its trusted
+   request file and `deploy.lock` stay outside that writable child; a test
+   cannot unlink the active lock and allow a second deployment to acquire a
+   replacement inode. The controller checks these effective installed
+   properties before starting the unit. The dependency unit cannot access
+   `/var/lib/modelfc-deploy` at all. It has `ProtectSystem=strict` and grants
+   write access only to the instance's fresh `.venv`; package builds can use
+   its private `/tmp`.
    It cannot write other releases, `current`, history or state. It writes no
    dependency report. The test unit writes only a bounded
-   test report under `/var/lib/modelfc-deploy`; tests receive an allowlisted
+   test report under `/var/lib/modelfc-deploy/reports`; tests receive an allowlisted
    environment with no API, GitHub, SSH or application credential.
 
    ```sh

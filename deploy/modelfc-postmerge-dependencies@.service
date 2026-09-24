@@ -16,6 +16,7 @@ ReadOnlyPaths=/srv/modelfc/releases
 ReadWritePaths=/srv/modelfc/releases/%i/.venv
 InaccessiblePaths=/root/modelfc-state
 InaccessiblePaths=/root/dev/modelfc
+InaccessiblePaths=/var/lib/modelfc-deploy
 InaccessiblePaths=/etc/modelfc-validator
 StandardOutput=null
 StandardError=null

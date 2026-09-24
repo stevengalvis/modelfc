@@ -23,13 +23,14 @@ ROOT = Path("/srv/modelfc")
 RELEASES = ROOT / "releases"
 CURRENT = ROOT / "current"
 CONTROL = Path("/var/lib/modelfc-deploy")
+REPORTS = CONTROL / "reports"
 STATE = Path("/root/modelfc-state")
 HISTORY = Path("/root/dev/modelfc")
 TRUSTED = Path("/opt/modelfc-deploy/deploy_main.py")
 SERVICE = "modelfc-postmerge-tests.service"
 DEPENDENCY_SERVICE = "modelfc-postmerge-dependencies@{}.service"
 REQUEST = CONTROL / "test-request.json"
-TEST_OUTPUT = CONTROL / "test-result.json"
+TEST_OUTPUT = REPORTS / "test-result.json"
 SHA = re.compile(r"[0-9a-f]{40}\Z")
 RELEASE_ID = re.compile(r"([0-9a-f]{40})-([0-9a-f]{12})\Z")
 FIELDS = ("status", "requested_sha", "previous_sha", "final_sha", "fetch_verified",
@@ -118,15 +119,21 @@ def current_release(*, current=CURRENT, releases=RELEASES):
 
 def boundary(*, root=ROOT, releases=RELEASES, control=CONTROL, state=STATE,
              service=SERVICE):
+    reports = control / "reports"
     if os.geteuid() == 0 or pwd.getpwuid(os.geteuid()).pw_name != "modelfc-deploy":
         raise Failure("STATE_BOUNDARY_FAILED")
     if os.access(state, os.R_OK) or os.access(state, os.W_OK):
         raise Failure("STATE_BOUNDARY_FAILED")
     if (root.is_symlink() or releases.is_symlink() or control.is_symlink()
+            or reports.is_symlink()
             or releases.parent != root or not releases.is_dir() or not control.is_dir()
+            or not reports.is_dir()
             or control.stat().st_uid != os.geteuid()
+            or reports.stat().st_uid != os.geteuid()
+            or control.stat().st_mode & 0o022 or reports.stat().st_mode & 0o022
             or any((control / name).is_symlink() for name in
-                   ("deploy.lock", REQUEST.name, TEST_OUTPUT.name))):
+                   ("deploy.lock", REQUEST.name))
+            or (reports / TEST_OUTPUT.name).is_symlink()):
         raise Failure("STATE_BOUNDARY_FAILED")
     try:
         properties = command(["systemctl", "show", service,
@@ -143,7 +150,8 @@ def boundary(*, root=ROOT, releases=RELEASES, control=CONTROL, state=STATE,
             or str(state) not in hidden or str(HISTORY) not in hidden
             or fields.get("ProtectSystem") != "strict"
             or str(releases) not in fields.get("ReadOnlyPaths", "").split()
-            or fields.get("ReadWritePaths") != str(control)
+            or str(control) not in fields.get("ReadOnlyPaths", "").split()
+            or fields.get("ReadWritePaths") != str(reports)
             or fields.get("BindPaths") not in (None, "")
             or fields.get("TemporaryFileSystem") not in (None, "")
             or fields.get("User") != "modelfc-deploy"
@@ -174,6 +182,7 @@ def dependency_boundary(release, *, releases=None):
             or str(releases) not in fields.get("ReadOnlyPaths", "").split()
             or fields.get("ReadWritePaths") != str(release / ".venv")
             or str(STATE) not in hidden or str(HISTORY) not in hidden
+            or str(CONTROL) not in hidden
             or fields.get("PrivateTmp") != "yes"
             or fields.get("PrivateDevices") != "yes"
             or fields.get("NoNewPrivileges") != "yes"

@@ -37,6 +37,7 @@ class FreshReleaseTest(unittest.TestCase):
         self.current = self.deploy_root / "current"
         self.control = self.root / "control"
         self.control.mkdir()
+        (self.control / "reports").mkdir()
         self.legacy = self.root / "old-checkout"
         self.legacy.mkdir()
         (self.legacy / "E1_2627.csv").write_text("historical evidence unchanged\n")
@@ -138,6 +139,19 @@ class FreshReleaseTest(unittest.TestCase):
         with (self.control / "deploy.lock").open("a+") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             self.assertEqual(self.run_deploy(self.b)["reason"], "DEPLOYMENT_BUSY")
+
+    def test_locked_inode_survives_test_service_and_concurrent_run_stays_busy(self):
+        lock_path = self.control / "deploy.lock"
+        def test_while_locked(release, sha):
+            inode = lock_path.stat().st_ino
+            self.assertEqual(self.run_deploy(sha)["reason"], "DEPLOYMENT_BUSY")
+            self.assertEqual(lock_path.stat().st_ino, inode)
+            self.assertTrue(lock_path.exists())
+            return 7
+        with patch.object(deploy, "tests", side_effect=test_while_locked):
+            result = self.run_deploy(self.b)
+        self.assertEqual(result["status"], "PASS")
+        self.assertEqual(result["tests_run"], 7)
 
     def test_active_sha_must_belong_to_fetched_main(self):
         self.run_deploy(self.a)
@@ -315,6 +329,7 @@ class IsolatedBoundaryTest(unittest.TestCase):
         self.root = Path(self.temp.name)
         self.control = self.root / "control"
         self.control.mkdir()
+        (self.control / "reports").mkdir()
         self.releases = self.root / "releases"
         self.releases.mkdir()
         self.sha = "a" * 40
@@ -348,7 +363,8 @@ class IsolatedBoundaryTest(unittest.TestCase):
         properties = ("User=modelfc-deploy\nProtectSystem=strict\n"
                       f"ReadOnlyPaths={self.releases}\n"
                       f"ReadWritePaths={self.release / '.venv'}\n"
-                      "InaccessiblePaths=/root/modelfc-state /root/dev/modelfc\n"
+                      "InaccessiblePaths=/root/modelfc-state /root/dev/modelfc "
+                      "/var/lib/modelfc-deploy\n"
                       "PrivateTmp=yes\nPrivateDevices=yes\nNoNewPrivileges=yes\n"
                       "BindPaths=\nTemporaryFileSystem=\n"
                       "ExecStart=/usr/bin/python3 -I /opt/modelfc-deploy/deploy_main.py "
@@ -365,6 +381,7 @@ class IsolatedBoundaryTest(unittest.TestCase):
                          (f"ReadWritePaths={self.release / '.venv'}",
                           f"ReadWritePaths={self.release / '.venv'} {self.releases.parent / 'current'}"),
                          (f"ReadWritePaths={self.release / '.venv'}\n", ""),
+                         ("/var/lib/modelfc-deploy", "/tmp/control"),
                          ("/root/modelfc-state", "/tmp"),
                          ("/root/dev/modelfc", "/tmp"),
                          ("PrivateTmp=yes", "PrivateTmp=no"),
@@ -381,6 +398,7 @@ class IsolatedBoundaryTest(unittest.TestCase):
         unit = (SOURCE.parents[2] / "deploy/modelfc-postmerge-dependencies@.service").read_text()
         for required in ("ProtectSystem=strict", "ReadOnlyPaths=/srv/modelfc/releases",
                          "ReadWritePaths=/srv/modelfc/releases/%i/.venv",
+                         "InaccessiblePaths=/var/lib/modelfc-deploy",
                          "InaccessiblePaths=/root/modelfc-state",
                          "InaccessiblePaths=/root/dev/modelfc", "NoNewPrivileges=yes",
                          "PrivateDevices=yes"):
@@ -420,8 +438,8 @@ class IsolatedBoundaryTest(unittest.TestCase):
     def test_effective_service_properties_enforced(self):
         properties = ("PrivateNetwork=yes\nInaccessiblePaths=/root/modelfc-state "
                       "/root/dev/modelfc /etc/modelfc-validator\nProtectSystem=strict\n"
-                      f"ReadOnlyPaths={self.releases}\nReadWritePaths="
-                      f"{self.control}\nBindPaths=\nTemporaryFileSystem=\n"
+                      f"ReadOnlyPaths={self.releases} {self.control}\nReadWritePaths="
+                      f"{self.control / 'reports'}\nBindPaths=\nTemporaryFileSystem=\n"
                       "MemoryMax=2147483648\nTasksMax=64\n"
                       "User=modelfc-deploy\nExecStart=/usr/bin/python3 -I "
                       "/opt/modelfc-deploy/deploy_main.py --run-tests\n")
@@ -429,7 +447,7 @@ class IsolatedBoundaryTest(unittest.TestCase):
         real_stat = os.stat
         def owned_stat(path, *args, **kwargs):
             result = real_stat(path, *args, **kwargs)
-            if str(path) == str(self.control):
+            if str(path) in (str(self.control), str(self.control / "reports")):
                 return type("Owned", (), {"st_uid": 1001, "st_mode": result.st_mode})()
             return result
         with patch.object(deploy.os, "geteuid", return_value=1001), patch.object(
@@ -439,7 +457,9 @@ class IsolatedBoundaryTest(unittest.TestCase):
                 deploy, "command", return_value=properties):
             deploy.boundary(root=self.root, releases=self.releases, control=self.control)
         for old, new in (("ProtectSystem=strict", "ProtectSystem=full"),
-                         (f"ReadOnlyPaths={self.releases}", "ReadOnlyPaths=/tmp"),
+                         (f"ReadOnlyPaths={self.releases} {self.control}", "ReadOnlyPaths=/tmp"),
+                         (f"ReadOnlyPaths={self.releases} {self.control}",
+                          f"ReadOnlyPaths={self.releases}"),
                          ("PrivateNetwork=yes", "PrivateNetwork=no"),
                          ("/root/modelfc-state", "/tmp"),
                          ("/root/dev/modelfc", "/tmp"),
@@ -452,7 +472,12 @@ class IsolatedBoundaryTest(unittest.TestCase):
                          ("TasksMax=64\n", ""),
                          ("/opt/modelfc-deploy/deploy_main.py", "/tmp/evil.py"),
                          ("BindPaths=", "BindPaths=/tmp:/srv/modelfc/releases"),
-                         (f"ReadWritePaths={self.control}", "ReadWritePaths=/srv/modelfc")):
+                         (f"ReadWritePaths={self.control / 'reports'}",
+                          f"ReadWritePaths={self.control}"),
+                         (f"ReadWritePaths={self.control / 'reports'}",
+                          f"ReadWritePaths={self.control / 'reports'} {self.control}"),
+                         (f"ReadWritePaths={self.control / 'reports'}",
+                          "ReadWritePaths=/srv/modelfc")):
             with self.subTest(old=old), patch.object(deploy.os, "geteuid", return_value=1001), patch.object(
                     deploy.pwd, "getpwuid", return_value=identity), patch.object(
                     deploy.os, "access", return_value=False), patch.object(
@@ -464,13 +489,31 @@ class IsolatedBoundaryTest(unittest.TestCase):
         for required in ("PrivateNetwork=yes", "ProtectSystem=strict",
                          "MemoryMax=2G", "TasksMax=64",
                          "ReadOnlyPaths=/srv/modelfc/releases",
+                         "ReadOnlyPaths=/var/lib/modelfc-deploy",
+                         "ReadWritePaths=/var/lib/modelfc-deploy/reports",
                          "InaccessiblePaths=/root/modelfc-state",
                          "InaccessiblePaths=/root/dev/modelfc", "KillMode=control-group"):
             self.assertIn(required, unit)
 
+    def test_test_unit_can_write_report_without_exposing_lock_or_request(self):
+        unit = (SOURCE.parents[2] / "deploy/modelfc-postmerge-tests.service").read_text()
+        self.assertIn("ReadOnlyPaths=/var/lib/modelfc-deploy\n", unit)
+        self.assertIn("ReadWritePaths=/var/lib/modelfc-deploy/reports\n", unit)
+        self.assertNotIn("ReadWritePaths=/var/lib/modelfc-deploy\n", unit)
+        self.assertEqual(deploy.REQUEST, deploy.CONTROL / "test-request.json")
+        self.assertEqual(deploy.TEST_OUTPUT, deploy.REPORTS / "test-result.json")
+        self.assertEqual(deploy.REPORTS.parent, deploy.CONTROL)
+        # Even if PR tests run while the controller holds its lock, the only
+        # writable host path exposed by the unit is the separate report child.
+        self.assertNotEqual((deploy.CONTROL / "deploy.lock").parent, deploy.REPORTS)
+        self.assertNotEqual(deploy.REQUEST.parent, deploy.REPORTS)
+
     def test_candidate_request_is_fixed_and_report_requires_positive_tests(self):
         request = self.control / "test-request.json"
-        output = self.control / "test-result.json"
+        output = self.control / "reports/test-result.json"
+        lock = self.control / "deploy.lock"
+        lock.write_text("trusted lock stays intact\n")
+        original_inode = lock.stat().st_ino
         def fake_service(args, **kwargs):
             self.assertEqual(json.loads(request.read_text()),
                              {"release_id": self.release.name, "sha": self.sha})
@@ -482,6 +525,8 @@ class IsolatedBoundaryTest(unittest.TestCase):
             self.assertEqual(deploy.tests(self.release, self.sha, request=request, output=output), 2)
         self.assertFalse(request.exists())
         self.assertFalse(output.exists())
+        self.assertEqual((lock.stat().st_ino, lock.read_text()),
+                         (original_inode, "trusted lock stays intact\n"))
         def zero(*args, **kwargs):
             fake_service(*args, **kwargs)
             value = json.loads(output.read_text())
@@ -500,7 +545,7 @@ class IsolatedBoundaryTest(unittest.TestCase):
 
     def test_run_tests_uses_sanitized_env_and_final_stderr(self):
         request = self.control / "test-request.json"
-        output = self.control / "test-result.json"
+        output = self.control / "reports/test-result.json"
         request.write_text(json.dumps({"release_id": self.release.name, "sha": self.sha}))
         class Stat:
             def __init__(self, ino):
