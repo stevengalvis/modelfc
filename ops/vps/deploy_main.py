@@ -155,7 +155,8 @@ def boundary(*, root=ROOT, releases=RELEASES, control=CONTROL, state=STATE,
     try:
         properties = command(["systemctl", "show", service,
                               "-p", "PrivateNetwork", "-p", "InaccessiblePaths",
-                              "-p", "User", "-p", "ExecStart", "-p", "ProtectSystem",
+                              "-p", "User", "-p", "Group", "-p", "SupplementaryGroups",
+                              "-p", "ExecStart", "-p", "ProtectSystem",
                               "-p", "ReadOnlyPaths", "-p", "ReadWritePaths",
                               "-p", "BindPaths", "-p", "BindReadOnlyPaths",
                               "-p", "TemporaryFileSystem",
@@ -174,6 +175,8 @@ def boundary(*, root=ROOT, releases=RELEASES, control=CONTROL, state=STATE,
             or fields.get("BindReadOnlyPaths") != ""
             or fields.get("TemporaryFileSystem") not in (None, "")
             or fields.get("User") != "modelfc-deploy"
+            or fields.get("Group") != "modelfc-deploy"
+            or fields.get("SupplementaryGroups") != ""
             or fields.get("MemoryMax") != str(2 * 1024**3)
             or fields.get("TasksMax") != "64"
             or not trusted_exec_start(fields.get("ExecStart"),
@@ -194,7 +197,8 @@ def dependency_boundary(release, *, releases=None):
                               "-p", "PrivateTmp", "-p", "PrivateDevices",
                               "-p", "NoNewPrivileges",
                               "-p", "BindPaths", "-p", "BindReadOnlyPaths",
-                              "-p", "TemporaryFileSystem"], timeout=15)
+                              "-p", "TemporaryFileSystem",
+                              "-p", "MemoryMax", "-p", "TasksMax"], timeout=15)
     except Failure:
         raise Failure("STATE_BOUNDARY_FAILED") from None
     fields = dict(line.split("=", 1) for line in properties.splitlines() if "=" in line)
@@ -213,6 +217,8 @@ def dependency_boundary(release, *, releases=None):
             or fields.get("BindPaths") not in (None, "")
             or fields.get("BindReadOnlyPaths") != ""
             or fields.get("TemporaryFileSystem") not in (None, "")
+            or fields.get("MemoryMax") != str(2 * 1024**3)
+            or fields.get("TasksMax") != "64"
             or not trusted_exec_start(fields.get("ExecStart"),
                                       ["/usr/bin/python3", "-I", str(TRUSTED),
                                        "--install-dependencies", release.name])):
@@ -298,6 +304,33 @@ def verify_source(release, sha):
         raise Failure("SOURCE_INVALID")
 
 
+def venv_bootstrap_manifest(venv):
+    """Fingerprint only the fresh venv interpreter surface and configuration."""
+    config = venv / "pyvenv.cfg"
+    python = venv / "bin/python"
+    try:
+        if config.is_symlink() or not config.is_file() or not python.exists():
+            raise Failure("DEPENDENCY_SYNC_FAILED")
+        paths = [config, *sorted((venv / "bin").glob("python*"))]
+        if python not in paths:
+            raise Failure("DEPENDENCY_SYNC_FAILED")
+        manifest = {}
+        for path in paths:
+            status = path.lstat()
+            relative = str(path.relative_to(venv))
+            if stat.S_ISLNK(status.st_mode):
+                value = ("symlink", stat.S_IMODE(status.st_mode), os.readlink(path))
+            elif stat.S_ISREG(status.st_mode):
+                value = ("file", stat.S_IMODE(status.st_mode),
+                         hashlib.sha256(path.read_bytes()).hexdigest())
+            else:
+                raise Failure("DEPENDENCY_SYNC_FAILED")
+            manifest[relative] = value
+        return manifest
+    except (Failure, OSError, ValueError):
+        raise Failure("DEPENDENCY_SYNC_FAILED") from None
+
+
 def dependencies(release, *, check_boundary=dependency_boundary):
     """Host creates only the venv; package/build execution runs in systemd."""
     env = {"PATH": "/usr/bin:/bin", "HOME": str(CONTROL),
@@ -311,12 +344,15 @@ def dependencies(release, *, check_boundary=dependency_boundary):
         raise Failure("DEPENDENCY_SYNC_FAILED") from None
     if (release / ".venv").is_symlink() or not (release / ".venv/bin/python").is_file():
         raise Failure("DEPENDENCY_SYNC_FAILED")
+    bootstrap = venv_bootstrap_manifest(release / ".venv")
     check_boundary(release)
     try:
         command(["sudo", "-n", "/usr/bin/systemctl", "start", "--wait",
                  DEPENDENCY_SERVICE.format(release.name)], timeout=390)
     except Failure:
         raise Failure("DEPENDENCY_SYNC_FAILED") from None
+    if venv_bootstrap_manifest(release / ".venv") != bootstrap:
+        raise Failure("DEPENDENCY_SYNC_FAILED")
     return "INSTALLED"
 
 

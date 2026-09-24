@@ -33,7 +33,8 @@ or the systemd unit. This PR only provides source; it does not install anything.
    `systemctl show` properties. The test unit must have `PrivateNetwork=yes`,
    `ProtectSystem=strict`, `ReadOnlyPaths=/srv/modelfc/releases`,
    `InaccessiblePaths=/root/modelfc-state /root/dev/modelfc`, the fixed
-   `User=modelfc-deploy`, `MemoryMax=2G`, `TasksMax=64`, and trusted `ExecStart`.
+   `User=modelfc-deploy`, `Group=modelfc-deploy`, no supplementary groups,
+   `MemoryMax=2G`, `TasksMax=64`, and trusted `ExecStart`.
    The test unit mounts `/var/lib/modelfc-deploy` read-only and grants write
    access only to its `reports/` child for the sanitized result. Its trusted
    request file and `deploy.lock` stay outside that writable child; a test
@@ -42,7 +43,9 @@ or the systemd unit. This PR only provides source; it does not install anything.
    properties before starting the unit. The dependency unit cannot access
    `/var/lib/modelfc-deploy` at all. It has `ProtectSystem=strict` and grants
    write access only to the instance's fresh `.venv`; package builds can use
-   its private `/tmp`.
+   its private `/tmp`. The dependency unit is also limited to `MemoryMax=2G`
+   and `TasksMax=64`, and the controller verifies those effective installed
+   limits before starting it.
    It cannot write other releases, `current`, history or state. It writes no
    dependency report. The test unit writes only a bounded
    test report under `/var/lib/modelfc-deploy/reports`; tests receive an allowlisted
@@ -131,6 +134,11 @@ path through the narrowly writable dependency service, verifies every tracked
 source blob against the reviewed Git commit, and runs the complete offline
 tests in the installed systemd sandbox. It verifies tracked source again before
 promotion. Package installation has no production state or provider credential.
+The host fingerprints the fresh virtualenv's Python interpreter links/files and
+`pyvenv.cfg` before package installation and rejects the candidate if those
+bootstrap artifacts change. This narrow check does not make arbitrary installed
+Python packages safe: approved dependency artifacts are part of the trusted
+runtime, while their build and installation execution remains sandboxed.
 Successful tests must produce a positive final unittest count on stderr.
 Promotion creates a temporary absolute symlink and atomically replaces
 `/srv/modelfc/current`. The old successful release remains on disk. A failed
@@ -156,3 +164,12 @@ tasks. Never delete a release still referenced by `current`; keep previous
 successful releases until a separate retention policy is reviewed. This system
 does not restart Model FC services, call providers, refresh history, settle
 outcomes, or replace the trusted PR validator.
+
+## Activation gate
+
+Do not enable automatic VPS deployment from this PR alone. Before configuring
+the GitHub deployment credential or accepting this controller for automatic
+use, merge and separately accept a reviewed, hash-locked, wheels-only deployment
+dependency set covering direct and transitive requirements. Until that work is
+complete, this PR is reviewed infrastructure source only and is not
+authorization to activate automatic deployment on the VPS.

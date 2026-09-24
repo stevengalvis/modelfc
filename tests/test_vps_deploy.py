@@ -350,6 +350,7 @@ class IsolatedBoundaryTest(unittest.TestCase):
                 self.assertEqual(args[3], str(self.release / ".venv"))
                 (self.release / ".venv/bin").mkdir(parents=True)
                 (self.release / ".venv/bin/python").write_text("new")
+                (self.release / ".venv/pyvenv.cfg").write_text("version = 3.12\n")
             return "3.12"
         with patch.object(deploy, "CONTROL", self.control), patch.object(
                 deploy, "command", side_effect=fake_command) as run:
@@ -374,6 +375,7 @@ class IsolatedBoundaryTest(unittest.TestCase):
                       "/var/lib/modelfc-deploy\n"
                       "PrivateTmp=yes\nPrivateDevices=yes\nNoNewPrivileges=yes\n"
                       "BindPaths=\nBindReadOnlyPaths=\nTemporaryFileSystem=\n"
+                      "MemoryMax=2147483648\nTasksMax=64\n"
                       "ExecStart=" + effective_exec("/usr/bin/python3", "-I", str(deploy.TRUSTED),
                                                     "--install-dependencies", self.release.name) + "\n")
 
@@ -407,6 +409,12 @@ class IsolatedBoundaryTest(unittest.TestCase):
                          ("BindPaths=", "BindPaths=/tmp:/srv/modelfc/current"),
                          ("BindReadOnlyPaths=", "BindReadOnlyPaths=/tmp:/srv/modelfc/current"),
                          ("TemporaryFileSystem=", "TemporaryFileSystem=/srv/modelfc"),
+                         ("MemoryMax=2147483648", "MemoryMax=infinity"),
+                         ("MemoryMax=2147483648", "MemoryMax=1073741824"),
+                         ("MemoryMax=2147483648\n", ""),
+                         ("TasksMax=64", "TasksMax=infinity"),
+                         ("TasksMax=64", "TasksMax=128"),
+                         ("TasksMax=64\n", ""),
                          ("/opt/modelfc-deploy/deploy_main.py", "/tmp/evil.py"),
                          (f"--install-dependencies {self.release.name}", "--install-dependencies other"),
                          (" ; ignore_errors=no", " --extra ; ignore_errors=no"),
@@ -421,7 +429,7 @@ class IsolatedBoundaryTest(unittest.TestCase):
                          "InaccessiblePaths=/var/lib/modelfc-deploy",
                          "InaccessiblePaths=/root/modelfc-state",
                          "InaccessiblePaths=/root/dev/modelfc", "NoNewPrivileges=yes",
-                         "PrivateDevices=yes"):
+                         "PrivateDevices=yes", "MemoryMax=2G", "TasksMax=64"):
             self.assertIn(required, unit)
 
     def test_dependency_group_failure_prevents_install_service_start(self):
@@ -436,6 +444,7 @@ class IsolatedBoundaryTest(unittest.TestCase):
                 if args[:3] == ["/usr/bin/python3", "-m", "venv"]:
                     (candidate / ".venv/bin").mkdir(parents=True)
                     (candidate / ".venv/bin/python").write_text("fresh runtime")
+                    (candidate / ".venv/pyvenv.cfg").write_text("version = 3.12\n")
                     return ""
                 if args[:2] == ["systemctl", "show"]:
                     return properties
@@ -445,6 +454,61 @@ class IsolatedBoundaryTest(unittest.TestCase):
                     deploy.dependencies(candidate, check_boundary=lambda release:
                         deploy.dependency_boundary(release, releases=self.releases))
                 self.assertEqual(run.call_count, 2)
+
+    def test_dependency_resource_failure_prevents_install_service_start(self):
+        for index, (old, new) in enumerate((
+                ("MemoryMax=2147483648", "MemoryMax=infinity"),
+                ("MemoryMax=2147483648", "MemoryMax=1073741824"),
+                ("MemoryMax=2147483648\n", ""),
+                ("TasksMax=64", "TasksMax=infinity"),
+                ("TasksMax=64", "TasksMax=128"),
+                ("TasksMax=64\n", ""))):
+            candidate = self.releases / (self.sha + f"-{index + 10:012x}")
+            candidate.mkdir()
+            properties = self.dependency_properties().replace(str(self.release), str(candidate))
+            properties = properties.replace(self.release.name, candidate.name).replace(old, new)
+            def fake_command(args, **kwargs):
+                if args[:3] == ["/usr/bin/python3", "-m", "venv"]:
+                    (candidate / ".venv/bin").mkdir(parents=True)
+                    (candidate / ".venv/bin/python").write_text("fresh runtime")
+                    (candidate / ".venv/pyvenv.cfg").write_text("version = 3.12\n")
+                    return ""
+                if args[:2] == ["systemctl", "show"]:
+                    return properties
+                self.fail("Dependency installation must not start after a resource boundary failure")
+            with self.subTest(property=new), patch.object(
+                    deploy, "command", side_effect=fake_command) as run:
+                with self.assertRaisesRegex(deploy.Failure, "STATE_BOUNDARY_FAILED"):
+                    deploy.dependencies(candidate, check_boundary=lambda release:
+                        deploy.dependency_boundary(release, releases=self.releases))
+                self.assertEqual(run.call_count, 2)
+
+    def test_dependency_install_cannot_change_venv_bootstrap(self):
+        mutations = ("interpreter", "symlink", "configuration")
+        for index, mutation in enumerate(mutations):
+            candidate = self.releases / (self.sha + f"-{index + 20:012x}")
+            candidate.mkdir()
+            def fake_command(args, **kwargs):
+                if args[:3] == ["/usr/bin/python3", "-m", "venv"]:
+                    (candidate / ".venv/bin").mkdir(parents=True)
+                    (candidate / ".venv/bin/python3.12").write_text("trusted interpreter")
+                    (candidate / ".venv/bin/python").symlink_to("python3.12")
+                    (candidate / ".venv/pyvenv.cfg").write_text("version = 3.12\n")
+                    return ""
+                if args[:4] == ["sudo", "-n", "/usr/bin/systemctl", "start"]:
+                    if mutation == "interpreter":
+                        (candidate / ".venv/bin/python3.12").write_text("replaced")
+                    elif mutation == "symlink":
+                        (candidate / ".venv/bin/python").unlink()
+                        (candidate / ".venv/bin/python").symlink_to("/tmp/replaced")
+                    else:
+                        (candidate / ".venv/pyvenv.cfg").write_text("home = /tmp/replaced\n")
+                    return ""
+                self.fail(f"unexpected command: {args}")
+            with self.subTest(mutation=mutation), patch.object(
+                    deploy, "command", side_effect=fake_command):
+                with self.assertRaisesRegex(deploy.Failure, "DEPENDENCY_SYNC_FAILED"):
+                    deploy.dependencies(candidate, check_boundary=lambda _: None)
 
     def test_dependency_command_mismatch_prevents_install_service_start(self):
         expected = self.dependency_properties()
@@ -462,6 +526,7 @@ class IsolatedBoundaryTest(unittest.TestCase):
                 if args[:3] == ["/usr/bin/python3", "-m", "venv"]:
                     (self.release / ".venv/bin").mkdir(parents=True)
                     (self.release / ".venv/bin/python").write_text("fresh runtime")
+                    (self.release / ".venv/pyvenv.cfg").write_text("version = 3.12\n")
                     return ""
                 if args[:2] == ["systemctl", "show"]:
                     return properties
@@ -510,7 +575,7 @@ class IsolatedBoundaryTest(unittest.TestCase):
                       f"ReadOnlyPaths={self.releases} {self.control}\nReadWritePaths="
                       f"{self.control / 'reports'}\nBindPaths=\nBindReadOnlyPaths=\nTemporaryFileSystem=\n"
                       "MemoryMax=2147483648\nTasksMax=64\n"
-                      "User=modelfc-deploy\nExecStart=" + effective_exec(
+                      "User=modelfc-deploy\nGroup=modelfc-deploy\nSupplementaryGroups=\nExecStart=" + effective_exec(
                           "/usr/bin/python3", "-I", str(deploy.TRUSTED), "--run-tests") + "\n")
         identity = type("Person", (), {"pw_name": "modelfc-deploy"})()
         real_stat = os.stat
@@ -523,8 +588,10 @@ class IsolatedBoundaryTest(unittest.TestCase):
                 deploy.pwd, "getpwuid", return_value=identity), patch.object(
                 deploy.os, "access", return_value=False), patch.object(
                 deploy.os, "stat", side_effect=owned_stat), patch.object(
-                deploy, "command", return_value=properties):
+                deploy, "command", return_value=properties) as show:
             deploy.boundary(root=self.root, releases=self.releases, control=self.control)
+            self.assertIn("Group", show.call_args.args[0])
+            self.assertIn("SupplementaryGroups", show.call_args.args[0])
         for old, new in (("ProtectSystem=strict", "ProtectSystem=full"),
                          (f"ReadOnlyPaths={self.releases} {self.control}", "ReadOnlyPaths=/tmp"),
                          (f"ReadOnlyPaths={self.releases} {self.control}",
@@ -533,6 +600,9 @@ class IsolatedBoundaryTest(unittest.TestCase):
                          ("/root/modelfc-state", "/tmp"),
                          ("/root/dev/modelfc", "/tmp"),
                          ("User=modelfc-deploy", "User=root"),
+                         ("Group=modelfc-deploy", "Group=root"),
+                         ("Group=modelfc-deploy\n", ""),
+                         ("SupplementaryGroups=\n", "SupplementaryGroups=docker\n"),
                          ("MemoryMax=2147483648", "MemoryMax=infinity"),
                          ("MemoryMax=2147483648", "MemoryMax=4294967296"),
                          ("MemoryMax=2147483648\n", ""),
@@ -597,6 +667,41 @@ class IsolatedBoundaryTest(unittest.TestCase):
                          "InaccessiblePaths=/root/modelfc-state",
                          "InaccessiblePaths=/root/dev/modelfc", "KillMode=control-group"):
             self.assertIn(required, unit)
+
+    def test_test_service_group_failure_prevents_tests_and_promotion(self):
+        base = ("PrivateNetwork=yes\nInaccessiblePaths=/root/modelfc-state "
+                "/root/dev/modelfc /etc/modelfc-validator\nProtectSystem=strict\n"
+                f"ReadOnlyPaths={self.releases} {self.control}\nReadWritePaths="
+                f"{self.control / 'reports'}\nBindPaths=\nBindReadOnlyPaths=\nTemporaryFileSystem=\n"
+                "MemoryMax=2147483648\nTasksMax=64\nUser=modelfc-deploy\n"
+                "Group=modelfc-deploy\nSupplementaryGroups=\nExecStart=" + effective_exec(
+                    "/usr/bin/python3", "-I", str(deploy.TRUSTED), "--run-tests") + "\n")
+        identity = type("Person", (), {"pw_name": "modelfc-deploy"})()
+        real_stat = os.stat
+        def owned_stat(path, *args, **kwargs):
+            result = real_stat(path, *args, **kwargs)
+            if str(path) in (str(self.control), str(self.control / "reports")):
+                return type("Owned", (), {"st_uid": 1001, "st_mode": result.st_mode})()
+            return result
+        for old, new in (("Group=modelfc-deploy", "Group=root"),
+                         ("Group=modelfc-deploy\n", ""),
+                         ("SupplementaryGroups=\n", "SupplementaryGroups=docker\n")):
+            with self.subTest(value=new), patch.object(
+                    deploy.os, "geteuid", return_value=1001), patch.object(
+                    deploy.pwd, "getpwuid", return_value=identity), patch.object(
+                    deploy.os, "access", return_value=False), patch.object(
+                    deploy.os, "stat", side_effect=owned_stat), patch.object(
+                    deploy, "command", return_value=base.replace(old, new)), patch.object(
+                    deploy, "create_release", side_effect=AssertionError(
+                        "candidate must not be created")), patch.object(
+                    deploy, "tests", side_effect=AssertionError("tests must not execute")):
+                result = deploy.deploy(self.sha, root=self.root, releases=self.releases,
+                    current=self.root / "current", control=self.control, remote="unused",
+                    check_boundary=lambda: deploy.boundary(
+                        root=self.root, releases=self.releases, control=self.control))
+            self.assertEqual((result["status"], result["reason"]),
+                             ("FAIL", "STATE_BOUNDARY_FAILED"))
+            self.assertFalse((self.root / "current").exists())
 
     def test_test_unit_can_write_report_without_exposing_lock_or_request(self):
         unit = (SOURCE.parents[2] / "deploy/modelfc-postmerge-tests.service").read_text()
