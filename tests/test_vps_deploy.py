@@ -5,6 +5,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -22,6 +23,12 @@ spec.loader.exec_module(deploy)
 def cmd(*args, cwd=None):
     return subprocess.run(args, cwd=cwd, check=True, capture_output=True,
                           text=True).stdout.strip()
+
+
+def effective_exec(*args):
+    return ("{ path=" + args[0] + " ; argv[]=" + " ".join(args)
+            + " ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] "
+            "; pid=0 ; code=(null) ; status=0/0 }")
 
 
 class FreshReleaseTest(unittest.TestCase):
@@ -366,9 +373,9 @@ class IsolatedBoundaryTest(unittest.TestCase):
                       "InaccessiblePaths=/root/modelfc-state /root/dev/modelfc "
                       "/var/lib/modelfc-deploy\n"
                       "PrivateTmp=yes\nPrivateDevices=yes\nNoNewPrivileges=yes\n"
-                      "BindPaths=\nTemporaryFileSystem=\n"
-                      "ExecStart=/usr/bin/python3 -I /opt/modelfc-deploy/deploy_main.py "
-                      f"--install-dependencies {self.release.name}\n")
+                      "BindPaths=\nBindReadOnlyPaths=\nTemporaryFileSystem=\n"
+                      "ExecStart=" + effective_exec("/usr/bin/python3", "-I", str(deploy.TRUSTED),
+                                                    "--install-dependencies", self.release.name) + "\n")
 
     def test_dependency_service_effective_write_boundary(self):
         properties = self.dependency_properties()
@@ -378,6 +385,7 @@ class IsolatedBoundaryTest(unittest.TestCase):
                              deploy.DEPENDENCY_SERVICE.format(self.release.name))
             self.assertIn("Group", show.call_args.args[0])
             self.assertIn("SupplementaryGroups", show.call_args.args[0])
+            self.assertIn("BindReadOnlyPaths", show.call_args.args[0])
         for old, new in (("User=modelfc-deploy", "User=root"),
                          ("\nGroup=modelfc-deploy\n", "\nGroup=root\n"),
                          ("\nGroup=modelfc-deploy\n", "\n"),
@@ -397,9 +405,12 @@ class IsolatedBoundaryTest(unittest.TestCase):
                          ("PrivateDevices=yes", "PrivateDevices=no"),
                          ("NoNewPrivileges=yes", "NoNewPrivileges=no"),
                          ("BindPaths=", "BindPaths=/tmp:/srv/modelfc/current"),
+                         ("BindReadOnlyPaths=", "BindReadOnlyPaths=/tmp:/srv/modelfc/current"),
                          ("TemporaryFileSystem=", "TemporaryFileSystem=/srv/modelfc"),
                          ("/opt/modelfc-deploy/deploy_main.py", "/tmp/evil.py"),
-                         (f"--install-dependencies {self.release.name}", "--install-dependencies other")):
+                         (f"--install-dependencies {self.release.name}", "--install-dependencies other"),
+                         (" ; ignore_errors=no", " --extra ; ignore_errors=no"),
+                         ("path=/usr/bin/python3", "path=/bin/sh")):
             with self.subTest(old=old), patch.object(deploy, "command",
                                                      return_value=properties.replace(old, new)):
                 with self.assertRaisesRegex(deploy.Failure, "STATE_BOUNDARY_FAILED"):
@@ -434,6 +445,33 @@ class IsolatedBoundaryTest(unittest.TestCase):
                     deploy.dependencies(candidate, check_boundary=lambda release:
                         deploy.dependency_boundary(release, releases=self.releases))
                 self.assertEqual(run.call_count, 2)
+
+    def test_dependency_command_mismatch_prevents_install_service_start(self):
+        expected = self.dependency_properties()
+        for command in (
+                effective_exec("/bin/sh", "-c", "/usr/bin/python3 -I " + str(deploy.TRUSTED)
+                               + " --install-dependencies " + self.release.name),
+                effective_exec("/usr/bin/python3", "-I", str(deploy.TRUSTED),
+                               "--install-dependencies", self.release.name, "--extra"),
+                effective_exec("/usr/local/bin/python3", "-I", str(deploy.TRUSTED),
+                               "--install-dependencies", self.release.name)):
+            properties = expected.replace("ExecStart=" + effective_exec(
+                "/usr/bin/python3", "-I", str(deploy.TRUSTED),
+                "--install-dependencies", self.release.name), "ExecStart=" + command)
+            def fake_command(args, **kwargs):
+                if args[:3] == ["/usr/bin/python3", "-m", "venv"]:
+                    (self.release / ".venv/bin").mkdir(parents=True)
+                    (self.release / ".venv/bin/python").write_text("fresh runtime")
+                    return ""
+                if args[:2] == ["systemctl", "show"]:
+                    return properties
+                self.fail("Dependency installation started with an untrusted command")
+            with self.subTest(command=command), patch.object(deploy, "command", side_effect=fake_command) as run:
+                with self.assertRaisesRegex(deploy.Failure, "STATE_BOUNDARY_FAILED"):
+                    deploy.dependencies(self.release, check_boundary=lambda release:
+                        deploy.dependency_boundary(release, releases=self.releases))
+                self.assertEqual(run.call_count, 2)
+            shutil.rmtree(self.release / ".venv")
 
     def test_dependency_entrypoint_keeps_build_code_in_sandbox(self):
         (self.release / ".venv/bin").mkdir(parents=True)
@@ -470,10 +508,10 @@ class IsolatedBoundaryTest(unittest.TestCase):
         properties = ("PrivateNetwork=yes\nInaccessiblePaths=/root/modelfc-state "
                       "/root/dev/modelfc /etc/modelfc-validator\nProtectSystem=strict\n"
                       f"ReadOnlyPaths={self.releases} {self.control}\nReadWritePaths="
-                      f"{self.control / 'reports'}\nBindPaths=\nTemporaryFileSystem=\n"
+                      f"{self.control / 'reports'}\nBindPaths=\nBindReadOnlyPaths=\nTemporaryFileSystem=\n"
                       "MemoryMax=2147483648\nTasksMax=64\n"
-                      "User=modelfc-deploy\nExecStart=/usr/bin/python3 -I "
-                      "/opt/modelfc-deploy/deploy_main.py --run-tests\n")
+                      "User=modelfc-deploy\nExecStart=" + effective_exec(
+                          "/usr/bin/python3", "-I", str(deploy.TRUSTED), "--run-tests") + "\n")
         identity = type("Person", (), {"pw_name": "modelfc-deploy"})()
         real_stat = os.stat
         def owned_stat(path, *args, **kwargs):
@@ -503,6 +541,10 @@ class IsolatedBoundaryTest(unittest.TestCase):
                          ("TasksMax=64\n", ""),
                          ("/opt/modelfc-deploy/deploy_main.py", "/tmp/evil.py"),
                          ("BindPaths=", "BindPaths=/tmp:/srv/modelfc/releases"),
+                         ("BindReadOnlyPaths=", "BindReadOnlyPaths=/tmp:/srv/modelfc/current"),
+                         (" ; ignore_errors=no", " --extra ; ignore_errors=no"),
+                         ("path=/usr/bin/python3", "path=/bin/sh"),
+                         (" ; ignore_errors=no", " ; ignore_errors=no } { path=/bin/sh"),
                          (f"ReadWritePaths={self.control / 'reports'}",
                           f"ReadWritePaths={self.control}"),
                          (f"ReadWritePaths={self.control / 'reports'}",
@@ -516,6 +558,36 @@ class IsolatedBoundaryTest(unittest.TestCase):
                     deploy, "command", return_value=properties.replace(old, new)):
                 with self.assertRaisesRegex(deploy.Failure, "STATE_BOUNDARY_FAILED"):
                     deploy.boundary(root=self.root, releases=self.releases, control=self.control)
+        for args in (("/bin/sh", "-c", "python3 -I " + str(deploy.TRUSTED) + " --run-tests"),
+                     ("/usr/bin/python3", "-I", str(deploy.TRUSTED), "--run-tests", "--extra"),
+                     ("/usr/local/bin/python3", "-I", str(deploy.TRUSTED), "--run-tests")):
+            original = effective_exec("/usr/bin/python3", "-I", str(deploy.TRUSTED), "--run-tests")
+            changed = properties.replace("ExecStart=" + original, "ExecStart=" + effective_exec(*args))
+            with self.subTest(command=args), patch.object(deploy.os, "geteuid", return_value=1001), patch.object(
+                    deploy.pwd, "getpwuid", return_value=identity), patch.object(
+                    deploy.os, "access", return_value=False), patch.object(
+                    deploy.os, "stat", side_effect=owned_stat), patch.object(
+                    deploy, "command", return_value=changed):
+                with self.assertRaisesRegex(deploy.Failure, "STATE_BOUNDARY_FAILED"):
+                    deploy.boundary(root=self.root, releases=self.releases, control=self.control)
+
+        changed = properties.replace("ExecStart=" + effective_exec(
+            "/usr/bin/python3", "-I", str(deploy.TRUSTED), "--run-tests"),
+            "ExecStart=" + effective_exec(
+                "/bin/sh", "-c", "/usr/bin/python3 -I " + str(deploy.TRUSTED) + " --run-tests"))
+        with patch.object(deploy.os, "geteuid", return_value=1001), patch.object(
+                deploy.pwd, "getpwuid", return_value=identity), patch.object(
+                deploy.os, "access", return_value=False), patch.object(
+                deploy.os, "stat", side_effect=owned_stat), patch.object(
+                deploy, "command", return_value=changed), patch.object(
+                deploy, "create_release", side_effect=AssertionError("candidate must not be created")), patch.object(
+                deploy, "tests", side_effect=AssertionError("tests must not execute")):
+            result = deploy.deploy(self.sha, root=self.root, releases=self.releases,
+                current=self.root / "current", control=self.control, remote="unused",
+                check_boundary=lambda: deploy.boundary(
+                    root=self.root, releases=self.releases, control=self.control))
+        self.assertEqual((result["status"], result["reason"]), ("FAIL", "STATE_BOUNDARY_FAILED"))
+        self.assertFalse((self.root / "current").exists())
         unit = (SOURCE.parents[2] / "deploy/modelfc-postmerge-tests.service").read_text()
         for required in ("PrivateNetwork=yes", "ProtectSystem=strict",
                          "MemoryMax=2G", "TasksMax=64",

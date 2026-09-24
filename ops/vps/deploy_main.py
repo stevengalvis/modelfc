@@ -117,6 +117,23 @@ def current_release(*, current=CURRENT, releases=RELEASES):
     return path, revision
 
 
+def trusted_exec_start(value, argv):
+    """Accept one systemctl-show ExecStart struct with exactly our argv."""
+    match = re.fullmatch(r"\{\s*([^{}]*)\s*\}", value or "")
+    if match is None:
+        return False
+    parts = [part.strip().partition("=") for part in match.group(1).split(";")]
+    expected_fields = {"path", "argv[]", "ignore_errors", "start_time", "stop_time",
+                       "pid", "code", "status"}
+    if (any(not key or separator != "=" for key, separator, _ in parts)
+            or len(parts) != len(expected_fields)
+            or {key for key, _, _ in parts} != expected_fields):
+        return False
+    fields = {key: item for key, _, item in parts}
+    return (fields["path"] == argv[0] and fields["argv[]"] == " ".join(argv)
+            and fields["ignore_errors"] == "no")
+
+
 def boundary(*, root=ROOT, releases=RELEASES, control=CONTROL, state=STATE,
              service=SERVICE):
     reports = control / "reports"
@@ -140,7 +157,8 @@ def boundary(*, root=ROOT, releases=RELEASES, control=CONTROL, state=STATE,
                               "-p", "PrivateNetwork", "-p", "InaccessiblePaths",
                               "-p", "User", "-p", "ExecStart", "-p", "ProtectSystem",
                               "-p", "ReadOnlyPaths", "-p", "ReadWritePaths",
-                              "-p", "BindPaths", "-p", "TemporaryFileSystem",
+                              "-p", "BindPaths", "-p", "BindReadOnlyPaths",
+                              "-p", "TemporaryFileSystem",
                               "-p", "MemoryMax", "-p", "TasksMax"], timeout=15)
     except Failure:
         raise Failure("STATE_BOUNDARY_FAILED") from None
@@ -153,11 +171,13 @@ def boundary(*, root=ROOT, releases=RELEASES, control=CONTROL, state=STATE,
             or str(control) not in fields.get("ReadOnlyPaths", "").split()
             or fields.get("ReadWritePaths") != str(reports)
             or fields.get("BindPaths") not in (None, "")
+            or fields.get("BindReadOnlyPaths") != ""
             or fields.get("TemporaryFileSystem") not in (None, "")
             or fields.get("User") != "modelfc-deploy"
             or fields.get("MemoryMax") != str(2 * 1024**3)
             or fields.get("TasksMax") != "64"
-            or str(TRUSTED) not in fields.get("ExecStart", "")):
+            or not trusted_exec_start(fields.get("ExecStart"),
+                                      ["/usr/bin/python3", "-I", str(TRUSTED), "--run-tests"])):
         raise Failure("STATE_BOUNDARY_FAILED")
 
 
@@ -173,7 +193,8 @@ def dependency_boundary(release, *, releases=None):
                               "-p", "ReadWritePaths", "-p", "InaccessiblePaths",
                               "-p", "PrivateTmp", "-p", "PrivateDevices",
                               "-p", "NoNewPrivileges",
-                              "-p", "BindPaths", "-p", "TemporaryFileSystem"], timeout=15)
+                              "-p", "BindPaths", "-p", "BindReadOnlyPaths",
+                              "-p", "TemporaryFileSystem"], timeout=15)
     except Failure:
         raise Failure("STATE_BOUNDARY_FAILED") from None
     fields = dict(line.split("=", 1) for line in properties.splitlines() if "=" in line)
@@ -190,9 +211,11 @@ def dependency_boundary(release, *, releases=None):
             or fields.get("PrivateDevices") != "yes"
             or fields.get("NoNewPrivileges") != "yes"
             or fields.get("BindPaths") not in (None, "")
+            or fields.get("BindReadOnlyPaths") != ""
             or fields.get("TemporaryFileSystem") not in (None, "")
-            or f"--install-dependencies {release.name}" not in fields.get("ExecStart", "")
-            or fields.get("ExecStart", "").count(str(TRUSTED)) != 1):
+            or not trusted_exec_start(fields.get("ExecStart"),
+                                      ["/usr/bin/python3", "-I", str(TRUSTED),
+                                       "--install-dependencies", release.name])):
         raise Failure("STATE_BOUNDARY_FAILED")
 
 
