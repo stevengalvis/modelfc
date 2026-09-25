@@ -766,7 +766,7 @@ class IsolatedBoundaryTest(unittest.TestCase):
                       "InaccessiblePaths=/root/modelfc-state /root/dev/modelfc "
                       "/var/lib/modelfc-deploy\n"
                       "PrivateTmp=yes\nPrivateDevices=yes\nNoNewPrivileges=yes\nKillMode=control-group\n"
-                      "BindPaths=\nBindReadOnlyPaths=\nMountImages=\nLoadCredential=\nLoadCredentialEncrypted=\nImportCredential=\nSetCredential=\nTemporaryFileSystem=/tmp:rw,size=268435456,nr_inodes=16384 /var/tmp:rw,size=268435456,nr_inodes=16384\n"
+                      "BindPaths=\nBindReadOnlyPaths=\nMountImages=\nLoadCredential=\nLoadCredentialEncrypted=\nImportCredential=\nSetCredential=\nExecStartPre=\nExecStartPost=\nExecStopPost=\nAmbientCapabilities=\nTemporaryFileSystem=/tmp:rw,size=268435456,nr_inodes=16384 /var/tmp:rw,size=268435456,nr_inodes=16384\n"
                       "MemoryMax=2147483648\nTasksMax=64\n"
                       "ExecStart=" + effective_exec("/usr/bin/python3", "-I", str(deploy.TRUSTED),
                                                     "--install-dependencies", self.release.name) + "\n")
@@ -784,6 +784,8 @@ class IsolatedBoundaryTest(unittest.TestCase):
             self.assertIn("Group", show.call_args.args[0])
             self.assertIn("SupplementaryGroups", show.call_args.args[0])
             self.assertIn("BindReadOnlyPaths", show.call_args.args[0])
+            for name in ("ExecStartPre", "ExecStartPost", "ExecStopPost", "AmbientCapabilities"):
+                self.assertIn(name, show.call_args.args[0])
         for old, new in (("User=modelfc-deploy", "User=root"),
                          ("\nGroup=modelfc-deploy\n", "\nGroup=root\n"),
                          ("\nGroup=modelfc-deploy\n", "\n"),
@@ -958,6 +960,34 @@ class IsolatedBoundaryTest(unittest.TestCase):
                         deploy.dependency_boundary(release, releases=self.releases))
                 self.assertEqual(run.call_count, 2)
 
+    def test_dependency_hooks_and_ambient_caps_prevent_service_start(self):
+        cases = [(name + "=\n", replacement) for name in
+                 ("ExecStartPre", "ExecStartPost", "ExecStopPost", "AmbientCapabilities")
+                 for replacement in ("", name + "=unexpected\n")]
+        cases.extend(("AmbientCapabilities=\n", "AmbientCapabilities=" + caps + "\n")
+                     for caps in ("cap_sys_admin", "cap_dac_override",
+                                  "cap_sys_admin cap_dac_override"))
+        for index, (old, new) in enumerate(cases):
+            candidate = self.releases / (self.sha + f"-{index + 10:012x}")
+            candidate.mkdir()
+            properties = self.dependency_properties().replace(str(self.release), str(candidate))
+            properties = properties.replace(self.release.name, candidate.name).replace(old, new)
+            def fake_command(args, **kwargs):
+                if args[:3] == ["/usr/bin/python3", "-m", "venv"]:
+                    (candidate / ".venv/bin").mkdir(parents=True)
+                    (candidate / ".venv/bin/python").write_text("fresh runtime")
+                    (candidate / ".venv/pyvenv.cfg").write_text("version = 3.12\n")
+                    return ""
+                if args[:2] == ["systemctl", "show"]:
+                    return properties
+                self.fail("Dependency installation must not start after a lifecycle/capability boundary failure")
+            with self.subTest(property=new), patch.object(
+                    deploy, "command", side_effect=fake_command) as run:
+                with self.assertRaisesRegex(deploy.Failure, "STATE_BOUNDARY_FAILED"):
+                    deploy.dependencies(candidate, check_boundary=lambda release:
+                        deploy.dependency_boundary(release, releases=self.releases))
+                self.assertEqual(run.call_count, 2)
+
     def test_dependency_install_cannot_change_venv_bootstrap(self):
         mutations = ("interpreter", "symlink", "configuration")
         for index, mutation in enumerate(mutations):
@@ -1050,7 +1080,7 @@ class IsolatedBoundaryTest(unittest.TestCase):
         properties = ("PrivateNetwork=yes\nPrivateTmp=yes\nNoNewPrivileges=yes\nKillMode=control-group\nInaccessiblePaths=/root/modelfc-state "
                       "/root/dev/modelfc /etc/modelfc-validator\nProtectSystem=strict\n"
                       f"ReadOnlyPaths={self.releases} {self.control}\nReadWritePaths="
-                      f"{self.control / 'reports'}\nBindPaths=\nBindReadOnlyPaths=\nMountImages=\nLoadCredential=\nLoadCredentialEncrypted=\nImportCredential=\nSetCredential=\nTemporaryFileSystem=\n"
+                      f"{self.control / 'reports'}\nBindPaths=\nBindReadOnlyPaths=\nMountImages=\nLoadCredential=\nLoadCredentialEncrypted=\nImportCredential=\nSetCredential=\nExecStartPre=\nExecStartPost=\nExecStopPost=\nAmbientCapabilities=\nTemporaryFileSystem=\n"
                       "MemoryMax=2147483648\nTasksMax=64\n"
                       "User=modelfc-deploy\nGroup=modelfc-deploy\nSupplementaryGroups=\nExecStart=" + effective_exec(
                           "/usr/bin/python3", "-I", str(deploy.TRUSTED), "--run-tests") + "\n")
@@ -1179,6 +1209,39 @@ class IsolatedBoundaryTest(unittest.TestCase):
                 self.assertFalse((self.root / "current").exists())
                 self.assertTrue(all(call.args[0][:2] == ["systemctl", "show"]
                                     for call in commands.call_args_list))
+        for name in ("ExecStartPre", "ExecStartPost", "ExecStopPost", "AmbientCapabilities"):
+            self.assertIn(name, show.call_args.args[0])
+        cases = [(name, value) for name in
+                 ("ExecStartPre", "ExecStartPost", "ExecStopPost", "AmbientCapabilities")
+                 for value in (None, "unexpected")]
+        cases.extend(("AmbientCapabilities", caps)
+                     for caps in ("cap_sys_admin", "cap_dac_override",
+                                  "cap_sys_admin cap_dac_override"))
+        for name, mode in cases:
+            changed = properties.replace(name + "=\n",
+                                         "" if mode is None else f"{name}={mode}\n")
+            with self.subTest(property=name, value=mode), patch.object(
+                    deploy.os, "geteuid", return_value=1001), patch.object(
+                    deploy.pwd, "getpwuid", return_value=identity), patch.object(
+                    deploy.os, "access", return_value=False), patch.object(
+                    deploy.os, "stat", side_effect=owned_stat), patch.object(
+                    deploy, "command", return_value=changed) as commands, patch.object(
+                    deploy, "create_release") as create, patch.object(
+                    deploy, "tests") as tests, patch.object(
+                    deploy, "promote") as promote:
+                result = deploy.deploy(self.sha, root=self.root, releases=self.releases,
+                    current=self.root / "current", control=self.control, remote="unused",
+                    check_boundary=lambda: deploy.boundary(
+                        root=self.root, releases=self.releases, control=self.control))
+                self.assertEqual((result["status"], result["reason"]),
+                                 ("FAIL", "STATE_BOUNDARY_FAILED"))
+                create.assert_not_called()
+                tests.assert_not_called()
+                promote.assert_not_called()
+                self.assertFalse((self.root / "current").is_symlink())
+                self.assertFalse((self.root / "current").exists())
+                self.assertTrue(all(call.args[0][:2] == ["systemctl", "show"]
+                                    for call in commands.call_args_list))
         for old, new in (("ProtectSystem=strict", "ProtectSystem=full"),
                          (f"ReadOnlyPaths={self.releases} {self.control}", "ReadOnlyPaths=/tmp"),
                          (f"ReadOnlyPaths={self.releases} {self.control}",
@@ -1262,7 +1325,7 @@ class IsolatedBoundaryTest(unittest.TestCase):
         base = ("PrivateNetwork=yes\nNoNewPrivileges=yes\nInaccessiblePaths=/root/modelfc-state "
                 "/root/dev/modelfc /etc/modelfc-validator\nProtectSystem=strict\n"
                 f"ReadOnlyPaths={self.releases} {self.control}\nReadWritePaths="
-                f"{self.control / 'reports'}\nBindPaths=\nBindReadOnlyPaths=\nMountImages=\nLoadCredential=\nLoadCredentialEncrypted=\nImportCredential=\nSetCredential=\nTemporaryFileSystem=\n"
+                f"{self.control / 'reports'}\nBindPaths=\nBindReadOnlyPaths=\nMountImages=\nLoadCredential=\nLoadCredentialEncrypted=\nImportCredential=\nSetCredential=\nExecStartPre=\nExecStartPost=\nExecStopPost=\nAmbientCapabilities=\nTemporaryFileSystem=\n"
                 "MemoryMax=2147483648\nTasksMax=64\nUser=modelfc-deploy\n"
                 "Group=modelfc-deploy\nSupplementaryGroups=\nExecStart=" + effective_exec(
                     "/usr/bin/python3", "-I", str(deploy.TRUSTED), "--run-tests") + "\n")
