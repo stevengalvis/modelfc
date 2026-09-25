@@ -74,14 +74,32 @@ class FreshReleaseTest(unittest.TestCase):
         cmd("git", "commit", "-m", "second", cwd=self.seed)
         cmd("git", "push", "origin", "main", cwd=self.seed)
         self.b = cmd("git", "rev-parse", "HEAD", cwd=self.seed)
+        self.staging = self.root / "acquisition"
+        self.mount_events = []
         self.created = []
         self.tested = []
         self.patches = [patch.object(deploy, "CONTROL", self.control),
+                        patch.object(deploy, "ACQUISITION", self.staging),
+                        patch.object(deploy, "REMOTE", str(self.remote)),
+                        patch.object(deploy, "acquisition_mount", side_effect=self.fake_mount),
+                        patch.object(deploy, "run_acquisition", side_effect=lambda ident, previous:
+                                     deploy.staged_acquisition(ident, previous, remote=str(self.remote))),
                         patch.object(deploy, "dependencies", side_effect=self.fake_dependencies),
                         patch.object(deploy, "tests", side_effect=self.fake_tests)]
         for item in self.patches:
             item.start()
             self.addCleanup(item.stop)
+
+    def fake_mount(self, action, ident):
+        self.mount_events.append(action)
+        if action == "mount":
+            if self.staging.exists():
+                raise deploy.Failure("STATE_BOUNDARY_FAILED")
+            self.staging.mkdir()
+        elif action == "unmount":
+            shutil.rmtree(self.staging)
+        elif not self.staging.is_dir():
+            raise deploy.Failure("STATE_BOUNDARY_FAILED")
 
     def fake_dependencies(self, release):
         self.created.append(release)
@@ -98,6 +116,130 @@ class FreshReleaseTest(unittest.TestCase):
                              current=self.current, control=self.control,
                              remote=str(self.remote), check_boundary=lambda: None,
                              test_runner=deploy.tests)
+
+    def test_acquisition_precedes_persistent_candidate_and_preserves_git(self):
+        original = deploy.staged_acquisition
+        def staged(*args, **kwargs):
+            self.assertEqual(list(self.releases.iterdir()), [])
+            result = original(*args, **kwargs)
+            self.assertTrue((self.staging / "repo/.git").is_dir())
+            self.assertEqual(deploy.git_env(self.staging / "repo")["TMPDIR"], str(self.staging / "tmp"))
+            return result
+        with patch.object(deploy, "staged_acquisition", side_effect=staged):
+            result = self.run_deploy(self.a)  # Queued SHA older than fetched main.
+        self.assertEqual(result["status"], "PASS")
+        self.assertEqual(deploy.head(self.current.resolve()), self.a)
+        deploy.verify_source(self.current.resolve(), self.a)
+        self.assertTrue((self.current / ".git/objects").is_dir())
+        self.assertFalse(self.staging.exists())
+        self.assertEqual(self.mount_events[-1], "unmount")
+
+    def test_acquisition_failures_preserve_active_and_retained_releases(self):
+        self.assertEqual(self.run_deploy(self.a)["status"], "PASS")
+        before = os.readlink(self.current)
+        retained = set(self.releases.iterdir())
+        for label, error in (("bytes", OSError(28, "capacity")),
+                             ("inodes", OSError(28, "inode capacity")),
+                             ("fetch", deploy.Failure("FETCH_FAILED"))):
+            with self.subTest(label=label), patch.object(deploy, "run_acquisition", side_effect=error):
+                result = self.run_deploy(self.b)
+            self.assertEqual(result["status"], "FAIL")
+            self.assertIn(result["reason"], ("STORAGE_LIMIT_FAILED", "FETCH_FAILED"))
+            self.assertEqual(len(self.created), 1)
+            self.assertEqual(len(self.tested), 1)
+            self.assertEqual(os.readlink(self.current), before)
+            self.assertEqual(set(self.releases.iterdir()), retained)
+            self.assertFalse(self.staging.exists())
+
+    def test_unmount_failure_blocks_dependencies_tests_and_promotion(self):
+        def fail_unmount(action, ident):
+            if action == "unmount":
+                raise deploy.Failure("STATE_BOUNDARY_FAILED")
+            self.fake_mount(action, ident)
+        with patch.object(deploy, "acquisition_mount", side_effect=fail_unmount):
+            result = self.run_deploy(self.b)
+        self.assertEqual(result["reason"], "STATE_BOUNDARY_FAILED")
+        self.assertEqual(list(self.releases.iterdir()), [])
+        self.assertEqual(self.created, [])
+        self.assertEqual(self.tested, [])
+        self.assertFalse(self.current.exists())
+        self.assertTrue(self.staging.exists())  # Deliberate fail-closed stale state.
+
+    def test_export_failure_cleans_only_attempt(self):
+        self.run_deploy(self.a)
+        before = os.readlink(self.current)
+        retained = set(self.releases.iterdir())
+        def fail(repo, release):
+            (release / "partial").write_bytes(b"incomplete")
+            raise OSError(28, "full")
+        with patch.object(deploy, "export_repository", side_effect=fail):
+            result = self.run_deploy(self.b)
+        self.assertEqual(result["reason"], "STORAGE_LIMIT_FAILED")
+        self.assertEqual(os.readlink(self.current), before)
+        self.assertEqual(set(self.releases.iterdir()), retained)
+        self.assertFalse(self.staging.exists())
+        self.assertEqual(len(self.created), 1)
+        self.assertEqual(len(self.tested), 1)
+
+    def test_staged_export_limits_block_execution(self):
+        original = deploy.run_acquisition.side_effect
+        for limit in ("bytes", "entries"):
+            with self.subTest(limit=limit):
+                def large(ident, previous):
+                    result = original(ident, previous)
+                    if limit == "bytes":
+                        with (self.staging / "repo/large").open("wb") as stream:
+                            stream.truncate(128 * 1024**2 + 1)
+                    return result
+                with patch.object(deploy, "run_acquisition", side_effect=large), patch.object(
+                        deploy, "MAX_EXPORT_ENTRIES", 1 if limit == "entries" else 16384):
+                    result = self.run_deploy(self.b)
+                self.assertEqual(result["reason"], "STORAGE_LIMIT_FAILED")
+                self.assertFalse(self.current.exists())
+                self.assertEqual(list(self.releases.iterdir()), [])
+                self.assertFalse(self.staging.exists())
+                self.assertEqual(self.created, [])
+                self.assertEqual(self.tested, [])
+
+    def test_export_preserves_source_symlinks_without_following(self):
+        (self.seed / "external").symlink_to(self.state, target_is_directory=True)
+        cmd("git", "add", "external", cwd=self.seed)
+        cmd("git", "commit", "-m", "symlink", cwd=self.seed)
+        cmd("git", "push", "origin", "main", cwd=self.seed)
+        sha = cmd("git", "rev-parse", "HEAD", cwd=self.seed)
+        self.assertEqual(self.run_deploy(sha)["status"], "PASS")
+        self.assertTrue((self.current / "external").is_symlink())
+        self.assertEqual(os.readlink(self.current / "external"), str(self.state))
+        self.assertEqual((self.state / "capture.json").read_text(), "immutable evidence\n")
+
+    def test_export_reverifies_source_at_permanent_path(self):
+        original = deploy.export_repository
+        def alter(repo, release):
+            original(repo, release)
+            (release / "example.txt").write_text("changed")
+        with patch.object(deploy, "export_repository", side_effect=alter):
+            self.assertEqual(self.run_deploy(self.b)["reason"], "SOURCE_INVALID")
+        self.assertEqual(self.created, [])
+        self.assertEqual(self.tested, [])
+        self.assertFalse(self.current.exists())
+        self.assertEqual(list(self.releases.iterdir()), [])
+
+    def test_stale_staging_fails_closed_and_is_not_removed(self):
+        self.staging.mkdir()
+        (self.staging / "foreign").write_text("leave intact")
+        self.assertEqual(self.run_deploy(self.b)["reason"], "STATE_BOUNDARY_FAILED")
+        self.assertEqual((self.staging / "foreign").read_text(), "leave intact")
+        self.assertEqual(self.created, [])
+        self.assertEqual(self.tested, [])
+
+    def test_candidate_collision_never_removes_existing_release(self):
+        existing = self.releases / (self.b + "-" + "a" * 12)
+        existing.mkdir()
+        (existing / "retained").write_text("leave intact")
+        with patch.object(deploy.secrets, "token_hex", return_value="a" * 12):
+            self.assertEqual(self.run_deploy(self.b)["reason"], "STORAGE_LIMIT_FAILED")
+        self.assertEqual((existing / "retained").read_text(), "leave intact")
+        self.assertFalse(self.staging.exists())
 
     def test_ancestor_distinguishes_exit_status_and_errors(self):
         self.assertTrue(deploy.ancestor(self.seed, self.a, self.b))
@@ -1470,6 +1612,163 @@ class IsolatedBoundaryTest(unittest.TestCase):
                 self.assertEqual(deploy.main(), 0)
                 self.assertEqual(called.call_args.args, ("",))
                 self.assertEqual(json.loads(output.getvalue())["reason"], "INVALID_REQUEST")
+
+
+class AcquisitionBoundaryTest(unittest.TestCase):
+    def setUp(self):
+        spec = importlib.util.spec_from_file_location("acquisition_mount_offline", SOURCE.with_name("acquisition_mount.py"))
+        self.helper = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(self.helper)
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.ident = "a" * 40 + "-" + "b" * 12
+        self.target = self.root / "staging"
+        self.helper.TARGET = self.target
+        self.helper.LOCK = self.root / "mount.lock"
+
+    def test_helper_rejects_arbitrary_paths_options_and_actions(self):
+        for args in (("mount", "/tmp/other"), ("mount", self.ident + " -o size=1G"),
+                     ("remount", self.ident), ("mount", self.ident, "/another"), ()):
+            with self.subTest(args=args), patch.object(self.helper.subprocess, "run") as called:
+                self.assertEqual(self.helper.main(args), 1)
+                called.assert_not_called()
+
+    def test_helper_mount_has_fixed_capacity_inodes_and_private_ownership(self):
+        from types import SimpleNamespace
+        actual_lstat = Path.lstat
+        def info(path):
+            if path == self.root:
+                return SimpleNamespace(st_mode=0o40700, st_uid=0)
+            return actual_lstat(path)
+        with patch.object(self.helper.os, "geteuid", return_value=0), patch.object(
+                Path, "lstat", info), patch.object(self.helper.os, "fstat", return_value=SimpleNamespace(
+                    st_uid=0, st_mode=0o100600, st_nlink=1)), patch.object(
+                self.helper, "identity", return_value=(1234, 1234)), patch.object(
+                self.helper, "mount_rows", return_value=[]), patch.object(
+                self.helper, "verify_mount") as verify, patch.object(self.helper.subprocess, "run") as run:
+            self.helper.run("mount", self.ident)
+        self.assertEqual(run.call_args.args[0], ["/usr/bin/mount", "-t", "tmpfs", "-o",
+            "rw,nosuid,nodev,noexec,size=268435456,nr_inodes=32768,mode=0700,uid=1234,gid=1234",
+            "modelfc-acquire-" + self.ident, str(self.target)])
+        verify.assert_called_once_with(self.ident)
+        self.assertEqual(self.target.stat().st_mode & 0o777, 0o700)
+
+    def test_helper_stale_state_never_mounts_or_deletes(self):
+        from types import SimpleNamespace
+        self.target.mkdir()
+        (self.target / "foreign").write_text("preserve")
+        actual_lstat = Path.lstat
+        def info(path):
+            if path == self.root:
+                return SimpleNamespace(st_mode=0o40700, st_uid=0)
+            return actual_lstat(path)
+        with patch.object(self.helper.os, "geteuid", return_value=0), patch.object(
+                Path, "lstat", info), patch.object(self.helper.os, "fstat", return_value=SimpleNamespace(
+                    st_uid=0, st_mode=0o100600, st_nlink=1)), patch.object(
+                self.helper, "mount_rows", return_value=[]), patch.object(self.helper.subprocess, "run") as run:
+            self.assertEqual(self.helper.main(["mount", self.ident]), 1)
+        run.assert_not_called()
+        self.assertEqual((self.target / "foreign").read_text(), "preserve")
+
+    def test_helper_failed_mount_removes_only_its_empty_target(self):
+        from types import SimpleNamespace
+        actual_lstat = Path.lstat
+        def info(path):
+            if path == self.root:
+                return SimpleNamespace(st_mode=0o40700, st_uid=0)
+            return actual_lstat(path)
+        with patch.object(self.helper.os, "geteuid", return_value=0), patch.object(
+                Path, "lstat", info), patch.object(self.helper.os, "fstat", return_value=SimpleNamespace(
+                    st_uid=0, st_mode=0o100600, st_nlink=1)), patch.object(
+                self.helper, "identity", return_value=(1234, 1234)), patch.object(
+                self.helper, "mount_rows", return_value=[]), patch.object(
+                self.helper.subprocess, "run", side_effect=subprocess.CalledProcessError(1, "mount")):
+            self.assertEqual(self.helper.main(["mount", self.ident]), 1)
+        self.assertFalse(self.target.exists())
+        self.assertTrue(self.helper.LOCK.exists())
+
+    def test_helper_verifies_hard_limits_identity_and_no_nested_mounts(self):
+        from types import SimpleNamespace
+        valid = (str(self.target), {"rw", "nodev", "nosuid", "noexec"}, "tmpfs", "modelfc-acquire-" + self.ident)
+        for change in (None, "bytes", "inodes", "owner", "mode", "source", "nested", "symlink"):
+            with self.subTest(change=change):
+                rows = [valid]
+                if change == "source":
+                    rows = [(*valid[:3], "foreign")]
+                if change == "nested":
+                    rows.append(valid)
+                with patch.object(self.helper, "identity", return_value=(1234, 1234)), patch.object(
+                        self.helper, "mount_rows", return_value=rows), patch.object(
+                        Path, "lstat", return_value=SimpleNamespace(
+                            st_mode=0o120700 if change == "symlink" else (0o40755 if change == "mode" else 0o40700),
+                            st_uid=999 if change == "owner" else 1234, st_gid=1234)), patch.object(
+                        self.helper.os, "statvfs", return_value=SimpleNamespace(
+                            f_blocks=65537 if change == "bytes" else 65536, f_frsize=4096,
+                            f_files=32769 if change == "inodes" else 32768)):
+                    if change is None:
+                        self.helper.verify_mount(self.ident)
+                    else:
+                        with self.assertRaises(ValueError):
+                            self.helper.verify_mount(self.ident)
+
+    def test_export_rejects_git_symlinks_and_alternates(self):
+        repo = self.root / "repo"
+        (repo / ".git/objects/info").mkdir(parents=True)
+        (repo / ".git/link").symlink_to("/outside")
+        with self.assertRaisesRegex(deploy.Failure, "SOURCE_INVALID"):
+            deploy.export_inventory(repo)
+        (repo / ".git/link").unlink()
+        (repo / ".git/objects/info/alternates").write_text("/outside")
+        with self.assertRaisesRegex(deploy.Failure, "SOURCE_INVALID"):
+            deploy.export_inventory(repo)
+
+    def test_export_counts_allocated_bytes_and_never_follows_source_link(self):
+        repo = self.root / "repo"
+        repo.mkdir()
+        (repo / "link").symlink_to("/unreadable/outside")
+        (repo / "small").write_bytes(b"a")
+        with patch.object(deploy, "MAX_EXPORT_BYTES", 100):
+            with self.assertRaisesRegex(deploy.Failure, "STORAGE_LIMIT_FAILED"):
+                deploy.export_inventory(repo)  # Logical <100; allocated block >100.
+        (repo / "small").unlink()
+        inventory = deploy.export_inventory(repo)
+        self.assertEqual([str(item[0]) for item in inventory], ["link"])
+
+    def test_worker_reaps_descendants_before_export_can_begin(self):
+        worker = self.root / "worker.py"
+        marker = self.root / "child.pid"
+        worker.write_text("import os,sys,time,json\n"
+            "child=os.fork()\n"
+            "if child == 0:\n"
+            " os.close(1)\n"
+            " time.sleep(60)\n"
+            " os._exit(0)\n"
+            f"open({str(marker)!r},'w').write(str(child))\n"
+            "print(json.dumps({'status':'READY','tip':'a'*40}))\n")
+        with patch.object(deploy, "TRUSTED", worker), patch.object(deploy, "ACQUISITION", self.root):
+            result = deploy.run_acquisition(self.ident, None)
+        self.assertEqual(result["status"], "READY")
+        pid = int(marker.read_text())
+        with self.assertRaises(ProcessLookupError):
+            os.kill(pid, 0)
+        with self.assertRaises(ChildProcessError):
+            os.waitpid(pid, os.WNOHANG)
+
+    def test_worker_timeout_reaps_before_failure(self):
+        worker = self.root / "worker.py"
+        worker.write_text("import time\ntime.sleep(60)\n")
+        real_communicate = subprocess.Popen.communicate
+        def short_wait(process, **kwargs):
+            return real_communicate(process, timeout=0.1)
+        with patch.object(deploy, "TRUSTED", worker), patch.object(deploy, "ACQUISITION", self.root), patch.object(
+                subprocess.Popen, "communicate", short_wait), patch.object(
+                deploy.os, "killpg", wraps=os.killpg) as kill:
+            with self.assertRaisesRegex(deploy.Failure, "FETCH_FAILED"):
+                deploy.run_acquisition(self.ident, None)
+        kill.assert_called_once()
+        with self.assertRaises(ProcessLookupError):
+            os.kill(kill.call_args.args[0], 0)
 
 
 if __name__ == "__main__":

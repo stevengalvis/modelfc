@@ -4,6 +4,7 @@ Install this file outside the Git checkout. SSH supplies only a fixed request;
 the installed systemd unit invokes --run-tests against one candidate release.
 """
 
+import ctypes
 import fcntl
 import grp
 import hashlib
@@ -13,6 +14,7 @@ from pathlib import Path
 import pwd
 import re
 import secrets
+import signal
 import shutil
 import stat
 import subprocess
@@ -32,6 +34,10 @@ SERVICE = "modelfc-postmerge-tests.service"
 DEPENDENCY_SERVICE = "modelfc-postmerge-dependencies@{}.service"
 REQUEST = CONTROL / "test-request.json"
 TEST_OUTPUT = REPORTS / "test-result.json"
+ACQUISITION = Path("/run/modelfc-acquisition")
+MOUNT_HELPER = Path("/opt/modelfc-deploy/acquisition_mount.py")
+MAX_EXPORT_BYTES = 128 * 1024**2
+MAX_EXPORT_ENTRIES = 16384
 SHA = re.compile(r"[0-9a-f]{40}\Z")
 RELEASE_ID = re.compile(r"([0-9a-f]{40})-([0-9a-f]{12})\Z")
 FIELDS = ("status", "requested_sha", "previous_sha", "final_sha", "fetch_verified",
@@ -58,16 +64,23 @@ def command(args, *, cwd=None, env=None, timeout=90):
         raise Failure("INTERNAL_ERROR") from None
 
 
-def git_env():
-    return {"PATH": "/usr/bin:/bin", "HOME": str(CONTROL), "GIT_CONFIG_NOSYSTEM": "1",
+def git_env(release=None):
+    env = {"PATH": "/usr/bin:/bin", "HOME": str(CONTROL), "GIT_CONFIG_NOSYSTEM": "1",
             "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_TERMINAL_PROMPT": "0",
             "GIT_NO_REPLACE_OBJECTS": "1", "GIT_OPTIONAL_LOCKS": "0"}
+    if release == ACQUISITION / "repo":
+        env.update(HOME=str(ACQUISITION / "tmp"), TMPDIR=str(ACQUISITION / "tmp"),
+                   TMP=str(ACQUISITION / "tmp"), TEMP=str(ACQUISITION / "tmp"),
+                   XDG_CACHE_HOME=str(ACQUISITION / "tmp"))
+    return env
+
 
 
 def git(release, *args, failure="SOURCE_INVALID"):
     try:
         return command(["git", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false",
-                        "-C", str(release), *args], env=git_env(), timeout=120)
+                        "-c", "gc.auto=0", "-c", "maintenance.auto=false",
+                        "-C", str(release), *args], env=git_env(release), timeout=120)
     except Failure:
         raise Failure(failure) from None
 
@@ -77,7 +90,7 @@ def ancestor(release, older, newer, *, failure="SOURCE_INVALID"):
         result = subprocess.run(
             ["git", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false",
              "-C", str(release), "merge-base", "--is-ancestor", older, newer],
-            env=git_env(), timeout=120, check=False,
+            env=git_env(release), timeout=120, check=False,
             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
         if (type(result.returncode) is not int or result.returncode not in (0, 1)
                 or result.stdout != b""):
@@ -271,31 +284,197 @@ def dependency_boundary(release, *, releases=None):
         raise Failure("STATE_BOUNDARY_FAILED")
 
 
-def create_release(sha, *, releases=RELEASES, remote=REMOTE):
-    # mkdir(exist_ok=False) never adopts a failed candidate from an earlier run.
+def acquisition_mount(action, release_id):
+    if action not in ("mount", "unmount", "verify") or not RELEASE_ID.fullmatch(release_id):
+        raise Failure("STATE_BOUNDARY_FAILED")
+    try:
+        command(["sudo", "-n", "/usr/bin/python3", "-I", str(MOUNT_HELPER),
+                 action, release_id], cwd="/", env={"PATH": "/usr/bin:/bin"}, timeout=45)
+    except Failure:
+        raise Failure("STATE_BOUNDARY_FAILED") from None
+
+
+def staged_acquisition(release_id, previous, *, remote=REMOTE):
+    """Only trusted Git executes here; all acquisition paths are on the tmpfs."""
+    if (not RELEASE_ID.fullmatch(release_id)
+            or (previous is not None and SHA.fullmatch(previous) is None)):
+        raise Failure("INVALID_REQUEST")
+    acquisition_mount("verify", release_id)
+    repo = ACQUISITION / "repo"
+    (ACQUISITION / "tmp").mkdir(mode=0o700)
+    repo.mkdir(mode=0o700)
+    sha = release_id[:40]
+    git(repo, "init", "--quiet")
+    git(repo, "remote", "add", "origin", remote)
+    git(repo, "fetch", "--no-tags", "--no-recurse-submodules", "origin",
+        "+refs/heads/main:refs/remotes/origin/main", failure="FETCH_FAILED")
+    tip = git(repo, "rev-parse", "refs/remotes/origin/main", failure="FETCH_FAILED")
+    if SHA.fullmatch(tip) is None or not ancestor(repo, sha, tip, failure="SHA_NOT_ON_MAIN"):
+        raise Failure("SHA_NOT_ON_MAIN")
+    if previous is not None:
+        if not ancestor(repo, previous, tip, failure="ACTIVE_SHA_NOT_ON_MAIN"):
+            raise Failure("ACTIVE_SHA_NOT_ON_MAIN")
+        if ancestor(repo, sha, previous):
+            return {"status": "SUPERSEDED", "tip": tip}
+        if not ancestor(repo, previous, sha):
+            raise Failure("SOURCE_INVALID")
+    checkout_release(repo, sha)
+    verify_source(repo, sha)
+    return {"status": "READY", "tip": tip}
+
+
+def run_acquisition(release_id, previous):
+    """Reap the worker and its Git descendants before reading/exporting staging."""
+    libc = ctypes.CDLL(None, use_errno=True)
+    original = ctypes.c_int()
+    if libc.prctl(37, ctypes.byref(original), 0, 0, 0) != 0 or libc.prctl(36, 1, 0, 0, 0) != 0:
+        raise Failure("STATE_BOUNDARY_FAILED")
+    process = None
+    try:
+        process = subprocess.Popen(
+            ["/usr/bin/python3", "-I", str(TRUSTED), "--acquire-stage", release_id, previous or "-"],
+            cwd=str(ACQUISITION), env={"PATH": "/usr/bin:/bin", "HOME": str(ACQUISITION),
+                                      "PYTHONDONTWRITEBYTECODE": "1"},
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, start_new_session=True)
+        output, _ = process.communicate(timeout=600)
+        if len(output) > 1024 or process.returncode != 0:
+            raise Failure("FETCH_FAILED")
+        result = json.loads(output)
+        if set(result) == {"reason"} and result["reason"] in REASONS:
+            raise Failure(result["reason"])
+        if (set(result) != {"status", "tip"} or result["status"] not in ("READY", "SUPERSEDED")
+                or not isinstance(result["tip"], str) or SHA.fullmatch(result["tip"]) is None):
+            raise Failure("FETCH_FAILED")
+        return result
+    except (OSError, ValueError, TypeError, subprocess.SubprocessError):
+        raise Failure("FETCH_FAILED") from None
+    finally:
+        if process is not None:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            process.wait()
+            if process.stdout is not None:
+                process.stdout.close()
+            while True:
+                try:
+                    os.waitpid(-process.pid, 0)
+                except ChildProcessError:
+                    break
+        if libc.prctl(36, original.value, 0, 0, 0) != 0:
+            raise Failure("STATE_BOUNDARY_FAILED")
+
+
+def export_inventory(repo):
+    """Bound all entries, never dereference source or Git symlinks."""
+    logical = allocated = 0
+    inventory = []
+    pending = [repo]
+    try:
+        if repo.is_symlink() or not repo.is_dir():
+            raise Failure("STORAGE_LIMIT_FAILED")
+        while pending:
+            directory = pending.pop()
+            with os.scandir(directory) as entries:
+                for entry in entries:
+                    info = entry.stat(follow_symlinks=False)
+                    relative = Path(entry.path).relative_to(repo)
+                    logical += info.st_size
+                    allocated += info.st_blocks * 512
+                    inventory.append((relative, info))
+                    if (logical > MAX_EXPORT_BYTES or allocated > MAX_EXPORT_BYTES
+                            or len(inventory) > MAX_EXPORT_ENTRIES):
+                        raise Failure("STORAGE_LIMIT_FAILED")
+                    if stat.S_ISDIR(info.st_mode):
+                        pending.append(Path(entry.path))
+                    elif stat.S_ISLNK(info.st_mode):
+                        # Git metadata must be entirely self-contained.
+                        if relative.parts[0] == ".git":
+                            raise Failure("SOURCE_INVALID")
+                    elif not stat.S_ISREG(info.st_mode):
+                        raise Failure("STORAGE_LIMIT_FAILED")
+        if (repo / ".git/objects/info/alternates").exists():
+            raise Failure("SOURCE_INVALID")
+        return sorted(inventory, key=lambda item: (len(item[0].parts), str(item[0])))
+    except OSError:
+        raise Failure("STORAGE_LIMIT_FAILED") from None
+
+
+def export_repository(repo, release):
+    inventory = export_inventory(repo)
+    for relative, info in inventory:
+        source, target = repo / relative, release / relative
+        if stat.S_ISDIR(info.st_mode):
+            target.mkdir(mode=stat.S_IMODE(info.st_mode))
+        elif stat.S_ISLNK(info.st_mode):
+            target.symlink_to(os.readlink(source))
+        else:
+            # No acquisition process remains. Never follow a changed leaf.
+            fd = os.open(source, os.O_RDONLY | os.O_NOFOLLOW)
+            with os.fdopen(fd, "rb") as incoming, target.open("xb") as outgoing:
+                if os.fstat(incoming.fileno()) != info:
+                    raise Failure("SOURCE_INVALID")
+                remaining = info.st_size
+                while remaining:
+                    data = incoming.read(min(remaining, 1024 * 1024))
+                    if not data:
+                        raise Failure("SOURCE_INVALID")
+                    outgoing.write(data)
+                    remaining -= len(data)
+                if incoming.read(1):
+                    raise Failure("SOURCE_INVALID")
+            target.chmod(stat.S_IMODE(info.st_mode))
+    export_inventory(release)
+
+
+def create_release(sha, *, releases=RELEASES, remote=REMOTE, previous=None):
     release_id = f"{sha}-{secrets.token_hex(6)}"
     release = release_path(release_id, releases=releases)
-    created = False
+    mounted = created = False
+    handlers = {}
+    def interrupted(signum, frame):
+        raise Failure("FETCH_FAILED")
     try:
+        for signum in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT):
+            handlers[signum] = signal.signal(signum, interrupted)
+        acquisition_mount("mount", release_id)
+        mounted = True
+        # Production never accepts a caller-selected acquisition remote.
+        if remote != REMOTE:
+            raise Failure("INVALID_REQUEST")
+        result = run_acquisition(release_id, previous)
+        if result["status"] == "SUPERSEDED":
+            return None, result["tip"]
+        acquisition_mount("verify", release_id)
+        repo = ACQUISITION / "repo"
+        export_inventory(repo)
+        storage_preflight(releases)
         release.mkdir(mode=0o755)
         created = True
         release.chmod(0o755)
-        git(release, "init", "--quiet")
-        git(release, "remote", "add", "origin", remote)
-        git(release, "fetch", "--no-tags", "--no-recurse-submodules", "origin",
-            "+refs/heads/main:refs/remotes/origin/main", failure="FETCH_FAILED")
-        tip = git(release, "rev-parse", "refs/remotes/origin/main", failure="FETCH_FAILED")
-        if not ancestor(release, sha, tip, failure="SHA_NOT_ON_MAIN"):
-            raise Failure("SHA_NOT_ON_MAIN")
-        return release, tip
-    except Failure:
-        if created:
-            shutil.rmtree(release)
-        raise
+        export_repository(repo, release)
+        if (git(release, "remote", "get-url", "origin") != REMOTE
+                or git(release, "rev-parse", "--absolute-git-dir") != str(release / ".git")):
+            raise Failure("SOURCE_INVALID")
+        verify_source(release, sha)
+        return release, result["tip"]
     except OSError:
-        if created:
-            shutil.rmtree(release)
-        raise Failure("SOURCE_INVALID") from None
+        raise Failure("STORAGE_LIMIT_FAILED") from None
+    finally:
+        try:
+            if mounted:
+                acquisition_mount("unmount", release_id)
+        except BaseException:
+            if created and release.is_dir() and not release.is_symlink():
+                shutil.rmtree(release)
+            raise
+        finally:
+            # Failed/interrupting attempts own only this unique candidate.
+            if created and sys.exc_info()[0] is not None and release.is_dir() and not release.is_symlink():
+                shutil.rmtree(release)
+            for signum, handler in handlers.items():
+                signal.signal(signum, handler)
 
 
 def checkout_release(release, sha):
@@ -618,18 +797,13 @@ def deploy(sha, *, root=ROOT, releases=RELEASES, current=CURRENT, control=CONTRO
             if root.is_symlink() or releases.parent != root:
                 raise Failure("STATE_BOUNDARY_FAILED")
             storage_preflight(releases)
-            candidate, tip = create_release(sha, releases=releases, remote=remote)
-            value["release_created"] = True
+            candidate, tip = create_release(sha, releases=releases, remote=remote, previous=previous)
             value["fetch_verified"] = True
-            if previous is not None and not ancestor(candidate, previous, tip, failure="ACTIVE_SHA_NOT_ON_MAIN"):
-                raise Failure("ACTIVE_SHA_NOT_ON_MAIN")
-            if previous is not None and ancestor(candidate, sha, previous):
+            if candidate is None:
                 value.update(status="SUPERSEDED", reason="SUPERSEDED",
                              promotion_status="SUPERSEDED")
                 return value
-            if previous is not None and not ancestor(candidate, previous, sha):
-                raise Failure("SOURCE_INVALID")
-            checkout_release(candidate, sha)
+            value["release_created"] = True
             verify_source(candidate, sha)
             value["dependency_sync"] = dependencies(candidate)
             verify_venv_size(candidate / ".venv")
@@ -706,6 +880,16 @@ def run_tests():
 
 
 def main():
+    if len(sys.argv) == 4 and sys.argv[1] == "--acquire-stage" and "SSH_ORIGINAL_COMMAND" not in os.environ:
+        try:
+            result = staged_acquisition(sys.argv[2], None if sys.argv[3] == "-" else sys.argv[3])
+        except Failure as error:
+            result = {"reason": error.code}
+        except Exception:
+            result = {"reason": "FETCH_FAILED"}
+        print(json.dumps(result))
+        return 0
+
     if (len(sys.argv) == 3 and sys.argv[1] == "--install-dependencies"
             and "SSH_ORIGINAL_COMMAND" not in os.environ):
         return 0 if run_dependency_install(sys.argv[2]) else 1

@@ -3,7 +3,8 @@
 This deployment path is separate from the trusted PR validator. A push to
 `main`, after GitHub CI succeeds, requests exactly that push's SHA. The reviewed
 controller installed at `/opt/modelfc-deploy/deploy_main.py` creates a new,
-independent Git repository under `/srv/modelfc/releases/<sha>-<nonce>/`, installs
+independent Git repository in bounded acquisition staging, exports it to
+`/srv/modelfc/releases/<sha>-<nonce>/`, installs
 a fresh `.venv` there, and runs offline tests. Only a passing release is pointed
 to by `/srv/modelfc/current`. The incoming release never supplies the controller
 or the systemd unit. This PR only provides source; it does not install anything.
@@ -55,6 +56,8 @@ or the systemd unit. This PR only provides source; it does not install anything.
    install -d -o root -g root -m 0755 /opt/modelfc-deploy
    git -C /root/dev/modelfc show "${REVIEWED_SHA}:ops/vps/deploy_main.py" \
      | install -o root -g root -m 0555 /dev/stdin /opt/modelfc-deploy/deploy_main.py
+   git -C /root/dev/modelfc show "${REVIEWED_SHA}:ops/vps/acquisition_mount.py" \
+     | install -o root -g root -m 0555 /dev/stdin /opt/modelfc-deploy/acquisition_mount.py
    git -C /root/dev/modelfc show "${REVIEWED_SHA}:deploy/modelfc-postmerge-tests.service" \
      | install -o root -g root -m 0644 /dev/stdin /etc/systemd/system/modelfc-postmerge-tests.service
    git -C /root/dev/modelfc show "${REVIEWED_SHA}:deploy/modelfc-postmerge-dependencies@.service" \
@@ -126,10 +129,13 @@ does not itself switch the old running commands to the new code.
 
 The controller accepts only `deploy stevengalvis/modelfc <40 lowercase hex>`.
 It locks the host deployment path, verifies any current release's independent
-Git HEAD, initializes a new repository, fetches fixed `origin/main` with
+Git HEAD, mounts the fixed private acquisition tmpfs described below, initializes
+a new repository there, fetches fixed `origin/main` with
 isolated Git config, proves the requested SHA is on that fetched branch, and
 rejects moving a verified active release backward. It checks out the exact
-SHA, installs `requirements-deploy.lock` into a fresh `.venv` at the candidate's permanent
+SHA, reaps acquisition processes, validates and exports the independent repository
+to a fresh permanent candidate, reverifies HEAD and tracked source, then
+installs `requirements-deploy.lock` into a fresh `.venv` at the candidate's permanent
 path through the narrowly writable dependency service, verifies every tracked
 source blob against the reviewed Git commit, and runs the complete offline
 tests in the installed systemd sandbox. It verifies tracked source again before
@@ -218,3 +224,73 @@ zero-test execution and ordinary failures; it is not adversarial attestation
 against trusted tests deliberately fabricating their own result. The controller
 requires effective test-service KillMode=control-group so an installed override
 cannot weaken process cleanup.
+
+
+## Bounded Git acquisition
+
+The separately reviewed root-owned `acquisition_mount.py` helper has only three
+operations: `mount`, `verify`, and `unmount`, each taking one validated
+`<40-hex-sha>-<12-hex-nonce>` release ID. It accepts no path, mount options or
+remote from the caller. Install it alongside the trusted controller from the
+same reviewed revision. Add only these narrowly scoped sudoers entries, using
+`visudo` and validating the resulting file before enabling deployment:
+
+```sudoers
+modelfc-deploy ALL=(root) NOPASSWD: /usr/bin/python3 -I /opt/modelfc-deploy/acquisition_mount.py mount *
+modelfc-deploy ALL=(root) NOPASSWD: /usr/bin/python3 -I /opt/modelfc-deploy/acquisition_mount.py verify *
+modelfc-deploy ALL=(root) NOPASSWD: /usr/bin/python3 -I /opt/modelfc-deploy/acquisition_mount.py unmount *
+```
+
+The wildcard is constrained by the installed helper's exact argument count and
+release-ID grammar. No SETENV permission, arbitrary Python execution, general
+mount command or new daemon is authorized. Existing systemctl permissions remain
+separate. The helper creates only `/run/modelfc-acquisition`, mounts **256 MiB /
+32,768 inodes** of tmpfs there, and requires mode **0700**, dedicated deployment
+UID/GID, `nodev,nosuid,noexec`, exact capacity and an attempt-specific mount source.
+Its root-owned `/run/modelfc-acquisition-control.lock` serializes mount operations;
+the existing host `deploy.lock` still serializes the entire deployment.
+
+Repository initialization, full main fetch, objects, checkout and Git temporary
+files live on this filesystem. Git receives an isolated configuration and staging
+HOME/TMPDIR/TMP/TEMP/cache paths; automatic Git maintenance is disabled. No candidate
+code runs during acquisition. The controller runs the installed acquisition worker
+in a new process group, acts as a child subreaper, and kills/reaps remaining Git
+processes before export or unmount. The worker has a 600-second deadline; individual
+Git operations retain their bounded timeouts. Full history preserves queued-event,
+forward-ancestry and supersession checks; shallow fetch is not the security boundary.
+
+Before any persistent candidate is created, a no-follow traversal bounds the
+repository plus checkout to **128 MiB logical and allocated bytes** and **16,384
+entries**. Special files, Git-metadata symlinks and external object alternates are
+rejected. Source symlinks are preserved, never dereferenced. Export makes fresh
+files, not shared object links, and verifies the same bounds again. The permanent
+candidate's exact HEAD and tracked source bytes are independently verified before
+its `.venv` is created. Every retained release still has its own usable `.git`.
+
+Capacity/inode exhaustion or fetch failure reports `FETCH_FAILED` (or
+`STORAGE_LIMIT_FAILED` for local filesystem/export limits); verification failures
+retain `SHA_NOT_ON_MAIN`, `ACTIVE_SHA_NOT_ON_MAIN` or `SOURCE_INVALID`. Mount or
+cleanup boundary failure reports `STATE_BOUNDARY_FAILED`. Raw Git output is never
+returned. Failures prevent dependencies, tests and promotion. Cleanup removes only
+the current attempt's newly created incomplete candidate and unmounts its staging;
+current, retained releases, historical data and evidence remain untouched.
+
+Handled SIGINT/SIGTERM/SIGHUP interruptions follow the same cleanup. SIGKILL, host
+crash or a busy/failed unmount can leave staging behind. A subsequent attempt fails
+closed rather than adopting or deleting it. An administrator must confirm no
+acquisition process remains, inspect the exact mount source/limits, and invoke the
+reviewed helper's `unmount <original-release-id>` operation. No lazy/forced unmount
+is used. Foreign mounts, nested mounts, symlinks or an unexpected plain directory
+require manual investigation; the controller never recursively deletes that state.
+A reboot discards the tmpfs. Retained releases still require manual lifecycle
+maintenance; this change adds no pruning policy.
+
+Real-VPS acceptance is required before enabling deployment: verify installed sudo
+restrictions and actual mount UID/GID/mode, capacity, inode count and flags; exhaust
+bytes and inodes in disposable staging and confirm ENOSPC without host disk growth;
+exercise success, fetch failure, export failure and SSH interruption; check staging
+unmount/process reaping and unchanged current/retained/history/state paths. Test
+stale-state refusal and deliberate administrative recovery. Verify queued older
+main requests, divergent requests, final `git rev-parse HEAD`, capture provenance,
+and locked dependency installation/tests at the permanent path. Offline tests mock
+mounting and cannot attest the VPS kernel, sudo policy or actual mount lifecycle.
