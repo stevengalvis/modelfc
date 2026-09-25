@@ -8,7 +8,7 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -18,14 +18,18 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install runtime and test dependencies
-        run: python3 -m pip install -r requirements.txt
+      - name: Create fresh locked environment
+        run: |
+          python3 -m venv "$RUNNER_TEMP/modelfc-locked"
+          "$RUNNER_TEMP/modelfc-locked/bin/python" -m pip install --require-hashes --only-binary=:all: --no-cache-dir -r requirements-deploy.lock
+          "$RUNNER_TEMP/modelfc-locked/bin/python" -m pip check
+          "$RUNNER_TEMP/modelfc-locked/bin/python" -B tests/test_deployment_dependencies.py --check-installed
 
       - name: Run test suite
-        run: PYTHONPATH=src python3 -m unittest discover -v
+        run: PYTHONPATH=src "$RUNNER_TEMP/modelfc-locked/bin/python" -m unittest discover -v
 
       - name: Compile Python sources and tests
-        run: python3 -m compileall -q src tests
+        run: '"$RUNNER_TEMP/modelfc-locked/bin/python" -m compileall -q src tests'
 
   deploy:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -39,6 +43,7 @@ jobs:
       cancel-in-progress: false
     steps:
       - name: Build and activate reviewed release on VPS
+        timeout-minutes: 75
         env:
           DEPLOY_KEY: ${{ secrets.MODELFC_DEPLOY_SSH_KEY }}
           DEPLOY_HOST: ${{ vars.MODELFC_DEPLOY_HOST }}
@@ -58,6 +63,7 @@ jobs:
           printf '%s\n' "$DEPLOY_HOST_KEY" > "$hosts_file"
           if ! ssh -T -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
             -o UserKnownHostsFile="$hosts_file" -o ForwardAgent=no \
+            -o ConnectTimeout=15 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 \
             -o ClearAllForwardings=yes -i "$key_file" \
             "modelfc-deploy@$DEPLOY_HOST" "deploy stevengalvis/modelfc $EXPECTED_SHA" > "$report_file" 2>/dev/null; then
             printf '%s\n' '{"status":"FAIL","reason":"SSH_TRANSPORT_FAILED"}'
@@ -77,7 +83,7 @@ jobs:
                          "DEPLOYMENT_BUSY", "STATE_BOUNDARY_FAILED", "SOURCE_INVALID",
                          "FETCH_FAILED", "SHA_NOT_ON_MAIN", "ACTIVE_SHA_NOT_ON_MAIN",
                          "DEPENDENCY_SYNC_FAILED", "TESTS_FAILED", "FINAL_SHA_MISMATCH",
-                         "PROMOTION_FAILED", "INTERNAL_ERROR"}
+                         "PROMOTION_FAILED", "INTERNAL_ERROR", "STORAGE_LIMIT_FAILED"}
               if (set(value) != fields or value["status"] not in {"PASS", "FAIL", "SUPERSEDED"}
                   or value["requested_sha"] != sys.argv[2] or value["reason"] not in reasons
                   or value["promotion_status"] not in {"NOT_ATTEMPTED", "PROMOTED",

@@ -39,7 +39,7 @@ FIELDS = ("status", "requested_sha", "previous_sha", "final_sha", "fetch_verifie
 REASONS = {"OK", "ALREADY_CURRENT", "SUPERSEDED", "INVALID_REQUEST", "DEPLOYMENT_BUSY",
            "STATE_BOUNDARY_FAILED", "SOURCE_INVALID", "FETCH_FAILED", "SHA_NOT_ON_MAIN",
            "ACTIVE_SHA_NOT_ON_MAIN", "DEPENDENCY_SYNC_FAILED", "TESTS_FAILED",
-           "FINAL_SHA_MISMATCH", "PROMOTION_FAILED", "INTERNAL_ERROR"}
+           "FINAL_SHA_MISMATCH", "PROMOTION_FAILED", "INTERNAL_ERROR", "STORAGE_LIMIT_FAILED"}
 
 
 class Failure(Exception):
@@ -228,7 +228,7 @@ def dependency_boundary(release, *, releases=None):
             or fields.get("NoNewPrivileges") != "yes"
             or fields.get("BindPaths") not in (None, "")
             or fields.get("BindReadOnlyPaths") != ""
-            or fields.get("TemporaryFileSystem") not in (None, "")
+            or not dependency_tmpfs_valid(fields.get("TemporaryFileSystem"))
             or fields.get("MemoryMax") != str(2 * 1024**3)
             or fields.get("TasksMax") != "64"
             or not trusted_exec_start(fields.get("ExecStart"),
@@ -343,8 +343,79 @@ def venv_bootstrap_manifest(venv):
         raise Failure("DEPENDENCY_SYNC_FAILED") from None
 
 
+MIN_FREE_BYTES = 1024**3
+MAX_VENV_BYTES = 128 * 1024**2
+MAX_VENV_ENTRIES = 10000
+DEPENDENCY_TMPFS = frozenset({
+    "/tmp:rw,size=268435456,nr_inodes=16384",
+    "/var/tmp:rw,size=268435456,nr_inodes=16384",
+})
+
+
+def dependency_tmpfs_valid(value):
+    if not isinstance(value, str):
+        return False
+    entries = value.split()
+    return len(entries) == 2 and set(entries) == DEPENDENCY_TMPFS
+
+
+def storage_preflight(path):
+    try:
+        if shutil.disk_usage(path).free < MIN_FREE_BYTES:
+            raise Failure("STORAGE_LIMIT_FAILED")
+    except OSError:
+        raise Failure("STORAGE_LIMIT_FAILED") from None
+
+
+def verify_dependency_lock(release, sha):
+    path = release / "requirements-deploy.lock"
+    try:
+        info = path.lstat()
+        if not stat.S_ISREG(info.st_mode):
+            raise Failure("DEPENDENCY_SYNC_FAILED")
+        entry = git(release, "ls-tree", sha, "--", "requirements-deploy.lock")
+        meta, name = entry.split("\t")
+        mode, kind, oid = meta.split()
+        if mode not in ("100644", "100755") or kind != "blob" or name != path.name:
+            raise Failure("DEPENDENCY_SYNC_FAILED")
+        contents = path.read_bytes()
+        actual = hashlib.sha1(b"blob " + str(len(contents)).encode() + b"\0" + contents).hexdigest()
+        if actual != oid:
+            raise Failure("DEPENDENCY_SYNC_FAILED")
+    except (OSError, ValueError, Failure):
+        raise Failure("DEPENDENCY_SYNC_FAILED") from None
+
+
+def verify_venv_size(venv):
+    """Operational bound for reviewed wheels; never follow symlinks."""
+    logical = allocated = count = 0
+    try:
+        if venv.is_symlink() or not venv.is_dir():
+            raise Failure("STORAGE_LIMIT_FAILED")
+        pending = [venv]
+        while pending:
+            directory = pending.pop()
+            with os.scandir(directory) as entries:
+                for entry in entries:
+                    info = entry.stat(follow_symlinks=False)
+                    count += 1
+                    logical += info.st_size
+                    allocated += info.st_blocks * 512
+                    if (count > MAX_VENV_ENTRIES or logical > MAX_VENV_BYTES
+                            or allocated > MAX_VENV_BYTES):
+                        raise Failure("STORAGE_LIMIT_FAILED")
+                    if stat.S_ISDIR(info.st_mode):
+                        pending.append(Path(entry.path))
+                    elif not (stat.S_ISREG(info.st_mode) or stat.S_ISLNK(info.st_mode)):
+                        raise Failure("STORAGE_LIMIT_FAILED")
+    except OSError:
+        raise Failure("STORAGE_LIMIT_FAILED") from None
+
+
 def dependencies(release, *, check_boundary=dependency_boundary):
-    """Host creates only the venv; package/build execution runs in systemd."""
+    """Host creates the fresh venv; reviewed wheel installation runs in systemd."""
+    verify_dependency_lock(release, release.name[:40])
+    storage_preflight(release)
     env = {"PATH": "/usr/bin:/bin", "HOME": str(CONTROL),
            "PYTHONNOUSERSITE": "1"}
     try:
@@ -358,6 +429,7 @@ def dependencies(release, *, check_boundary=dependency_boundary):
         raise Failure("DEPENDENCY_SYNC_FAILED")
     bootstrap = venv_bootstrap_manifest(release / ".venv")
     check_boundary(release)
+    storage_preflight(release)
     try:
         command(["sudo", "-n", "/usr/bin/systemctl", "start", "--wait",
                  DEPENDENCY_SERVICE.format(release.name)], timeout=540)
@@ -375,6 +447,9 @@ def run_dependency_install(release_id):
         if (not release.is_dir() or release.name[:40] != head(release)
                 or (release / ".venv").is_symlink()):
             raise Failure("DEPENDENCY_SYNC_FAILED")
+        lock = release / "requirements-deploy.lock"
+        if lock.is_symlink() or not lock.is_file():
+            raise Failure("DEPENDENCY_SYNC_FAILED")
         env = {"PATH": "/usr/bin:/bin", "HOME": "/nonexistent",
                "PIP_DISABLE_PIP_VERSION_CHECK": "1", "PIP_CONFIG_FILE": "/dev/null",
                "PIP_NO_CACHE_DIR": "1", "PYTHONNOUSERSITE": "1"}
@@ -382,8 +457,8 @@ def run_dependency_install(release_id):
         if command([python, "-c", "import sys; print('%d.%d' % sys.version_info[:2])"],
                    env=env, timeout=15) != "3.12":
             raise Failure("DEPENDENCY_SYNC_FAILED")
-        command([python, "-m", "pip", "install", "--no-cache-dir", "-r",
-                 str(release / "requirements.txt")], cwd="/", env=env, timeout=300)
+        command([python, "-m", "pip", "install", "--require-hashes", "--only-binary=:all:", "--no-cache-dir", "-r",
+                 str(release / "requirements-deploy.lock")], cwd="/", env=env, timeout=300)
         command([python, "-m", "pip", "check"], cwd="/", env=env, timeout=30)
         return True
     except (Failure, OSError):
@@ -508,6 +583,7 @@ def deploy(sha, *, root=ROOT, releases=RELEASES, current=CURRENT, control=CONTRO
             # Revalidate root even in test harnesses that inject a stub boundary.
             if root.is_symlink() or releases.parent != root:
                 raise Failure("STATE_BOUNDARY_FAILED")
+            storage_preflight(releases)
             candidate, tip = create_release(sha, releases=releases, remote=remote)
             value["release_created"] = True
             value["fetch_verified"] = True
@@ -518,7 +594,9 @@ def deploy(sha, *, root=ROOT, releases=RELEASES, current=CURRENT, control=CONTRO
                              promotion_status="SUPERSEDED")
                 return value
             checkout_release(candidate, sha)
+            verify_source(candidate, sha)
             value["dependency_sync"] = dependencies(candidate)
+            verify_venv_size(candidate / ".venv")
             verify_source(candidate, sha)
             value["tests_run"] = test_runner(candidate, sha)
             if type(value["tests_run"]) is not int or value["tests_run"] <= 0:

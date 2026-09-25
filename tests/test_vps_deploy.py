@@ -58,6 +58,7 @@ class FreshReleaseTest(unittest.TestCase):
         cmd("git", "remote", "add", "origin", str(self.remote), cwd=self.seed)
         (self.seed / ".gitignore").write_text(".venv/\n__pycache__/\n*.pyc\n")
         (self.seed / "requirements.txt").write_text("example>=1\n")
+        (self.seed / "requirements-deploy.lock").write_text("--require-hashes\n--only-binary=:all:\n")
         (self.seed / "example.txt").write_text("one\n")
         package = self.seed / "src/modelfc"
         package.mkdir(parents=True)
@@ -372,6 +373,64 @@ class FreshReleaseTest(unittest.TestCase):
         self.assertNotIn("offline-secret", json.dumps(value))
         self.assertEqual(list(self.releases.iterdir()), [])
 
+    def test_reviewed_lock_identity_and_rejections(self):
+        release, _ = deploy.create_release(self.b, releases=self.releases, remote=str(self.remote))
+        deploy.checkout_release(release, self.b)
+        lock = release / "requirements-deploy.lock"
+        original = lock.read_bytes()
+        deploy.verify_dependency_lock(release, self.b)
+        for kind in ("missing", "symlink", "altered"):
+            with self.subTest(kind=kind):
+                lock.unlink()
+                if kind == "symlink":
+                    lock.symlink_to(self.seed / lock.name)
+                elif kind == "altered":
+                    lock.write_bytes(original + b"changed")
+                with self.assertRaisesRegex(deploy.Failure, "DEPENDENCY_SYNC_FAILED"):
+                    deploy.verify_dependency_lock(release, self.b)
+                if lock.exists() or lock.is_symlink():
+                    lock.unlink()
+                lock.write_bytes(original)
+        # File exists in the worktree but is absent from the requested tree.
+        cmd("git", "rm", lock.name, cwd=release)
+        cmd("git", "-c", "user.name=Test", "-c", "user.email=test@example.invalid",
+            "commit", "-m", "remove lock", cwd=release)
+        lock.write_bytes(original)
+        with self.assertRaisesRegex(deploy.Failure, "DEPENDENCY_SYNC_FAILED"):
+            deploy.verify_dependency_lock(release, deploy.head(release))
+
+    def test_low_space_prevents_candidate_creation(self):
+        usage = shutil._ntuple_diskusage(2**32, 0, deploy.MIN_FREE_BYTES - 1)
+        with patch.object(deploy.shutil, "disk_usage", return_value=usage), patch.object(
+                deploy, "create_release") as create:
+            result = self.run_deploy(self.b)
+        self.assertEqual(result["reason"], "STORAGE_LIMIT_FAILED")
+        create.assert_not_called()
+        self.assertFalse(self.current.exists())
+
+    def test_environment_limit_prevents_tests_and_cleans_only_candidate(self):
+        self.run_deploy(self.a)
+        previous = os.readlink(self.current)
+        tested = len(self.tested)
+        with patch.object(deploy, "verify_venv_size", side_effect=deploy.Failure("STORAGE_LIMIT_FAILED")):
+            result = self.run_deploy(self.b)
+        self.assertEqual(result["reason"], "STORAGE_LIMIT_FAILED")
+        self.assertEqual(len(self.tested), tested)
+        self.assertEqual(os.readlink(self.current), previous)
+        self.assertEqual(list(self.releases.iterdir()), [Path(previous)])
+        self.assertEqual((self.state / "capture.json").read_text(), "immutable evidence\n")
+
+    def test_source_verified_before_dependency_execution(self):
+        original = deploy.checkout_release
+        def corrupt(release, sha):
+            original(release, sha)
+            (release / "requirements-deploy.lock").write_text("unreviewed")
+        with patch.object(deploy, "checkout_release", side_effect=corrupt):
+            result = self.run_deploy(self.b)
+        self.assertEqual(result["reason"], "SOURCE_INVALID")
+        self.assertEqual(self.created, [])
+        self.assertEqual(self.tested, [])
+
 
 class IsolatedBoundaryTest(unittest.TestCase):
     def setUp(self):
@@ -386,6 +445,10 @@ class IsolatedBoundaryTest(unittest.TestCase):
         self.sha = "a" * 40
         self.release = self.releases / (self.sha + "-123456789abc")
         self.release.mkdir()
+        (self.release / "requirements-deploy.lock").write_text("reviewed fixture lock\n")
+        lock_check = patch.object(deploy, "verify_dependency_lock")
+        lock_check.start()
+        self.addCleanup(lock_check.stop)
 
     def test_report_read_rejects_symlinks_nonregular_and_oversize_before_parse(self):
         output = self.control / "reports/result.json"
@@ -493,6 +556,89 @@ class IsolatedBoundaryTest(unittest.TestCase):
             finally:
                 reports.chmod(0o700)
 
+
+    def test_storage_preflight_exact_boundary_and_error(self):
+        for available in (deploy.MIN_FREE_BYTES, deploy.MIN_FREE_BYTES + 1):
+            with patch.object(deploy.shutil, "disk_usage", return_value=
+                    shutil._ntuple_diskusage(2**32, 0, available)):
+                deploy.storage_preflight(self.release)
+        with patch.object(deploy.shutil, "disk_usage", side_effect=OSError("private error")):
+            with self.assertRaisesRegex(deploy.Failure, "STORAGE_LIMIT_FAILED"):
+                deploy.storage_preflight(self.release)
+
+    def test_second_space_check_prevents_install(self):
+        def create(args, **kwargs):
+            (self.release / ".venv/bin").mkdir(parents=True)
+            (self.release / ".venv/bin/python").write_text("runtime")
+            (self.release / ".venv/pyvenv.cfg").write_text("config")
+            return ""
+        with patch.object(deploy, "storage_preflight", side_effect=[None, deploy.Failure("STORAGE_LIMIT_FAILED")]), patch.object(
+                deploy, "command", side_effect=create) as run:
+            with self.assertRaisesRegex(deploy.Failure, "STORAGE_LIMIT_FAILED"):
+                deploy.dependencies(self.release, check_boundary=lambda _: None)
+            self.assertEqual(run.call_count, 1)
+            self.assertEqual(run.call_args.args[0][:3], ["/usr/bin/python3", "-m", "venv"])
+
+    def test_environment_size_logical_allocated_and_entries(self):
+        venv = self.release / ".venv"
+        venv.mkdir()
+        target = venv / "file"
+        target.write_bytes(b"small")
+        deploy.verify_venv_size(venv)
+        for field in ("logical", "allocated", "entries"):
+            class Entry:
+                path = str(target)
+                def stat(self, *, follow_symlinks):
+                    self_outer.assertFalse(follow_symlinks)
+                    return type("Info", (), dict(st_mode=0o100600,
+                        st_size=deploy.MAX_VENV_BYTES + 1 if field == "logical" else 1,
+                        st_blocks=deploy.MAX_VENV_BYTES // 512 + 1 if field == "allocated" else 1))()
+            self_outer = self
+            from contextlib import nullcontext
+            count = deploy.MAX_VENV_ENTRIES + 1 if field == "entries" else 1
+            with self.subTest(field=field), patch.object(deploy.os, "scandir", return_value=nullcontext(iter([Entry()] * count))):
+                with self.assertRaisesRegex(deploy.Failure, "STORAGE_LIMIT_FAILED"):
+                    deploy.verify_venv_size(venv)
+
+    def test_environment_measurement_does_not_follow_symlinks(self):
+        venv = self.release / ".venv"
+        venv.mkdir()
+        outside = self.root / "outside"
+        outside.mkdir()
+        with (outside / "huge").open("wb") as output:
+            output.truncate(deploy.MAX_VENV_BYTES + 1)
+        (venv / "external-directory").symlink_to(outside)
+        (venv / "python").symlink_to(sys.executable)
+        deploy.verify_venv_size(venv)
+        self.assertTrue((outside / "huge").exists())
+
+    def test_dependency_tmpfs_requires_exact_effective_limits(self):
+        expected = self.dependency_properties()
+        correct = " ".join(sorted(deploy.DEPENDENCY_TMPFS))
+        with patch.object(deploy, "command", return_value=expected):
+            deploy.dependency_boundary(self.release, releases=self.releases)
+        for value in ("", "/tmp", correct.replace("268435456", "536870912"),
+                      correct.replace("16384", "0"), correct + " /other:rw,size=1M",
+                      correct.replace("rw", "ro")):
+            properties = expected.replace(next(line for line in expected.splitlines()
+                if line.startswith("TemporaryFileSystem=")), "TemporaryFileSystem=" + value)
+            with self.subTest(value=value), patch.object(deploy, "command", return_value=properties):
+                with self.assertRaisesRegex(deploy.Failure, "STATE_BOUNDARY_FAILED"):
+                    deploy.dependency_boundary(self.release, releases=self.releases)
+        unit = (SOURCE.parents[2] / "deploy/modelfc-postmerge-dependencies@.service").read_text()
+        for entry in deploy.DEPENDENCY_TMPFS:
+            self.assertIn("TemporaryFileSystem=" + entry, unit)
+
+    def test_workflow_preserves_locked_ci_and_bounds_ssh(self):
+        workflow = (SOURCE.parents[2] / ".github/workflows/tests.yml").read_text()
+        for value in ("runs-on: ubuntu-24.04", 'python-version: "3.12"',
+                      "--require-hashes --only-binary=:all: --no-cache-dir -r requirements-deploy.lock",
+                      "--check-installed", "-m pip check", "needs: test", "timeout-minutes: 75",
+                      "-o ConnectTimeout=15", "-o ServerAliveInterval=15", "-o ServerAliveCountMax=4",
+                      '"STORAGE_LIMIT_FAILED"'):
+            self.assertIn(value, workflow)
+        self.assertNotIn("-r requirements.txt", workflow)
+
     def test_dependency_timeout_covers_internal_budgets(self):
         unit = (SOURCE.parents[2] / "deploy/modelfc-postmerge-dependencies@.service").read_text()
         timeout = int(next(line.split("=", 1)[1] for line in unit.splitlines()
@@ -532,7 +678,7 @@ class IsolatedBoundaryTest(unittest.TestCase):
                       "InaccessiblePaths=/root/modelfc-state /root/dev/modelfc "
                       "/var/lib/modelfc-deploy\n"
                       "PrivateTmp=yes\nPrivateDevices=yes\nNoNewPrivileges=yes\n"
-                      "BindPaths=\nBindReadOnlyPaths=\nTemporaryFileSystem=\n"
+                      "BindPaths=\nBindReadOnlyPaths=\nTemporaryFileSystem=/tmp:rw,size=268435456,nr_inodes=16384 /var/tmp:rw,size=268435456,nr_inodes=16384\n"
                       "MemoryMax=2147483648\nTasksMax=64\n"
                       "ExecStart=" + effective_exec("/usr/bin/python3", "-I", str(deploy.TRUSTED),
                                                     "--install-dependencies", self.release.name) + "\n")
@@ -708,8 +854,10 @@ class IsolatedBoundaryTest(unittest.TestCase):
             self.assertTrue(deploy.run_dependency_install(self.release.name))
             self.assertEqual(execute.call_count, 3)
             pip_install = execute.call_args_list[1]
-            self.assertEqual(pip_install.args[0][:5], [
-                str(self.release / ".venv/bin/python"), "-m", "pip", "install", "--no-cache-dir"])
+            self.assertEqual(pip_install.args[0], [
+                str(self.release / ".venv/bin/python"), "-m", "pip", "install",
+                "--require-hashes", "--only-binary=:all:", "--no-cache-dir", "-r",
+                str(self.release / "requirements-deploy.lock")])
             self.assertEqual(pip_install.kwargs["cwd"], "/")
             self.assertEqual(pip_install.kwargs["env"]["PIP_NO_CACHE_DIR"], "1")
             self.assertNotIn("ODDSPAPI_API_KEY", pip_install.kwargs["env"])

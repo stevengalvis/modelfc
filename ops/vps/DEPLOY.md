@@ -129,7 +129,7 @@ It locks the host deployment path, verifies any current release's independent
 Git HEAD, initializes a new repository, fetches fixed `origin/main` with
 isolated Git config, proves the requested SHA is on that fetched branch, and
 rejects moving a verified active release backward. It checks out the exact
-SHA, installs requirements into a fresh `.venv` at the candidate's permanent
+SHA, installs `requirements-deploy.lock` into a fresh `.venv` at the candidate's permanent
 path through the narrowly writable dependency service, verifies every tracked
 source blob against the reviewed Git commit, and runs the complete offline
 tests in the installed systemd sandbox. It verifies tracked source again before
@@ -165,11 +165,46 @@ successful releases until a separate retention policy is reviewed. This system
 does not restart Model FC services, call providers, refresh history, settle
 outcomes, or replace the trusted PR validator.
 
+## Locked dependency and storage policy
+
+Deployment accepts only the regular, non-symlink `requirements-deploy.lock`
+tracked at the requested reviewed SHA. Its bytes must match that Git blob before
+installation. Source verification runs before installation, afterward, and before
+promotion. There is no requirements.txt fallback and no incidental pip upgrade.
+The candidate Python invokes pip with `--require-hashes --only-binary=:all:
+--no-cache-dir`; pip check and bootstrap integrity verification remain required.
+
+Reviewed source, exact hash-approved wheels, and host Python/pip bootstrap tooling
+are trusted. Wheels avoid source distributions and build backends. These controls
+are not a claim of hard containment against intentionally malicious approved
+wheel code. Existing service isolation still protects retained releases, current,
+history, evidence and deployment-control files.
+
+Before candidate creation and immediately before dependency installation, the
+release filesystem must have at least 1 GiB available. Private dependency /tmp
+and /var/tmp each use tmpfs limited to 256 MiB and 16,384 inodes. The controller
+requires those exact effective systemd settings. Existing PrivateTmp, resource,
+credential, bind and write-boundary checks remain in force. During host acceptance,
+verify inside the installed service namespace that these tmpfs mounts and limits
+are actually active; static unit verification alone does not establish this.
+
+After installation, .venv must occupy no more than 128 MiB in either logical or
+allocated bytes and contain at most 10,000 entries. Measurement does not follow
+symlinks. This is operational protection for a finite reviewed artifact set,
+not a filesystem quota. Reconsider limits whenever the lock changes. Concurrent
+unrelated host writes can still exhaust free space. Failure returns the fixed
+STORAGE_LIMIT_FAILED reason, blocks testing/promotion and removes only the failed
+candidate using existing cleanup. No retained-release pruning is automatic.
+
+SSH uses ConnectTimeout=15, ServerAliveInterval=15 and ServerAliveCountMax=4;
+the deployment step has a 75-minute timeout. Quiet responsive sessions continue;
+unresponsive connections fail. GitHub timeout is not a replacement for host
+locking, bounded service execution or cleanup.
+
 ## Activation gate
 
-Do not enable automatic VPS deployment from this PR alone. Before configuring
-the GitHub deployment credential or accepting this controller for automatic
-use, merge and separately accept a reviewed, hash-locked, wheels-only deployment
-dependency set covering direct and transitive requirements. Until that work is
-complete, this PR is reviewed infrastructure source only and is not
-authorization to activate automatic deployment on the VPS.
+PR #59 supplies the reviewed wheels-only lock. This integration does not authorize
+VPS installation or activation. Installing the reviewed controller and both units,
+configuring credentials, and host acceptance remain separate manually approved
+steps. Preserve all existing acceptance checks, including state/history isolation,
+mount-limit verification and failure cleanup, before enabling automatic deployment.

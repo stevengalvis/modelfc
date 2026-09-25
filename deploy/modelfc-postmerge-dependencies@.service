@@ -11,6 +11,8 @@ TimeoutStartSec=510
 MemoryMax=2G
 TasksMax=64
 PrivateTmp=yes
+TemporaryFileSystem=/tmp:rw,size=268435456,nr_inodes=16384
+TemporaryFileSystem=/var/tmp:rw,size=268435456,nr_inodes=16384
 PrivateDevices=yes
 NoNewPrivileges=yes
 ProtectSystem=strict
