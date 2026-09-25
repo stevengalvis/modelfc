@@ -143,6 +143,58 @@ class FreshReleaseTest(unittest.TestCase):
             self.assertEqual(os.readlink(self.current), previous)
             self.assertEqual(len(self.tested), 1)
 
+    def test_forward_direct_and_multicommit_descendants(self):
+        self.assertEqual(self.run_deploy(self.a)["status"], "PASS")
+        self.assertEqual(self.run_deploy(self.b)["status"], "PASS")
+        for index in range(2):
+            (self.seed / "example.txt").write_text(f"forward {index}\n")
+            cmd("git", "add", ".", cwd=self.seed)
+            cmd("git", "commit", "-m", "forward", cwd=self.seed)
+        tip = cmd("git", "rev-parse", "HEAD", cwd=self.seed)
+        cmd("git", "push", "origin", "main", cwd=self.seed)
+        self.assertEqual(self.run_deploy(tip)["status"], "PASS")
+        self.assertEqual(deploy.head(self.current.resolve()), tip)
+
+    def test_divergent_merged_side_branch_never_tests_or_promotes(self):
+        self.assertEqual(self.run_deploy(self.b)["status"], "PASS")
+        previous = os.readlink(self.current)
+        cmd("git", "checkout", "-b", "side", self.a, cwd=self.seed)
+        (self.seed / "side.txt").write_text("side branch\n")
+        cmd("git", "add", ".", cwd=self.seed)
+        cmd("git", "commit", "-m", "side", cwd=self.seed)
+        side = cmd("git", "rev-parse", "HEAD", cwd=self.seed)
+        cmd("git", "checkout", "main", cwd=self.seed)
+        cmd("git", "merge", "--no-ff", "side", "-m", "merge side", cwd=self.seed)
+        cmd("git", "push", "origin", "main", cwd=self.seed)
+        with patch.object(deploy, "dependencies") as dependencies, patch.object(
+                deploy, "tests") as tests, patch.object(deploy, "promote") as promote:
+            result = self.run_deploy(side)
+            dependencies.assert_not_called()
+            tests.assert_not_called()
+            promote.assert_not_called()
+        self.assertEqual((result["status"], result["reason"]), ("FAIL", "SOURCE_INVALID"))
+        self.assertEqual(os.readlink(self.current), previous)
+
+    def test_forward_ancestry_error_never_tests_or_promotes(self):
+        self.assertEqual(self.run_deploy(self.a)["status"], "PASS")
+        previous = os.readlink(self.current)
+        original = deploy.ancestor
+        calls = []
+        def fail_forward(release, older, newer, **kwargs):
+            calls.append((older, newer))
+            if (older, newer) == (self.a, self.b) and calls.count((older, newer)) == 2:
+                raise deploy.Failure("SOURCE_INVALID")
+            return original(release, older, newer, **kwargs)
+        with patch.object(deploy, "ancestor", side_effect=fail_forward), patch.object(
+                deploy, "dependencies") as dependencies, patch.object(
+                deploy, "tests") as tests, patch.object(deploy, "promote") as promote:
+            result = self.run_deploy(self.b)
+            dependencies.assert_not_called()
+            tests.assert_not_called()
+            promote.assert_not_called()
+        self.assertEqual((result["status"], result["reason"]), ("FAIL", "SOURCE_INVALID"))
+        self.assertEqual(os.readlink(self.current), previous)
+
     def test_exact_sha_creates_independent_git_and_promotes_atomically(self):
         result = self.run_deploy(self.b)
         self.assertEqual((result["status"], result["reason"], result["final_sha"],
@@ -446,9 +498,45 @@ class IsolatedBoundaryTest(unittest.TestCase):
         self.release = self.releases / (self.sha + "-123456789abc")
         self.release.mkdir()
         (self.release / "requirements-deploy.lock").write_text("reviewed fixture lock\n")
+        account = type("Account", (), {"pw_gid": 1001})()
+        group = type("Group", (), {"gr_gid": 1001})()
+        for stub in (patch.object(deploy.pwd, "getpwnam", return_value=account),
+                     patch.object(deploy.grp, "getgrnam", return_value=group),
+                     patch.object(deploy.os, "getgrouplist", return_value=[1001])):
+            stub.start()
+            self.addCleanup(stub.stop)
         lock_check = patch.object(deploy, "verify_dependency_lock")
         lock_check.start()
         self.addCleanup(lock_check.stop)
+
+    def test_nss_group_allowlist_and_lookup_failures_block_services(self):
+        deploy.deployment_account_groups()
+        cases = [
+            ("docker", patch.object(deploy.os, "getgrouplist", return_value=[1001, 999])),
+            ("sudo", patch.object(deploy.os, "getgrouplist", return_value=[1001, 27])),
+            ("arbitrary", patch.object(deploy.os, "getgrouplist", return_value=[1001, 2345])),
+            ("missing expected", patch.object(deploy.os, "getgrouplist", return_value=[])),
+            ("NSS failure", patch.object(deploy.os, "getgrouplist", side_effect=OSError())),
+            ("account missing", patch.object(deploy.pwd, "getpwnam", side_effect=KeyError())),
+            ("group missing", patch.object(deploy.grp, "getgrnam", side_effect=KeyError())),
+            ("wrong primary", patch.object(deploy.pwd, "getpwnam",
+                return_value=type("Account", (), {"pw_gid": 0})())),
+        ]
+        for label, stub in cases:
+            with self.subTest(case=label), stub, patch.object(deploy, "command") as commands, patch.object(
+                    deploy, "tests") as tests, patch.object(deploy, "promote") as promote:
+                with self.assertRaisesRegex(deploy.Failure, "STATE_BOUNDARY_FAILED"):
+                    deploy.dependency_boundary(self.release, releases=self.releases)
+                result = deploy.deploy(self.sha, root=self.root, releases=self.releases,
+                    current=self.root / "current", control=self.control,
+                    check_boundary=lambda: deploy.boundary(
+                        root=self.root, releases=self.releases, control=self.control),
+                    test_runner=tests)
+                self.assertEqual(result["reason"], "STATE_BOUNDARY_FAILED")
+                commands.assert_not_called()
+                tests.assert_not_called()
+                promote.assert_not_called()
+                self.assertFalse((self.root / "current").exists())
 
     def test_report_read_rejects_symlinks_nonregular_and_oversize_before_parse(self):
         output = self.control / "reports/result.json"
@@ -678,7 +766,7 @@ class IsolatedBoundaryTest(unittest.TestCase):
                       "InaccessiblePaths=/root/modelfc-state /root/dev/modelfc "
                       "/var/lib/modelfc-deploy\n"
                       "PrivateTmp=yes\nPrivateDevices=yes\nNoNewPrivileges=yes\nKillMode=control-group\n"
-                      "BindPaths=\nBindReadOnlyPaths=\nMountImages=\nTemporaryFileSystem=/tmp:rw,size=268435456,nr_inodes=16384 /var/tmp:rw,size=268435456,nr_inodes=16384\n"
+                      "BindPaths=\nBindReadOnlyPaths=\nMountImages=\nLoadCredential=\nLoadCredentialEncrypted=\nImportCredential=\nSetCredential=\nTemporaryFileSystem=/tmp:rw,size=268435456,nr_inodes=16384 /var/tmp:rw,size=268435456,nr_inodes=16384\n"
                       "MemoryMax=2147483648\nTasksMax=64\n"
                       "ExecStart=" + effective_exec("/usr/bin/python3", "-I", str(deploy.TRUSTED),
                                                     "--install-dependencies", self.release.name) + "\n")
@@ -845,6 +933,31 @@ class IsolatedBoundaryTest(unittest.TestCase):
                         deploy.dependency_boundary(release, releases=self.releases))
                 self.assertEqual(run.call_count, 2)
 
+    def test_dependency_credentials_prevent_install_service_start(self):
+        cases = [(name + "=\n", replacement) for name in
+                 ("LoadCredential", "LoadCredentialEncrypted", "ImportCredential", "SetCredential")
+                 for replacement in ("", name + "=unexpected\n")]
+        for index, (old, new) in enumerate(cases):
+            candidate = self.releases / (self.sha + f"-{index + 10:012x}")
+            candidate.mkdir()
+            properties = self.dependency_properties().replace(str(self.release), str(candidate))
+            properties = properties.replace(self.release.name, candidate.name).replace(old, new)
+            def fake_command(args, **kwargs):
+                if args[:3] == ["/usr/bin/python3", "-m", "venv"]:
+                    (candidate / ".venv/bin").mkdir(parents=True)
+                    (candidate / ".venv/bin/python").write_text("fresh runtime")
+                    (candidate / ".venv/pyvenv.cfg").write_text("version = 3.12\n")
+                    return ""
+                if args[:2] == ["systemctl", "show"]:
+                    return properties
+                self.fail("Dependency installation must not start after a credential boundary failure")
+            with self.subTest(property=new), patch.object(
+                    deploy, "command", side_effect=fake_command) as run:
+                with self.assertRaisesRegex(deploy.Failure, "STATE_BOUNDARY_FAILED"):
+                    deploy.dependencies(candidate, check_boundary=lambda release:
+                        deploy.dependency_boundary(release, releases=self.releases))
+                self.assertEqual(run.call_count, 2)
+
     def test_dependency_install_cannot_change_venv_bootstrap(self):
         mutations = ("interpreter", "symlink", "configuration")
         for index, mutation in enumerate(mutations):
@@ -937,7 +1050,7 @@ class IsolatedBoundaryTest(unittest.TestCase):
         properties = ("PrivateNetwork=yes\nPrivateTmp=yes\nNoNewPrivileges=yes\nKillMode=control-group\nInaccessiblePaths=/root/modelfc-state "
                       "/root/dev/modelfc /etc/modelfc-validator\nProtectSystem=strict\n"
                       f"ReadOnlyPaths={self.releases} {self.control}\nReadWritePaths="
-                      f"{self.control / 'reports'}\nBindPaths=\nBindReadOnlyPaths=\nMountImages=\nTemporaryFileSystem=\n"
+                      f"{self.control / 'reports'}\nBindPaths=\nBindReadOnlyPaths=\nMountImages=\nLoadCredential=\nLoadCredentialEncrypted=\nImportCredential=\nSetCredential=\nTemporaryFileSystem=\n"
                       "MemoryMax=2147483648\nTasksMax=64\n"
                       "User=modelfc-deploy\nGroup=modelfc-deploy\nSupplementaryGroups=\nExecStart=" + effective_exec(
                           "/usr/bin/python3", "-I", str(deploy.TRUSTED), "--run-tests") + "\n")
@@ -1016,6 +1129,35 @@ class IsolatedBoundaryTest(unittest.TestCase):
             changed = properties.replace("MountImages=\n",
                                          "" if mode is None else f"MountImages={mode}\n")
             with self.subTest(mount_images=mode), patch.object(
+                    deploy.os, "geteuid", return_value=1001), patch.object(
+                    deploy.pwd, "getpwuid", return_value=identity), patch.object(
+                    deploy.os, "access", return_value=False), patch.object(
+                    deploy.os, "stat", side_effect=owned_stat), patch.object(
+                    deploy, "command", return_value=changed) as commands, patch.object(
+                    deploy, "create_release") as create, patch.object(
+                    deploy, "tests") as tests, patch.object(
+                    deploy, "promote") as promote:
+                result = deploy.deploy(self.sha, root=self.root, releases=self.releases,
+                    current=self.root / "current", control=self.control, remote="unused",
+                    check_boundary=lambda: deploy.boundary(
+                        root=self.root, releases=self.releases, control=self.control))
+                self.assertEqual((result["status"], result["reason"]),
+                                 ("FAIL", "STATE_BOUNDARY_FAILED"))
+                create.assert_not_called()
+                tests.assert_not_called()
+                promote.assert_not_called()
+                self.assertFalse((self.root / "current").is_symlink())
+                self.assertFalse((self.root / "current").exists())
+                self.assertTrue(all(call.args[0][:2] == ["systemctl", "show"]
+                                    for call in commands.call_args_list))
+        for name in ("LoadCredential", "LoadCredentialEncrypted", "ImportCredential", "SetCredential"):
+            self.assertIn(name, show.call_args.args[0])
+        for name, mode in ((name, mode) for name in
+                           ("LoadCredential", "LoadCredentialEncrypted", "ImportCredential", "SetCredential")
+                           for mode in (None, "unexpected")):
+            changed = properties.replace(name + "=\n",
+                                         "" if mode is None else f"{name}={mode}\n")
+            with self.subTest(credential=name, value=mode), patch.object(
                     deploy.os, "geteuid", return_value=1001), patch.object(
                     deploy.pwd, "getpwuid", return_value=identity), patch.object(
                     deploy.os, "access", return_value=False), patch.object(
@@ -1120,7 +1262,7 @@ class IsolatedBoundaryTest(unittest.TestCase):
         base = ("PrivateNetwork=yes\nNoNewPrivileges=yes\nInaccessiblePaths=/root/modelfc-state "
                 "/root/dev/modelfc /etc/modelfc-validator\nProtectSystem=strict\n"
                 f"ReadOnlyPaths={self.releases} {self.control}\nReadWritePaths="
-                f"{self.control / 'reports'}\nBindPaths=\nBindReadOnlyPaths=\nMountImages=\nTemporaryFileSystem=\n"
+                f"{self.control / 'reports'}\nBindPaths=\nBindReadOnlyPaths=\nMountImages=\nLoadCredential=\nLoadCredentialEncrypted=\nImportCredential=\nSetCredential=\nTemporaryFileSystem=\n"
                 "MemoryMax=2147483648\nTasksMax=64\nUser=modelfc-deploy\n"
                 "Group=modelfc-deploy\nSupplementaryGroups=\nExecStart=" + effective_exec(
                     "/usr/bin/python3", "-I", str(deploy.TRUSTED), "--run-tests") + "\n")

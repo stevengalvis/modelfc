@@ -5,6 +5,7 @@ the installed systemd unit invokes --run-tests against one candidate release.
 """
 
 import fcntl
+import grp
 import hashlib
 import json
 import os
@@ -141,8 +142,21 @@ def trusted_exec_start(value, argv):
             and fields["ignore_errors"] == "no")
 
 
+def deployment_account_groups():
+    """Attest NSS memberships, including groups inherited outside the unit."""
+    try:
+        account = pwd.getpwnam("modelfc-deploy")
+        expected = grp.getgrnam("modelfc-deploy").gr_gid
+        groups = set(os.getgrouplist("modelfc-deploy", account.pw_gid))
+        if account.pw_gid != expected or groups != {expected}:
+            raise Failure("STATE_BOUNDARY_FAILED")
+    except (KeyError, OSError, TypeError, ValueError):
+        raise Failure("STATE_BOUNDARY_FAILED") from None
+
+
 def boundary(*, root=ROOT, releases=RELEASES, control=CONTROL, state=STATE,
              service=SERVICE):
+    deployment_account_groups()
     reports = control / "reports"
     if os.geteuid() == 0 or pwd.getpwuid(os.geteuid()).pw_name != "modelfc-deploy":
         raise Failure("STATE_BOUNDARY_FAILED")
@@ -170,6 +184,8 @@ def boundary(*, root=ROOT, releases=RELEASES, control=CONTROL, state=STATE,
                               "-p", "ExecStart", "-p", "ProtectSystem",
                               "-p", "ReadOnlyPaths", "-p", "ReadWritePaths",
                               "-p", "BindPaths", "-p", "BindReadOnlyPaths", "-p", "MountImages",
+                              "-p", "LoadCredential", "-p", "LoadCredentialEncrypted",
+                              "-p", "ImportCredential", "-p", "SetCredential",
                               "-p", "TemporaryFileSystem",
                               "-p", "MemoryMax", "-p", "TasksMax"], timeout=15)
     except Failure:
@@ -188,6 +204,8 @@ def boundary(*, root=ROOT, releases=RELEASES, control=CONTROL, state=STATE,
             or fields.get("BindPaths") not in (None, "")
             or fields.get("BindReadOnlyPaths") != ""
             or fields.get("MountImages") != ""
+            or any(fields.get(name) != "" for name in
+                   ("LoadCredential", "LoadCredentialEncrypted", "ImportCredential", "SetCredential"))
             or fields.get("TemporaryFileSystem") not in (None, "")
             or fields.get("User") != "modelfc-deploy"
             or fields.get("Group") != "modelfc-deploy"
@@ -201,6 +219,7 @@ def boundary(*, root=ROOT, releases=RELEASES, control=CONTROL, state=STATE,
 
 def dependency_boundary(release, *, releases=None):
     releases = RELEASES if releases is None else releases
+    deployment_account_groups()
     if release.parent != releases or release_path(release.name, releases=releases) != release:
         raise Failure("STATE_BOUNDARY_FAILED")
     instance = DEPENDENCY_SERVICE.format(release.name)
@@ -212,6 +231,8 @@ def dependency_boundary(release, *, releases=None):
                               "-p", "PrivateTmp", "-p", "PrivateDevices",
                               "-p", "NoNewPrivileges", "-p", "KillMode",
                               "-p", "BindPaths", "-p", "BindReadOnlyPaths", "-p", "MountImages",
+                              "-p", "LoadCredential", "-p", "LoadCredentialEncrypted",
+                              "-p", "ImportCredential", "-p", "SetCredential",
                               "-p", "TemporaryFileSystem",
                               "-p", "MemoryMax", "-p", "TasksMax"], timeout=15)
     except Failure:
@@ -233,6 +254,8 @@ def dependency_boundary(release, *, releases=None):
             or fields.get("BindPaths") not in (None, "")
             or fields.get("BindReadOnlyPaths") != ""
             or fields.get("MountImages") != ""
+            or any(fields.get(name) != "" for name in
+                   ("LoadCredential", "LoadCredentialEncrypted", "ImportCredential", "SetCredential"))
             or not dependency_tmpfs_valid(fields.get("TemporaryFileSystem"))
             or fields.get("MemoryMax") != str(2 * 1024**3)
             or fields.get("TasksMax") != "64"
@@ -598,6 +621,8 @@ def deploy(sha, *, root=ROOT, releases=RELEASES, current=CURRENT, control=CONTRO
                 value.update(status="SUPERSEDED", reason="SUPERSEDED",
                              promotion_status="SUPERSEDED")
                 return value
+            if previous is not None and not ancestor(candidate, previous, sha):
+                raise Failure("SOURCE_INVALID")
             checkout_release(candidate, sha)
             verify_source(candidate, sha)
             value["dependency_sync"] = dependencies(candidate)
