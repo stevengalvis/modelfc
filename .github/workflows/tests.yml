@@ -8,7 +8,7 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -18,11 +18,15 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install runtime and test dependencies
-        run: python3 -m pip install -r requirements.txt
+      - name: Create fresh locked environment
+        run: |
+          python3 -m venv "$RUNNER_TEMP/modelfc-locked"
+          "$RUNNER_TEMP/modelfc-locked/bin/python" -m pip install --require-hashes --only-binary=:all: --no-cache-dir -r requirements-deploy.lock
+          "$RUNNER_TEMP/modelfc-locked/bin/python" -m pip check
+          "$RUNNER_TEMP/modelfc-locked/bin/python" -B tests/test_deployment_dependencies.py --check-installed
 
       - name: Run test suite
-        run: PYTHONPATH=src python3 -m unittest discover -v
+        run: PYTHONPATH=src "$RUNNER_TEMP/modelfc-locked/bin/python" -m unittest discover -v
 
       - name: Compile Python sources and tests
-        run: python3 -m compileall -q src tests
+        run: '"$RUNNER_TEMP/modelfc-locked/bin/python" -m compileall -q src tests'
