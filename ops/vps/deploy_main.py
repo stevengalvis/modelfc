@@ -206,6 +206,11 @@ def service_inactive(unit):
         output = command(["systemctl", "show", unit, "--all", "-p", "ActiveState",
                           "-p", "MainPID", "-p", "ControlPID", "-p", "ControlGroup", "-p", "Job"], timeout=15)
         fields = dict(line.split("=", 1) for line in output.splitlines() if "=" in line)
+        if fields.get("Job") == "":
+            job = bus_properties(unit, "Unit", {"Job": "(uo)"})["Job"]
+            if len(job) != 2 or type(job[0]) is not int or job != [0, "/"]:
+                return False
+            fields["Job"] = "0"
         if (fields.get("ActiveState") not in ("inactive", "failed")
                 or fields.get("MainPID") != "0" or fields.get("ControlPID") != "0"
                 or fields.get("Job") != "0" or "ControlGroup" not in fields):
@@ -307,6 +312,78 @@ SERVICE_UNSET = ("ODDSPAPI_API_KEY", "GITHUB_TOKEN", "SSH_AUTH_SOCK", "LD_PRELOA
                  "LD_LIBRARY_PATH", "LD_AUDIT", "PYTHONPATH", "PYTHONHOME")
 
 
+# systemd 255's text printer cannot render credential structs, and omits
+# empty EnvironmentFiles/Exec* arrays even with --all. Query effective D-Bus
+# values, never unit-file text, to disambiguate these specific representations.
+CREDENTIAL_TYPES = {
+    "LoadCredential": "a(ss)", "LoadCredentialEncrypted": "a(ss)",
+    "SetCredential": "a(say)", "SetCredentialEncrypted": "a(say)",
+    "ImportCredential": "as",
+}
+OMITTED_EMPTY_TYPES = {
+    "EnvironmentFiles": "a(sb)",
+    **{name: "a(sasbttttuii)" for name in
+       ("ExecCondition", "ExecStartPre", "ExecStartPost", "ExecStop", "ExecStopPost")},
+}
+
+
+def unique_properties(pairs):
+    pairs = list(pairs)
+    result = dict(pairs)
+    if len(result) != len(pairs):
+        raise ValueError("duplicate property")
+    return result
+
+
+def bus_properties(unit, interface, signatures):
+    """Read typed effective properties; no sudo, inherited bus address, or fallback."""
+    service_kind(unit)
+    # All allowlisted names start with a letter and contain only ASCII.
+    label = re.sub(r"[^a-zA-Z0-9]", lambda m: "_%02x" % ord(m[0]), unit)
+    try:
+        output = command([
+            "/usr/bin/busctl", "--system", "--json=short", "get-property",
+            "org.freedesktop.systemd1", "/org/freedesktop/systemd1/unit/" + label,
+            "org.freedesktop.systemd1." + interface, *signatures,
+        ], env={"PATH": "/usr/bin:/bin", "LANG": "C"}, timeout=15)
+        rows = output.splitlines()
+        if len(rows) != len(signatures):
+            raise ValueError
+        result = {}
+        for (name, signature), row in zip(signatures.items(), rows):
+            value = json.loads(row, object_pairs_hook=unique_properties)
+            if (not isinstance(value, dict) or set(value) != {"type", "data"}
+                    or value["type"] != signature or not isinstance(value["data"], list)):
+                raise ValueError
+            result[name] = value["data"]
+        return result
+    except (Failure, ValueError, TypeError):
+        # Do not include credential payloads or raw bus errors in reports.
+        raise Failure("STATE_BOUNDARY_FAILED") from None
+
+
+def service_properties(unit, output):
+    try:
+        fields = unique_properties(line.split("=", 1) for line in output.splitlines())
+    except (ValueError, TypeError):
+        raise Failure("STATE_BOUNDARY_FAILED") from None
+    signatures = dict(CREDENTIAL_TYPES)
+    for name in CREDENTIAL_TYPES:
+        allowed = ("",) if name == "ImportCredential" else ("", "[unprintable]")
+        if fields.get(name) not in allowed:
+            raise Failure("STATE_BOUNDARY_FAILED")
+    for name, signature in OMITTED_EMPTY_TYPES.items():
+        if name not in fields:
+            signatures[name] = signature
+        elif fields[name] != "":
+            raise Failure("STATE_BOUNDARY_FAILED")
+    values = bus_properties(unit, "Service", signatures)
+    if any(values[name] != [] for name in signatures):
+        raise Failure("STATE_BOUNDARY_FAILED")
+    fields.update({name: "" for name in signatures})
+    return fields
+
+
 def service_environment_valid(fields, *, bytecode):
     expected = ["PYTHONDONTWRITEBYTECODE=1"] if bytecode else []
     try:
@@ -383,7 +460,7 @@ def boundary(*, root=ROOT, releases=RELEASES, control=CONTROL, state=STATE,
                               "-p", "ReadOnlyPaths", "-p", "ReadWritePaths",
                               "-p", "BindPaths", "-p", "BindReadOnlyPaths", "-p", "MountImages",
                               "-p", "LoadCredential", "-p", "LoadCredentialEncrypted",
-                              "-p", "ImportCredential", "-p", "SetCredential",
+                              "-p", "ImportCredential", "-p", "SetCredential", "-p", "SetCredentialEncrypted",
                               "-p", "ExecCondition", "-p", "ExecStartPre", "-p", "ExecStartPost", "-p", "ExecStop", "-p", "ExecStopPost",
                               "-p", "AmbientCapabilities",
                               "-p", "TemporaryFileSystem",
@@ -393,7 +470,7 @@ def boundary(*, root=ROOT, releases=RELEASES, control=CONTROL, state=STATE,
                               "-p", "PassEnvironment", "-p", "UnsetEnvironment"], timeout=15)
     except Failure:
         raise Failure("STATE_BOUNDARY_FAILED") from None
-    fields = dict(line.split("=", 1) for line in properties.splitlines() if "=" in line)
+    fields = service_properties(service, properties)
     hidden = fields.get("InaccessiblePaths", "").split()
     if (not service_environment_valid(fields, bytecode=True)
             or fields.get("StandardInput") != "null"
@@ -411,7 +488,7 @@ def boundary(*, root=ROOT, releases=RELEASES, control=CONTROL, state=STATE,
             or fields.get("BindReadOnlyPaths") != ""
             or fields.get("MountImages") != ""
             or any(fields.get(name) != "" for name in
-                   ("LoadCredential", "LoadCredentialEncrypted", "ImportCredential", "SetCredential",
+                   ("LoadCredential", "LoadCredentialEncrypted", "ImportCredential", "SetCredential", "SetCredentialEncrypted",
                     "ExecCondition", "ExecStartPre", "ExecStartPost", "ExecStop", "ExecStopPost", "AmbientCapabilities"))
             or fields.get("TemporaryFileSystem") not in (None, "")
             or fields.get("User") != "modelfc-deploy"
@@ -442,7 +519,7 @@ def dependency_boundary(release, *, releases=None):
                               "-p", "NoNewPrivileges", "-p", "KillMode",
                               "-p", "BindPaths", "-p", "BindReadOnlyPaths", "-p", "MountImages",
                               "-p", "LoadCredential", "-p", "LoadCredentialEncrypted",
-                              "-p", "ImportCredential", "-p", "SetCredential",
+                              "-p", "ImportCredential", "-p", "SetCredential", "-p", "SetCredentialEncrypted",
                               "-p", "ExecCondition", "-p", "ExecStartPre", "-p", "ExecStartPost", "-p", "ExecStop", "-p", "ExecStopPost",
                               "-p", "AmbientCapabilities",
                               "-p", "TemporaryFileSystem",
@@ -452,7 +529,7 @@ def dependency_boundary(release, *, releases=None):
                               "-p", "PassEnvironment", "-p", "UnsetEnvironment"], timeout=15)
     except Failure:
         raise Failure("STATE_BOUNDARY_FAILED") from None
-    fields = dict(line.split("=", 1) for line in properties.splitlines() if "=" in line)
+    fields = service_properties(instance, properties)
     hidden = fields.get("InaccessiblePaths", "").split()
     if (not service_environment_valid(fields, bytecode=False)
             or fields.get("StandardInput") != "null"
@@ -473,7 +550,7 @@ def dependency_boundary(release, *, releases=None):
             or fields.get("BindReadOnlyPaths") != ""
             or fields.get("MountImages") != ""
             or any(fields.get(name) != "" for name in
-                   ("LoadCredential", "LoadCredentialEncrypted", "ImportCredential", "SetCredential",
+                   ("LoadCredential", "LoadCredentialEncrypted", "ImportCredential", "SetCredential", "SetCredentialEncrypted",
                     "ExecCondition", "ExecStartPre", "ExecStartPost", "ExecStop", "ExecStopPost", "AmbientCapabilities"))
             or not dependency_tmpfs_valid(fields.get("TemporaryFileSystem"))
             or fields.get("MemoryMax") != str(2 * 1024**3)
@@ -541,7 +618,7 @@ def acquisition_boundary(release_id):
         "ReadOnlyPaths": str(ROOT), "NoNewPrivileges": "yes", "PrivateDevices": "yes",
         "PrivateTmp": "yes", "WorkingDirectory": str(ACQUISITION),
         "BindPaths": "", "BindReadOnlyPaths": "", "MountImages": "", "TemporaryFileSystem": "",
-        "LoadCredential": "", "LoadCredentialEncrypted": "", "ImportCredential": "", "SetCredential": "",
+        "LoadCredential": "", "LoadCredentialEncrypted": "", "ImportCredential": "", "SetCredential": "", "SetCredentialEncrypted": "",
         "ExecCondition": "", "ExecStartPre": "", "ExecStartPost": "", "ExecStop": "", "ExecStopPost": "",
         "AmbientCapabilities": "", "Delegate": "no", "StandardInput": "null",
     }
@@ -551,7 +628,7 @@ def acquisition_boundary(release_id):
         args.extend(["-p", key])
     try:
         output = command(args, timeout=15)
-        fields = dict(line.split("=", 1) for line in output.splitlines() if "=" in line)
+        fields = service_properties(unit, output)
         if (not service_environment_valid(fields, bytecode=True)
                 or any(fields.get(key) != value for key, value in expected.items())
                 or not {str(STATE), str(HISTORY), str(CONTROL), "/etc/modelfc-validator"}
