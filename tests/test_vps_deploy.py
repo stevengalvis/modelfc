@@ -44,7 +44,7 @@ class FreshReleaseTest(unittest.TestCase):
         self.current = self.deploy_root / "current"
         self.control = self.root / "control"
         self.control.mkdir()
-        (self.control / "reports").mkdir()
+        (self.control / "reports").mkdir(mode=0o700)
         self.legacy = self.root / "old-checkout"
         self.legacy.mkdir()
         (self.legacy / "E1_2627.csv").write_text("historical evidence unchanged\n")
@@ -380,7 +380,7 @@ class IsolatedBoundaryTest(unittest.TestCase):
         self.root = Path(self.temp.name)
         self.control = self.root / "control"
         self.control.mkdir()
-        (self.control / "reports").mkdir()
+        (self.control / "reports").mkdir(mode=0o700)
         self.releases = self.root / "releases"
         self.releases.mkdir()
         self.sha = "a" * 40
@@ -460,6 +460,38 @@ class IsolatedBoundaryTest(unittest.TestCase):
                     command.assert_not_called()
                     create.assert_not_called()
                     promote.assert_not_called()
+
+    def test_invalid_reports_modes_prevent_tests_and_promotion(self):
+        reports = self.control / "reports"
+        identity = type("Person", (), {"pw_name": "modelfc-deploy"})()
+        real_stat = os.stat
+        def owned_stat(path, *args, **kwargs):
+            result = real_stat(path, *args, **kwargs)
+            if str(path) in map(str, (self.root, self.releases, self.control, reports)):
+                return type("Owned", (), {"st_uid": 1001, "st_mode": result.st_mode})()
+            return result
+        # No owner access, no owner write, and extra group/world permissions.
+        for mode in (0o000, 0o500, 0o600, 0o720, 0o702, 0o750, 0o705):
+            reports.chmod(mode)
+            try:
+                with self.subTest(mode=oct(mode)), patch.object(
+                        deploy.os, "geteuid", return_value=1001), patch.object(
+                        deploy.pwd, "getpwuid", return_value=identity), patch.object(
+                        deploy.os, "access", return_value=False), patch.object(
+                        deploy.os, "stat", side_effect=owned_stat), patch.object(
+                        deploy, "command") as command, patch.object(
+                        deploy, "tests") as tests, patch.object(deploy, "promote") as promote:
+                    result = deploy.deploy(self.sha, root=self.root, releases=self.releases,
+                        current=self.root / "current", control=self.control,
+                        check_boundary=lambda: deploy.boundary(root=self.root,
+                            releases=self.releases, control=self.control), test_runner=tests)
+                    self.assertEqual(result["reason"], "STATE_BOUNDARY_FAILED")
+                    command.assert_not_called()
+                    tests.assert_not_called()
+                    promote.assert_not_called()
+                    self.assertEqual(reports.stat().st_mode & 0o777, mode)
+            finally:
+                reports.chmod(0o700)
 
     def test_dependency_timeout_covers_internal_budgets(self):
         unit = (SOURCE.parents[2] / "deploy/modelfc-postmerge-dependencies@.service").read_text()

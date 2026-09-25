@@ -157,7 +157,8 @@ def boundary(*, root=ROOT, releases=RELEASES, control=CONTROL, state=STATE,
             or not reports.is_dir()
             or control.stat().st_uid != os.geteuid()
             or reports.stat().st_uid != os.geteuid()
-            or control.stat().st_mode & 0o022 or reports.stat().st_mode & 0o022
+            or control.stat().st_mode & 0o022
+            or stat.S_IMODE(reports.stat().st_mode) != 0o700
             or any((control / name).is_symlink() for name in
                    ("deploy.lock", REQUEST.name))
             or (reports / TEST_OUTPUT.name).is_symlink()):
