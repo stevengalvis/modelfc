@@ -164,12 +164,12 @@ def boundary(*, root=ROOT, releases=RELEASES, control=CONTROL, state=STATE,
             or (reports / TEST_OUTPUT.name).is_symlink()):
         raise Failure("STATE_BOUNDARY_FAILED")
     try:
-        properties = command(["systemctl", "show", service,
+        properties = command(["systemctl", "show", service, "--all",
                               "-p", "PrivateNetwork", "-p", "PrivateTmp", "-p", "NoNewPrivileges", "-p", "KillMode", "-p", "InaccessiblePaths",
                               "-p", "User", "-p", "Group", "-p", "SupplementaryGroups",
                               "-p", "ExecStart", "-p", "ProtectSystem",
                               "-p", "ReadOnlyPaths", "-p", "ReadWritePaths",
-                              "-p", "BindPaths", "-p", "BindReadOnlyPaths",
+                              "-p", "BindPaths", "-p", "BindReadOnlyPaths", "-p", "MountImages",
                               "-p", "TemporaryFileSystem",
                               "-p", "MemoryMax", "-p", "TasksMax"], timeout=15)
     except Failure:
@@ -187,6 +187,7 @@ def boundary(*, root=ROOT, releases=RELEASES, control=CONTROL, state=STATE,
             or fields.get("ReadWritePaths") != str(reports)
             or fields.get("BindPaths") not in (None, "")
             or fields.get("BindReadOnlyPaths") != ""
+            or fields.get("MountImages") != ""
             or fields.get("TemporaryFileSystem") not in (None, "")
             or fields.get("User") != "modelfc-deploy"
             or fields.get("Group") != "modelfc-deploy"
@@ -204,13 +205,13 @@ def dependency_boundary(release, *, releases=None):
         raise Failure("STATE_BOUNDARY_FAILED")
     instance = DEPENDENCY_SERVICE.format(release.name)
     try:
-        properties = command(["systemctl", "show", instance, "-p", "User", "-p", "ExecStart",
+        properties = command(["systemctl", "show", instance, "--all", "-p", "User", "-p", "ExecStart",
                               "-p", "Group", "-p", "SupplementaryGroups",
                               "-p", "ProtectSystem", "-p", "ReadOnlyPaths",
                               "-p", "ReadWritePaths", "-p", "InaccessiblePaths",
                               "-p", "PrivateTmp", "-p", "PrivateDevices",
                               "-p", "NoNewPrivileges", "-p", "KillMode",
-                              "-p", "BindPaths", "-p", "BindReadOnlyPaths",
+                              "-p", "BindPaths", "-p", "BindReadOnlyPaths", "-p", "MountImages",
                               "-p", "TemporaryFileSystem",
                               "-p", "MemoryMax", "-p", "TasksMax"], timeout=15)
     except Failure:
@@ -231,6 +232,7 @@ def dependency_boundary(release, *, releases=None):
             or fields.get("NoNewPrivileges") != "yes"
             or fields.get("BindPaths") not in (None, "")
             or fields.get("BindReadOnlyPaths") != ""
+            or fields.get("MountImages") != ""
             or not dependency_tmpfs_valid(fields.get("TemporaryFileSystem"))
             or fields.get("MemoryMax") != str(2 * 1024**3)
             or fields.get("TasksMax") != "64"
