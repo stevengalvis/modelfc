@@ -208,3 +208,13 @@ VPS installation or activation. Installing the reviewed controller and both unit
 configuring credentials, and host acceptance remain separate manually approved
 steps. Preserve all existing acceptance checks, including state/history isolation,
 mount-limit verification and failure cleanup, before enabling automatic deployment.
+
+Reviewed Model FC source and its tests are trusted code, as are the exact
+hash-approved dependency wheels. The test sandbox does not provide hard disk
+containment against intentionally malicious reviewed tests. Memory, task,
+timeout and free-space controls are operational safeguards against accidental
+failures, not a hard filesystem quota. Test-count validation detects accidental
+zero-test execution and ordinary failures; it is not adversarial attestation
+against trusted tests deliberately fabricating their own result. The controller
+requires effective test-service KillMode=control-group so an installed override
+cannot weaken process cleanup.

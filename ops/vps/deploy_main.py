@@ -165,7 +165,7 @@ def boundary(*, root=ROOT, releases=RELEASES, control=CONTROL, state=STATE,
         raise Failure("STATE_BOUNDARY_FAILED")
     try:
         properties = command(["systemctl", "show", service,
-                              "-p", "PrivateNetwork", "-p", "NoNewPrivileges", "-p", "InaccessiblePaths",
+                              "-p", "PrivateNetwork", "-p", "NoNewPrivileges", "-p", "KillMode", "-p", "InaccessiblePaths",
                               "-p", "User", "-p", "Group", "-p", "SupplementaryGroups",
                               "-p", "ExecStart", "-p", "ProtectSystem",
                               "-p", "ReadOnlyPaths", "-p", "ReadWritePaths",
@@ -178,6 +178,7 @@ def boundary(*, root=ROOT, releases=RELEASES, control=CONTROL, state=STATE,
     hidden = fields.get("InaccessiblePaths", "").split()
     if (fields.get("PrivateNetwork") != "yes"
             or fields.get("NoNewPrivileges") != "yes"
+            or fields.get("KillMode") != "control-group"
             or str(state) not in hidden or str(HISTORY) not in hidden
             or fields.get("ProtectSystem") != "strict"
             or str(releases) not in fields.get("ReadOnlyPaths", "").split()
