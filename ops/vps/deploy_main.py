@@ -186,7 +186,7 @@ def boundary(*, root=ROOT, releases=RELEASES, control=CONTROL, state=STATE,
                               "-p", "BindPaths", "-p", "BindReadOnlyPaths", "-p", "MountImages",
                               "-p", "LoadCredential", "-p", "LoadCredentialEncrypted",
                               "-p", "ImportCredential", "-p", "SetCredential",
-                              "-p", "ExecCondition", "-p", "ExecStartPre", "-p", "ExecStartPost", "-p", "ExecStopPost",
+                              "-p", "ExecCondition", "-p", "ExecStartPre", "-p", "ExecStartPost", "-p", "ExecStop", "-p", "ExecStopPost",
                               "-p", "AmbientCapabilities",
                               "-p", "TemporaryFileSystem",
                               "-p", "MemoryMax", "-p", "TasksMax"], timeout=15)
@@ -208,7 +208,7 @@ def boundary(*, root=ROOT, releases=RELEASES, control=CONTROL, state=STATE,
             or fields.get("MountImages") != ""
             or any(fields.get(name) != "" for name in
                    ("LoadCredential", "LoadCredentialEncrypted", "ImportCredential", "SetCredential",
-                    "ExecCondition", "ExecStartPre", "ExecStartPost", "ExecStopPost", "AmbientCapabilities"))
+                    "ExecCondition", "ExecStartPre", "ExecStartPost", "ExecStop", "ExecStopPost", "AmbientCapabilities"))
             or fields.get("TemporaryFileSystem") not in (None, "")
             or fields.get("User") != "modelfc-deploy"
             or fields.get("Group") != "modelfc-deploy"
@@ -236,7 +236,7 @@ def dependency_boundary(release, *, releases=None):
                               "-p", "BindPaths", "-p", "BindReadOnlyPaths", "-p", "MountImages",
                               "-p", "LoadCredential", "-p", "LoadCredentialEncrypted",
                               "-p", "ImportCredential", "-p", "SetCredential",
-                              "-p", "ExecCondition", "-p", "ExecStartPre", "-p", "ExecStartPost", "-p", "ExecStopPost",
+                              "-p", "ExecCondition", "-p", "ExecStartPre", "-p", "ExecStartPost", "-p", "ExecStop", "-p", "ExecStopPost",
                               "-p", "AmbientCapabilities",
                               "-p", "TemporaryFileSystem",
                               "-p", "MemoryMax", "-p", "TasksMax"], timeout=15)
@@ -261,7 +261,7 @@ def dependency_boundary(release, *, releases=None):
             or fields.get("MountImages") != ""
             or any(fields.get(name) != "" for name in
                    ("LoadCredential", "LoadCredentialEncrypted", "ImportCredential", "SetCredential",
-                    "ExecCondition", "ExecStartPre", "ExecStartPost", "ExecStopPost", "AmbientCapabilities"))
+                    "ExecCondition", "ExecStartPre", "ExecStartPost", "ExecStop", "ExecStopPost", "AmbientCapabilities"))
             or not dependency_tmpfs_valid(fields.get("TemporaryFileSystem"))
             or fields.get("MemoryMax") != str(2 * 1024**3)
             or fields.get("TasksMax") != "64"
