@@ -165,7 +165,7 @@ def boundary(*, root=ROOT, releases=RELEASES, control=CONTROL, state=STATE,
         raise Failure("STATE_BOUNDARY_FAILED")
     try:
         properties = command(["systemctl", "show", service,
-                              "-p", "PrivateNetwork", "-p", "NoNewPrivileges", "-p", "KillMode", "-p", "InaccessiblePaths",
+                              "-p", "PrivateNetwork", "-p", "PrivateTmp", "-p", "NoNewPrivileges", "-p", "KillMode", "-p", "InaccessiblePaths",
                               "-p", "User", "-p", "Group", "-p", "SupplementaryGroups",
                               "-p", "ExecStart", "-p", "ProtectSystem",
                               "-p", "ReadOnlyPaths", "-p", "ReadWritePaths",
@@ -177,6 +177,7 @@ def boundary(*, root=ROOT, releases=RELEASES, control=CONTROL, state=STATE,
     fields = dict(line.split("=", 1) for line in properties.splitlines() if "=" in line)
     hidden = fields.get("InaccessiblePaths", "").split()
     if (fields.get("PrivateNetwork") != "yes"
+            or fields.get("PrivateTmp") != "yes"
             or fields.get("NoNewPrivileges") != "yes"
             or fields.get("KillMode") != "control-group"
             or str(state) not in hidden or str(HISTORY) not in hidden
@@ -208,7 +209,7 @@ def dependency_boundary(release, *, releases=None):
                               "-p", "ProtectSystem", "-p", "ReadOnlyPaths",
                               "-p", "ReadWritePaths", "-p", "InaccessiblePaths",
                               "-p", "PrivateTmp", "-p", "PrivateDevices",
-                              "-p", "NoNewPrivileges",
+                              "-p", "NoNewPrivileges", "-p", "KillMode",
                               "-p", "BindPaths", "-p", "BindReadOnlyPaths",
                               "-p", "TemporaryFileSystem",
                               "-p", "MemoryMax", "-p", "TasksMax"], timeout=15)
@@ -225,6 +226,7 @@ def dependency_boundary(release, *, releases=None):
             or str(STATE) not in hidden or str(HISTORY) not in hidden
             or str(CONTROL) not in hidden
             or fields.get("PrivateTmp") != "yes"
+            or fields.get("KillMode") != "control-group"
             or fields.get("PrivateDevices") != "yes"
             or fields.get("NoNewPrivileges") != "yes"
             or fields.get("BindPaths") not in (None, "")
