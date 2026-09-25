@@ -372,8 +372,9 @@ prove actual kernel/systemd enforcement or installed sudo policy.
 ## Effective environments, trusted helper, and runtime permissions
 
 All three service boundaries now query `Environment`, `EnvironmentFiles`,
-`PassEnvironment`, and `UnsetEnvironment` with `systemctl show --all`. Missing or
-unverifiable output fails before execution. Test/acquisition units may configure
+`PassEnvironment`, and `UnsetEnvironment` with `systemctl show --all`.
+Unverifiable output fails before execution; the typed inspection below handles
+specific empty values omitted by systemd 255. Test/acquisition units may configure
 only `PYTHONDONTWRITEBYTECODE=1`; the dependency unit may configure no Environment
 assignments. EnvironmentFiles and PassEnvironment must be empty. The complete
 UnsetEnvironment list must contain exactly `ODDSPAPI_API_KEY`, `GITHUB_TOKEN`,
@@ -422,3 +423,38 @@ one expected executable and complete argument vector, with **empty execution
 flags** in `ExecStartEx`. Privileged (`+` / `privileged`), other flags, missing or
 unprintable properties fail before service execution. Confirm installed systemd
 255 effective output during VPS acceptance; the committed units need no changes.
+
+
+## systemd 255 effective-property serialization
+
+The controller combines `systemctl show --all` with read-only
+`/usr/bin/busctl --system --json=short get-property` on the same allowlisted unit.
+`busctl` is supplied by Ubuntu's systemd package; no Python D-Bus package, sudo
+permission, unit override, or installed-boundary relaxation is required. The bus
+query uses a clean environment, a 15-second timeout, and the system bus.
+
+| Effective properties | systemd 255 text representation | Required verification |
+| --- | --- | --- |
+| `LoadCredential`, `LoadCredentialEncrypted` | `[unprintable]` for empty or configured arrays | Always require typed `a(ss)` empty arrays from D-Bus |
+| `SetCredential`, `SetCredentialEncrypted` | `[unprintable]` for empty or configured arrays | Always require typed `a(say)` empty arrays from D-Bus |
+| `ImportCredential` | Empty string when unconfigured | Require empty text and typed `as` empty array |
+| `EnvironmentFiles` | No line for an empty array | If omitted, require typed `a(sb)` empty array |
+| `ExecCondition`, `ExecStartPre`, `ExecStartPost`, `ExecStop`, `ExecStopPost` | No line for an empty array | If omitted, require typed `a(sasbttttuii)` empty arrays |
+| `Job` | `Job=` for no queued job | Require typed `(uo)` value `[0, "/"]` before treating it as zero |
+
+All other checks remain exact, including environment allowlists, capabilities,
+stdin, resource/lifecycle limits, complete `ExecStart`/`ExecStartEx` commands and
+empty execution flags. A missing credential text property is still rejected.
+Explicitly configured text or nonempty typed arrays are rejected. Missing bus
+results, failed queries, incorrect signatures, duplicate keys, malformed JSON,
+and unexpected serialization fail closed. No credential data is included in
+failure reports. Job normalization never substitutes for zero process IDs and
+an empty or removed cgroup.
+
+This policy follows the systemd v255
+[systemctl printer](https://github.com/systemd/systemd/blob/v255/src/systemctl/systemctl-show.c),
+[generic property printer](https://github.com/systemd/systemd/blob/v255/src/shared/bus-print-properties.c),
+and [effective credential definitions](https://github.com/systemd/systemd/blob/v255/src/core/dbus-execute.c).
+Regression fixtures retain the real VPS text representation and typed empty-array
+responses. Host acceptance must still inspect actual effective properties as
+`modelfc-deploy`; static unit verification alone does not prove the boundary.

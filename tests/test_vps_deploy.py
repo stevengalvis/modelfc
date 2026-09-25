@@ -40,6 +40,13 @@ def invalid_exec_ex(*args):
             value.replace(" ; flags=", " extra ; flags=")]
 
 
+def legacy_empty_credentials(unit, interface, signatures):
+    # Explicit-empty legacy fixtures supply no evidence for omitted arrays.
+    if interface != "Service" or signatures != deploy.CREDENTIAL_TYPES:
+        raise deploy.Failure("STATE_BOUNDARY_FAILED")
+    return {name: [] for name in signatures}
+
+
 class RuntimeReleaseProvenanceTest(unittest.TestCase):
     def setUp(self):
         from modelfc import ledger_storage
@@ -894,7 +901,8 @@ class IsolatedBoundaryTest(unittest.TestCase):
         (self.release / "requirements-deploy.lock").write_text("reviewed fixture lock\n")
         account = type("Account", (), {"pw_gid": 1001})()
         group = type("Group", (), {"gr_gid": 1001})()
-        for stub in (patch.object(deploy.pwd, "getpwnam", return_value=account),
+        for stub in (patch.object(deploy, "bus_properties", side_effect=legacy_empty_credentials),
+                     patch.object(deploy.pwd, "getpwnam", return_value=account),
                      patch.object(deploy.grp, "getgrnam", return_value=group),
                      patch.object(deploy.os, "getgrouplist", return_value=[1001]),
                      patch.object(deploy, "PENDING_SERVICE", self.control / "service-pending.json"),
@@ -1192,7 +1200,7 @@ class IsolatedBoundaryTest(unittest.TestCase):
                       "/var/lib/modelfc-deploy\n"
                       "PrivateTmp=yes\nPrivateDevices=yes\nNoNewPrivileges=yes\nKillMode=control-group\n"
                       "TimeoutStartUSec=8min 30s\nTimeoutStopUSec=30s\nSendSIGKILL=yes\n"
-                      "BindPaths=\nBindReadOnlyPaths=\nMountImages=\nLoadCredential=\nLoadCredentialEncrypted=\nImportCredential=\nSetCredential=\nExecCondition=\nExecStartPre=\nExecStartPost=\nExecStop=\nExecStopPost=\nAmbientCapabilities=\nTemporaryFileSystem=/tmp:rw,size=268435456,nr_inodes=16384 /var/tmp:rw,size=268435456,nr_inodes=16384\n"
+                      "BindPaths=\nBindReadOnlyPaths=\nMountImages=\nLoadCredential=\nLoadCredentialEncrypted=\nImportCredential=\nSetCredential=\nSetCredentialEncrypted=\nExecCondition=\nExecStartPre=\nExecStartPost=\nExecStop=\nExecStopPost=\nAmbientCapabilities=\nTemporaryFileSystem=/tmp:rw,size=268435456,nr_inodes=16384 /var/tmp:rw,size=268435456,nr_inodes=16384\n"
                       "MemoryMax=2147483648\nTasksMax=64\n"
                       "ExecStart=" + effective_exec("/usr/bin/python3", "-I", str(deploy.TRUSTED),
                                                     "--install-dependencies", self.release.name) + "\n")
@@ -1385,7 +1393,7 @@ class IsolatedBoundaryTest(unittest.TestCase):
 
     def test_dependency_credentials_prevent_install_service_start(self):
         cases = [(name + "=\n", replacement) for name in
-                 ("LoadCredential", "LoadCredentialEncrypted", "ImportCredential", "SetCredential")
+                 ("LoadCredential", "LoadCredentialEncrypted", "ImportCredential", "SetCredential", "SetCredentialEncrypted")
                  for replacement in ("", name + "=unexpected\n")]
         original = effective_exec("/usr/bin/python3", "-I", str(deploy.TRUSTED),
                                   "--install-dependencies", self.release.name).split("\nExecStartEx=", 1)[1]
@@ -1541,7 +1549,7 @@ class IsolatedBoundaryTest(unittest.TestCase):
                       "PrivateNetwork=yes\nPrivateTmp=yes\nNoNewPrivileges=yes\nKillMode=control-group\nInaccessiblePaths=/root/modelfc-state "
                       "/root/dev/modelfc /etc/modelfc-validator\nProtectSystem=strict\n"
                       f"ReadOnlyPaths={self.releases} {self.control}\nReadWritePaths="
-                      f"{self.control / 'reports'}\nBindPaths=\nBindReadOnlyPaths=\nMountImages=\nLoadCredential=\nLoadCredentialEncrypted=\nImportCredential=\nSetCredential=\nExecCondition=\nExecStartPre=\nExecStartPost=\nExecStop=\nExecStopPost=\nAmbientCapabilities=\nTemporaryFileSystem=\n"
+                      f"{self.control / 'reports'}\nBindPaths=\nBindReadOnlyPaths=\nMountImages=\nLoadCredential=\nLoadCredentialEncrypted=\nImportCredential=\nSetCredential=\nSetCredentialEncrypted=\nExecCondition=\nExecStartPre=\nExecStartPost=\nExecStop=\nExecStopPost=\nAmbientCapabilities=\nTemporaryFileSystem=\n"
                       "MemoryMax=2147483648\nTasksMax=64\n"
                       "StandardInput=null\nUser=modelfc-deploy\nGroup=modelfc-deploy\nSupplementaryGroups=\nExecStart=" + effective_exec(
                           "/usr/bin/python3", "-I", str(deploy.TRUSTED), "--run-tests") + "\n")
@@ -1643,10 +1651,10 @@ class IsolatedBoundaryTest(unittest.TestCase):
                 self.assertFalse((self.root / "current").exists())
                 self.assertTrue(all(call.args[0][:2] == ["systemctl", "show"]
                                     for call in commands.call_args_list))
-        for name in ("LoadCredential", "LoadCredentialEncrypted", "ImportCredential", "SetCredential"):
+        for name in ("LoadCredential", "LoadCredentialEncrypted", "ImportCredential", "SetCredential", "SetCredentialEncrypted"):
             self.assertIn(name, show.call_args.args[0])
         for name, mode in ((name, mode) for name in
-                           ("LoadCredential", "LoadCredentialEncrypted", "ImportCredential", "SetCredential")
+                           ("LoadCredential", "LoadCredentialEncrypted", "ImportCredential", "SetCredential", "SetCredentialEncrypted")
                            for mode in (None, "unexpected")):
             changed = properties.replace(name + "=\n",
                                          "" if mode is None else f"{name}={mode}\n")
@@ -1803,7 +1811,7 @@ class IsolatedBoundaryTest(unittest.TestCase):
         base = ("PrivateNetwork=yes\nNoNewPrivileges=yes\nInaccessiblePaths=/root/modelfc-state "
                 "/root/dev/modelfc /etc/modelfc-validator\nProtectSystem=strict\n"
                 f"ReadOnlyPaths={self.releases} {self.control}\nReadWritePaths="
-                f"{self.control / 'reports'}\nBindPaths=\nBindReadOnlyPaths=\nMountImages=\nLoadCredential=\nLoadCredentialEncrypted=\nImportCredential=\nSetCredential=\nExecCondition=\nExecStartPre=\nExecStartPost=\nExecStop=\nExecStopPost=\nAmbientCapabilities=\nTemporaryFileSystem=\n"
+                f"{self.control / 'reports'}\nBindPaths=\nBindReadOnlyPaths=\nMountImages=\nLoadCredential=\nLoadCredentialEncrypted=\nImportCredential=\nSetCredential=\nSetCredentialEncrypted=\nExecCondition=\nExecStartPre=\nExecStartPost=\nExecStop=\nExecStopPost=\nAmbientCapabilities=\nTemporaryFileSystem=\n"
                 "StandardInput=null\nMemoryMax=2147483648\nTasksMax=64\nUser=modelfc-deploy\n"
                 "Group=modelfc-deploy\nSupplementaryGroups=\nExecStart=" + effective_exec(
                     "/usr/bin/python3", "-I", str(deploy.TRUSTED), "--run-tests") + "\n")
@@ -2192,7 +2200,7 @@ def acquisition_properties(ident):
         "ReadOnlyPaths": str(deploy.ROOT), "NoNewPrivileges": "yes", "PrivateDevices": "yes",
         "PrivateTmp": "yes", "WorkingDirectory": str(deploy.ACQUISITION),
         "BindPaths": "", "BindReadOnlyPaths": "", "MountImages": "", "TemporaryFileSystem": "",
-        "LoadCredential": "", "LoadCredentialEncrypted": "", "ImportCredential": "", "SetCredential": "",
+        "LoadCredential": "", "LoadCredentialEncrypted": "", "ImportCredential": "", "SetCredential": "", "SetCredentialEncrypted": "",
         "ExecCondition": "", "ExecStartPre": "", "ExecStartPost": "", "ExecStop": "", "ExecStopPost": "",
         "AmbientCapabilities": "", "Delegate": "no", "StandardInput": "null",
         "InaccessiblePaths": f"{deploy.STATE} {deploy.HISTORY} {deploy.CONTROL} /etc/modelfc-validator",
@@ -2210,7 +2218,8 @@ class AcquisitionResourceTest(unittest.TestCase):
         cgroup = self.root / "cgroup"
         cgroup.mkdir()
         (cgroup / "cgroup.controllers").write_text("memory pids")
-        for stub in (patch.object(deploy, "CGROUP_ROOT", cgroup),
+        for stub in (patch.object(deploy, "bus_properties", side_effect=legacy_empty_credentials),
+                     patch.object(deploy, "CGROUP_ROOT", cgroup),
                      patch.object(deploy, "deployment_account_groups"),
                      patch.object(deploy, "ACQUISITION", self.root)):
             stub.start()
@@ -2266,6 +2275,222 @@ class AcquisitionResourceTest(unittest.TestCase):
                 deploy, "acquisition_mount"), patch.object(deploy, "run_service", side_effect=service):
             self.assertEqual(deploy.run_acquisition(self.ident, None), {"status": "READY", "tip": "a" * 40})
 
+
+
+# Verbatim property output retained from the real Ubuntu/systemd 255 VPS.
+# Empty struct arrays are absent; credential struct arrays are unprintable.
+SYSTEMD255_TEST_PROPERTIES = """TimeoutStartUSec=5min 30s
+TimeoutStopUSec=30s
+ExecStart={ path=/usr/bin/python3 ; argv[]=/usr/bin/python3 -I /opt/modelfc-deploy/deploy_main.py --run-tests ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }
+ExecStartEx={ path=/usr/bin/python3 ; argv[]=/usr/bin/python3 -I /opt/modelfc-deploy/deploy_main.py --run-tests ; flags= ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }
+Delegate=no
+MemoryMax=2147483648
+TasksMax=64
+Environment=PYTHONDONTWRITEBYTECODE=1
+PassEnvironment=
+UnsetEnvironment=ODDSPAPI_API_KEY GITHUB_TOKEN SSH_AUTH_SOCK LD_PRELOAD LD_LIBRARY_PATH LD_AUDIT PYTHONPATH PYTHONHOME
+WorkingDirectory=/var/lib/modelfc-deploy
+MountImages=
+StandardInput=null
+AmbientCapabilities=
+User=modelfc-deploy
+Group=modelfc-deploy
+SetCredential=[unprintable]
+SetCredentialEncrypted=[unprintable]
+LoadCredential=[unprintable]
+LoadCredentialEncrypted=[unprintable]
+ImportCredential=
+SupplementaryGroups=
+ReadWritePaths=/var/lib/modelfc-deploy/reports
+ReadOnlyPaths=/srv/modelfc/releases /var/lib/modelfc-deploy
+InaccessiblePaths=/root/modelfc-state /root/dev/modelfc /etc/modelfc-validator
+PrivateTmp=yes
+PrivateDevices=no
+PrivateNetwork=yes
+ProtectSystem=strict
+NoNewPrivileges=yes
+BindPaths=
+BindReadOnlyPaths=
+TemporaryFileSystem=
+KillMode=control-group
+SendSIGKILL=yes
+FragmentPath=/etc/systemd/system/modelfc-postmerge-tests.service
+DropInPaths=
+"""
+
+BUS_TYPES_255 = {
+    "LoadCredential": "a(ss)", "LoadCredentialEncrypted": "a(ss)",
+    "SetCredential": "a(say)", "SetCredentialEncrypted": "a(say)",
+    "ImportCredential": "as", "EnvironmentFiles": "a(sb)",
+    **{name: "a(sasbttttuii)" for name in
+       ("ExecCondition", "ExecStartPre", "ExecStartPost", "ExecStop", "ExecStopPost")},
+}
+
+
+def bus_empty_255(names):
+    return "\n".join(json.dumps({"type": BUS_TYPES_255[name], "data": []}) for name in names)
+
+
+def systemd255_text(text):
+    rows = []
+    for line in text.splitlines():
+        name = line.split("=", 1)[0]
+        if name in BUS_TYPES_255 and name not in deploy.CREDENTIAL_TYPES:
+            continue
+        if name in deploy.CREDENTIAL_TYPES and name != "ImportCredential":
+            line = name + "=[unprintable]"
+        rows.append(line)
+    return "\n".join(rows)
+
+
+class Systemd255SerializationTest(unittest.TestCase):
+    def test_actual_clean_output_requires_independent_typed_empty_arrays(self):
+        def query(args, **kwargs):
+            self.assertEqual(args[:7], ["/usr/bin/busctl", "--system", "--json=short", "get-property",
+                "org.freedesktop.systemd1", "/org/freedesktop/systemd1/unit/modelfc_2dpostmerge_2dtests_2eservice",
+                "org.freedesktop.systemd1.Service"])
+            self.assertEqual(set(args[7:]), set(BUS_TYPES_255))
+            self.assertEqual(kwargs, {"env": {"PATH": "/usr/bin:/bin", "LANG": "C"}, "timeout": 15})
+            return bus_empty_255(args[7:])
+        with patch.object(deploy, "command", side_effect=query) as bus:
+            fields = deploy.service_properties(deploy.SERVICE, SYSTEMD255_TEST_PROPERTIES)
+        bus.assert_called_once()
+        self.assertTrue(all(fields[name] == "" for name in BUS_TYPES_255))
+        self.assertTrue(deploy.service_environment_valid(fields, bytecode=True))
+        self.assertTrue(deploy.trusted_exec_start(fields["ExecStartEx"],
+            ["/usr/bin/python3", "-I", str(deploy.TRUSTED), "--run-tests"], extended=True))
+
+    def test_configured_effective_arrays_are_rejected_despite_ambiguous_text(self):
+        payloads = {
+            "LoadCredential": [["token", "/secret"]],
+            "LoadCredentialEncrypted": [["token", "/encrypted"]],
+            "SetCredential": [["token", [115, 101, 99, 114, 101, 116]]],
+            "SetCredentialEncrypted": [["token", [99, 105, 112, 104, 101, 114]]],
+            "ImportCredential": ["token*"], "EnvironmentFiles": [["/secret.env", True]],
+            **{name: [["/bin/true", ["/bin/true"], False, 0, 0, 0, 0, 0, 0, 0]]
+               for name in BUS_TYPES_255 if name.startswith("Exec")},
+        }
+        for name, data in payloads.items():
+            def query(args, **kwargs):
+                return "\n".join(json.dumps({"type": BUS_TYPES_255[key],
+                    "data": data if key == name else []}) for key in args[7:])
+            with self.subTest(property=name), patch.object(deploy, "command", side_effect=query):
+                with self.assertRaisesRegex(deploy.Failure, "^STATE_BOUNDARY_FAILED$"):
+                    deploy.service_properties(deploy.SERVICE, SYSTEMD255_TEST_PROPERTIES)
+        # Even an explicit empty credential text value is independently checked.
+        text = SYSTEMD255_TEST_PROPERTIES.replace("[unprintable]", "")
+        def configured_load(args, **kwargs):
+            return "\n".join(json.dumps({"type": BUS_TYPES_255[key],
+                "data": payloads["LoadCredential"] if key == "LoadCredential" else []})
+                for key in args[7:])
+        with patch.object(deploy, "command", side_effect=configured_load):
+            with self.assertRaisesRegex(deploy.Failure, "STATE_BOUNDARY_FAILED"):
+                deploy.service_properties(deploy.SERVICE, text)
+
+    def test_missing_malformed_or_incomplete_bus_output_never_means_empty(self):
+        good = bus_empty_255(BUS_TYPES_255)
+        first = good.splitlines()[0]
+        bad = ["", "[unprintable]", "not json", good + "\n" + first,
+               "\n".join(good.splitlines()[:-1]), good.replace('"a(ss)"', '"as"', 1)]
+        for value in ('null', 'false', '{}', '""', '[[]]', '["[unprintable]"]'):
+            bad.append(good.replace('"data": []', '"data": ' + value, 1))
+        bad += [good.replace(first, '{}', 1), good.replace(first, '[]', 1),
+                good.replace(first, '{"type":"a(ss)","data":[],"extra":0}', 1),
+                good.replace(first, '{"type":"a(ss)","data":[["hidden"]],"data":[]}', 1)]
+        for output in bad:
+            with self.subTest(output=output), patch.object(deploy, "command", return_value=output):
+                with self.assertRaisesRegex(deploy.Failure, "STATE_BOUNDARY_FAILED"):
+                    deploy.service_properties(deploy.SERVICE, SYSTEMD255_TEST_PROPERTIES)
+
+    def test_bus_execution_errors_fail_closed_without_disclosing_stderr(self):
+        for error in (FileNotFoundError(), PermissionError(),
+                      subprocess.TimeoutExpired("busctl", 15),
+                      subprocess.CalledProcessError(1, "busctl", stderr=b"secret")):
+            with self.subTest(error=error), patch.object(deploy.subprocess, "run", side_effect=error):
+                with self.assertRaisesRegex(deploy.Failure, "^STATE_BOUNDARY_FAILED$"):
+                    deploy.service_properties(deploy.SERVICE, SYSTEMD255_TEST_PROPERTIES)
+
+    def test_ambiguous_or_configured_text_cannot_hide_behind_empty_bus_output(self):
+        text = SYSTEMD255_TEST_PROPERTIES
+        bad = [text + "EnvironmentFiles=/secret.env\n", text + "ExecStartPre=unexpected\n",
+               text + "User=modelfc-deploy\n", text + "malformed\n"]
+        for name in deploy.CREDENTIAL_TYPES:
+            original = next(line for line in text.splitlines() if line.startswith(name + "="))
+            bad += [text.replace(original + "\n", ""),
+                    text.replace(original, name + "=unknown"),
+                    text.replace(original, name + "=configured")]
+        for output in bad:
+            with self.subTest(output=output), patch.object(deploy, "command") as bus:
+                with self.assertRaisesRegex(deploy.Failure, "STATE_BOUNDARY_FAILED"):
+                    deploy.service_properties(deploy.SERVICE, output)
+                bus.assert_not_called()
+
+    def test_all_three_boundaries_use_typed_inspection(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            releases, control = root / "releases", root / "control"
+            releases.mkdir(); control.mkdir(); (control / "reports").mkdir(mode=0o700)
+            ident = "a" * 40 + "-" + "b" * 12
+            release = releases / ident
+            release.mkdir()
+            (root / "cgroup.controllers").write_text("memory pids")
+            test_text = SYSTEMD255_TEST_PROPERTIES.replace(str(deploy.RELEASES), str(releases)).replace(
+                str(deploy.CONTROL), str(control))
+            fixture = type("Fixture", (), {"releases": releases, "release": release})()
+            dep_text = systemd255_text(IsolatedBoundaryTest.dependency_properties(fixture))
+            acq_text = systemd255_text(acquisition_properties(ident))
+            real_stat = os.stat
+            def owned_stat(path, *args, **kwargs):
+                info = real_stat(path, *args, **kwargs)
+                if str(path) in {str(p) for p in (root, releases, control, control / "reports")}:
+                    values = list(info); values[4] = 1001
+                    return os.stat_result(values)
+                return info
+            identity = type("Identity", (), {"pw_name": "modelfc-deploy"})()
+            with patch.object(deploy, "deployment_account_groups"), patch.object(deploy, "CGROUP_ROOT", root), \
+                    patch.object(deploy.os, "geteuid", return_value=1001), \
+                    patch.object(deploy.pwd, "getpwuid", return_value=identity), \
+                    patch.object(deploy.os, "access", return_value=False), \
+                    patch.object(deploy.os, "stat", side_effect=owned_stat):
+                for unit, output, check in (
+                    (deploy.SERVICE, test_text, lambda: deploy.boundary(root=root, releases=releases, control=control)),
+                    (deploy.DEPENDENCY_SERVICE.format(ident), dep_text,
+                     lambda: deploy.dependency_boundary(release, releases=releases)),
+                    (deploy.ACQUISITION_SERVICE.format(ident), acq_text, lambda: deploy.acquisition_boundary(ident)),
+                ):
+                    def query(args, **kwargs):
+                        if args[:2] == ["systemctl", "show"]:
+                            self.assertEqual(args[2], unit)
+                            return output
+                        self.assertEqual(args[5], "/org/freedesktop/systemd1/unit/" + unit.replace(
+                            "-", "_2d").replace("@", "_40").replace(".", "_2e"))
+                        return bus_empty_255(args[7:])
+                    with self.subTest(unit=unit), patch.object(deploy, "command", side_effect=query) as commands:
+                        check()
+                        self.assertEqual(commands.call_count, 2)
+                    with self.subTest(unit=unit, unavailable=True), patch.object(deploy, "command",
+                            side_effect=[output, deploy.Failure("INTERNAL_ERROR")]):
+                        with self.assertRaisesRegex(deploy.Failure, "STATE_BOUNDARY_FAILED"):
+                            check()
+
+    def test_empty_job_text_requires_exact_idle_tuple_and_quiescent_pids(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "cgroup.controllers").touch()
+            fields = "ActiveState=inactive\nMainPID=0\nControlPID=0\nControlGroup=\nJob=\n"
+            for data in ([0, "/"], [1, "/org/freedesktop/systemd1/job/1"], [0, "/other"],
+                         [False, "/"], [], [0], [0, "/", "extra"]):
+                with self.subTest(data=data), patch.object(deploy, "CGROUP_ROOT", root), \
+                        patch.object(deploy, "command", side_effect=[fields, json.dumps({"type": "(uo)", "data": data})]):
+                    self.assertEqual(deploy.service_inactive(deploy.SERVICE), data == [0, "/"] and type(data[0]) is int)
+            for changed in (fields.replace("MainPID=0", "MainPID=123"),
+                            fields.replace("ControlPID=0", "ControlPID=123")):
+                with patch.object(deploy, "CGROUP_ROOT", root), patch.object(deploy, "command",
+                        side_effect=[changed, '{"type":"(uo)","data":[0,"/"]}']):
+                    self.assertFalse(deploy.service_inactive(deploy.SERVICE))
+            with patch.object(deploy, "CGROUP_ROOT", root), patch.object(deploy, "command",
+                    side_effect=[fields, deploy.Failure("INTERNAL_ERROR")]):
+                self.assertFalse(deploy.service_inactive(deploy.SERVICE))
 
 
 class HelperIntegrityTest(unittest.TestCase):
