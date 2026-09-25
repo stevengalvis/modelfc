@@ -3,6 +3,7 @@ Description=Bounded trusted Git acquisition for a Model FC release
 
 [Service]
 Type=oneshot
+StandardInput=null
 User=modelfc-deploy
 Group=modelfc-deploy
 WorkingDirectory=/run/modelfc-acquisition

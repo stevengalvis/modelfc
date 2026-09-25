@@ -1185,7 +1185,7 @@ class IsolatedBoundaryTest(unittest.TestCase):
     def dependency_properties(self):
         return ("Environment=\nEnvironmentFiles=\nPassEnvironment=\n"
                       "UnsetEnvironment=ODDSPAPI_API_KEY GITHUB_TOKEN SSH_AUTH_SOCK LD_PRELOAD LD_LIBRARY_PATH LD_AUDIT PYTHONPATH PYTHONHOME\n"
-                      "User=modelfc-deploy\nGroup=modelfc-deploy\nSupplementaryGroups=\nProtectSystem=strict\n"
+                      "StandardInput=null\nUser=modelfc-deploy\nGroup=modelfc-deploy\nSupplementaryGroups=\nProtectSystem=strict\n"
                       f"ReadOnlyPaths={self.releases}\n"
                       f"ReadWritePaths={self.release / '.venv'}\n"
                       "InaccessiblePaths=/root/modelfc-state /root/dev/modelfc "
@@ -1204,6 +1204,7 @@ class IsolatedBoundaryTest(unittest.TestCase):
             self.assertEqual(show.call_args.args[0][2],
                              deploy.DEPENDENCY_SERVICE.format(self.release.name))
             self.assertIn("NoNewPrivileges", show.call_args.args[0])
+            self.assertIn("StandardInput", show.call_args.args[0])
             self.assertIn("ExecStartEx", show.call_args.args[0])
             self.assertIn("KillMode", show.call_args.args[0])
             self.assertIn("MountImages", show.call_args.args[0])
@@ -1392,6 +1393,10 @@ class IsolatedBoundaryTest(unittest.TestCase):
                       "" if value is None else "ExecStartEx=" + value + "\n")
                      for value in invalid_exec_ex("/usr/bin/python3", "-I", str(deploy.TRUSTED),
                                                   "--install-dependencies", self.release.name))
+        cases.extend(("StandardInput=null\n",
+                      "" if value is None else "StandardInput=" + value + "\n")
+                     for value in (None, "", "[unprintable]", "file:/root/secret",
+                                   "socket", "tty", "data", "inherit"))
         for index, (old, new) in enumerate(cases):
             candidate = self.releases / (self.sha + f"-{index + 10:012x}")
             candidate.mkdir()
@@ -1538,7 +1543,7 @@ class IsolatedBoundaryTest(unittest.TestCase):
                       f"ReadOnlyPaths={self.releases} {self.control}\nReadWritePaths="
                       f"{self.control / 'reports'}\nBindPaths=\nBindReadOnlyPaths=\nMountImages=\nLoadCredential=\nLoadCredentialEncrypted=\nImportCredential=\nSetCredential=\nExecCondition=\nExecStartPre=\nExecStartPost=\nExecStop=\nExecStopPost=\nAmbientCapabilities=\nTemporaryFileSystem=\n"
                       "MemoryMax=2147483648\nTasksMax=64\n"
-                      "User=modelfc-deploy\nGroup=modelfc-deploy\nSupplementaryGroups=\nExecStart=" + effective_exec(
+                      "StandardInput=null\nUser=modelfc-deploy\nGroup=modelfc-deploy\nSupplementaryGroups=\nExecStart=" + effective_exec(
                           "/usr/bin/python3", "-I", str(deploy.TRUSTED), "--run-tests") + "\n")
         identity = type("Person", (), {"pw_name": "modelfc-deploy"})()
         real_stat = os.stat
@@ -1553,6 +1558,7 @@ class IsolatedBoundaryTest(unittest.TestCase):
                 deploy.os, "stat", side_effect=owned_stat), patch.object(
                 deploy, "command", return_value=properties) as show:
             deploy.boundary(root=self.root, releases=self.releases, control=self.control)
+            self.assertIn("StandardInput", show.call_args.args[0])
             self.assertIn("ExecStartEx", show.call_args.args[0])
             self.assertIn("KillMode", show.call_args.args[0])
             self.assertIn("MountImages", show.call_args.args[0])
@@ -1676,6 +1682,8 @@ class IsolatedBoundaryTest(unittest.TestCase):
                                   "cap_sys_admin cap_dac_override"))
         cases.extend(("ExecStartEx", value) for value in invalid_exec_ex(
             "/usr/bin/python3", "-I", str(deploy.TRUSTED), "--run-tests"))
+        cases.extend(("StandardInput", value) for value in
+                     (None, "", "[unprintable]", "file:/root/secret", "socket", "tty", "data", "inherit"))
         for name, mode in cases:
             original = next(line for line in properties.splitlines() if line.startswith(name + "="))
             changed = properties.replace(original + "\n",
@@ -1796,7 +1804,7 @@ class IsolatedBoundaryTest(unittest.TestCase):
                 "/root/dev/modelfc /etc/modelfc-validator\nProtectSystem=strict\n"
                 f"ReadOnlyPaths={self.releases} {self.control}\nReadWritePaths="
                 f"{self.control / 'reports'}\nBindPaths=\nBindReadOnlyPaths=\nMountImages=\nLoadCredential=\nLoadCredentialEncrypted=\nImportCredential=\nSetCredential=\nExecCondition=\nExecStartPre=\nExecStartPost=\nExecStop=\nExecStopPost=\nAmbientCapabilities=\nTemporaryFileSystem=\n"
-                "MemoryMax=2147483648\nTasksMax=64\nUser=modelfc-deploy\n"
+                "StandardInput=null\nMemoryMax=2147483648\nTasksMax=64\nUser=modelfc-deploy\n"
                 "Group=modelfc-deploy\nSupplementaryGroups=\nExecStart=" + effective_exec(
                     "/usr/bin/python3", "-I", str(deploy.TRUSTED), "--run-tests") + "\n")
         identity = type("Person", (), {"pw_name": "modelfc-deploy"})()
@@ -2186,7 +2194,7 @@ def acquisition_properties(ident):
         "BindPaths": "", "BindReadOnlyPaths": "", "MountImages": "", "TemporaryFileSystem": "",
         "LoadCredential": "", "LoadCredentialEncrypted": "", "ImportCredential": "", "SetCredential": "",
         "ExecCondition": "", "ExecStartPre": "", "ExecStartPost": "", "ExecStop": "", "ExecStopPost": "",
-        "AmbientCapabilities": "", "Delegate": "no",
+        "AmbientCapabilities": "", "Delegate": "no", "StandardInput": "null",
         "InaccessiblePaths": f"{deploy.STATE} {deploy.HISTORY} {deploy.CONTROL} /etc/modelfc-validator",
         "ExecStart": effective_exec("/usr/bin/python3", "-I", str(deploy.TRUSTED), "--acquire-service", ident),
     }
@@ -2208,14 +2216,22 @@ class AcquisitionResourceTest(unittest.TestCase):
             stub.start()
             self.addCleanup(stub.stop)
 
+    def test_all_reviewed_services_explicitly_disable_standard_input(self):
+        for name in ("tests", "dependencies@", "acquisition@"):
+            with self.subTest(service=name):
+                unit = (SOURCE.parents[2] / f"deploy/modelfc-postmerge-{name}.service").read_text()
+                values = [line for line in unit.splitlines() if line.startswith("StandardInput=")]
+                self.assertEqual(values, ["StandardInput=null"])
+
     def test_expected_acquisition_boundary_passes(self):
         with patch.object(deploy, "command", return_value=acquisition_properties(self.ident)) as show:
             deploy.acquisition_boundary(self.ident)
-        for property in ("MemoryMax", "TasksMax", "KillMode", "TimeoutStartUSec", "TimeoutStopUSec", "SendSIGKILL", "Delegate"):
+        for property in ("StandardInput", "MemoryMax", "TasksMax", "KillMode", "TimeoutStartUSec", "TimeoutStopUSec", "SendSIGKILL", "Delegate"):
             self.assertIn(property, show.call_args.args[0])
 
     def test_missing_wrong_unlimited_resources_and_lifecycle_rejected(self):
-        fields = {"ExecStartEx": invalid_exec_ex("/usr/bin/python3", "-I", str(deploy.TRUSTED), "--acquire-service", self.ident),
+        fields = {"StandardInput": (None, "", "[unprintable]", "file:/root/secret", "socket", "tty", "data", "inherit"),
+                  "ExecStartEx": invalid_exec_ex("/usr/bin/python3", "-I", str(deploy.TRUSTED), "--acquire-service", self.ident),
                   "Environment": (None, "LD_PRELOAD=/tmp/evil.so", "PYTHONHOME=/tmp"),
                   "EnvironmentFiles": (None, "/tmp/env"), "PassEnvironment": (None, "LD_PRELOAD"),
                   "UnsetEnvironment": (None, ""),

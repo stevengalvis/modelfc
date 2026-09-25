@@ -379,7 +379,7 @@ def boundary(*, root=ROOT, releases=RELEASES, control=CONTROL, state=STATE,
         properties = command(["systemctl", "show", service, "--all",
                               "-p", "PrivateNetwork", "-p", "PrivateTmp", "-p", "NoNewPrivileges", "-p", "KillMode", "-p", "InaccessiblePaths",
                               "-p", "User", "-p", "Group", "-p", "SupplementaryGroups",
-                              "-p", "ExecStart", "-p", "ExecStartEx", "-p", "ProtectSystem",
+                              "-p", "ExecStart", "-p", "ExecStartEx", "-p", "StandardInput", "-p", "ProtectSystem",
                               "-p", "ReadOnlyPaths", "-p", "ReadWritePaths",
                               "-p", "BindPaths", "-p", "BindReadOnlyPaths", "-p", "MountImages",
                               "-p", "LoadCredential", "-p", "LoadCredentialEncrypted",
@@ -396,6 +396,7 @@ def boundary(*, root=ROOT, releases=RELEASES, control=CONTROL, state=STATE,
     fields = dict(line.split("=", 1) for line in properties.splitlines() if "=" in line)
     hidden = fields.get("InaccessiblePaths", "").split()
     if (not service_environment_valid(fields, bytecode=True)
+            or fields.get("StandardInput") != "null"
             or not lifecycle_valid(fields, 330)
             or fields.get("PrivateNetwork") != "yes"
             or fields.get("PrivateTmp") != "yes"
@@ -433,7 +434,7 @@ def dependency_boundary(release, *, releases=None):
         raise Failure("STATE_BOUNDARY_FAILED")
     instance = DEPENDENCY_SERVICE.format(release.name)
     try:
-        properties = command(["systemctl", "show", instance, "--all", "-p", "User", "-p", "ExecStart", "-p", "ExecStartEx",
+        properties = command(["systemctl", "show", instance, "--all", "-p", "User", "-p", "ExecStart", "-p", "ExecStartEx", "-p", "StandardInput",
                               "-p", "Group", "-p", "SupplementaryGroups",
                               "-p", "ProtectSystem", "-p", "ReadOnlyPaths",
                               "-p", "ReadWritePaths", "-p", "InaccessiblePaths",
@@ -454,6 +455,7 @@ def dependency_boundary(release, *, releases=None):
     fields = dict(line.split("=", 1) for line in properties.splitlines() if "=" in line)
     hidden = fields.get("InaccessiblePaths", "").split()
     if (not service_environment_valid(fields, bytecode=False)
+            or fields.get("StandardInput") != "null"
             or not lifecycle_valid(fields, 510)
             or fields.get("User") != "modelfc-deploy"
             or fields.get("Group") != "modelfc-deploy"
@@ -541,7 +543,7 @@ def acquisition_boundary(release_id):
         "BindPaths": "", "BindReadOnlyPaths": "", "MountImages": "", "TemporaryFileSystem": "",
         "LoadCredential": "", "LoadCredentialEncrypted": "", "ImportCredential": "", "SetCredential": "",
         "ExecCondition": "", "ExecStartPre": "", "ExecStartPost": "", "ExecStop": "", "ExecStopPost": "",
-        "AmbientCapabilities": "", "Delegate": "no",
+        "AmbientCapabilities": "", "Delegate": "no", "StandardInput": "null",
     }
     args = ["systemctl", "show", unit, "--all"]
     for key in (*expected, "ExecStart", "ExecStartEx", "InaccessiblePaths", "Environment", "EnvironmentFiles",
