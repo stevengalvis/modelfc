@@ -367,3 +367,46 @@ empty before export/cleanup. Also exercise controller timeout, SSH disconnect,
 and pending-marker recovery while checking lock exclusion and unchanged current/
 retained releases. Ordinary offline tests simulate manager states and cannot
 prove actual kernel/systemd enforcement or installed sudo policy.
+
+
+## Effective environments, trusted helper, and runtime permissions
+
+All three service boundaries now query `Environment`, `EnvironmentFiles`,
+`PassEnvironment`, and `UnsetEnvironment` with `systemctl show --all`. Missing or
+unverifiable output fails before execution. Test/acquisition units may configure
+only `PYTHONDONTWRITEBYTECODE=1`; the dependency unit may configure no Environment
+assignments. EnvironmentFiles and PassEnvironment must be empty. The complete
+UnsetEnvironment list must contain exactly `ODDSPAPI_API_KEY`, `GITHUB_TOKEN`,
+`SSH_AUTH_SOCK`, `LD_PRELOAD`, `LD_LIBRARY_PATH`, `LD_AUDIT`, `PYTHONPATH`, and
+`PYTHONHOME`. Unexpected assignments are rejected, not merely scanned for known
+bad names. The explicit unsets also remove these loader/Python overrides from
+inherited manager defaults. Install the reviewed updated units with the controller.
+
+Before **every** sudo mount-helper invocation, the controller opens `/`, `opt`,
+`modelfc-deploy`, and `acquisition_mount.py` through directory-relative no-follow
+lookups. Every directory must be a real root-owned directory without group/world
+write permissions; the helper must be a regular root-owned non-symlink file with
+no group/world write permissions. Failure prevents sudo. Root administrators
+remain trusted to install reviewed code; this checks path ownership and integrity,
+not a new controller/helper signing system.
+
+Exported source and Git directories receive explicit mode **0755**, independent
+of umask. Regular files become readable by the production account, retain their
+executable/non-executable distinction, preserve existing owner-write permission,
+and lose all group/world write permissions. No write permission is added to a
+read-only file. Source symlinks stay symlinks and are never followed or chmodded.
+The fresh `.venv` is normalized with the same policy both before bootstrap
+fingerprinting and after successful installation/bootstrap verification. Interpreter
+and library symlinks are preserved; external targets are never normalized.
+
+The one-time `/srv/modelfc` and `releases` ancestors must remain traversable by the
+intended production account as documented above. Git's separate ownership/trust
+policy still applies: validate provenance under that real account with narrowly
+approved exact release paths, never `safe.directory=*`. This change does not alter
+Model FC's provenance function or global runtime Git configuration. Offline tests
+exercise umask 0077, source/Git traversal, executable modes, external symlinks,
+venv Python and the existing provenance function. They attempt distinct-UID
+execution where permitted; restricted root containers can reject UID/GID changes,
+so real-account access and its exact-path Git trust configuration still require
+VPS acceptance. Also confirm effective environment output and installed helper
+ownership/path checks there before enabling deployment.

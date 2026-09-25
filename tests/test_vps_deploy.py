@@ -318,6 +318,68 @@ class FreshReleaseTest(unittest.TestCase):
             if failure == "boundary":
                 run.assert_not_called()
 
+    def test_umask_0077_export_and_runtime_environment_are_nonowner_readable(self):
+        module = self.seed / "src/modelfc/nested"
+        module.mkdir()
+        (module / "sample.py").write_text("VALUE = 42\n")
+        executable = self.seed / "tool.sh"
+        executable.write_text("#!/bin/sh\nexit 0\n")
+        executable.chmod(0o755)
+        outside = self.root / "outside"
+        outside.mkdir(mode=0o700)
+        (outside / "secret").write_text("unchanged")
+        (outside / "secret").chmod(0o600)
+        (self.seed / "outside-link").symlink_to(outside, target_is_directory=True)
+        cmd("git", "add", ".", cwd=self.seed)
+        cmd("git", "commit", "-m", "nested runtime permission fixture", cwd=self.seed)
+        cmd("git", "push", "origin", "main", cwd=self.seed)
+        sha = cmd("git", "rev-parse", "HEAD", cwd=self.seed)
+        self.root.chmod(0o755)  # Public ancestor of the disposable deployment root.
+        previous_mask = os.umask(0o077)
+        try:
+            release, _ = deploy.create_release(sha, releases=self.releases, remote=str(self.remote))
+            cmd(sys.executable, "-m", "venv", "--without-pip", str(release / ".venv"))
+            (release / ".venv/outside-link").symlink_to(outside, target_is_directory=True)
+            deploy.normalize_runtime_permissions(release / ".venv")
+        finally:
+            os.umask(previous_mask)
+        for directory, dirs, files in os.walk(release, followlinks=False):
+            path = Path(directory)
+            self.assertEqual(path.stat().st_mode & 0o777, 0o755)
+            for name in files:
+                entry = path / name
+                if not entry.is_symlink():
+                    self.assertEqual(entry.stat().st_mode & 0o022, 0)
+                    self.assertEqual(entry.stat().st_mode & 0o444, 0o444)
+        self.assertEqual((release / "tool.sh").stat().st_mode & 0o777, 0o755)
+        self.assertEqual((release / "src/modelfc/nested/sample.py").stat().st_mode & 0o111, 0)
+        self.assertTrue((release / "outside-link").is_symlink())
+        self.assertTrue((release / ".venv/outside-link").is_symlink())
+        self.assertEqual(outside.stat().st_mode & 0o777, 0o700)
+        self.assertEqual((outside / "secret").stat().st_mode & 0o777, 0o600)
+        deploy.verify_source(release, sha)
+        # Distinct-UID execution where the test host permits credential dropping.
+        # On non-root CI the POSIX 'other' mode assertions above prove access.
+        credentials = dict(user=65534, group=65534, extra_groups=[]) if os.geteuid() == 0 else {}
+        environment = {"PATH": "/usr/bin:/bin", "PYTHONPATH": str(release / "src"),
+                       "PYTHONDONTWRITEBYTECODE": "1", "GIT_CONFIG_NOSYSTEM": "1",
+                       "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_COUNT": "1",
+                       "GIT_CONFIG_KEY_0": "safe.directory", "GIT_CONFIG_VALUE_0": str(release)}
+        program = ("from modelfc.nested.sample import VALUE; "
+                   "from modelfc.ledger_storage import git_commit_sha; "
+                   f"assert VALUE == 42; assert git_commit_sha() == {sha!r}")
+        arguments = [str(release / ".venv/bin/python"), "-B", "-c", program]
+        try:
+            result = subprocess.run(arguments, cwd=release, env=environment, capture_output=True, **credentials)
+        except PermissionError as error:
+            if error.errno != 1 or not credentials:
+                raise  # EACCES from a bad mode must still fail the test.
+            # Some root containers cannot change UID/GID (EPERM). Retain all
+            # non-owner mode assertions and run the interpreter/source check;
+            # actual cross-UID execution then remains a VPS acceptance check.
+            result = subprocess.run(arguments, cwd=release, env=environment, capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stderr.decode())
+
     def test_ancestor_distinguishes_exit_status_and_errors(self):
         self.assertTrue(deploy.ancestor(self.seed, self.a, self.b))
         self.assertFalse(deploy.ancestor(self.seed, self.b, self.a))
@@ -980,8 +1042,37 @@ class IsolatedBoundaryTest(unittest.TestCase):
         with self.assertRaisesRegex(deploy.Failure, "DEPENDENCY_SYNC_FAILED"):
             deploy.dependencies(self.release)
 
+    def test_dependency_normalizes_bootstrap_and_installed_files_under_private_umask(self):
+        outside = self.root / "private-target"
+        outside.write_text("do not chmod")
+        outside.chmod(0o600)
+        def command(args, **kwargs):
+            self.assertEqual(args[:3], ["/usr/bin/python3", "-m", "venv"])
+            (self.release / ".venv/bin").mkdir(parents=True)
+            (self.release / ".venv/bin/python").write_text("trusted bootstrap")
+            (self.release / ".venv/bin/python").chmod(0o700)
+            (self.release / ".venv/pyvenv.cfg").write_text("version=3.12")
+            return ""
+        def install(unit):
+            self.assertEqual((self.release / ".venv/bin").stat().st_mode & 0o777, 0o755)
+            package = self.release / ".venv/lib/site-packages/sample"
+            package.mkdir(parents=True)
+            (package / "__init__.py").write_text("VALUE=1")
+            (package / "link").symlink_to(outside)
+        old = os.umask(0o077)
+        try:
+            with patch.object(deploy, "command", side_effect=command), patch.object(deploy, "run_service", side_effect=install):
+                self.assertEqual(deploy.dependencies(self.release, check_boundary=lambda _: None), "INSTALLED")
+        finally:
+            os.umask(old)
+        self.assertEqual((self.release / ".venv/lib/site-packages/sample").stat().st_mode & 0o777, 0o755)
+        self.assertEqual((self.release / ".venv/lib/site-packages/sample/__init__.py").stat().st_mode & 0o777, 0o644)
+        self.assertEqual(outside.stat().st_mode & 0o777, 0o600)
+
     def dependency_properties(self):
-        return ("User=modelfc-deploy\nGroup=modelfc-deploy\nSupplementaryGroups=\nProtectSystem=strict\n"
+        return ("Environment=\nEnvironmentFiles=\nPassEnvironment=\n"
+                      "UnsetEnvironment=ODDSPAPI_API_KEY GITHUB_TOKEN SSH_AUTH_SOCK LD_PRELOAD LD_LIBRARY_PATH LD_AUDIT PYTHONPATH PYTHONHOME\n"
+                      "User=modelfc-deploy\nGroup=modelfc-deploy\nSupplementaryGroups=\nProtectSystem=strict\n"
                       f"ReadOnlyPaths={self.releases}\n"
                       f"ReadWritePaths={self.release / '.venv'}\n"
                       "InaccessiblePaths=/root/modelfc-state /root/dev/modelfc "
@@ -1029,6 +1120,12 @@ class IsolatedBoundaryTest(unittest.TestCase):
                          ("BindPaths=", "BindPaths=/tmp:/srv/modelfc/current"),
                          ("BindReadOnlyPaths=", "BindReadOnlyPaths=/tmp:/srv/modelfc/current"),
                          ("TemporaryFileSystem=", "TemporaryFileSystem=/srv/modelfc"),
+                         ("Environment=\n", "Environment=LD_PRELOAD=/tmp/evil.so\n"),
+                         ("EnvironmentFiles=\n", "EnvironmentFiles=/tmp/env\n"),
+                         ("PassEnvironment=\n", "PassEnvironment=LD_PRELOAD\n"),
+                         ("Environment=\n", ""),
+                         ("EnvironmentFiles=\n", ""),
+                         ("PassEnvironment=\n", ""),
                          ("TimeoutStopUSec=30s", "TimeoutStopUSec=90s"),
                          ("TimeoutStopUSec=30s\n", ""),
                          ("TimeoutStartUSec=8min 30s", "TimeoutStartUSec=infinity"),
@@ -1081,7 +1178,13 @@ class IsolatedBoundaryTest(unittest.TestCase):
 
     def test_dependency_resource_failure_prevents_install_service_start(self):
         for index, (old, new) in enumerate((
-                ("TimeoutStopUSec=30s", "TimeoutStopUSec=90s"),
+                ("Environment=\n", "Environment=LD_PRELOAD=/tmp/evil.so\n"),
+                         ("EnvironmentFiles=\n", "EnvironmentFiles=/tmp/env\n"),
+                         ("PassEnvironment=\n", "PassEnvironment=LD_PRELOAD\n"),
+                         ("Environment=\n", ""),
+                         ("EnvironmentFiles=\n", ""),
+                         ("PassEnvironment=\n", ""),
+                         ("TimeoutStopUSec=30s", "TimeoutStopUSec=90s"),
                 ("TimeoutStopUSec=30s\n", ""),
                 ("TimeoutStartUSec=8min 30s", "TimeoutStartUSec=infinity"),
                 ("SendSIGKILL=yes", "SendSIGKILL=no"),
@@ -1307,7 +1410,9 @@ class IsolatedBoundaryTest(unittest.TestCase):
         self.assertFalse((self.root / "current").exists())
 
     def test_effective_service_properties_enforced(self):
-        properties = ("TimeoutStartUSec=5min 30s\nTimeoutStopUSec=30s\nSendSIGKILL=yes\n"
+        properties = ("Environment=PYTHONDONTWRITEBYTECODE=1\nEnvironmentFiles=\nPassEnvironment=\n"
+                      "UnsetEnvironment=ODDSPAPI_API_KEY GITHUB_TOKEN SSH_AUTH_SOCK LD_PRELOAD LD_LIBRARY_PATH LD_AUDIT PYTHONPATH PYTHONHOME\n"
+                      "TimeoutStartUSec=5min 30s\nTimeoutStopUSec=30s\nSendSIGKILL=yes\n"
                       "PrivateNetwork=yes\nPrivateTmp=yes\nNoNewPrivileges=yes\nKillMode=control-group\nInaccessiblePaths=/root/modelfc-state "
                       "/root/dev/modelfc /etc/modelfc-validator\nProtectSystem=strict\n"
                       f"ReadOnlyPaths={self.releases} {self.control}\nReadWritePaths="
@@ -1490,6 +1595,12 @@ class IsolatedBoundaryTest(unittest.TestCase):
                          ("MemoryMax=2147483648", "MemoryMax=infinity"),
                          ("TimeoutStopUSec=30s", "TimeoutStopUSec=90s"),
                          ("TimeoutStopUSec=30s\n", ""),
+                         ("Environment=PYTHONDONTWRITEBYTECODE=1\n", "Environment=LD_PRELOAD=/tmp/evil.so\n"),
+                         ("EnvironmentFiles=\n", "EnvironmentFiles=/tmp/env\n"),
+                         ("PassEnvironment=\n", "PassEnvironment=LD_PRELOAD\n"),
+                         ("Environment=PYTHONDONTWRITEBYTECODE=1\n", ""),
+                         ("EnvironmentFiles=\n", ""),
+                         ("PassEnvironment=\n", ""),
                          ("TimeoutStartUSec=5min 30s", "TimeoutStartUSec=infinity"),
                          ("SendSIGKILL=yes", "SendSIGKILL=no"),
                          ("MemoryMax=2147483648", "MemoryMax=4294967296"),
@@ -1940,6 +2051,8 @@ class ServiceLifecycleTest(unittest.TestCase):
 
 def acquisition_properties(ident):
     values = {
+        "Environment": "PYTHONDONTWRITEBYTECODE=1", "EnvironmentFiles": "", "PassEnvironment": "",
+        "UnsetEnvironment": "ODDSPAPI_API_KEY GITHUB_TOKEN SSH_AUTH_SOCK LD_PRELOAD LD_LIBRARY_PATH LD_AUDIT PYTHONPATH PYTHONHOME",
         "User": "modelfc-deploy", "Group": "modelfc-deploy", "SupplementaryGroups": "",
         "MemoryMax": "536870912", "TasksMax": "32", "KillMode": "control-group",
         "TimeoutStartUSec": "10min", "TimeoutStopUSec": "30s", "SendSIGKILL": "yes",
@@ -1978,7 +2091,10 @@ class AcquisitionResourceTest(unittest.TestCase):
             self.assertIn(property, show.call_args.args[0])
 
     def test_missing_wrong_unlimited_resources_and_lifecycle_rejected(self):
-        fields = {"MemoryMax": (None, "infinity", "1073741824", "0"),
+        fields = {"Environment": (None, "LD_PRELOAD=/tmp/evil.so", "PYTHONHOME=/tmp"),
+                  "EnvironmentFiles": (None, "/tmp/env"), "PassEnvironment": (None, "LD_PRELOAD"),
+                  "UnsetEnvironment": (None, ""),
+                  "MemoryMax": (None, "infinity", "1073741824", "0"),
                   "TasksMax": (None, "infinity", "64", "0"),
                   "KillMode": (None, "process", "mixed", "none"),
                   "TimeoutStopUSec": (None, "infinity", "1min 30s"),
@@ -2009,6 +2125,84 @@ class AcquisitionResourceTest(unittest.TestCase):
                 deploy, "acquisition_mount"), patch.object(deploy, "run_service", side_effect=service):
             self.assertEqual(deploy.run_acquisition(self.ident, None), {"status": "READY", "tip": "a" * 40})
 
+
+
+class HelperIntegrityTest(unittest.TestCase):
+    def test_descriptor_anchored_root_owned_helper(self):
+        from types import SimpleNamespace
+        info = [SimpleNamespace(st_mode=0o40755, st_uid=0)] * 3 + [SimpleNamespace(st_mode=0o100555, st_uid=0)]
+        with patch.object(deploy.os, "open", side_effect=[10, 11, 12, 13]) as opened, patch.object(
+                deploy.os, "fstat", side_effect=info), patch.object(deploy.os, "close"), patch.object(
+                deploy, "command") as sudo:
+            deploy.acquisition_mount("verify", "a" * 40 + "-" + "b" * 12)
+        self.assertEqual([call.args[0] for call in opened.call_args_list],
+                         ["/", "opt", "modelfc-deploy", "acquisition_mount.py"])
+        for call in opened.call_args_list:
+            self.assertTrue(call.args[1] & os.O_NOFOLLOW)
+        self.assertEqual(opened.call_args.kwargs["dir_fd"], 12)
+        self.assertEqual(sudo.call_args.args[0][:5],
+                         ["sudo", "-n", "/usr/bin/python3", "-I", str(deploy.MOUNT_HELPER)])
+
+    def test_all_helper_and_ancestor_integrity_failures_prevent_sudo(self):
+        from types import SimpleNamespace
+        for index in range(4):
+            mode = 0o100555 if index == 3 else 0o40755
+            for label, replacement in (
+                    ("symlink", SimpleNamespace(st_mode=0o120777, st_uid=0)),
+                    ("owner", SimpleNamespace(st_mode=mode, st_uid=1001)),
+                    ("group-write", SimpleNamespace(st_mode=mode | 0o020, st_uid=0)),
+                    ("world-write", SimpleNamespace(st_mode=mode | 0o002, st_uid=0)),
+                    ("wrong-kind", SimpleNamespace(st_mode=0o10600, st_uid=0))):
+                infos = [SimpleNamespace(st_mode=0o40755, st_uid=0)] * 3 + [SimpleNamespace(st_mode=0o100555, st_uid=0)]
+                infos[index] = replacement
+                with self.subTest(index=index, failure=label), patch.object(
+                        deploy.os, "open", side_effect=[10, 11, 12, 13]), patch.object(
+                        deploy.os, "fstat", side_effect=infos), patch.object(deploy.os, "close"), patch.object(
+                        deploy, "command") as sudo:
+                    with self.assertRaisesRegex(deploy.Failure, "STATE_BOUNDARY_FAILED"):
+                        deploy.acquisition_mount("mount", "a" * 40 + "-" + "b" * 12)
+                sudo.assert_not_called()
+        for index in range(4):
+            opens = list(range(10, 10 + index)) + [OSError("no-follow lookup rejected")]
+            with self.subTest(open_failure=index), patch.object(deploy.os, "open", side_effect=opens), patch.object(
+                    deploy.os, "fstat", return_value=SimpleNamespace(st_mode=0o40755, st_uid=0)), patch.object(
+                    deploy.os, "close"), patch.object(deploy, "command") as sudo:
+                with self.assertRaisesRegex(deploy.Failure, "STATE_BOUNDARY_FAILED"):
+                    deploy.acquisition_mount("unmount", "a" * 40 + "-" + "b" * 12)
+            sudo.assert_not_called()
+
+
+class ServiceEnvironmentTest(unittest.TestCase):
+    def test_complete_environment_policy(self):
+        unset = "ODDSPAPI_API_KEY GITHUB_TOKEN SSH_AUTH_SOCK LD_PRELOAD LD_LIBRARY_PATH LD_AUDIT PYTHONPATH PYTHONHOME"
+        for bytecode in (True, False):
+            fields = dict(Environment="PYTHONDONTWRITEBYTECODE=1" if bytecode else "",
+                          EnvironmentFiles="", PassEnvironment="", UnsetEnvironment=unset)
+            self.assertTrue(deploy.service_environment_valid(fields, bytecode=bytecode))
+            for key in fields:
+                changed = fields.copy()
+                del changed[key]
+                self.assertFalse(deploy.service_environment_valid(changed, bytecode=bytecode))
+            for key, value in (("Environment", "LD_PRELOAD=/tmp/evil.so"),
+                               ("Environment", "LD_LIBRARY_PATH=/tmp"),
+                               ("Environment", "PYTHONPATH=/tmp"),
+                               ("Environment", "PYTHONHOME=/tmp"),
+                               ("Environment", '"unterminated'),
+                               ("EnvironmentFiles", "/tmp/override"),
+                               ("PassEnvironment", "LD_PRELOAD"),
+                               ("UnsetEnvironment", ""),
+                               ("UnsetEnvironment", unset + " PATH")):
+                self.assertFalse(deploy.service_environment_valid({**fields, key: value}, bytecode=bytecode))
+
+    def test_committed_units_match_allowed_environment(self):
+        unset = "ODDSPAPI_API_KEY GITHUB_TOKEN SSH_AUTH_SOCK LD_PRELOAD LD_LIBRARY_PATH LD_AUDIT PYTHONPATH PYTHONHOME"
+        for name in ("tests", "dependencies@", "acquisition@"):
+            text = (SOURCE.parents[2] / f"deploy/modelfc-postmerge-{name}.service").read_text()
+            self.assertIn("UnsetEnvironment=" + unset, text)
+            assignments = [line for line in text.splitlines() if line.startswith("Environment=")]
+            self.assertEqual(assignments, [] if name == "dependencies@" else ["Environment=PYTHONDONTWRITEBYTECODE=1"])
+            self.assertNotIn("EnvironmentFile=", text)
+            self.assertNotIn("PassEnvironment=", text)
 
 
 if __name__ == "__main__":

@@ -13,6 +13,7 @@ from pathlib import Path
 import pwd
 import re
 import secrets
+import shlex
 import signal
 import shutil
 import stat
@@ -301,6 +302,53 @@ def recover_service(control):
     raise Failure("STATE_BOUNDARY_FAILED")
 
 
+SERVICE_UNSET = ("ODDSPAPI_API_KEY", "GITHUB_TOKEN", "SSH_AUTH_SOCK", "LD_PRELOAD",
+                 "LD_LIBRARY_PATH", "LD_AUDIT", "PYTHONPATH", "PYTHONHOME")
+
+
+def service_environment_valid(fields, *, bytecode):
+    expected = ["PYTHONDONTWRITEBYTECODE=1"] if bytecode else []
+    try:
+        environment = shlex.split(fields["Environment"])
+        unset = shlex.split(fields["UnsetEnvironment"])
+        return (environment == expected and fields["EnvironmentFiles"] == ""
+                and fields["PassEnvironment"] == ""
+                and len(unset) == len(SERVICE_UNSET) and set(unset) == set(SERVICE_UNSET))
+    except (KeyError, ValueError, TypeError):
+        return False
+
+
+def verify_mount_helper():
+    """Anchor each lookup to an already verified, non-symlink directory FD."""
+    if MOUNT_HELPER != Path("/opt/modelfc-deploy/acquisition_mount.py"):
+        raise Failure("STATE_BOUNDARY_FAILED")
+    directory = None
+    helper = None
+    try:
+        flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+        directory = os.open("/", flags)
+        for component in (None, "opt", "modelfc-deploy"):
+            if component is not None:
+                child = os.open(component, flags, dir_fd=directory)
+                os.close(directory)
+                directory = child
+            info = os.fstat(directory)
+            if not stat.S_ISDIR(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o022:
+                raise Failure("STATE_BOUNDARY_FAILED")
+        helper = os.open("acquisition_mount.py", os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
+                         dir_fd=directory)
+        info = os.fstat(helper)
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o022:
+            raise Failure("STATE_BOUNDARY_FAILED")
+    except OSError:
+        raise Failure("STATE_BOUNDARY_FAILED") from None
+    finally:
+        if helper is not None:
+            os.close(helper)
+        if directory is not None:
+            os.close(directory)
+
+
 def boundary(*, root=ROOT, releases=RELEASES, control=CONTROL, state=STATE,
              service=SERVICE):
     deployment_account_groups()
@@ -339,12 +387,15 @@ def boundary(*, root=ROOT, releases=RELEASES, control=CONTROL, state=STATE,
                               "-p", "AmbientCapabilities",
                               "-p", "TemporaryFileSystem",
                               "-p", "MemoryMax", "-p", "TasksMax",
-                              "-p", "TimeoutStartUSec", "-p", "TimeoutStopUSec", "-p", "SendSIGKILL"], timeout=15)
+                              "-p", "TimeoutStartUSec", "-p", "TimeoutStopUSec", "-p", "SendSIGKILL",
+                              "-p", "Environment", "-p", "EnvironmentFiles",
+                              "-p", "PassEnvironment", "-p", "UnsetEnvironment"], timeout=15)
     except Failure:
         raise Failure("STATE_BOUNDARY_FAILED") from None
     fields = dict(line.split("=", 1) for line in properties.splitlines() if "=" in line)
     hidden = fields.get("InaccessiblePaths", "").split()
-    if (not lifecycle_valid(fields, 330)
+    if (not service_environment_valid(fields, bytecode=True)
+            or not lifecycle_valid(fields, 330)
             or fields.get("PrivateNetwork") != "yes"
             or fields.get("PrivateTmp") != "yes"
             or fields.get("NoNewPrivileges") != "yes"
@@ -391,12 +442,15 @@ def dependency_boundary(release, *, releases=None):
                               "-p", "AmbientCapabilities",
                               "-p", "TemporaryFileSystem",
                               "-p", "MemoryMax", "-p", "TasksMax",
-                              "-p", "TimeoutStartUSec", "-p", "TimeoutStopUSec", "-p", "SendSIGKILL"], timeout=15)
+                              "-p", "TimeoutStartUSec", "-p", "TimeoutStopUSec", "-p", "SendSIGKILL",
+                              "-p", "Environment", "-p", "EnvironmentFiles",
+                              "-p", "PassEnvironment", "-p", "UnsetEnvironment"], timeout=15)
     except Failure:
         raise Failure("STATE_BOUNDARY_FAILED") from None
     fields = dict(line.split("=", 1) for line in properties.splitlines() if "=" in line)
     hidden = fields.get("InaccessiblePaths", "").split()
-    if (not lifecycle_valid(fields, 510)
+    if (not service_environment_valid(fields, bytecode=False)
+            or not lifecycle_valid(fields, 510)
             or fields.get("User") != "modelfc-deploy"
             or fields.get("Group") != "modelfc-deploy"
             or fields.get("SupplementaryGroups") != ""
@@ -427,6 +481,7 @@ def dependency_boundary(release, *, releases=None):
 def acquisition_mount(action, release_id):
     if action not in ("mount", "unmount", "verify") or not RELEASE_ID.fullmatch(release_id):
         raise Failure("STATE_BOUNDARY_FAILED")
+    verify_mount_helper()
     try:
         command(["sudo", "-n", "/usr/bin/python3", "-I", str(MOUNT_HELPER),
                  action, release_id], cwd="/", env={"PATH": "/usr/bin:/bin"}, timeout=45)
@@ -482,12 +537,14 @@ def acquisition_boundary(release_id):
         "AmbientCapabilities": "", "Delegate": "no",
     }
     args = ["systemctl", "show", unit, "--all"]
-    for key in (*expected, "ExecStart", "InaccessiblePaths"):
+    for key in (*expected, "ExecStart", "InaccessiblePaths", "Environment", "EnvironmentFiles",
+                "PassEnvironment", "UnsetEnvironment"):
         args.extend(["-p", key])
     try:
         output = command(args, timeout=15)
         fields = dict(line.split("=", 1) for line in output.splitlines() if "=" in line)
-        if (any(fields.get(key) != value for key, value in expected.items())
+        if (not service_environment_valid(fields, bytecode=True)
+                or any(fields.get(key) != value for key, value in expected.items())
                 or not {str(STATE), str(HISTORY), str(CONTROL), "/etc/modelfc-validator"}
                 <= set(fields.get("InaccessiblePaths", "").split())
                 or not trusted_exec_start(fields.get("ExecStart"),
@@ -570,12 +627,42 @@ def export_inventory(repo):
         raise Failure("STORAGE_LIMIT_FAILED") from None
 
 
+def runtime_file_mode(mode):
+    # Readable by the production account, never add write access. Preserve the
+    # executable/non-executable distinction represented in the Git tree.
+    return 0o444 | (mode & 0o200) | (0o111 if mode & 0o111 else 0)
+
+
+def normalize_runtime_permissions(root):
+    """Private fresh environment only; never chmod or traverse symlinks."""
+    try:
+        if not stat.S_ISDIR(root.lstat().st_mode):
+            raise Failure("DEPENDENCY_SYNC_FAILED")
+        root.chmod(0o755, follow_symlinks=False)
+        pending = [root]
+        while pending:
+            with os.scandir(pending.pop()) as entries:
+                for entry in entries:
+                    info = entry.stat(follow_symlinks=False)
+                    path = Path(entry.path)
+                    if stat.S_ISDIR(info.st_mode):
+                        path.chmod(0o755, follow_symlinks=False)
+                        pending.append(path)
+                    elif stat.S_ISREG(info.st_mode):
+                        path.chmod(runtime_file_mode(info.st_mode), follow_symlinks=False)
+                    elif not stat.S_ISLNK(info.st_mode):
+                        raise Failure("DEPENDENCY_SYNC_FAILED")
+    except OSError:
+        raise Failure("DEPENDENCY_SYNC_FAILED") from None
+
+
 def export_repository(repo, release):
     inventory = export_inventory(repo)
     for relative, info in inventory:
         source, target = repo / relative, release / relative
         if stat.S_ISDIR(info.st_mode):
-            target.mkdir(mode=stat.S_IMODE(info.st_mode))
+            target.mkdir(mode=0o755)
+            target.chmod(0o755, follow_symlinks=False)
         elif stat.S_ISLNK(info.st_mode):
             target.symlink_to(os.readlink(source))
         else:
@@ -593,7 +680,7 @@ def export_repository(repo, release):
                     remaining -= len(data)
                 if incoming.read(1):
                     raise Failure("SOURCE_INVALID")
-            target.chmod(stat.S_IMODE(info.st_mode))
+            target.chmod(runtime_file_mode(info.st_mode), follow_symlinks=False)
     export_inventory(release)
 
 
@@ -809,6 +896,7 @@ def dependencies(release, *, check_boundary=dependency_boundary):
         raise Failure("DEPENDENCY_SYNC_FAILED") from None
     if (release / ".venv").is_symlink() or not (release / ".venv/bin/python").is_file():
         raise Failure("DEPENDENCY_SYNC_FAILED")
+    normalize_runtime_permissions(release / ".venv")
     bootstrap = venv_bootstrap_manifest(release / ".venv")
     check_boundary(release)
     storage_preflight(release)
@@ -820,6 +908,7 @@ def dependencies(release, *, check_boundary=dependency_boundary):
         raise Failure("DEPENDENCY_SYNC_FAILED") from None
     if venv_bootstrap_manifest(release / ".venv") != bootstrap:
         raise Failure("DEPENDENCY_SYNC_FAILED")
+    normalize_runtime_permissions(release / ".venv")
     return "INSTALLED"
 
 

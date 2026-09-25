@@ -23,7 +23,7 @@ InaccessiblePaths=/root/modelfc-state
 InaccessiblePaths=/root/dev/modelfc
 InaccessiblePaths=/etc/modelfc-validator
 Environment=PYTHONDONTWRITEBYTECODE=1
-UnsetEnvironment=ODDSPAPI_API_KEY GITHUB_TOKEN SSH_AUTH_SOCK
+UnsetEnvironment=ODDSPAPI_API_KEY GITHUB_TOKEN SSH_AUTH_SOCK LD_PRELOAD LD_LIBRARY_PATH LD_AUDIT PYTHONPATH PYTHONHOME
 KillMode=control-group
 
 [Install]
