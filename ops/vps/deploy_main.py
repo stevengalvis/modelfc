@@ -16,6 +16,7 @@ import secrets
 import shlex
 import signal
 import shutil
+import socket
 import stat
 import subprocess
 import sys
@@ -542,7 +543,7 @@ def dependency_boundary(release, *, releases=None):
             or fields.get("ReadWritePaths") != str(release / ".venv")
             or str(STATE) not in hidden or str(HISTORY) not in hidden
             or str(CONTROL) not in hidden
-            or fields.get("PrivateTmp") != "yes"
+            or fields.get("PrivateTmp") != "no"
             or fields.get("KillMode") != "control-group"
             or fields.get("PrivateDevices") != "yes"
             or fields.get("NoNewPrivileges") != "yes"
@@ -930,8 +931,8 @@ MIN_FREE_BYTES = 1024**3
 MAX_VENV_BYTES = 128 * 1024**2
 MAX_VENV_ENTRIES = 10000
 DEPENDENCY_TMPFS = frozenset({
-    "/tmp:rw,size=268435456,nr_inodes=16384",
-    "/var/tmp:rw,size=268435456,nr_inodes=16384",
+    "/tmp:rw,mode=1777,size=268435456,nr_inodes=16384",
+    "/var/tmp:rw,mode=1777,size=268435456,nr_inodes=16384",
 })
 
 
@@ -940,6 +941,38 @@ def dependency_tmpfs_valid(value):
         return False
     entries = value.split()
     return len(entries) == 2 and set(entries) == DEPENDENCY_TMPFS
+
+
+def verify_dependency_tmpfs():
+    """Check the worker's kernel mounts, not merely systemd configuration."""
+    try:
+        rows = []
+        for line in Path("/proc/self/mountinfo").read_text().splitlines():
+            left, right = line.split(" - ", 1)
+            rows.append((left.split(), right.split()))
+        devices = set()
+        for path in ("/tmp", "/var/tmp"):
+            mounts = [(a, b) for a, b in rows if a[4] == path or a[4].startswith(path + "/")]
+            if len(mounts) != 1:
+                raise ValueError
+            mount, filesystem = mounts[0]
+            if (mount[4] != path or mount[3] != "/" or filesystem[0] != "tmpfs"
+                    or not {"rw", "nosuid", "nodev"} <= set(mount[5].split(","))):
+                raise ValueError
+            fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+            try:
+                info, limits = os.fstat(fd), os.fstatvfs(fd)
+                device = f"{os.major(info.st_dev)}:{os.minor(info.st_dev)}"
+                if (device != mount[2] or device in devices
+                        or stat.S_IMODE(info.st_mode) != 0o1777 or info.st_uid != 0
+                        or limits.f_blocks * limits.f_frsize != 256 * 1024**2
+                        or limits.f_files != 16384 or limits.f_flag & os.ST_RDONLY):
+                    raise ValueError
+                devices.add(device)
+            finally:
+                os.close(fd)
+    except (OSError, ValueError, IndexError):
+        raise Failure("STATE_BOUNDARY_FAILED") from None
 
 
 def storage_preflight(path):
@@ -1029,6 +1062,7 @@ def dependencies(release, *, check_boundary=dependency_boundary):
 def run_dependency_install(release_id):
     """Trusted entrypoint in the candidate-only systemd write namespace."""
     try:
+        verify_dependency_tmpfs()
         release = release_path(release_id)
         if (not release.is_dir() or release.name[:40] != head(release)
                 or (release / ".venv").is_symlink()):
@@ -1085,7 +1119,8 @@ def tests(release, sha, *, request=REQUEST, output=TEST_OUTPUT, service=SERVICE)
     request.unlink(missing_ok=True)
     output.unlink(missing_ok=True)
     try:
-        write_json(request, {"release_id": release_id, "sha": sha})
+        write_json(request, {"release_id": release_id, "sha": sha,
+                             "controller_netns": network_namespace()})
         service_ok = True
         try:
             run_service(service)
@@ -1211,6 +1246,35 @@ def deploy(sha, *, root=ROOT, releases=RELEASES, current=CURRENT, control=CONTRO
     return value
 
 
+def network_namespace():
+    """Only our own namespace is guaranteed inspectable by the sandbox UID."""
+    try:
+        info = os.stat("/proc/self/ns/net")
+        return [info.st_dev, info.st_ino]
+    except OSError:
+        raise Failure("STATE_BOUNDARY_FAILED") from None
+
+
+def verify_test_network(controller_netns):
+    """Prove isolation before running candidate code, without inspecting PID 1."""
+    try:
+        if (not isinstance(controller_netns, list) or len(controller_netns) != 2
+                or any(type(n) is not int or n <= 0 for n in controller_netns)
+                or network_namespace() == controller_netns):
+            raise ValueError
+        # Recheck the actual running unit, including ways to reuse a namespace.
+        fields = unique_properties(line.split("=", 1) for line in command([
+            "systemctl", "show", SERVICE, "--all", "-p", "PrivateNetwork",
+            "-p", "NetworkNamespacePath", "-p", "JoinsNamespaceOf", "-p", "MainPID",
+        ], env={"PATH": "/usr/bin:/bin", "LANG": "C"}, timeout=15).splitlines())
+        if (fields != {"PrivateNetwork": "yes", "NetworkNamespacePath": "",
+                       "JoinsNamespaceOf": "", "MainPID": str(os.getpid())}
+                or socket.if_nameindex() != [(1, "lo")]):
+            raise ValueError
+    except (Failure, OSError, ValueError, TypeError):
+        raise Failure("STATE_BOUNDARY_FAILED") from None
+
+
 def run_tests():
     """Fixed systemd entrypoint; PR code is only invoked as the test subprocess."""
     value = {"sha": "", "release_id": "", "tests_status": "FAIL", "tests_run": 0,
@@ -1218,12 +1282,11 @@ def run_tests():
     try:
         if os.access(STATE, os.R_OK) or os.access(STATE, os.W_OK):
             raise Failure("STATE_BOUNDARY_FAILED")
-        if os.stat("/proc/self/ns/net").st_ino == os.stat("/proc/1/ns/net").st_ino:
-            raise Failure("STATE_BOUNDARY_FAILED")
         request = json.loads(REQUEST.read_text(encoding="utf-8"))
-        if (set(request) != {"release_id", "sha"} or not isinstance(request["sha"], str)
+        if (set(request) != {"release_id", "sha", "controller_netns"} or not isinstance(request["sha"], str)
                 or SHA.fullmatch(request["sha"]) is None):
             raise Failure("STATE_BOUNDARY_FAILED")
+        verify_test_network(request["controller_netns"])
         release = release_path(request["release_id"])
         if release.name[:40] != request["sha"] or not release.is_dir():
             raise Failure("STATE_BOUNDARY_FAILED")

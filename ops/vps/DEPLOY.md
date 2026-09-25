@@ -194,8 +194,10 @@ history, evidence and deployment-control files.
 Before candidate creation and immediately before dependency installation, the
 release filesystem must have at least 1 GiB available. Private dependency /tmp
 and /var/tmp each use tmpfs limited to 256 MiB and 16,384 inodes. The controller
-requires those exact effective systemd settings. Existing PrivateTmp, resource,
-credential, bind and write-boundary checks remain in force. During host acceptance,
+requires those exact effective systemd settings. The dependency unit uses
+`PrivateTmp=no` so its two explicit tmpfs mounts take effect, with `mode=1777`
+to make them writable by the deployment user. Test/acquisition PrivateTmp,
+resource, credential, bind and write-boundary checks remain in force. During host acceptance,
 verify inside the installed service namespace that these tmpfs mounts and limits
 are actually active; static unit verification alone does not establish this.
 
@@ -458,3 +460,42 @@ and [effective credential definitions](https://github.com/systemd/systemd/blob/v
 Regression fixtures retain the real VPS text representation and typed empty-array
 responses. Host acceptance must still inspect actual effective properties as
 `modelfc-deploy`; static unit verification alone does not prove the boundary.
+
+## Worker runtime verification after Phase 5 findings
+
+The controller records its own network namespace device/inode in the protected
+test request immediately before starting the test service. It remains alive
+under the deployment lock throughout the service run, keeping that namespace
+identity live. This is the normal host controller invoked by SSH; candidate code
+does not supply the reference. The existing read-only control-directory mount
+protects the request from the test process. The test wrapper requires a valid
+reference and a different self namespace, verifies it is the running MainPID of
+the fixed test unit with `PrivateNetwork=yes`, no `NetworkNamespacePath` and no
+`JoinsNamespaceOf`, and requires exactly the isolated loopback interface. Only
+then may it inspect the candidate Git HEAD or launch candidate Python/tests.
+Missing or contradictory evidence, unreadable self namespace, failed manager
+queries, or unexpected interfaces fail closed. The wrapper never reads PID 1's
+namespace: [procfs namespace-link access is ptrace-gated](https://man7.org/linux/man-pages/man7/namespaces.7.html),
+and the intended unprivileged worker receives EACCES on this host. An unreadable
+PID 1 is not treated as proof of isolation. Host administrators and the installed
+controller remain trusted; these checks do not defend against a hostile root.
+
+On systemd 255, [mount priority and duplicate removal](https://github.com/systemd/systemd/blob/v255/src/core/namespace.c)
+select `PrivateTmp` directory bind mounts ahead of `TemporaryFileSystem` at the
+same path. The corrected dependency unit explicitly disables that competing
+mechanism while retaining separate private 256 MiB / 16,384-inode tmpfs mounts
+at both `/tmp` and `/var/tmp`. No writable path is added. Before any candidate
+Python or pip invocation, the installed dependency wrapper checks its own
+mountinfo and opens each directory without following a leaf symlink. It requires
+one full-root tmpfs mount per path, no nested mounts, rw/nodev/nosuid, distinct
+devices matching the open descriptors, root-owned mode 1777, and exact kernel
+byte/inode totals from fstatvfs. Ext4 private directories, absent mounts, wrong
+limits/permissions, shared devices or inspection errors block installation.
+
+After independent review/merge, install the controller and dependency unit from
+the same reviewed commit and daemon-reload; the helper and other units do not
+change. Repeat real acceptance before activation. Disposable diagnostics of this
+correction verified isolation with PID 1 inaccessible, rejection when isolation
+was disabled, both actual tmpfs mounts, byte and inode ENOSPC on each, and rejection
+of legacy private directories, missing mounts and incorrect limits. Those
+diagnostics did not install trusted production components or resume deployment.

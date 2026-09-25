@@ -13,9 +13,11 @@ TimeoutStopSec=30
 SendSIGKILL=yes
 MemoryMax=2G
 TasksMax=64
-PrivateTmp=yes
-TemporaryFileSystem=/tmp:rw,size=268435456,nr_inodes=16384
-TemporaryFileSystem=/var/tmp:rw,size=268435456,nr_inodes=16384
+# PrivateTmp's bind mounts take priority over TemporaryFileSystem on systemd 255.
+# These two private tmpfs mounts provide isolation AND kernel-enforced limits.
+PrivateTmp=no
+TemporaryFileSystem=/tmp:rw,mode=1777,size=268435456,nr_inodes=16384
+TemporaryFileSystem=/var/tmp:rw,mode=1777,size=268435456,nr_inodes=16384
 PrivateDevices=yes
 NoNewPrivileges=yes
 ProtectSystem=strict

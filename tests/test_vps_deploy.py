@@ -1198,9 +1198,9 @@ class IsolatedBoundaryTest(unittest.TestCase):
                       f"ReadWritePaths={self.release / '.venv'}\n"
                       "InaccessiblePaths=/root/modelfc-state /root/dev/modelfc "
                       "/var/lib/modelfc-deploy\n"
-                      "PrivateTmp=yes\nPrivateDevices=yes\nNoNewPrivileges=yes\nKillMode=control-group\n"
+                      "PrivateTmp=no\nPrivateDevices=yes\nNoNewPrivileges=yes\nKillMode=control-group\n"
                       "TimeoutStartUSec=8min 30s\nTimeoutStopUSec=30s\nSendSIGKILL=yes\n"
-                      "BindPaths=\nBindReadOnlyPaths=\nMountImages=\nLoadCredential=\nLoadCredentialEncrypted=\nImportCredential=\nSetCredential=\nSetCredentialEncrypted=\nExecCondition=\nExecStartPre=\nExecStartPost=\nExecStop=\nExecStopPost=\nAmbientCapabilities=\nTemporaryFileSystem=/tmp:rw,size=268435456,nr_inodes=16384 /var/tmp:rw,size=268435456,nr_inodes=16384\n"
+                      "BindPaths=\nBindReadOnlyPaths=\nMountImages=\nLoadCredential=\nLoadCredentialEncrypted=\nImportCredential=\nSetCredential=\nSetCredentialEncrypted=\nExecCondition=\nExecStartPre=\nExecStartPost=\nExecStop=\nExecStopPost=\nAmbientCapabilities=\nTemporaryFileSystem=/tmp:rw,mode=1777,size=268435456,nr_inodes=16384 /var/tmp:rw,mode=1777,size=268435456,nr_inodes=16384\n"
                       "MemoryMax=2147483648\nTasksMax=64\n"
                       "ExecStart=" + effective_exec("/usr/bin/python3", "-I", str(deploy.TRUSTED),
                                                     "--install-dependencies", self.release.name) + "\n")
@@ -1237,7 +1237,7 @@ class IsolatedBoundaryTest(unittest.TestCase):
                          ("/var/lib/modelfc-deploy", "/tmp/control"),
                          ("/root/modelfc-state", "/tmp"),
                          ("/root/dev/modelfc", "/tmp"),
-                         ("PrivateTmp=yes", "PrivateTmp=no"),
+                         ("PrivateTmp=no", "PrivateTmp=yes"),
                          ("PrivateDevices=yes", "PrivateDevices=no"),
                          ("NoNewPrivileges=yes", "NoNewPrivileges=no"),
                          ("BindPaths=", "BindPaths=/tmp:/srv/modelfc/current"),
@@ -1515,7 +1515,8 @@ class IsolatedBoundaryTest(unittest.TestCase):
         (self.release / "requirements.txt").write_text("fastapi>=0.115,<1\n")
         with patch.object(deploy, "RELEASES", self.releases), patch.object(
                 deploy, "head", return_value=self.sha), patch.object(
-                deploy, "command", return_value="3.12") as execute, patch.dict(
+                deploy, "command", return_value="3.12") as execute, patch.object(
+                deploy, "verify_dependency_tmpfs"), patch.dict(
                 os.environ, {"ODDSPAPI_API_KEY": "offline-secret", "GITHUB_TOKEN": "secret"}):
             self.assertTrue(deploy.run_dependency_install(self.release.name))
             self.assertEqual(execute.call_count, 3)
@@ -1530,9 +1531,10 @@ class IsolatedBoundaryTest(unittest.TestCase):
             self.assertNotIn("GITHUB_TOKEN", pip_install.kwargs["env"])
         with patch.object(deploy, "RELEASES", self.releases), patch.object(
                 deploy, "head", return_value=self.sha), patch.object(
+                deploy, "verify_dependency_tmpfs"), patch.object(
                 deploy, "command", side_effect=deploy.Failure("INTERNAL_ERROR")):
             self.assertFalse(deploy.run_dependency_install(self.release.name))
-        with patch.object(deploy, "RELEASES", self.releases):
+        with patch.object(deploy, "RELEASES", self.releases), patch.object(deploy, "verify_dependency_tmpfs"):
             self.assertFalse(deploy.run_dependency_install("../../current"))
 
     def test_failed_dependency_install_keeps_failed_candidate_unpromoted(self):
@@ -1866,7 +1868,8 @@ class IsolatedBoundaryTest(unittest.TestCase):
         original_inode = lock.stat().st_ino
         def fake_service(args, **kwargs):
             self.assertEqual(json.loads(request.read_text()),
-                             {"release_id": self.release.name, "sha": self.sha})
+                             {"release_id": self.release.name, "sha": self.sha,
+                              "controller_netns": deploy.network_namespace()})
             output.write_text(json.dumps({"sha": self.sha, "release_id": self.release.name,
                                           "tests_status": "PASS", "tests_run": 2,
                                           "state_boundary_enforced": True}))
@@ -1896,27 +1899,16 @@ class IsolatedBoundaryTest(unittest.TestCase):
     def test_run_tests_uses_sanitized_env_and_final_stderr(self):
         request = self.control / "test-request.json"
         output = self.control / "reports/test-result.json"
-        request.write_text(json.dumps({"release_id": self.release.name, "sha": self.sha}))
-        class Stat:
-            def __init__(self, ino):
-                self.st_ino = ino
+        request.write_text(json.dumps({"release_id": self.release.name, "sha": self.sha, "controller_netns": [4, 2]}))
         cases = ((b"Ran 999 tests in 0.01s\n\nOK\n", b"no summary\n", 0, False, 0),
                  (b"", b"Ran 0 tests in 0.01s\n\nOK\n", 0, False, 0),
                  (b"", b"Ran 3 tests in 0.01s\n\nOK\n", 0, True, 3),
                  (b"", b"Ran 3 tests in 0.01s\n\nFAILED (errors=1)\n", 1, False, 3))
         for stdout, stderr, code, expected, count in cases:
-            real_stat = os.stat
-            def proc_stat(path, *args, **kwargs):
-                if str(path) == "/proc/self/ns/net":
-                    return Stat(1)
-                if str(path) == "/proc/1/ns/net":
-                    return Stat(2)
-                return real_stat(path, *args, **kwargs)
-            with self.subTest(stderr=stderr), patch.object(deploy, "RELEASES", self.releases), patch.object(
+            with self.subTest(stderr=stderr), patch.object(deploy, "verify_test_network"), patch.object(deploy, "RELEASES", self.releases), patch.object(
                     deploy, "REQUEST", request), patch.object(deploy, "TEST_OUTPUT", output), patch.object(
                     deploy, "head", return_value=self.sha), patch.object(
                     deploy.os, "access", return_value=False), patch.object(
-                    deploy.os, "stat", side_effect=proc_stat), patch.object(
                     deploy.subprocess, "run", return_value=subprocess.CompletedProcess(
                         [], code, stdout, stderr)) as run, patch.dict(
                     os.environ, {"ODDSPAPI_API_KEY": "offline-secret", "GITHUB_TOKEN": "secret",
