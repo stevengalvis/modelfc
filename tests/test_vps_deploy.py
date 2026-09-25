@@ -78,6 +78,7 @@ class FreshReleaseTest(unittest.TestCase):
         self.mount_events = []
         self.created = []
         self.tested = []
+        self.real_acquisition = deploy.run_acquisition
         self.patches = [patch.object(deploy, "CONTROL", self.control),
                         patch.object(deploy, "ACQUISITION", self.staging),
                         patch.object(deploy, "REMOTE", str(self.remote)),
@@ -240,6 +241,82 @@ class FreshReleaseTest(unittest.TestCase):
             self.assertEqual(self.run_deploy(self.b)["reason"], "STORAGE_LIMIT_FAILED")
         self.assertEqual((existing / "retained").read_text(), "leave intact")
         self.assertFalse(self.staging.exists())
+
+    def test_systemd_acquisition_entrypoint_preserves_complete_offline_git_flow(self):
+        staged = deploy.staged_acquisition
+        def service(unit):
+            prefix, suffix = deploy.ACQUISITION_SERVICE.split("{}")
+            self.assertTrue(unit.startswith(prefix) and unit.endswith(suffix))
+            deploy.acquire_service(unit[len(prefix):-len(suffix)])
+        with patch.object(deploy, "run_acquisition", side_effect=self.real_acquisition), patch.object(
+                deploy, "acquisition_boundary"), patch.object(deploy, "run_service", side_effect=service), patch.object(
+                deploy, "staged_acquisition", side_effect=lambda ident, previous:
+                staged(ident, previous, remote=str(self.remote))):
+            result = self.run_deploy(self.a)
+        self.assertEqual(result["status"], "PASS")
+        self.assertEqual(deploy.head(self.current.resolve()), self.a)
+        self.assertFalse(self.staging.exists())
+
+    def test_live_descendant_blocks_candidate_cleanup_and_lock_release(self):
+        self.assertEqual(self.run_deploy(self.a)["status"], "PASS")
+        previous = os.readlink(self.current)
+        state = {"active": False}
+        events = []
+        original_command = deploy.command
+        def command(args, **kwargs):
+            if args[:3] == ["sudo", "-n", "/usr/bin/systemctl"]:
+                events.append(args[3])
+                if args[3] == "start":
+                    state["active"] = True
+                    raise deploy.Failure("INTERNAL_ERROR")  # systemctl wait timed out.
+                return ""  # Simulate a stubborn descendant despite stop completion.
+            return original_command(args, **kwargs)
+        def waiting(seconds):
+            self.assertTrue(state["active"])
+            self.assertTrue(self.created[-1].is_dir())
+            self.assertEqual(os.readlink(self.current), previous)
+            self.assertTrue((self.control / "service-pending.json").exists())
+            with (self.control / "deploy.lock").open("a+") as contender:
+                with self.assertRaises(BlockingIOError):
+                    fcntl.flock(contender, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            events.append("confirmed-lock-and-candidate-retained")
+            state["active"] = False  # OS/admin finally confirms cgroup termination.
+        def candidate_tests(release, sha):
+            deploy.run_service(deploy.SERVICE)
+            self.fail("A failed termination must never produce passing tests")
+        with patch.object(deploy, "PENDING_SERVICE", self.control / "service-pending.json"), patch.object(
+                deploy, "command", side_effect=command), patch.object(
+                deploy, "service_inactive", side_effect=lambda _: not state["active"]), patch.object(
+                deploy, "time", __import__("types").SimpleNamespace(sleep=waiting)), patch.object(
+                deploy, "tests", side_effect=candidate_tests), patch.object(deploy, "promote") as promote:
+            result = self.run_deploy(self.b)
+        self.assertEqual(result["reason"], "STATE_BOUNDARY_FAILED")
+        self.assertEqual(events, ["start", "stop", "confirmed-lock-and-candidate-retained"])
+        promote.assert_not_called()
+        self.assertEqual(os.readlink(self.current), previous)
+        self.assertEqual(list(self.releases.iterdir()), [Path(previous)])
+        self.assertFalse((self.control / "service-pending.json").exists())
+
+    def test_acquisition_resource_rejection_and_worker_failure_clean_staging(self):
+        self.assertEqual(self.run_deploy(self.a)["status"], "PASS")
+        previous = os.readlink(self.current)
+        for failure in ("boundary", "worker"):
+            with self.subTest(failure=failure), patch.object(
+                    deploy, "run_acquisition", side_effect=self.real_acquisition), patch.object(
+                    deploy, "acquisition_boundary", side_effect=deploy.Failure("STATE_BOUNDARY_FAILED")
+                    if failure == "boundary" else None), patch.object(
+                    deploy, "run_service", side_effect=deploy.Failure("INTERNAL_ERROR")) as run, patch.object(
+                    deploy, "promote") as promote:
+                result = self.run_deploy(self.b)
+            self.assertEqual(result["reason"], "STATE_BOUNDARY_FAILED" if failure == "boundary" else "FETCH_FAILED")
+            self.assertEqual(len(self.created), 1)
+            self.assertEqual(len(self.tested), 1)
+            self.assertFalse(self.staging.exists())
+            self.assertEqual(os.readlink(self.current), previous)
+            self.assertEqual(list(self.releases.iterdir()), [Path(previous)])
+            promote.assert_not_called()
+            if failure == "boundary":
+                run.assert_not_called()
 
     def test_ancestor_distinguishes_exit_status_and_errors(self):
         self.assertTrue(deploy.ancestor(self.seed, self.a, self.b))
@@ -644,7 +721,9 @@ class IsolatedBoundaryTest(unittest.TestCase):
         group = type("Group", (), {"gr_gid": 1001})()
         for stub in (patch.object(deploy.pwd, "getpwnam", return_value=account),
                      patch.object(deploy.grp, "getgrnam", return_value=group),
-                     patch.object(deploy.os, "getgrouplist", return_value=[1001])):
+                     patch.object(deploy.os, "getgrouplist", return_value=[1001]),
+                     patch.object(deploy, "PENDING_SERVICE", self.control / "service-pending.json"),
+                     patch.object(deploy, "service_inactive", return_value=True)):
             stub.start()
             self.addCleanup(stub.stop)
         lock_check = patch.object(deploy, "verify_dependency_lock")
@@ -908,6 +987,7 @@ class IsolatedBoundaryTest(unittest.TestCase):
                       "InaccessiblePaths=/root/modelfc-state /root/dev/modelfc "
                       "/var/lib/modelfc-deploy\n"
                       "PrivateTmp=yes\nPrivateDevices=yes\nNoNewPrivileges=yes\nKillMode=control-group\n"
+                      "TimeoutStartUSec=8min 30s\nTimeoutStopUSec=30s\nSendSIGKILL=yes\n"
                       "BindPaths=\nBindReadOnlyPaths=\nMountImages=\nLoadCredential=\nLoadCredentialEncrypted=\nImportCredential=\nSetCredential=\nExecCondition=\nExecStartPre=\nExecStartPost=\nExecStop=\nExecStopPost=\nAmbientCapabilities=\nTemporaryFileSystem=/tmp:rw,size=268435456,nr_inodes=16384 /var/tmp:rw,size=268435456,nr_inodes=16384\n"
                       "MemoryMax=2147483648\nTasksMax=64\n"
                       "ExecStart=" + effective_exec("/usr/bin/python3", "-I", str(deploy.TRUSTED),
@@ -949,6 +1029,10 @@ class IsolatedBoundaryTest(unittest.TestCase):
                          ("BindPaths=", "BindPaths=/tmp:/srv/modelfc/current"),
                          ("BindReadOnlyPaths=", "BindReadOnlyPaths=/tmp:/srv/modelfc/current"),
                          ("TemporaryFileSystem=", "TemporaryFileSystem=/srv/modelfc"),
+                         ("TimeoutStopUSec=30s", "TimeoutStopUSec=90s"),
+                         ("TimeoutStopUSec=30s\n", ""),
+                         ("TimeoutStartUSec=8min 30s", "TimeoutStartUSec=infinity"),
+                         ("SendSIGKILL=yes", "SendSIGKILL=no"),
                          ("MemoryMax=2147483648", "MemoryMax=infinity"),
                          ("MemoryMax=2147483648", "MemoryMax=1073741824"),
                          ("MemoryMax=2147483648\n", ""),
@@ -997,6 +1081,10 @@ class IsolatedBoundaryTest(unittest.TestCase):
 
     def test_dependency_resource_failure_prevents_install_service_start(self):
         for index, (old, new) in enumerate((
+                ("TimeoutStopUSec=30s", "TimeoutStopUSec=90s"),
+                ("TimeoutStopUSec=30s\n", ""),
+                ("TimeoutStartUSec=8min 30s", "TimeoutStartUSec=infinity"),
+                ("SendSIGKILL=yes", "SendSIGKILL=no"),
                 ("MemoryMax=2147483648", "MemoryMax=infinity"),
                 ("MemoryMax=2147483648", "MemoryMax=1073741824"),
                 ("MemoryMax=2147483648\n", ""),
@@ -1219,7 +1307,8 @@ class IsolatedBoundaryTest(unittest.TestCase):
         self.assertFalse((self.root / "current").exists())
 
     def test_effective_service_properties_enforced(self):
-        properties = ("PrivateNetwork=yes\nPrivateTmp=yes\nNoNewPrivileges=yes\nKillMode=control-group\nInaccessiblePaths=/root/modelfc-state "
+        properties = ("TimeoutStartUSec=5min 30s\nTimeoutStopUSec=30s\nSendSIGKILL=yes\n"
+                      "PrivateNetwork=yes\nPrivateTmp=yes\nNoNewPrivileges=yes\nKillMode=control-group\nInaccessiblePaths=/root/modelfc-state "
                       "/root/dev/modelfc /etc/modelfc-validator\nProtectSystem=strict\n"
                       f"ReadOnlyPaths={self.releases} {self.control}\nReadWritePaths="
                       f"{self.control / 'reports'}\nBindPaths=\nBindReadOnlyPaths=\nMountImages=\nLoadCredential=\nLoadCredentialEncrypted=\nImportCredential=\nSetCredential=\nExecCondition=\nExecStartPre=\nExecStartPost=\nExecStop=\nExecStopPost=\nAmbientCapabilities=\nTemporaryFileSystem=\n"
@@ -1399,6 +1488,10 @@ class IsolatedBoundaryTest(unittest.TestCase):
                          ("Group=modelfc-deploy\n", ""),
                          ("SupplementaryGroups=\n", "SupplementaryGroups=docker\n"),
                          ("MemoryMax=2147483648", "MemoryMax=infinity"),
+                         ("TimeoutStopUSec=30s", "TimeoutStopUSec=90s"),
+                         ("TimeoutStopUSec=30s\n", ""),
+                         ("TimeoutStartUSec=5min 30s", "TimeoutStartUSec=infinity"),
+                         ("SendSIGKILL=yes", "SendSIGKILL=no"),
                          ("MemoryMax=2147483648", "MemoryMax=4294967296"),
                          ("MemoryMax=2147483648\n", ""),
                          ("TasksMax=64", "TasksMax=infinity"),
@@ -1735,40 +1828,187 @@ class AcquisitionBoundaryTest(unittest.TestCase):
         inventory = deploy.export_inventory(repo)
         self.assertEqual([str(item[0]) for item in inventory], ["link"])
 
-    def test_worker_reaps_descendants_before_export_can_begin(self):
-        worker = self.root / "worker.py"
-        marker = self.root / "child.pid"
-        worker.write_text("import os,sys,time,json\n"
-            "child=os.fork()\n"
-            "if child == 0:\n"
-            " os.close(1)\n"
-            " time.sleep(60)\n"
-            " os._exit(0)\n"
-            f"open({str(marker)!r},'w').write(str(child))\n"
-            "print(json.dumps({'status':'READY','tip':'a'*40}))\n")
-        with patch.object(deploy, "TRUSTED", worker), patch.object(deploy, "ACQUISITION", self.root):
-            result = deploy.run_acquisition(self.ident, None)
-        self.assertEqual(result["status"], "READY")
-        pid = int(marker.read_text())
-        with self.assertRaises(ProcessLookupError):
-            os.kill(pid, 0)
-        with self.assertRaises(ChildProcessError):
-            os.waitpid(pid, os.WNOHANG)
 
-    def test_worker_timeout_reaps_before_failure(self):
-        worker = self.root / "worker.py"
-        worker.write_text("import time\ntime.sleep(60)\n")
-        real_communicate = subprocess.Popen.communicate
-        def short_wait(process, **kwargs):
-            return real_communicate(process, timeout=0.1)
-        with patch.object(deploy, "TRUSTED", worker), patch.object(deploy, "ACQUISITION", self.root), patch.object(
-                subprocess.Popen, "communicate", short_wait), patch.object(
-                deploy.os, "killpg", wraps=os.killpg) as kill:
-            with self.assertRaisesRegex(deploy.Failure, "FETCH_FAILED"):
-                deploy.run_acquisition(self.ident, None)
-        kill.assert_called_once()
-        with self.assertRaises(ProcessLookupError):
-            os.kill(kill.call_args.args[0], 0)
+
+class ServiceLifecycleTest(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.ident = "a" * 40 + "-" + "b" * 12
+        self.marker = self.root / "service-pending.json"
+        cgroup = self.root / "cgroup"
+        cgroup.mkdir()
+        (cgroup / "cgroup.controllers").write_text("memory pids")
+        mount = patch.object(deploy, "CGROUP_ROOT", cgroup)
+        mount.start()
+        self.addCleanup(mount.stop)
+        stub = patch.object(deploy, "PENDING_SERVICE", self.marker)
+        stub.start()
+        self.addCleanup(stub.stop)
+
+    def test_normal_completion_and_complete_wait_budgets(self):
+        for unit, wait in ((deploy.SERVICE, 390),
+                           (deploy.DEPENDENCY_SERVICE.format(self.ident), 570),
+                           (deploy.ACQUISITION_SERVICE.format(self.ident), 660)):
+            with self.subTest(unit=unit), patch.object(deploy, "service_inactive", return_value=True), patch.object(
+                    deploy, "command") as command:
+                deploy.run_service(unit)
+            self.assertEqual(command.call_args.args[0],
+                             ["sudo", "-n", "/usr/bin/systemctl", "start", "--wait", unit])
+            self.assertEqual(command.call_args.kwargs["timeout"], wait)
+            self.assertFalse(self.marker.exists())
+
+    def test_controller_timeout_explicitly_stops_and_confirms(self):
+        events = []
+        def command(args, **kwargs):
+            events.append(args[3])
+            if args[3] == "start":
+                raise deploy.Failure("INTERNAL_ERROR")  # command() translates TimeoutExpired.
+            self.assertEqual(kwargs["timeout"], 60)
+        with patch.object(deploy, "service_inactive", side_effect=[True, False, True, True]), patch.object(
+                deploy, "command", side_effect=command):
+            with self.assertRaisesRegex(deploy.Failure, "INTERNAL_ERROR"):
+                deploy.run_service(deploy.SERVICE)
+        self.assertEqual(events, ["start", "stop"])
+        self.assertFalse(self.marker.exists())
+
+    def test_real_command_timeout_translation_still_stops_unit(self):
+        completed = subprocess.CompletedProcess([], 0, stdout=b"")
+        with patch.object(deploy, "service_inactive", side_effect=[True, False, True, True]), patch.object(
+                deploy.subprocess, "run", side_effect=[subprocess.TimeoutExpired("systemctl", 390), completed]) as run:
+            with self.assertRaisesRegex(deploy.Failure, "INTERNAL_ERROR"):
+                deploy.run_service(deploy.SERVICE)
+        self.assertEqual(run.call_args_list[0].kwargs["timeout"], 390)
+        self.assertEqual(run.call_args_list[1].args[0],
+                         ["sudo", "-n", "/usr/bin/systemctl", "stop", deploy.SERVICE])
+        self.assertEqual(run.call_args_list[1].kwargs["timeout"], 60)
+
+    def test_unknown_termination_waits_and_fails_even_after_recovery(self):
+        states = iter([True, False, False, False, True, True])
+        with patch.object(deploy, "service_inactive", side_effect=lambda _: next(states)), patch.object(
+                deploy, "command"), patch.object(deploy.time, "sleep") as sleep:
+            with self.assertRaisesRegex(deploy.Failure, "STATE_BOUNDARY_FAILED"):
+                deploy.run_service(deploy.SERVICE)
+        sleep.assert_called_once_with(5)
+        self.assertFalse(self.marker.exists())
+
+    def test_inactive_requires_empty_cgroup_and_zero_processes(self):
+        unit = deploy.SERVICE
+        fields = f"ActiveState=inactive\nMainPID=0\nControlPID=0\nJob=0\nControlGroup=/system.slice/{unit}\n"
+        for populated in ("0", "1", "unknown"):
+            with self.subTest(populated=populated), patch.object(deploy, "command", return_value=fields), patch.object(
+                    Path, "read_text", return_value=f"populated {populated}\nfrozen 0\n"):
+                self.assertEqual(deploy.service_inactive(unit), populated == "0")
+        for changed in (fields.replace("MainPID=0", "MainPID=12"),
+                        fields.replace("ControlPID=0", "ControlPID=12"),
+                        fields.replace("inactive", "deactivating"),
+                        fields.replace("Job=0", "Job=42"),
+                        fields.replace("Job=0\n", ""),
+                        "ActiveState=inactive\nMainPID=0\nControlPID=0\n"):
+            with self.subTest(fields=changed), patch.object(deploy, "command", return_value=changed):
+                self.assertFalse(deploy.service_inactive(unit))
+        with patch.object(deploy, "command", side_effect=deploy.Failure("INTERNAL_ERROR")):
+            self.assertFalse(deploy.service_inactive(unit))
+        with patch.object(deploy, "command", return_value=fields), patch.object(
+                Path, "read_text", side_effect=FileNotFoundError):
+            self.assertTrue(deploy.service_inactive(unit))
+
+    def test_stale_marker_requires_termination_and_never_resumes(self):
+        self.marker.write_text(json.dumps({"unit": deploy.SERVICE}))
+        with patch.object(deploy, "finish_service") as finish:
+            with self.assertRaisesRegex(deploy.Failure, "STATE_BOUNDARY_FAILED"):
+                deploy.recover_service(self.root)
+        finish.assert_called_once_with(deploy.SERVICE)
+        self.assertFalse(self.marker.exists())
+        self.marker.write_text(json.dumps({"unit": "arbitrary.service"}))
+        with patch.object(deploy, "finish_service") as finish:
+            with self.assertRaisesRegex(deploy.Failure, "STATE_BOUNDARY_FAILED"):
+                deploy.recover_service(self.root)
+        finish.assert_not_called()
+        self.assertTrue(self.marker.exists())
+
+    def test_reviewed_units_bound_complete_termination(self):
+        for name, start in (("modelfc-postmerge-tests.service", 330),
+                            ("modelfc-postmerge-dependencies@.service", 510),
+                            ("modelfc-postmerge-acquisition@.service", 600)):
+            text = (SOURCE.parents[2] / "deploy" / name).read_text()
+            for setting in (f"TimeoutStartSec={start}", "TimeoutStopSec=30",
+                            "KillMode=control-group", "SendSIGKILL=yes"):
+                self.assertIn(setting, text)
+
+
+def acquisition_properties(ident):
+    values = {
+        "User": "modelfc-deploy", "Group": "modelfc-deploy", "SupplementaryGroups": "",
+        "MemoryMax": "536870912", "TasksMax": "32", "KillMode": "control-group",
+        "TimeoutStartUSec": "10min", "TimeoutStopUSec": "30s", "SendSIGKILL": "yes",
+        "ProtectSystem": "strict", "ReadWritePaths": str(deploy.ACQUISITION),
+        "ReadOnlyPaths": str(deploy.ROOT), "NoNewPrivileges": "yes", "PrivateDevices": "yes",
+        "PrivateTmp": "yes", "WorkingDirectory": str(deploy.ACQUISITION),
+        "BindPaths": "", "BindReadOnlyPaths": "", "MountImages": "", "TemporaryFileSystem": "",
+        "LoadCredential": "", "LoadCredentialEncrypted": "", "ImportCredential": "", "SetCredential": "",
+        "ExecCondition": "", "ExecStartPre": "", "ExecStartPost": "", "ExecStop": "", "ExecStopPost": "",
+        "AmbientCapabilities": "", "Delegate": "no",
+        "InaccessiblePaths": f"{deploy.STATE} {deploy.HISTORY} {deploy.CONTROL} /etc/modelfc-validator",
+        "ExecStart": effective_exec("/usr/bin/python3", "-I", str(deploy.TRUSTED), "--acquire-service", ident),
+    }
+    return "".join(f"{key}={value}\n" for key, value in values.items())
+
+
+class AcquisitionResourceTest(unittest.TestCase):
+    def setUp(self):
+        self.ident = "a" * 40 + "-" + "b" * 12
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        cgroup = self.root / "cgroup"
+        cgroup.mkdir()
+        (cgroup / "cgroup.controllers").write_text("memory pids")
+        for stub in (patch.object(deploy, "CGROUP_ROOT", cgroup),
+                     patch.object(deploy, "deployment_account_groups"),
+                     patch.object(deploy, "ACQUISITION", self.root)):
+            stub.start()
+            self.addCleanup(stub.stop)
+
+    def test_expected_acquisition_boundary_passes(self):
+        with patch.object(deploy, "command", return_value=acquisition_properties(self.ident)) as show:
+            deploy.acquisition_boundary(self.ident)
+        for property in ("MemoryMax", "TasksMax", "KillMode", "TimeoutStartUSec", "TimeoutStopUSec", "SendSIGKILL", "Delegate"):
+            self.assertIn(property, show.call_args.args[0])
+
+    def test_missing_wrong_unlimited_resources_and_lifecycle_rejected(self):
+        fields = {"MemoryMax": (None, "infinity", "1073741824", "0"),
+                  "TasksMax": (None, "infinity", "64", "0"),
+                  "KillMode": (None, "process", "mixed", "none"),
+                  "TimeoutStopUSec": (None, "infinity", "1min 30s"),
+                  "TimeoutStartUSec": (None, "infinity", "20min"),
+                  "SendSIGKILL": (None, "no"), "Delegate": (None, "yes")}
+        for name, bad_values in fields.items():
+            for value in bad_values:
+                expected = acquisition_properties(self.ident)
+                lines = [line for line in expected.splitlines() if not line.startswith(name + "=")]
+                if value is not None:
+                    lines.append(name + "=" + value)
+                with self.subTest(name=name, value=value), patch.object(
+                        deploy, "command", return_value="\n".join(lines)), patch.object(deploy, "run_service") as start, patch.object(
+                        deploy, "acquisition_mount") as mount:
+                    with self.assertRaisesRegex(deploy.Failure, "STATE_BOUNDARY_FAILED"):
+                        deploy.run_acquisition(self.ident, None)
+                start.assert_not_called()
+                mount.assert_not_called()
+                self.assertFalse((self.root / "request.json").exists())
+
+    def test_fixed_service_command_and_worker_result(self):
+        def service(unit):
+            self.assertEqual(unit, deploy.ACQUISITION_SERVICE.format(self.ident))
+            self.assertEqual(json.loads((self.root / "request.json").read_text()),
+                             {"release_id": self.ident, "previous": None})
+            (self.root / "result.json").write_text(json.dumps({"status": "READY", "tip": "a" * 40}))
+        with patch.object(deploy, "command", return_value=acquisition_properties(self.ident)), patch.object(
+                deploy, "acquisition_mount"), patch.object(deploy, "run_service", side_effect=service):
+            self.assertEqual(deploy.run_acquisition(self.ident, None), {"status": "READY", "tip": "a" * 40})
+
 
 
 if __name__ == "__main__":

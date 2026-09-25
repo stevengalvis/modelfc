@@ -4,7 +4,6 @@ Install this file outside the Git checkout. SSH supplies only a fixed request;
 the installed systemd unit invokes --run-tests against one candidate release.
 """
 
-import ctypes
 import fcntl
 import grp
 import hashlib
@@ -19,6 +18,7 @@ import shutil
 import stat
 import subprocess
 import sys
+import time
 
 
 REMOTE = "https://github.com/stevengalvis/modelfc.git"
@@ -31,7 +31,10 @@ STATE = Path("/root/modelfc-state")
 HISTORY = Path("/root/dev/modelfc")
 TRUSTED = Path("/opt/modelfc-deploy/deploy_main.py")
 SERVICE = "modelfc-postmerge-tests.service"
+ACQUISITION_SERVICE = "modelfc-postmerge-acquisition@{}.service"
 DEPENDENCY_SERVICE = "modelfc-postmerge-dependencies@{}.service"
+CGROUP_ROOT = Path("/sys/fs/cgroup")
+PENDING_SERVICE = CONTROL / "service-pending.json"
 REQUEST = CONTROL / "test-request.json"
 TEST_OUTPUT = REPORTS / "test-result.json"
 ACQUISITION = Path("/run/modelfc-acquisition")
@@ -167,9 +170,142 @@ def deployment_account_groups():
         raise Failure("STATE_BOUNDARY_FAILED") from None
 
 
+# Includes stop escalation and time for systemctl to report completed cgroup cleanup.
+STOP_SECONDS = 30
+SERVICE_OVERHEAD = 30
+START_SECONDS = {SERVICE: 330, DEPENDENCY_SERVICE: 510, ACQUISITION_SERVICE: 600}
+
+
+def service_kind(unit):
+    if unit == SERVICE:
+        return SERVICE
+    for template in (DEPENDENCY_SERVICE, ACQUISITION_SERVICE):
+        prefix, suffix = template.split("{}")
+        if unit.startswith(prefix) and unit.endswith(suffix):
+            if RELEASE_ID.fullmatch(unit[len(prefix):-len(suffix)]):
+                return template
+    raise Failure("STATE_BOUNDARY_FAILED")
+
+
+def lifecycle_valid(fields, seconds):
+    expected = {330: "5min 30s", 510: "8min 30s", 600: "10min"}[seconds]
+    return (fields.get("TimeoutStartUSec") == expected
+            and fields.get("TimeoutStopUSec") == "30s"
+            and fields.get("SendSIGKILL") == "yes"
+            and fields.get("KillMode") == "control-group")
+
+
+def service_inactive(unit):
+    """Require systemd quiescence AND an empty/removed service cgroup."""
+    service_kind(unit)
+    try:
+        if not (CGROUP_ROOT / "cgroup.controllers").is_file():
+            return False
+        output = command(["systemctl", "show", unit, "--all", "-p", "ActiveState",
+                          "-p", "MainPID", "-p", "ControlPID", "-p", "ControlGroup", "-p", "Job"], timeout=15)
+        fields = dict(line.split("=", 1) for line in output.splitlines() if "=" in line)
+        if (fields.get("ActiveState") not in ("inactive", "failed")
+                or fields.get("MainPID") != "0" or fields.get("ControlPID") != "0"
+                or fields.get("Job") != "0" or "ControlGroup" not in fields):
+            return False
+        group = fields["ControlGroup"]
+        if not group:
+            return True  # systemd has released the empty cgroup.
+        relative = Path(group)
+        if (not group.startswith("/system.slice/") or ".." in relative.parts
+                or relative.name != unit):
+            return False
+        events = CGROUP_ROOT / group.lstrip("/") / "cgroup.events"
+        try:
+            values = dict(line.split() for line in events.read_text().splitlines())
+            return values.get("populated") == "0"
+        except FileNotFoundError:
+            return not events.parent.exists()
+    except (Failure, OSError, ValueError):
+        pass
+    return False
+
+
+def finish_service(unit):
+    """Do not unwind/release the deployment lock while a unit may still run."""
+    handlers = {}
+    try:
+        # A disconnected SSH client must not interrupt the termination gate.
+        for sig in (signal.SIGHUP, signal.SIGTERM, signal.SIGINT):
+            handlers[sig] = signal.signal(sig, signal.SIG_IGN)
+        if service_inactive(unit):
+            return
+        try:
+            command(["sudo", "-n", "/usr/bin/systemctl", "stop", unit],
+                    timeout=STOP_SECONDS + SERVICE_OVERHEAD)
+        except Failure:
+            pass
+        if service_inactive(unit):
+            return
+        # Kernel/manager failure: deliberately retain the host lock and files.
+        # No further execution, cleanup, or promotion is permitted. An operator
+        # may need to restore systemd/terminate the unit. Even eventual recovery
+        # still fails this deployment. The pending marker survives forced death.
+        while not service_inactive(unit):
+            time.sleep(5)
+        raise Failure("STATE_BOUNDARY_FAILED")
+    finally:
+        for sig, handler in handlers.items():
+            signal.signal(sig, handler)
+
+
+def run_service(unit):
+    kind = service_kind(unit)
+    pending = PENDING_SERVICE
+    if pending.exists() or pending.is_symlink():
+        raise Failure("STATE_BOUNDARY_FAILED")
+    if not service_inactive(unit):
+        finish_service(unit)
+        raise Failure("STATE_BOUNDARY_FAILED")
+    write_json(pending, {"unit": unit})
+    handlers = {}
+    def interrupted(signum, frame):
+        raise Failure("STATE_BOUNDARY_FAILED")
+    try:
+        for sig in (signal.SIGHUP, signal.SIGTERM, signal.SIGINT):
+            handlers[sig] = signal.signal(sig, interrupted)
+        command(["sudo", "-n", "/usr/bin/systemctl", "start", "--wait", unit],
+                timeout=START_SECONDS[kind] + STOP_SECONDS + SERVICE_OVERHEAD)
+    finally:
+        try:
+            finish_service(unit)
+        finally:
+            # finish_service returns/raises only after quiescence; while unknown
+            # it stays above holding the host lock. Unexpected errors preserve
+            # the marker, requiring recovery under that same lock.
+            if service_inactive(unit):
+                pending.unlink(missing_ok=True)
+            for sig, handler in handlers.items():
+                signal.signal(sig, handler)
+
+
+def recover_service(control):
+    pending = control / "service-pending.json"
+    if not pending.exists() and not pending.is_symlink():
+        return
+    try:
+        value = read_test_report(pending)
+        if set(value) != {"unit"} or not isinstance(value["unit"], str):
+            raise ValueError
+        service_kind(value["unit"])
+    except (OSError, ValueError, TypeError):
+        raise Failure("STATE_BOUNDARY_FAILED") from None
+    finish_service(value["unit"])
+    pending.unlink()
+    # Do not resume a crashed attempt or automatically remove its resources.
+    raise Failure("STATE_BOUNDARY_FAILED")
+
+
 def boundary(*, root=ROOT, releases=RELEASES, control=CONTROL, state=STATE,
              service=SERVICE):
     deployment_account_groups()
+    if not (CGROUP_ROOT / "cgroup.controllers").is_file():
+        raise Failure("STATE_BOUNDARY_FAILED")
     reports = control / "reports"
     if os.geteuid() == 0 or pwd.getpwuid(os.geteuid()).pw_name != "modelfc-deploy":
         raise Failure("STATE_BOUNDARY_FAILED")
@@ -202,12 +338,14 @@ def boundary(*, root=ROOT, releases=RELEASES, control=CONTROL, state=STATE,
                               "-p", "ExecCondition", "-p", "ExecStartPre", "-p", "ExecStartPost", "-p", "ExecStop", "-p", "ExecStopPost",
                               "-p", "AmbientCapabilities",
                               "-p", "TemporaryFileSystem",
-                              "-p", "MemoryMax", "-p", "TasksMax"], timeout=15)
+                              "-p", "MemoryMax", "-p", "TasksMax",
+                              "-p", "TimeoutStartUSec", "-p", "TimeoutStopUSec", "-p", "SendSIGKILL"], timeout=15)
     except Failure:
         raise Failure("STATE_BOUNDARY_FAILED") from None
     fields = dict(line.split("=", 1) for line in properties.splitlines() if "=" in line)
     hidden = fields.get("InaccessiblePaths", "").split()
-    if (fields.get("PrivateNetwork") != "yes"
+    if (not lifecycle_valid(fields, 330)
+            or fields.get("PrivateNetwork") != "yes"
             or fields.get("PrivateTmp") != "yes"
             or fields.get("NoNewPrivileges") != "yes"
             or fields.get("KillMode") != "control-group"
@@ -252,12 +390,14 @@ def dependency_boundary(release, *, releases=None):
                               "-p", "ExecCondition", "-p", "ExecStartPre", "-p", "ExecStartPost", "-p", "ExecStop", "-p", "ExecStopPost",
                               "-p", "AmbientCapabilities",
                               "-p", "TemporaryFileSystem",
-                              "-p", "MemoryMax", "-p", "TasksMax"], timeout=15)
+                              "-p", "MemoryMax", "-p", "TasksMax",
+                              "-p", "TimeoutStartUSec", "-p", "TimeoutStopUSec", "-p", "SendSIGKILL"], timeout=15)
     except Failure:
         raise Failure("STATE_BOUNDARY_FAILED") from None
     fields = dict(line.split("=", 1) for line in properties.splitlines() if "=" in line)
     hidden = fields.get("InaccessiblePaths", "").split()
-    if (fields.get("User") != "modelfc-deploy"
+    if (not lifecycle_valid(fields, 510)
+            or fields.get("User") != "modelfc-deploy"
             or fields.get("Group") != "modelfc-deploy"
             or fields.get("SupplementaryGroups") != ""
             or fields.get("ProtectSystem") != "strict"
@@ -299,7 +439,6 @@ def staged_acquisition(release_id, previous, *, remote=REMOTE):
     if (not RELEASE_ID.fullmatch(release_id)
             or (previous is not None and SHA.fullmatch(previous) is None)):
         raise Failure("INVALID_REQUEST")
-    acquisition_mount("verify", release_id)
     repo = ACQUISITION / "repo"
     (ACQUISITION / "tmp").mkdir(mode=0o700)
     repo.mkdir(mode=0o700)
@@ -323,47 +462,77 @@ def staged_acquisition(release_id, previous, *, remote=REMOTE):
     return {"status": "READY", "tip": tip}
 
 
-def run_acquisition(release_id, previous):
-    """Reap the worker and its Git descendants before reading/exporting staging."""
-    libc = ctypes.CDLL(None, use_errno=True)
-    original = ctypes.c_int()
-    if libc.prctl(37, ctypes.byref(original), 0, 0, 0) != 0 or libc.prctl(36, 1, 0, 0, 0) != 0:
+def acquisition_boundary(release_id):
+    if RELEASE_ID.fullmatch(release_id) is None:
         raise Failure("STATE_BOUNDARY_FAILED")
-    process = None
+    deployment_account_groups()
+    if not (CGROUP_ROOT / "cgroup.controllers").is_file():
+        raise Failure("STATE_BOUNDARY_FAILED")
+    unit = ACQUISITION_SERVICE.format(release_id)
+    expected = {
+        "User": "modelfc-deploy", "Group": "modelfc-deploy", "SupplementaryGroups": "",
+        "MemoryMax": "536870912", "TasksMax": "32", "KillMode": "control-group",
+        "TimeoutStartUSec": "10min", "TimeoutStopUSec": "30s", "SendSIGKILL": "yes",
+        "ProtectSystem": "strict", "ReadWritePaths": str(ACQUISITION),
+        "ReadOnlyPaths": str(ROOT), "NoNewPrivileges": "yes", "PrivateDevices": "yes",
+        "PrivateTmp": "yes", "WorkingDirectory": str(ACQUISITION),
+        "BindPaths": "", "BindReadOnlyPaths": "", "MountImages": "", "TemporaryFileSystem": "",
+        "LoadCredential": "", "LoadCredentialEncrypted": "", "ImportCredential": "", "SetCredential": "",
+        "ExecCondition": "", "ExecStartPre": "", "ExecStartPost": "", "ExecStop": "", "ExecStopPost": "",
+        "AmbientCapabilities": "", "Delegate": "no",
+    }
+    args = ["systemctl", "show", unit, "--all"]
+    for key in (*expected, "ExecStart", "InaccessiblePaths"):
+        args.extend(["-p", key])
     try:
-        process = subprocess.Popen(
-            ["/usr/bin/python3", "-I", str(TRUSTED), "--acquire-stage", release_id, previous or "-"],
-            cwd=str(ACQUISITION), env={"PATH": "/usr/bin:/bin", "HOME": str(ACQUISITION),
-                                      "PYTHONDONTWRITEBYTECODE": "1"},
-            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, start_new_session=True)
-        output, _ = process.communicate(timeout=600)
-        if len(output) > 1024 or process.returncode != 0:
-            raise Failure("FETCH_FAILED")
-        result = json.loads(output)
+        output = command(args, timeout=15)
+        fields = dict(line.split("=", 1) for line in output.splitlines() if "=" in line)
+        if (any(fields.get(key) != value for key, value in expected.items())
+                or not {str(STATE), str(HISTORY), str(CONTROL), "/etc/modelfc-validator"}
+                <= set(fields.get("InaccessiblePaths", "").split())
+                or not trusted_exec_start(fields.get("ExecStart"),
+                    ["/usr/bin/python3", "-I", str(TRUSTED), "--acquire-service", release_id])):
+            raise Failure("STATE_BOUNDARY_FAILED")
+    except Failure:
+        raise Failure("STATE_BOUNDARY_FAILED") from None
+
+
+def run_acquisition(release_id, previous):
+    acquisition_boundary(release_id)
+    acquisition_mount("verify", release_id)
+    write_json(ACQUISITION / "request.json", {"release_id": release_id, "previous": previous})
+    try:
+        run_service(ACQUISITION_SERVICE.format(release_id))
+    except Failure as error:
+        if error.code == "STATE_BOUNDARY_FAILED":
+            raise
+        raise Failure("FETCH_FAILED") from None
+    try:
+        result = read_test_report(ACQUISITION / "result.json")
         if set(result) == {"reason"} and result["reason"] in REASONS:
             raise Failure(result["reason"])
         if (set(result) != {"status", "tip"} or result["status"] not in ("READY", "SUPERSEDED")
                 or not isinstance(result["tip"], str) or SHA.fullmatch(result["tip"]) is None):
-            raise Failure("FETCH_FAILED")
+            raise ValueError
         return result
-    except (OSError, ValueError, TypeError, subprocess.SubprocessError):
+    except (OSError, ValueError, TypeError):
         raise Failure("FETCH_FAILED") from None
-    finally:
-        if process is not None:
-            try:
-                os.killpg(process.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-            process.wait()
-            if process.stdout is not None:
-                process.stdout.close()
-            while True:
-                try:
-                    os.waitpid(-process.pid, 0)
-                except ChildProcessError:
-                    break
-        if libc.prctl(36, original.value, 0, 0, 0) != 0:
-            raise Failure("STATE_BOUNDARY_FAILED")
+
+
+def acquire_service(release_id):
+    try:
+        value = read_test_report(ACQUISITION / "request.json")
+        if (set(value) != {"release_id", "previous"} or value["release_id"] != release_id
+                or RELEASE_ID.fullmatch(release_id) is None
+                or (value["previous"] is not None and
+                    (not isinstance(value["previous"], str) or SHA.fullmatch(value["previous"]) is None))):
+            raise Failure("INVALID_REQUEST")
+        result = staged_acquisition(release_id, value["previous"])
+    except Failure as error:
+        result = {"reason": error.code}
+    except Exception:
+        result = {"reason": "FETCH_FAILED"}
+    write_json(ACQUISITION / "result.json", result)
 
 
 def export_inventory(repo):
@@ -644,9 +813,10 @@ def dependencies(release, *, check_boundary=dependency_boundary):
     check_boundary(release)
     storage_preflight(release)
     try:
-        command(["sudo", "-n", "/usr/bin/systemctl", "start", "--wait",
-                 DEPENDENCY_SERVICE.format(release.name)], timeout=540)
-    except Failure:
+        run_service(DEPENDENCY_SERVICE.format(release.name))
+    except Failure as error:
+        if error.code == "STATE_BOUNDARY_FAILED":
+            raise
         raise Failure("DEPENDENCY_SYNC_FAILED") from None
     if venv_bootstrap_manifest(release / ".venv") != bootstrap:
         raise Failure("DEPENDENCY_SYNC_FAILED")
@@ -715,7 +885,7 @@ def tests(release, sha, *, request=REQUEST, output=TEST_OUTPUT, service=SERVICE)
         write_json(request, {"release_id": release_id, "sha": sha})
         service_ok = True
         try:
-            command(["sudo", "-n", "/usr/bin/systemctl", "start", "--wait", service], timeout=390)
+            run_service(service)
         except Failure:
             service_ok = False  # Assertion failures still write a structured report.
         try:
@@ -787,6 +957,7 @@ def deploy(sha, *, root=ROOT, releases=RELEASES, current=CURRENT, control=CONTRO
                 fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError:
                 raise Failure("DEPLOYMENT_BUSY") from None
+            recover_service(control)
             active, previous = current_release(current=current, releases=releases)
             value.update(previous_sha=previous, final_sha=previous)
             if previous == sha:
@@ -880,14 +1051,8 @@ def run_tests():
 
 
 def main():
-    if len(sys.argv) == 4 and sys.argv[1] == "--acquire-stage" and "SSH_ORIGINAL_COMMAND" not in os.environ:
-        try:
-            result = staged_acquisition(sys.argv[2], None if sys.argv[3] == "-" else sys.argv[3])
-        except Failure as error:
-            result = {"reason": error.code}
-        except Exception:
-            result = {"reason": "FETCH_FAILED"}
-        print(json.dumps(result))
+    if len(sys.argv) == 3 and sys.argv[1] == "--acquire-service" and "SSH_ORIGINAL_COMMAND" not in os.environ:
+        acquire_service(sys.argv[2])
         return 0
 
     if (len(sys.argv) == 3 and sys.argv[1] == "--install-dependencies"

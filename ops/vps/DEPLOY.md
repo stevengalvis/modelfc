@@ -28,7 +28,7 @@ or the systemd unit. This PR only provides source; it does not install anything.
    ```
 
 2. From a specifically reviewed merged SHA, install the controller **outside**
-   releases and both fixed systemd units, owned by root. Install future
+   releases and all three fixed systemd units, owned by root. Install future
    reviewed controller changes intentionally after review. The installed unit,
    not the repository copy, determines test isolation; verify its effective
    `systemctl show` properties. The test unit must have `PrivateNetwork=yes`,
@@ -62,9 +62,12 @@ or the systemd unit. This PR only provides source; it does not install anything.
      | install -o root -g root -m 0644 /dev/stdin /etc/systemd/system/modelfc-postmerge-tests.service
    git -C /root/dev/modelfc show "${REVIEWED_SHA}:deploy/modelfc-postmerge-dependencies@.service" \
      | install -o root -g root -m 0644 /dev/stdin '/etc/systemd/system/modelfc-postmerge-dependencies@.service'
+   git -C /root/dev/modelfc show "${REVIEWED_SHA}:deploy/modelfc-postmerge-acquisition@.service" \
+     | install -o root -g root -m 0644 /dev/stdin '/etc/systemd/system/modelfc-postmerge-acquisition@.service'
    systemctl daemon-reload
    systemd-analyze verify /etc/systemd/system/modelfc-postmerge-tests.service
    systemd-analyze verify '/etc/systemd/system/modelfc-postmerge-dependencies@.service'
+   systemd-analyze verify '/etc/systemd/system/modelfc-postmerge-acquisition@.service'
    ```
 
 3. Create a dedicated SSH keypair. Bind its public key to the controller in
@@ -76,8 +79,10 @@ or the systemd unit. This PR only provides source; it does not install anything.
 
    `restrict` disables PTY, forwarding, X11 and user rc. The account only
    needs narrow passwordless sudo permission for `/usr/bin/systemctl start
-   --wait modelfc-postmerge-tests.service` and the fixed
-   `modelfc-postmerge-dependencies@<validated-release-id>.service` instances,
+   --wait modelfc-postmerge-tests.service`, `systemctl stop` for that exact unit,
+   and start/stop for the fixed
+   `modelfc-postmerge-dependencies@<validated-release-id>.service` and
+   `modelfc-postmerge-acquisition@<validated-release-id>.service` instances,
    without SETENV. The trusted controller validates the release ID, and the
    installed dependency unit validates it again. The account never gets an
    unrestricted root shell. The fixed service is not enabled by a timer.
@@ -210,7 +215,7 @@ locking, bounded service execution or cleanup.
 ## Activation gate
 
 PR #59 supplies the reviewed wheels-only lock. This integration does not authorize
-VPS installation or activation. Installing the reviewed controller and both units,
+VPS installation or activation. Installing the reviewed controller and all three units,
 configuring credentials, and host acceptance remain separate manually approved
 steps. Preserve all existing acceptance checks, including state/history isolation,
 mount-limit verification and failure cleanup, before enabling automatic deployment.
@@ -254,8 +259,13 @@ Repository initialization, full main fetch, objects, checkout and Git temporary
 files live on this filesystem. Git receives an isolated configuration and staging
 HOME/TMPDIR/TMP/TEMP/cache paths; automatic Git maintenance is disabled. No candidate
 code runs during acquisition. The controller runs the installed acquisition worker
-in a new process group, acts as a child subreaper, and kills/reaps remaining Git
-processes before export or unmount. The worker has a 600-second deadline; individual
+in `modelfc-postmerge-acquisition@<validated-release-id>.service`, with
+`MemoryMax=512M`, `TasksMax=32`, `Delegate=no` and `KillMode=control-group`.
+The controller attests the effective resource, lifecycle, command and filesystem
+boundary before starting the unit. Its only writable deployment path is staging,
+and it cannot access history, state or deployment controls. The trusted request
+and bounded result use fixed files within staging. It verifies service/cgroup
+termination before export or unmount. The worker has a 600-second deadline; individual
 Git operations retain their bounded timeouts. Full history preserves queued-event,
 forward-ancestry and supersession checks; shallow fetch is not the security boundary.
 
@@ -294,3 +304,66 @@ stale-state refusal and deliberate administrative recovery. Verify queued older
 main requests, divergent requests, final `git rev-parse HEAD`, capture provenance,
 and locked dependency installation/tests at the permanent path. Offline tests mock
 mounting and cannot attest the VPS kernel, sudo policy or actual mount lifecycle.
+
+
+## Complete service termination
+
+All three installed units explicitly set `TimeoutStopSec=30`,
+`SendSIGKILL=yes` and `KillMode=control-group`. The controller checks those
+**effective** properties plus `TimeoutStartUSec` before execution. Acquisition
+also requires exactly **512 MiB MemoryMax / 32 TasksMax**, with no cgroup
+delegation. These give Git headroom above its 256 MiB tmpfs while remaining
+conservative for the 4 GB VPS. Setsid/fork descendants stay in the systemd cgroup.
+
+| Service | Start budget | Stop budget | Controller start/wait budget |
+| --- | ---: | ---: | ---: |
+| Tests | 330 s | 30 s | 390 s |
+| Dependencies | 510 s | 30 s | 570 s |
+| Acquisition | 600 s | 30 s | 660 s |
+
+Each controller wait includes 30 seconds of overhead beyond start plus stop.
+A timed-out/interrupted systemctl call does not imply service termination. The
+controller explicitly stops a possibly running unit, allowing 60 seconds for
+that stop command, then verifies inactive/failed state, no queued job, zero main/control PIDs,
+and an empty or removed service cgroup. It never treats an inactive main PID
+alone as proof that descendants are gone. Only after confirmation may it read
+results, unmount staging, clean a candidate, or release the deployment lock.
+
+If systemd/kernel failure makes termination unverifiable, the controller stays
+in a fail-closed wait with the host lock and candidate retained. It ignores
+SSH-disconnect/termination signals during this termination gate. There is no
+unsafe fallback timeout that deletes files under a possibly live process. An
+administrator may need to restore the manager or terminate a stuck unit; even
+if shutdown is later confirmed, this attempt fails with `STATE_BOUNDARY_FAILED`.
+The fixed `service-pending.json` marker in the protected control directory is
+written before service start and removed only after confirmed termination. It
+survives a forced controller death: the next attempt acquires the host lock,
+validates the recorded allowlisted unit, stops/confirms it, and refuses to resume
+the crashed deployment. Incomplete candidates/staging then follow the existing
+manual recovery policy. Never delete this marker as a substitute for checking
+service/cgroup termination.
+
+One-time sudo policy must authorize only the following fixed command forms
+(in addition to the existing fixed mount helper), with validated release IDs:
+
+```sudoers
+modelfc-deploy ALL=(root) NOPASSWD: /usr/bin/systemctl start --wait modelfc-postmerge-tests.service
+modelfc-deploy ALL=(root) NOPASSWD: /usr/bin/systemctl stop modelfc-postmerge-tests.service
+modelfc-deploy ALL=(root) NOPASSWD: /usr/bin/systemctl start --wait modelfc-postmerge-dependencies@*.service
+modelfc-deploy ALL=(root) NOPASSWD: /usr/bin/systemctl stop modelfc-postmerge-dependencies@*.service
+modelfc-deploy ALL=(root) NOPASSWD: /usr/bin/systemctl start --wait modelfc-postmerge-acquisition@*.service
+modelfc-deploy ALL=(root) NOPASSWD: /usr/bin/systemctl stop modelfc-postmerge-acquisition@*.service
+```
+
+The trusted controller supplies one exact allowlisted unit argument. No candidate
+supplies service names, privileged options or resource settings; instance IDs
+are validated before acquisition code executes. Install the reviewed unit and
+controller together; no automatic installation occurs in this PR.
+
+Real-VPS acceptance must verify cgroup v2 accounting and effective limits, provoke
+memory/task exhaustion in disposable acquisition staging, exercise start timeout
+and SIGTERM-resistant descendants for all three units, and confirm cgroups are
+empty before export/cleanup. Also exercise controller timeout, SSH disconnect,
+and pending-marker recovery while checking lock exclusion and unchanged current/
+retained releases. Ordinary offline tests simulate manager states and cannot
+prove actual kernel/systemd enforcement or installed sudo policy.
