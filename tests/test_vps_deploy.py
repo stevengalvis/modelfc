@@ -98,6 +98,50 @@ class FreshReleaseTest(unittest.TestCase):
                              remote=str(self.remote), check_boundary=lambda: None,
                              test_runner=deploy.tests)
 
+    def test_ancestor_distinguishes_exit_status_and_errors(self):
+        self.assertTrue(deploy.ancestor(self.seed, self.a, self.b))
+        self.assertFalse(deploy.ancestor(self.seed, self.b, self.a))
+        for code, output in ((128, b""), (-9, b""), (0, b"unexpected"),
+                             (1, b"unexpected"), ("1", b"")):
+            with self.subTest(code=code, output=output), patch.object(
+                    deploy.subprocess, "run", return_value=subprocess.CompletedProcess(
+                        [], code, stdout=output)):
+                with self.assertRaisesRegex(deploy.Failure, "SOURCE_INVALID"):
+                    deploy.ancestor(self.seed, self.a, self.b)
+        for error in (OSError("execution failure"), subprocess.TimeoutExpired("git", 120)):
+            with self.subTest(error=type(error).__name__), patch.object(
+                    deploy.subprocess, "run", side_effect=error):
+                with self.assertRaisesRegex(deploy.Failure, "SOURCE_INVALID"):
+                    deploy.ancestor(self.seed, self.a, self.b)
+
+    def test_supersession_git_error_cannot_test_or_promote_older_release(self):
+        self.run_deploy(self.b)
+        previous = os.readlink(self.current)
+        original_run = subprocess.run
+        for failure in (128, OSError("execution failure"),
+                        subprocess.TimeoutExpired("git", 120)):
+            def fail_supersession(args, **kwargs):
+                if args[-4:] == ["merge-base", "--is-ancestor", self.a, self.b]:
+                    # Discovery also tests a against main, so fail only the
+                    # second occurrence, the actual rollback protection check.
+                    calls[0] += 1
+                    if calls[0] == 2:
+                        if isinstance(failure, Exception):
+                            raise failure
+                        return subprocess.CompletedProcess(args, failure, stdout=b"")
+                return original_run(args, **kwargs)
+            calls = [0]
+            with self.subTest(failure=str(failure)), patch.object(
+                    deploy.subprocess, "run", side_effect=fail_supersession), patch.object(
+                    deploy, "promote") as promote:
+                result = self.run_deploy(self.a)
+                promote.assert_not_called()
+            self.assertEqual(result["reason"], "SOURCE_INVALID")
+            self.assertEqual(result["status"], "FAIL")
+            self.assertEqual(result["tests_status"], "NOT_RUN")
+            self.assertEqual(os.readlink(self.current), previous)
+            self.assertEqual(len(self.tested), 1)
+
     def test_exact_sha_creates_independent_git_and_promotes_atomically(self):
         result = self.run_deploy(self.b)
         self.assertEqual((result["status"], result["reason"], result["final_sha"],
@@ -467,6 +511,7 @@ class IsolatedBoundaryTest(unittest.TestCase):
             deploy.dependency_boundary(self.release, releases=self.releases)
             self.assertEqual(show.call_args.args[0][2],
                              deploy.DEPENDENCY_SERVICE.format(self.release.name))
+            self.assertIn("NoNewPrivileges", show.call_args.args[0])
             self.assertIn("Group", show.call_args.args[0])
             self.assertIn("SupplementaryGroups", show.call_args.args[0])
             self.assertIn("BindReadOnlyPaths", show.call_args.args[0])
@@ -652,7 +697,7 @@ class IsolatedBoundaryTest(unittest.TestCase):
         self.assertFalse((self.root / "current").exists())
 
     def test_effective_service_properties_enforced(self):
-        properties = ("PrivateNetwork=yes\nInaccessiblePaths=/root/modelfc-state "
+        properties = ("PrivateNetwork=yes\nNoNewPrivileges=yes\nInaccessiblePaths=/root/modelfc-state "
                       "/root/dev/modelfc /etc/modelfc-validator\nProtectSystem=strict\n"
                       f"ReadOnlyPaths={self.releases} {self.control}\nReadWritePaths="
                       f"{self.control / 'reports'}\nBindPaths=\nBindReadOnlyPaths=\nTemporaryFileSystem=\n"
@@ -672,6 +717,7 @@ class IsolatedBoundaryTest(unittest.TestCase):
                 deploy.os, "stat", side_effect=owned_stat), patch.object(
                 deploy, "command", return_value=properties) as show:
             deploy.boundary(root=self.root, releases=self.releases, control=self.control)
+            self.assertIn("NoNewPrivileges", show.call_args.args[0])
             self.assertIn("Group", show.call_args.args[0])
             self.assertIn("SupplementaryGroups", show.call_args.args[0])
         for old, new in (("ProtectSystem=strict", "ProtectSystem=full"),
@@ -679,6 +725,9 @@ class IsolatedBoundaryTest(unittest.TestCase):
                          (f"ReadOnlyPaths={self.releases} {self.control}",
                           f"ReadOnlyPaths={self.releases}"),
                          ("PrivateNetwork=yes", "PrivateNetwork=no"),
+                         ("NoNewPrivileges=yes", "NoNewPrivileges=no"),
+                         ("NoNewPrivileges=yes", "NoNewPrivileges=unexpected"),
+                         ("NoNewPrivileges=yes\n", ""),
                          ("/root/modelfc-state", "/tmp"),
                          ("/root/dev/modelfc", "/tmp"),
                          ("User=modelfc-deploy", "User=root"),
@@ -750,8 +799,8 @@ class IsolatedBoundaryTest(unittest.TestCase):
                          "InaccessiblePaths=/root/dev/modelfc", "KillMode=control-group"):
             self.assertIn(required, unit)
 
-    def test_test_service_group_failure_prevents_tests_and_promotion(self):
-        base = ("PrivateNetwork=yes\nInaccessiblePaths=/root/modelfc-state "
+    def test_test_service_privilege_failure_prevents_tests_and_promotion(self):
+        base = ("PrivateNetwork=yes\nNoNewPrivileges=yes\nInaccessiblePaths=/root/modelfc-state "
                 "/root/dev/modelfc /etc/modelfc-validator\nProtectSystem=strict\n"
                 f"ReadOnlyPaths={self.releases} {self.control}\nReadWritePaths="
                 f"{self.control / 'reports'}\nBindPaths=\nBindReadOnlyPaths=\nTemporaryFileSystem=\n"
@@ -765,7 +814,10 @@ class IsolatedBoundaryTest(unittest.TestCase):
             if str(path) in (str(self.root), str(self.releases), str(self.control), str(self.control / "reports")):
                 return type("Owned", (), {"st_uid": 1001, "st_mode": result.st_mode})()
             return result
-        for old, new in (("Group=modelfc-deploy", "Group=root"),
+        for old, new in (("NoNewPrivileges=yes", "NoNewPrivileges=no"),
+                         ("NoNewPrivileges=yes\n", ""),
+                         ("NoNewPrivileges=yes", "NoNewPrivileges=unexpected"),
+                         ("Group=modelfc-deploy", "Group=root"),
                          ("Group=modelfc-deploy\n", ""),
                          ("SupplementaryGroups=\n", "SupplementaryGroups=docker\n")):
             with self.subTest(value=new), patch.object(

@@ -71,12 +71,19 @@ def git(release, *args, failure="SOURCE_INVALID"):
         raise Failure(failure) from None
 
 
-def ancestor(release, older, newer):
+def ancestor(release, older, newer, *, failure="SOURCE_INVALID"):
     try:
-        git(release, "merge-base", "--is-ancestor", older, newer)
-        return True
-    except Failure:
-        return False
+        result = subprocess.run(
+            ["git", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false",
+             "-C", str(release), "merge-base", "--is-ancestor", older, newer],
+            env=git_env(), timeout=120, check=False,
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        if (type(result.returncode) is not int or result.returncode not in (0, 1)
+                or result.stdout != b""):
+            raise Failure(failure)
+        return result.returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        raise Failure(failure) from None
 
 
 def release_path(release_id, *, releases=None):
@@ -157,7 +164,7 @@ def boundary(*, root=ROOT, releases=RELEASES, control=CONTROL, state=STATE,
         raise Failure("STATE_BOUNDARY_FAILED")
     try:
         properties = command(["systemctl", "show", service,
-                              "-p", "PrivateNetwork", "-p", "InaccessiblePaths",
+                              "-p", "PrivateNetwork", "-p", "NoNewPrivileges", "-p", "InaccessiblePaths",
                               "-p", "User", "-p", "Group", "-p", "SupplementaryGroups",
                               "-p", "ExecStart", "-p", "ProtectSystem",
                               "-p", "ReadOnlyPaths", "-p", "ReadWritePaths",
@@ -169,6 +176,7 @@ def boundary(*, root=ROOT, releases=RELEASES, control=CONTROL, state=STATE,
     fields = dict(line.split("=", 1) for line in properties.splitlines() if "=" in line)
     hidden = fields.get("InaccessiblePaths", "").split()
     if (fields.get("PrivateNetwork") != "yes"
+            or fields.get("NoNewPrivileges") != "yes"
             or str(state) not in hidden or str(HISTORY) not in hidden
             or fields.get("ProtectSystem") != "strict"
             or str(releases) not in fields.get("ReadOnlyPaths", "").split()
@@ -242,7 +250,7 @@ def create_release(sha, *, releases=RELEASES, remote=REMOTE):
         git(release, "fetch", "--no-tags", "--no-recurse-submodules", "origin",
             "+refs/heads/main:refs/remotes/origin/main", failure="FETCH_FAILED")
         tip = git(release, "rev-parse", "refs/remotes/origin/main", failure="FETCH_FAILED")
-        if not ancestor(release, sha, tip):
+        if not ancestor(release, sha, tip, failure="SHA_NOT_ON_MAIN"):
             raise Failure("SHA_NOT_ON_MAIN")
         return release, tip
     except Failure:
@@ -502,7 +510,7 @@ def deploy(sha, *, root=ROOT, releases=RELEASES, current=CURRENT, control=CONTRO
             candidate, tip = create_release(sha, releases=releases, remote=remote)
             value["release_created"] = True
             value["fetch_verified"] = True
-            if previous is not None and not ancestor(candidate, previous, tip):
+            if previous is not None and not ancestor(candidate, previous, tip, failure="ACTIVE_SHA_NOT_ON_MAIN"):
                 raise Failure("ACTIVE_SHA_NOT_ON_MAIN")
             if previous is not None and ancestor(candidate, sha, previous):
                 value.update(status="SUPERSEDED", reason="SUPERSEDED",
