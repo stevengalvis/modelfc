@@ -343,6 +343,88 @@ class IsolatedBoundaryTest(unittest.TestCase):
         self.release = self.releases / (self.sha + "-123456789abc")
         self.release.mkdir()
 
+    def test_report_read_rejects_symlinks_nonregular_and_oversize_before_parse(self):
+        output = self.control / "reports/result.json"
+        target = self.control / "target.json"
+        target.write_text('{"tests_run": 1}')
+        for kind in ("symlink", "fifo", "directory", "oversize"):
+            with self.subTest(kind=kind):
+                if kind == "symlink":
+                    output.symlink_to(target)
+                elif kind == "fifo":
+                    os.mkfifo(output)
+                elif kind == "directory":
+                    output.mkdir()
+                else:
+                    output.write_bytes(b"x" * 4097)
+                with patch.object(deploy.json, "loads") as parse:
+                    with self.assertRaises((OSError, deploy.Failure)):
+                        deploy.read_test_report(output)
+                    parse.assert_not_called()
+                if kind == "directory":
+                    output.rmdir()
+                else:
+                    output.unlink()
+        output.write_text('{"tests_run": 1}')
+        self.assertEqual(deploy.read_test_report(output), {"tests_run": 1})
+        self.assertEqual(target.read_text(), '{"tests_run": 1}')
+
+    def test_report_growth_still_uses_bounded_read(self):
+        output = self.control / "reports/result.json"
+        output.write_bytes(b"x" * 4097)
+        fake_stat = type("Info", (), {"st_mode": 0o100600, "st_size": 10})()
+        with patch.object(deploy.os, "fstat", return_value=fake_stat), patch.object(
+                deploy.json, "loads") as parse:
+            with self.assertRaisesRegex(deploy.Failure, "STATE_BOUNDARY_FAILED"):
+                deploy.read_test_report(output)
+            parse.assert_not_called()
+
+    def test_untrusted_release_roots_prevent_deployment(self):
+        identity = type("Person", (), {"pw_name": "modelfc-deploy"})()
+        real_stat = os.stat
+        for bad_path in (self.root, self.releases):
+            for kind in ("owner", "group_write", "world_write", "symlink"):
+                def owned_stat(path, *args, **kwargs):
+                    result = real_stat(path, *args, **kwargs)
+                    if str(path) in map(str, (self.root, self.releases, self.control,
+                                             self.control / "reports")):
+                        uid, mode = 1001, result.st_mode
+                        if str(path) == str(bad_path):
+                            if kind == "owner":
+                                uid = 1002
+                            elif kind == "group_write":
+                                mode |= 0o020
+                            elif kind == "world_write":
+                                mode |= 0o002
+                            elif kind == "symlink":
+                                mode = 0o120777
+                        return type("Owned", (), {"st_uid": uid, "st_mode": mode})()
+                    return result
+                with self.subTest(path=bad_path, kind=kind), patch.object(
+                        deploy.os, "geteuid", return_value=1001), patch.object(
+                        deploy.pwd, "getpwuid", return_value=identity), patch.object(
+                        deploy.os, "access", return_value=False), patch.object(
+                        deploy.os, "stat", side_effect=owned_stat), patch.object(
+                        deploy, "command") as command, patch.object(
+                        deploy, "create_release") as create, patch.object(
+                        deploy, "promote") as promote:
+                    result = deploy.deploy(self.sha, root=self.root, releases=self.releases,
+                        current=self.root / "current", control=self.control,
+                        check_boundary=lambda: deploy.boundary(root=self.root,
+                            releases=self.releases, control=self.control))
+                    self.assertEqual(result["reason"], "STATE_BOUNDARY_FAILED")
+                    command.assert_not_called()
+                    create.assert_not_called()
+                    promote.assert_not_called()
+
+    def test_dependency_timeout_covers_internal_budgets(self):
+        unit = (SOURCE.parents[2] / "deploy/modelfc-postmerge-dependencies@.service").read_text()
+        timeout = int(next(line.split("=", 1)[1] for line in unit.splitlines()
+                           if line.startswith("TimeoutStartSec=")))
+        # Git HEAD (120), Python version (15), pip install (300), pip check (30).
+        self.assertGreaterEqual(timeout, 120 + 15 + 300 + 30 + 30)
+        self.assertLessEqual(timeout, 540)
+
     def test_fresh_venv_at_permanent_release_path(self):
         (self.release / "requirements.txt").write_text("fastapi>=0.115,<1\n")
         def fake_command(args, **kwargs):
@@ -581,7 +663,7 @@ class IsolatedBoundaryTest(unittest.TestCase):
         real_stat = os.stat
         def owned_stat(path, *args, **kwargs):
             result = real_stat(path, *args, **kwargs)
-            if str(path) in (str(self.control), str(self.control / "reports")):
+            if str(path) in (str(self.root), str(self.releases), str(self.control), str(self.control / "reports")):
                 return type("Owned", (), {"st_uid": 1001, "st_mode": result.st_mode})()
             return result
         with patch.object(deploy.os, "geteuid", return_value=1001), patch.object(
@@ -680,7 +762,7 @@ class IsolatedBoundaryTest(unittest.TestCase):
         real_stat = os.stat
         def owned_stat(path, *args, **kwargs):
             result = real_stat(path, *args, **kwargs)
-            if str(path) in (str(self.control), str(self.control / "reports")):
+            if str(path) in (str(self.root), str(self.releases), str(self.control), str(self.control / "reports")):
                 return type("Owned", (), {"st_uid": 1001, "st_mode": result.st_mode})()
             return result
         for old, new in (("Group=modelfc-deploy", "Group=root"),

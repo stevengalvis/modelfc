@@ -143,7 +143,10 @@ def boundary(*, root=ROOT, releases=RELEASES, control=CONTROL, state=STATE,
         raise Failure("STATE_BOUNDARY_FAILED")
     if (root.is_symlink() or releases.is_symlink() or control.is_symlink()
             or reports.is_symlink()
-            or releases.parent != root or not releases.is_dir() or not control.is_dir()
+            or releases.parent != root or not root.is_dir()
+            or not releases.is_dir() or not control.is_dir()
+            or any(path.stat().st_uid != os.geteuid() or path.stat().st_mode & 0o022
+                   for path in (root, releases))
             or not reports.is_dir()
             or control.stat().st_uid != os.geteuid()
             or reports.stat().st_uid != os.geteuid()
@@ -348,7 +351,7 @@ def dependencies(release, *, check_boundary=dependency_boundary):
     check_boundary(release)
     try:
         command(["sudo", "-n", "/usr/bin/systemctl", "start", "--wait",
-                 DEPENDENCY_SERVICE.format(release.name)], timeout=390)
+                 DEPENDENCY_SERVICE.format(release.name)], timeout=540)
     except Failure:
         raise Failure("DEPENDENCY_SYNC_FAILED") from None
     if venv_bootstrap_manifest(release / ".venv") != bootstrap:
@@ -391,6 +394,20 @@ def write_json(path, value):
         temporary.unlink(missing_ok=True)
 
 
+def read_test_report(path):
+    """Open a bounded regular report without following the output symlink."""
+    limit = 4096
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    with os.fdopen(fd, "rb") as report_file:
+        info = os.fstat(report_file.fileno())
+        if not stat.S_ISREG(info.st_mode) or info.st_size > limit:
+            raise Failure("STATE_BOUNDARY_FAILED")
+        contents = report_file.read(limit + 1)
+        if len(contents) > limit:
+            raise Failure("STATE_BOUNDARY_FAILED")
+    return json.loads(contents)
+
+
 def tests(release, sha, *, request=REQUEST, output=TEST_OUTPUT, service=SERVICE):
     release_id = release.name
     if RELEASE_ID.fullmatch(release_id) is None or release_id[:40] != sha:
@@ -405,7 +422,7 @@ def tests(release, sha, *, request=REQUEST, output=TEST_OUTPUT, service=SERVICE)
         except Failure:
             service_ok = False  # Assertion failures still write a structured report.
         try:
-            value = json.loads(output.read_text(encoding="utf-8"))
+            value = read_test_report(output)
             if (set(value) != {"sha", "release_id", "tests_status", "tests_run",
                                "state_boundary_enforced"}
                     or value["sha"] != sha or value["release_id"] != release_id
