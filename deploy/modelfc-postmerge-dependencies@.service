@@ -1,0 +1,34 @@
+[Unit]
+Description=Install reviewed Model FC release dependencies in a candidate-only sandbox
+
+[Service]
+Type=oneshot
+StandardInput=null
+User=modelfc-deploy
+Group=modelfc-deploy
+WorkingDirectory=/
+ExecStart=/usr/bin/python3 -I /opt/modelfc-deploy/deploy_main.py --install-dependencies %i
+TimeoutStartSec=510
+TimeoutStopSec=30
+SendSIGKILL=yes
+MemoryMax=2G
+TasksMax=64
+PrivateTmp=yes
+TemporaryFileSystem=/tmp:rw,size=268435456,nr_inodes=16384
+TemporaryFileSystem=/var/tmp:rw,size=268435456,nr_inodes=16384
+PrivateDevices=yes
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadOnlyPaths=/srv/modelfc/releases
+ReadWritePaths=/srv/modelfc/releases/%i/.venv
+InaccessiblePaths=/root/modelfc-state
+InaccessiblePaths=/root/dev/modelfc
+InaccessiblePaths=/var/lib/modelfc-deploy
+InaccessiblePaths=/etc/modelfc-validator
+StandardOutput=null
+StandardError=null
+UnsetEnvironment=ODDSPAPI_API_KEY GITHUB_TOKEN SSH_AUTH_SOCK LD_PRELOAD LD_LIBRARY_PATH LD_AUDIT PYTHONPATH PYTHONHOME
+KillMode=control-group
+
+[Install]
+# Intentionally not enabled or started by a timer.

@@ -1,0 +1,31 @@
+[Unit]
+Description=Offline Model FC fresh release regression suite
+
+[Service]
+Type=oneshot
+StandardInput=null
+User=modelfc-deploy
+Group=modelfc-deploy
+WorkingDirectory=/var/lib/modelfc-deploy
+ExecStart=/usr/bin/python3 -I /opt/modelfc-deploy/deploy_main.py --run-tests
+TimeoutStartSec=330
+TimeoutStopSec=30
+SendSIGKILL=yes
+MemoryMax=2G
+TasksMax=64
+PrivateNetwork=yes
+PrivateTmp=yes
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadOnlyPaths=/srv/modelfc/releases
+ReadOnlyPaths=/var/lib/modelfc-deploy
+ReadWritePaths=/var/lib/modelfc-deploy/reports
+InaccessiblePaths=/root/modelfc-state
+InaccessiblePaths=/root/dev/modelfc
+InaccessiblePaths=/etc/modelfc-validator
+Environment=PYTHONDONTWRITEBYTECODE=1
+UnsetEnvironment=ODDSPAPI_API_KEY GITHUB_TOKEN SSH_AUTH_SOCK LD_PRELOAD LD_LIBRARY_PATH LD_AUDIT PYTHONPATH PYTHONHOME
+KillMode=control-group
+
+[Install]
+# Intentionally not enabled or started by a timer.

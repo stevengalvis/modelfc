@@ -1,0 +1,31 @@
+[Unit]
+Description=Bounded trusted Git acquisition for a Model FC release
+
+[Service]
+Type=oneshot
+StandardInput=null
+User=modelfc-deploy
+Group=modelfc-deploy
+WorkingDirectory=/run/modelfc-acquisition
+ExecStart=/usr/bin/python3 -I /opt/modelfc-deploy/deploy_main.py --acquire-service %i
+TimeoutStartSec=600
+TimeoutStopSec=30
+SendSIGKILL=yes
+KillMode=control-group
+MemoryMax=512M
+TasksMax=32
+Delegate=no
+PrivateTmp=yes
+PrivateDevices=yes
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadOnlyPaths=/srv/modelfc
+ReadWritePaths=/run/modelfc-acquisition
+InaccessiblePaths=/root/modelfc-state
+InaccessiblePaths=/root/dev/modelfc
+InaccessiblePaths=/var/lib/modelfc-deploy
+InaccessiblePaths=/etc/modelfc-validator
+StandardOutput=null
+StandardError=null
+Environment=PYTHONDONTWRITEBYTECODE=1
+UnsetEnvironment=ODDSPAPI_API_KEY GITHUB_TOKEN SSH_AUTH_SOCK LD_PRELOAD LD_LIBRARY_PATH LD_AUDIT PYTHONPATH PYTHONHOME
