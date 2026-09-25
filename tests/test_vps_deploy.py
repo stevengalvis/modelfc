@@ -26,9 +26,107 @@ def cmd(*args, cwd=None):
 
 
 def effective_exec(*args):
-    return ("{ path=" + args[0] + " ; argv[]=" + " ".join(args)
+    legacy = ("{ path=" + args[0] + " ; argv[]=" + " ".join(args)
             + " ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] "
             "; pid=0 ; code=(null) ; status=0/0 }")
+    return legacy + "\nExecStartEx=" + legacy.replace("ignore_errors=no", "flags=")
+
+
+def invalid_exec_ex(*args):
+    value = effective_exec(*args).split("\nExecStartEx=", 1)[1]
+    return [None, "[unprintable]", *(value.replace("flags=", "flags=" + flag)
+            for flag in ("privileged", "no-setuid", "ignore-failure", "no-env-expand", "+")),
+            value.replace("path=/usr/bin/python3", "path=/bin/sh"),
+            value.replace(" ; flags=", " extra ; flags=")]
+
+
+class RuntimeReleaseProvenanceTest(unittest.TestCase):
+    def setUp(self):
+        from modelfc import ledger_storage
+        self.storage = ledger_storage
+        self.temp = tempfile.TemporaryDirectory(dir=SOURCE.parents[2])
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        # The test host may expose /workspace as 0777. Model only its ancestors
+        # as protected; all release/.git/metadata checks use real filesystem modes.
+        ancestor_ids = {(p.stat().st_dev, p.stat().st_ino) for p in self.root.parents}
+        real_fstat = os.fstat
+        def fixture_fstat(fd):
+            info = real_fstat(fd)
+            if (info.st_dev, info.st_ino) in ancestor_ids:
+                fields = list(info)
+                fields[0] &= ~0o022
+                return os.stat_result(fields)
+            return info
+        stub = patch.object(ledger_storage.os, "fstat", side_effect=fixture_fstat)
+        stub.start()
+        self.addCleanup(stub.stop)
+        self.releases = self.root / "releases"
+        self.releases.mkdir(mode=0o755)
+        for stub in (patch.object(ledger_storage, "DEPLOYMENT_RELEASES", self.releases),
+                     patch.object(ledger_storage.pwd, "getpwnam",
+                                  return_value=type("Account", (), {"pw_uid": os.geteuid()})())):
+            stub.start()
+            self.addCleanup(stub.stop)
+
+    def release(self, sha, nonce="1" * 12):
+        release = self.releases / (sha + "-" + nonce)
+        (release / ".git").mkdir(parents=True, mode=0o755)
+        (release / "src/modelfc").mkdir(parents=True)
+        (release / "src/modelfc/ledger_storage.py").touch()
+        deploy.release_metadata(release, sha, create=True)
+        return release
+
+    def read(self, release):
+        with patch.object(self.storage, "__file__", str(release / "src/modelfc/ledger_storage.py")):
+            return self.storage.git_commit_sha()
+
+    def test_successive_nonce_releases_ignore_git_ownership_rejection(self):
+        first = self.release("a" * 40)
+        second = self.release("b" * 40, "2" * 12)
+        current = self.root / "current"
+        with patch.object(self.storage.subprocess, "run", side_effect=subprocess.CalledProcessError(
+                128, "git", stderr="detected dubious ownership")) as git:
+            for release in (first, second):
+                current.unlink(missing_ok=True)
+                current.symlink_to(release, target_is_directory=True)
+                self.assertEqual(self.read(current), release.name[:40])
+            git.assert_not_called()
+
+    def test_invalid_missing_or_writable_metadata_never_supplies_a_sha(self):
+        release = self.release("a" * 40)
+        metadata = release / ".git/modelfc-deployed-sha"
+        for value in ("b" * 40, "a" * 39, "a" * 40 + "\n", "z" * 40, None):
+            if metadata.exists():
+                metadata.chmod(0o644)
+                metadata.unlink()
+            if value is not None:
+                metadata.write_text(value)
+                metadata.chmod(0o444)
+            with self.subTest(value=value), patch.object(self.storage.subprocess, "run",
+                    side_effect=subprocess.CalledProcessError(128, "git")):
+                self.assertEqual(self.read(release), "unknown")
+        metadata.write_text("a" * 40)
+        for mode in (0o644, 0o666):
+            metadata.chmod(mode)
+            with self.subTest(mode=mode), patch.object(self.storage.subprocess, "run",
+                    return_value=subprocess.CompletedProcess([], 0, stdout="git-fallback\n")):
+                self.assertEqual(self.read(release), "git-fallback")
+        metadata.unlink()
+        outside = self.root / "outside"
+        outside.write_text("a" * 40)
+        outside.chmod(0o444)
+        metadata.symlink_to(outside)
+        with patch.object(self.storage.subprocess, "run", side_effect=subprocess.CalledProcessError(128, "git")):
+            self.assertEqual(self.read(release), "unknown")
+
+    def test_development_checkout_retains_git_fallback(self):
+        development = self.root / "development"
+        (development / "src/modelfc").mkdir(parents=True)
+        with patch.object(self.storage.subprocess, "run",
+                return_value=subprocess.CompletedProcess([], 0, stdout="abc123\n")) as git:
+            self.assertEqual(self.read(development), "abc123")
+            git.assert_called_once()
 
 
 class FreshReleaseTest(unittest.TestCase):
@@ -690,6 +788,21 @@ class FreshReleaseTest(unittest.TestCase):
         self.current.symlink_to(self.legacy, target_is_directory=True)
         self.assertEqual(self.run_deploy(self.b)["reason"], "SOURCE_INVALID")
 
+    def test_controller_metadata_is_exclusive_verified_and_promotion_required(self):
+        release, _ = deploy.create_release(self.b, releases=self.releases, remote=str(self.remote))
+        metadata = release / ".git/modelfc-deployed-sha"
+        self.assertEqual(metadata.read_bytes(), self.b.encode())
+        self.assertEqual(metadata.stat().st_mode & 0o777, 0o444)
+        deploy.verify_source(release, self.b)
+        with self.assertRaisesRegex(deploy.Failure, "SOURCE_INVALID"):
+            deploy.release_metadata(release, self.b, create=True)
+        metadata.chmod(0o644)
+        metadata.write_text(self.a)
+        metadata.chmod(0o444)
+        with self.assertRaisesRegex(deploy.Failure, "SOURCE_INVALID"):
+            deploy.promote(release, self.b, current=self.current, releases=self.releases)
+        self.assertFalse(self.current.exists())
+
     def test_provenance_resolves_through_current_symlink(self):
         self.run_deploy(self.b)
         code = "from modelfc.ledger_storage import git_commit_sha; print(git_commit_sha())"
@@ -1091,6 +1204,7 @@ class IsolatedBoundaryTest(unittest.TestCase):
             self.assertEqual(show.call_args.args[0][2],
                              deploy.DEPENDENCY_SERVICE.format(self.release.name))
             self.assertIn("NoNewPrivileges", show.call_args.args[0])
+            self.assertIn("ExecStartEx", show.call_args.args[0])
             self.assertIn("KillMode", show.call_args.args[0])
             self.assertIn("MountImages", show.call_args.args[0])
             self.assertIn("--all", show.call_args.args[0])
@@ -1272,11 +1386,17 @@ class IsolatedBoundaryTest(unittest.TestCase):
         cases = [(name + "=\n", replacement) for name in
                  ("LoadCredential", "LoadCredentialEncrypted", "ImportCredential", "SetCredential")
                  for replacement in ("", name + "=unexpected\n")]
+        original = effective_exec("/usr/bin/python3", "-I", str(deploy.TRUSTED),
+                                  "--install-dependencies", self.release.name).split("\nExecStartEx=", 1)[1]
+        cases.extend(("ExecStartEx=" + original + "\n",
+                      "" if value is None else "ExecStartEx=" + value + "\n")
+                     for value in invalid_exec_ex("/usr/bin/python3", "-I", str(deploy.TRUSTED),
+                                                  "--install-dependencies", self.release.name))
         for index, (old, new) in enumerate(cases):
             candidate = self.releases / (self.sha + f"-{index + 10:012x}")
             candidate.mkdir()
-            properties = self.dependency_properties().replace(str(self.release), str(candidate))
-            properties = properties.replace(self.release.name, candidate.name).replace(old, new)
+            properties = self.dependency_properties().replace(old, new)
+            properties = properties.replace(str(self.release), str(candidate)).replace(self.release.name, candidate.name)
             def fake_command(args, **kwargs):
                 if args[:3] == ["/usr/bin/python3", "-m", "venv"]:
                     (candidate / ".venv/bin").mkdir(parents=True)
@@ -1433,6 +1553,7 @@ class IsolatedBoundaryTest(unittest.TestCase):
                 deploy.os, "stat", side_effect=owned_stat), patch.object(
                 deploy, "command", return_value=properties) as show:
             deploy.boundary(root=self.root, releases=self.releases, control=self.control)
+            self.assertIn("ExecStartEx", show.call_args.args[0])
             self.assertIn("KillMode", show.call_args.args[0])
             self.assertIn("MountImages", show.call_args.args[0])
             self.assertIn("--all", show.call_args.args[0])
@@ -1553,8 +1674,11 @@ class IsolatedBoundaryTest(unittest.TestCase):
         cases.extend(("AmbientCapabilities", caps)
                      for caps in ("cap_sys_admin", "cap_dac_override",
                                   "cap_sys_admin cap_dac_override"))
+        cases.extend(("ExecStartEx", value) for value in invalid_exec_ex(
+            "/usr/bin/python3", "-I", str(deploy.TRUSTED), "--run-tests"))
         for name, mode in cases:
-            changed = properties.replace(name + "=\n",
+            original = next(line for line in properties.splitlines() if line.startswith(name + "="))
+            changed = properties.replace(original + "\n",
                                          "" if mode is None else f"{name}={mode}\n")
             with self.subTest(property=name, value=mode), patch.object(
                     deploy.os, "geteuid", return_value=1001), patch.object(
@@ -2091,7 +2215,8 @@ class AcquisitionResourceTest(unittest.TestCase):
             self.assertIn(property, show.call_args.args[0])
 
     def test_missing_wrong_unlimited_resources_and_lifecycle_rejected(self):
-        fields = {"Environment": (None, "LD_PRELOAD=/tmp/evil.so", "PYTHONHOME=/tmp"),
+        fields = {"ExecStartEx": invalid_exec_ex("/usr/bin/python3", "-I", str(deploy.TRUSTED), "--acquire-service", self.ident),
+                  "Environment": (None, "LD_PRELOAD=/tmp/evil.so", "PYTHONHOME=/tmp"),
                   "EnvironmentFiles": (None, "/tmp/env"), "PassEnvironment": (None, "LD_PRELOAD"),
                   "UnsetEnvironment": (None, ""),
                   "MemoryMax": (None, "infinity", "1073741824", "0"),

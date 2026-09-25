@@ -400,13 +400,25 @@ fingerprinting and after successful installation/bootstrap verification. Interpr
 and library symlinks are preserved; external targets are never normalized.
 
 The one-time `/srv/modelfc` and `releases` ancestors must remain traversable by the
-intended production account as documented above. Git's separate ownership/trust
-policy still applies: validate provenance under that real account with narrowly
-approved exact release paths, never `safe.directory=*`. This change does not alter
-Model FC's provenance function or global runtime Git configuration. Offline tests
-exercise umask 0077, source/Git traversal, executable modes, external symlinks,
-venv Python and the existing provenance function. They attempt distinct-UID
-execution where permitted; restricted root containers can reject UID/GID changes,
-so real-account access and its exact-path Git trust configuration still require
-VPS acceptance. Also confirm effective environment output and installed helper
-ownership/path checks there before enabling deployment.
+intended production account. After verified export, the trusted controller creates
+`.git/modelfc-deployed-sha` exclusively inside each permanent release: exactly the
+verified 40-character SHA, deployment-account ownership and mode **0444**. It
+rechecks the file before promotion. Tests/dependency services cannot write it;
+the distinct runtime account cannot modify it or its protected parent directories.
+Tracked-source and deployment Git verification remain unchanged.
+
+Runtime `git_commit_sha()` accepts this metadata only beneath
+`/srv/modelfc/releases/<sha>-<nonce>`, checks protected directory ownership/modes,
+opens directories and metadata without following symlinks, and requires the
+metadata SHA to match the release name. Resolving `/srv/modelfc/current` selects
+the new release automatically. This needs no runtime `safe.directory` entries.
+Missing/invalid metadata supplies no SHA; the existing Git fallback remains for
+development checkouts and older releases. Host administrators and the deployment
+account remain trusted. Real distinct-account readability still requires VPS
+acceptance, since restricted test containers may forbid UID/GID changes.
+
+All three service boundaries attest both `ExecStart` and `ExecStartEx`: exactly
+one expected executable and complete argument vector, with **empty execution
+flags** in `ExecStartEx`. Privileged (`+` / `privileged`), other flags, missing or
+unprintable properties fail before service execution. Confirm installed systemd
+255 effective output during VPS acceptance; the committed units need no changes.

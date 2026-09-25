@@ -7,6 +7,9 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import pwd
+import re
+import stat
 import subprocess
 import tempfile
 from typing import Any, Callable, Iterable, Iterator
@@ -24,8 +27,50 @@ def utc_timestamp() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
+DEPLOYMENT_RELEASES = Path("/srv/modelfc/releases")
+
+
+def _deployed_commit_sha(repository: Path) -> str | None:
+    """Read controller metadata only from protected permanent releases.
+
+    No Git process or safe.directory exception is needed by the runtime user.
+    The deployment account and host administrators remain trusted.
+    """
+    if (repository.parent != DEPLOYMENT_RELEASES
+            or not re.fullmatch(r"[0-9a-f]{40}-[0-9a-f]{12}", repository.name)):
+        return None
+    descriptors = []
+    try:
+        owner = pwd.getpwnam("modelfc-deploy").pw_uid
+        fd = os.open("/", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        descriptors.append(fd)
+        for part in (*repository.parts[1:], ".git"):
+            fd = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+            descriptors.append(fd)
+            info = os.fstat(fd)
+            if info.st_uid not in (0, owner) or info.st_mode & 0o022:
+                return None
+        fd = os.open("modelfc-deployed-sha", os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
+                     dir_fd=fd)
+        descriptors.append(fd)
+        info = os.fstat(fd)
+        if (not stat.S_ISREG(info.st_mode) or stat.S_IMODE(info.st_mode) != 0o444
+                or info.st_uid != owner or info.st_size != 40):
+            return None
+        value = os.read(fd, 41).decode("ascii")
+        return value if value == repository.name[:40] else None
+    except (OSError, KeyError, UnicodeError):
+        return None
+    finally:
+        for fd in reversed(descriptors):
+            os.close(fd)
+
+
 def git_commit_sha() -> str:
     repository = Path(__file__).resolve().parents[2]
+    deployed = _deployed_commit_sha(repository)
+    if deployed is not None:
+        return deployed
     try:
         result = subprocess.run(
             ("git", "-C", str(repository), "rev-parse", "HEAD"), check=True,

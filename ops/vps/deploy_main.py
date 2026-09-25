@@ -142,13 +142,14 @@ def current_release(*, current=CURRENT, releases=RELEASES):
     return path, revision
 
 
-def trusted_exec_start(value, argv):
-    """Accept one systemctl-show ExecStart struct with exactly our argv."""
+def trusted_exec_start(value, argv, *, extended=False):
+    """Accept one exact ExecStart/ExecStartEx command with no execution flags."""
     match = re.fullmatch(r"\{\s*([^{}]*)\s*\}", value or "")
     if match is None:
         return False
     parts = [part.strip().partition("=") for part in match.group(1).split(";")]
-    expected_fields = {"path", "argv[]", "ignore_errors", "start_time", "stop_time",
+    flag_field = "flags" if extended else "ignore_errors"
+    expected_fields = {"path", "argv[]", flag_field, "start_time", "stop_time",
                        "pid", "code", "status"}
     if (any(not key or separator != "=" for key, separator, _ in parts)
             or len(parts) != len(expected_fields)
@@ -156,7 +157,7 @@ def trusted_exec_start(value, argv):
         return False
     fields = {key: item for key, _, item in parts}
     return (fields["path"] == argv[0] and fields["argv[]"] == " ".join(argv)
-            and fields["ignore_errors"] == "no")
+            and fields[flag_field] == ("" if extended else "no"))
 
 
 def deployment_account_groups():
@@ -378,7 +379,7 @@ def boundary(*, root=ROOT, releases=RELEASES, control=CONTROL, state=STATE,
         properties = command(["systemctl", "show", service, "--all",
                               "-p", "PrivateNetwork", "-p", "PrivateTmp", "-p", "NoNewPrivileges", "-p", "KillMode", "-p", "InaccessiblePaths",
                               "-p", "User", "-p", "Group", "-p", "SupplementaryGroups",
-                              "-p", "ExecStart", "-p", "ProtectSystem",
+                              "-p", "ExecStart", "-p", "ExecStartEx", "-p", "ProtectSystem",
                               "-p", "ReadOnlyPaths", "-p", "ReadWritePaths",
                               "-p", "BindPaths", "-p", "BindReadOnlyPaths", "-p", "MountImages",
                               "-p", "LoadCredential", "-p", "LoadCredentialEncrypted",
@@ -418,7 +419,10 @@ def boundary(*, root=ROOT, releases=RELEASES, control=CONTROL, state=STATE,
             or fields.get("MemoryMax") != str(2 * 1024**3)
             or fields.get("TasksMax") != "64"
             or not trusted_exec_start(fields.get("ExecStart"),
-                                      ["/usr/bin/python3", "-I", str(TRUSTED), "--run-tests"])):
+                                      ["/usr/bin/python3", "-I", str(TRUSTED), "--run-tests"])
+            or not trusted_exec_start(fields.get("ExecStartEx"),
+                                      ["/usr/bin/python3", "-I", str(TRUSTED), "--run-tests"],
+                                      extended=True)):
         raise Failure("STATE_BOUNDARY_FAILED")
 
 
@@ -429,7 +433,7 @@ def dependency_boundary(release, *, releases=None):
         raise Failure("STATE_BOUNDARY_FAILED")
     instance = DEPENDENCY_SERVICE.format(release.name)
     try:
-        properties = command(["systemctl", "show", instance, "--all", "-p", "User", "-p", "ExecStart",
+        properties = command(["systemctl", "show", instance, "--all", "-p", "User", "-p", "ExecStart", "-p", "ExecStartEx",
                               "-p", "Group", "-p", "SupplementaryGroups",
                               "-p", "ProtectSystem", "-p", "ReadOnlyPaths",
                               "-p", "ReadWritePaths", "-p", "InaccessiblePaths",
@@ -474,7 +478,10 @@ def dependency_boundary(release, *, releases=None):
             or fields.get("TasksMax") != "64"
             or not trusted_exec_start(fields.get("ExecStart"),
                                       ["/usr/bin/python3", "-I", str(TRUSTED),
-                                       "--install-dependencies", release.name])):
+                                       "--install-dependencies", release.name])
+            or not trusted_exec_start(fields.get("ExecStartEx"),
+                                      ["/usr/bin/python3", "-I", str(TRUSTED),
+                                       "--install-dependencies", release.name], extended=True)):
         raise Failure("STATE_BOUNDARY_FAILED")
 
 
@@ -537,7 +544,7 @@ def acquisition_boundary(release_id):
         "AmbientCapabilities": "", "Delegate": "no",
     }
     args = ["systemctl", "show", unit, "--all"]
-    for key in (*expected, "ExecStart", "InaccessiblePaths", "Environment", "EnvironmentFiles",
+    for key in (*expected, "ExecStart", "ExecStartEx", "InaccessiblePaths", "Environment", "EnvironmentFiles",
                 "PassEnvironment", "UnsetEnvironment"):
         args.extend(["-p", key])
     try:
@@ -548,7 +555,10 @@ def acquisition_boundary(release_id):
                 or not {str(STATE), str(HISTORY), str(CONTROL), "/etc/modelfc-validator"}
                 <= set(fields.get("InaccessiblePaths", "").split())
                 or not trusted_exec_start(fields.get("ExecStart"),
-                    ["/usr/bin/python3", "-I", str(TRUSTED), "--acquire-service", release_id])):
+                    ["/usr/bin/python3", "-I", str(TRUSTED), "--acquire-service", release_id])
+                or not trusted_exec_start(fields.get("ExecStartEx"),
+                    ["/usr/bin/python3", "-I", str(TRUSTED), "--acquire-service", release_id],
+                    extended=True)):
             raise Failure("STATE_BOUNDARY_FAILED")
     except Failure:
         raise Failure("STATE_BOUNDARY_FAILED") from None
@@ -684,6 +694,30 @@ def export_repository(repo, release):
     export_inventory(release)
 
 
+def release_metadata(release, sha, *, create=False):
+    """Controller-owned read-only provenance, outside tracked source files."""
+    if not SHA.fullmatch(sha) or not release.name.startswith(sha + "-"):
+        raise Failure("SOURCE_INVALID")
+    path = release / ".git" / "modelfc-deployed-sha"
+    try:
+        if create:
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o444)
+            with os.fdopen(fd, "wb") as output:
+                output.write(sha.encode("ascii"))
+                output.flush()
+                os.fchmod(output.fileno(), 0o444)
+                os.fsync(output.fileno())
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        with os.fdopen(fd, "rb") as source:
+            info = os.fstat(source.fileno())
+            if (not stat.S_ISREG(info.st_mode) or stat.S_IMODE(info.st_mode) != 0o444
+                    or info.st_uid != os.geteuid() or info.st_size != 40
+                    or source.read(41) != sha.encode("ascii")):
+                raise Failure("SOURCE_INVALID")
+    except OSError:
+        raise Failure("SOURCE_INVALID") from None
+
+
 def create_release(sha, *, releases=RELEASES, remote=REMOTE, previous=None):
     release_id = f"{sha}-{secrets.token_hex(6)}"
     release = release_path(release_id, releases=releases)
@@ -714,6 +748,7 @@ def create_release(sha, *, releases=RELEASES, remote=REMOTE, previous=None):
                 or git(release, "rev-parse", "--absolute-git-dir") != str(release / ".git")):
             raise Failure("SOURCE_INVALID")
         verify_source(release, sha)
+        release_metadata(release, sha, create=True)
         return release, result["tip"]
     except OSError:
         raise Failure("STORAGE_LIMIT_FAILED") from None
@@ -999,6 +1034,7 @@ def tests(release, sha, *, request=REQUEST, output=TEST_OUTPUT, service=SERVICE)
 
 
 def promote(release, sha, *, current=CURRENT, releases=RELEASES):
+    release_metadata(release, sha)
     if release_path(release.name, releases=releases) != release or head(release) != sha:
         raise Failure("FINAL_SHA_MISMATCH")
     previous, _ = current_release(current=current, releases=releases)
