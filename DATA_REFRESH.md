@@ -103,15 +103,23 @@ CSV temporary files before publication, including new seasons. Failure blocks
 that replacement, not successful other leagues. It grants no ACLs on other
 leagues, backups or status. Existing behavior is unchanged when omitted.
 
-Inspect saved results without downloading:
+After the runtime migration in [RUNTIME.md](ops/vps/RUNTIME.md), inspect saved
+production results without downloading. Resolve `current` once so the interpreter
+and imports remain pinned to one physical release, run as `modelfc-runtime`, and
+provide only the explicit non-secret environment below:
 
 ```sh
-cd ~/dev/modelfc
-PYTHONPATH=src python3 -m modelfc.corner_refresh --config corner_data.json --status
+release="$(readlink -f -- /srv/modelfc/current)"
+sudo -u modelfc-runtime -- env -i \
+  PATH=/usr/bin:/bin HOME=/nonexistent LANG=C.UTF-8 \
+  PYTHONPATH="$release/src" PYTHONNOUSERSITE=1 PYTHONDONTWRITEBYTECODE=1 \
+  "$release/.venv/bin/python" -B -P -s -m modelfc.corner_refresh \
+  --config /etc/modelfc/corner_data.json --status
 ```
 
-The status command recalculates data age today; a saved success cannot remain
-fresh indefinitely. It reports the last attempt time, not proof that the timer
+This post-migration production command uses `--status` only and performs no
+download. The status command recalculates data age today; a saved success cannot
+remain fresh indefinitely. It reports the last attempt time, not proof that the timer
 is enabled. Check `systemctl list-timers` for the schedule. Failures are visible
 in the command output, saved report and systemd journal. Email/Telegram alerts
 are not installed. Stop scheduled updates with:
@@ -120,21 +128,14 @@ are not installed. Stop scheduled updates with:
 systemctl disable --now modelfc-corner-refresh.timer
 ```
 
-To recover a previous La Liga snapshot, stop the timer and any running refresh,
-then copy the backup over the active file using a temporary file and rename:
-
-```sh
-cd ~/dev/modelfc
-systemctl stop modelfc-corner-refresh.timer modelfc-corner-refresh.service
-PYTHONPATH=src python3 - <<'PY'
-from pathlib import Path
-from modelfc.corner_refresh import atomic_write
-atomic_write(Path("SP1_2627.csv"), Path("data/corner-refresh/backups/SP1_2627.csv").read_bytes())
-PY
-```
-
-Leave the timer stopped until the reason for rollback is understood. The saved
-refresh report describes the last refresh attempt, not this manual restoration.
+Do not use a checkout-relative script to recover production history. Follow the
+recovery and rollback procedure in [RUNTIME.md](ops/vps/RUNTIME.md). Recovery must
+remain separately authorized, use the coordinated history and validator locks,
+reconcile affected files individually rather than blanket-copying backups, and
+preserve or re-establish the required validator ACLs before refresh or validation
+resumes. Leave the timer stopped until the discrepancy and any partial refresh
+outcomes have been reconciled. The saved refresh report describes the last refresh
+attempt, not a later manual restoration.
 
 ## Coverage and source limitations
 
