@@ -217,9 +217,11 @@ find "$HISTORY_DIR" -maxdepth 1 -type f \( -name 'E1_[0-9][0-9][0-9][0-9].csv' -
 ```
 
 Grant parent traversal individually if needed; those paths depend on installation.
-Refresh may atomically replace CSV files and therefore their ACLs. Verify the
-existing refresh permissions preserve validator read access; otherwise reapply
-these limited read grants after refresh. Do not broaden secret access to avoid this.
+Refresh atomically replaces CSV files and therefore their ACLs. For the separated
+runtime, follow [RUNTIME.md](RUNTIME.md): canonical E1/SP1 ACLs are prepared before
+rename with `--validator-read-user modelfc-validator`, not a post-refresh hook.
+Update both history_directory and history_lock together during the coordinated
+migration. Do not broaden secret access to avoid this.
 
 ## Single manual invocation
 

@@ -151,6 +151,77 @@ class CornerRefreshTests(unittest.TestCase):
         # A saved success must not remain 'fresh' forever when the timer stops.
         self.assertTrue(corner_refresh.format_report(fresh, date(2026, 10, 1), 14)[1])
 
+    def test_validator_acl_precedes_canonical_rename_including_new_season(self):
+        for new_season in (False, True):
+            if new_season:
+                self.target.unlink()
+            def acl(args, **kwargs):
+                temporary = Path(args[-1])
+                self.assertNotEqual(temporary, self.target)
+                self.assertEqual(temporary.read_bytes(), NEW)
+                self.assertEqual(args[:-1], ['/usr/bin/setfacl', '-m', 'u:1234:r--', '--'])
+                self.assertEqual(self.target.exists(), not new_season)
+                if not new_season:
+                    self.assertEqual(self.target.read_bytes(), OLD)
+            with self.subTest(new_season=new_season), patch.object(corner_refresh, 'download_csv', return_value=NEW), patch.object(
+                    corner_refresh.pwd, 'getpwnam', return_value=type('User', (), {'pw_uid': 1234})()), patch.object(
+                    corner_refresh.subprocess, 'run', side_effect=acl) as prepare:
+                report = corner_refresh.refresh_data(self.config, TODAY, validator_read_user='validator')
+            self.assertEqual(report['results'][0]['status'], 'updated')
+            prepare.assert_called_once()
+            self.assertEqual(self.target.read_bytes(), NEW)
+            self.assertEqual(list(self.root.glob('.SP1*')), [])
+
+    def test_acl_failure_preserves_target_and_allows_partial_success(self):
+        import subprocess
+        config = CornerDataConfig(self.root, ('SP1', 'E1', 'E0'), 14)
+        def acl(args, **kwargs):
+            if '.SP1_' in args[-1]:
+                raise subprocess.CalledProcessError(1, args)
+        with patch.object(corner_refresh, 'download_csv', side_effect=[NEW, NEW.replace(b'SP1,', b'E1,'), NEW.replace(b'SP1,', b'E0,')]), patch.object(
+                corner_refresh.pwd, 'getpwnam', return_value=type('User', (), {'pw_uid': 1234})()), patch.object(
+                corner_refresh.subprocess, 'run', side_effect=acl) as prepare:
+            report = corner_refresh.refresh_data(config, TODAY, validator_read_user='validator')
+        self.assertEqual([r['status'] for r in report['results']], ['failed', 'updated', 'updated'])
+        self.assertEqual(self.target.read_bytes(), OLD)
+        self.assertEqual((self.state / 'backups' / self.target.name).read_bytes(), OLD)
+        self.assertEqual(json.loads((self.state / 'status.json').read_text()), report)
+        self.assertEqual(prepare.call_count, 2)  # No E0, backup or status ACL.
+        self.assertEqual(list(self.root.glob('.SP1*')), [])
+
+    def test_acl_lookup_and_command_errors_fail_closed(self):
+        import subprocess
+        for error in (OSError('missing ACL tool'), subprocess.TimeoutExpired('setfacl', 10)):
+            with self.subTest(error=type(error).__name__), patch.object(corner_refresh.pwd, 'getpwnam',
+                    return_value=type('User', (), {'pw_uid': 1234})()), patch.object(
+                    corner_refresh.subprocess, 'run', side_effect=error):
+                with self.assertRaisesRegex(ValueError, 'not published'):
+                    corner_refresh.atomic_write(self.target, NEW, validator_read_user='validator')
+            self.assertEqual(self.target.read_bytes(), OLD)
+            self.assertEqual(list(self.root.glob('.SP1*')), [])
+        with patch.object(corner_refresh.pwd, 'getpwnam', side_effect=KeyError('unknown')), patch.object(
+                corner_refresh.subprocess, 'run') as acl:
+            with self.assertRaisesRegex(ValueError, 'not published'):
+                corner_refresh.atomic_write(self.target, NEW, validator_read_user='unknown')
+            acl.assert_not_called()
+        self.assertEqual(self.target.read_bytes(), OLD)
+
+    def test_cli_passes_validator_option(self):
+        report = self.refresh(NEW)
+        with patch.object(sys, 'argv', ['refresh', '--config', 'fixture.json', '--validator-read-user', 'validator']), patch.object(
+                corner_refresh, 'load_data_config', return_value=self.config), patch.object(
+                corner_refresh, 'refresh_data', return_value=report) as refresh, patch.object(
+                corner_refresh, 'format_report', return_value=('fixture', False)), redirect_stdout(StringIO()):
+            corner_refresh.main()
+        refresh.assert_called_once_with(self.config, validator_read_user='validator')
+
+    def test_no_acl_when_omitted_or_unchanged(self):
+        with patch.object(corner_refresh, 'prepare_validator_read') as prepare:
+            self.refresh(NEW)
+            with patch.object(corner_refresh, 'download_csv', return_value=NEW):
+                corner_refresh.refresh_data(self.config, TODAY, validator_read_user='validator')
+            prepare.assert_not_called()
+
     def test_season_rollover(self):
         self.assertEqual(corner_refresh.current_season(date(2026, 6, 30)), "2526")
         self.assertEqual(corner_refresh.current_season(date(2026, 7, 1)), "2627")
