@@ -4,6 +4,7 @@ Install this file outside the Git checkout. SSH supplies only a fixed request;
 the installed systemd unit invokes --run-tests against one candidate release.
 """
 
+import ast
 import fcntl
 import grp
 import hashlib
@@ -13,6 +14,7 @@ from pathlib import Path
 import pwd
 import re
 import secrets
+import selectors
 import shlex
 import signal
 import shutil
@@ -39,6 +41,10 @@ CGROUP_ROOT = Path("/sys/fs/cgroup")
 PENDING_SERVICE = CONTROL / "service-pending.json"
 REQUEST = CONTROL / "test-request.json"
 TEST_OUTPUT = REPORTS / "test-result.json"
+TEST_STDERR_LIMIT = 65536
+DIAGNOSTIC_LIMIT = 4096
+DIAGNOSTIC_IDS = 8
+TEST_ID = re.compile(r"(?:tests\.)?test_[A-Za-z0-9_]+\.[A-Za-z_][A-Za-z0-9_]*\.test[A-Za-z0-9_]*\Z")
 ACQUISITION = Path("/run/modelfc-acquisition")
 MOUNT_HELPER = Path("/opt/modelfc-deploy/acquisition_mount.py")
 MAX_EXPORT_BYTES = 128 * 1024**2
@@ -1100,7 +1106,7 @@ def write_json(path, value):
 
 def read_test_report(path):
     """Open a bounded regular report without following the output symlink."""
-    limit = 4096
+    limit = DIAGNOSTIC_LIMIT
     fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     with os.fdopen(fd, "rb") as report_file:
         info = os.fstat(report_file.fileno())
@@ -1128,16 +1134,26 @@ def tests(release, sha, *, request=REQUEST, output=TEST_OUTPUT, service=SERVICE)
             service_ok = False  # Assertion failures still write a structured report.
         try:
             value = read_test_report(output)
-            if (set(value) != {"sha", "release_id", "tests_status", "tests_run",
-                               "state_boundary_enforced"}
+            fields = {"sha", "release_id", "tests_status", "tests_run", "state_boundary_enforced"}
+            if (set(value) not in (fields, fields | {"diagnostics"})
                     or value["sha"] != sha or value["release_id"] != release_id
                     or type(value["tests_run"]) is not int or value["tests_run"] < 0
                     or value["tests_status"] not in ("PASS", "FAIL")
                     or value["state_boundary_enforced"] is not True):
                 raise ValueError
+            if "diagnostics" in value and (value["tests_status"] != "FAIL" or
+                    not valid_test_diagnostics(value["diagnostics"], test_identifiers(release))):
+                raise ValueError
         except (OSError, ValueError, TypeError):
             raise Failure("STATE_BOUNDARY_FAILED") from None
         if value["tests_status"] != "PASS" or value["tests_run"] == 0:
+            # Only after service/cgroup termination, and only on the failure path.
+            # The test namespace cannot write this control-directory destination.
+            if "diagnostics" in value:
+                record = {key: value[key] for key in ("sha", "release_id", "tests_run", "diagnostics")}
+                if len(json.dumps(record).encode("ascii")) + 1 > DIAGNOSTIC_LIMIT:
+                    raise Failure("STATE_BOUNDARY_FAILED")
+                write_json(request.parent / "last-test-failure.json", record)
             raise Failure("TESTS_FAILED", value["tests_run"])
         if not service_ok:
             raise Failure("STATE_BOUNDARY_FAILED")
@@ -1275,6 +1291,101 @@ def verify_test_network(controller_netns):
         raise Failure("STATE_BOUNDARY_FAILED") from None
 
 
+def capture_test_process(args, *, cwd, env, timeout=300):
+    """Discard stdout; drain stderr with a fixed tail and an overall deadline."""
+    process = subprocess.Popen(args, cwd=cwd, env=env, stdout=subprocess.DEVNULL,
+                               stderr=subprocess.PIPE)
+    tail = b""
+    truncated = False
+    deadline = time.monotonic() + timeout
+    try:
+        with selectors.DefaultSelector() as selector:
+            selector.register(process.stderr, selectors.EVENT_READ)
+            while selector.get_map():
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise subprocess.TimeoutExpired(args, timeout)
+                for key, _ in selector.select(min(remaining, 1)):
+                    chunk = os.read(key.fd, 4096)
+                    if not chunk:
+                        selector.unregister(key.fd)
+                        continue
+                    truncated |= len(tail) + len(chunk) > TEST_STDERR_LIMIT
+                    tail = (tail + chunk)[-TEST_STDERR_LIMIT:]
+            process.wait(timeout=max(0, deadline - time.monotonic()))
+        return process.returncode, tail, truncated
+    finally:
+        # Same immediate-child timeout cleanup as subprocess.run; systemd owns
+        # complete descendant termination before the controller reads reports.
+        if process.poll() is None:
+            process.kill()
+        process.wait()
+        process.stderr.close()
+
+
+def test_identifiers(release):
+    """Only source-declared names may leave the sandbox, never output payloads."""
+    names = set()
+    for path in sorted((release / "tests").glob("test_*.py"))[:256]:
+        if path.is_symlink():
+            continue
+        try:
+            with path.open("rb") as source:
+                data = source.read(1048577)
+            if len(data) > 1048576:
+                continue
+            tree = ast.parse(data)
+        except (OSError, SyntaxError, ValueError):
+            continue
+        for cls in tree.body:
+            if not isinstance(cls, ast.ClassDef):
+                continue
+            for method in cls.body:
+                if isinstance(method, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    name = f"{path.stem}.{cls.name}.{method.name}"
+                    if len(name) <= 154 and TEST_ID.fullmatch(name):
+                        names.update((name, "tests." + name))
+                        if len(names) >= 4096:
+                            return names
+    return names
+
+
+def test_diagnostics(stderr, summary, allowed, truncated):
+    result = {"failures": None, "errors": None, "test_ids": [], "truncated": truncated}
+    if summary:
+        counts = re.fullmatch(r"FAILED \(((?:(?:failures|errors|skipped)=[0-9]{1,6},? ?)+)\)", summary)
+        if counts:
+            values = dict(re.findall(r"(failures|errors|skipped)=([0-9]{1,6})", counts[1]))
+            result.update(failures=int(values.get("failures", 0)), errors=int(values.get("errors", 0)))
+    for line in stderr.splitlines():
+        if not line.startswith(("FAIL: ", "ERROR: ")):
+            continue
+        # Subtest parameter values and traceback/error messages are never saved.
+        match = re.match(r"(?:FAIL|ERROR): (test[A-Za-z0-9_]*) \(([A-Za-z0-9_.]+)\)(?: |$)", line)
+        if not match or match[2] not in allowed or match[2].rsplit(".", 1)[-1] != match[1]:
+            result["truncated"] = True
+            continue
+        name = match[2]
+        if name not in result["test_ids"]:
+            if len(result["test_ids"]) < DIAGNOSTIC_IDS:
+                result["test_ids"].append(name)
+            else:
+                result["truncated"] = True
+    return result
+
+
+def valid_test_diagnostics(value, allowed):
+    return (isinstance(value, dict)
+            and set(value) == {"failures", "errors", "test_ids", "truncated"}
+            and all(value[key] is None or (type(value[key]) is int and 0 <= value[key] <= 999999)
+                    for key in ("failures", "errors"))
+            and type(value["truncated"]) is bool
+            and isinstance(value["test_ids"], list) and len(value["test_ids"]) <= DIAGNOSTIC_IDS
+            and all(isinstance(name, str) and len(name) <= 160 and TEST_ID.fullmatch(name)
+                    and name in allowed for name in value["test_ids"])
+            and len(set(value["test_ids"])) == len(value["test_ids"]))
+
+
 def run_tests():
     """Fixed systemd entrypoint; PR code is only invoked as the test subprocess."""
     value = {"sha": "", "release_id": "", "tests_status": "FAIL", "tests_run": 0,
@@ -1296,21 +1407,26 @@ def run_tests():
         value["state_boundary_enforced"] = True
         env = {"PATH": "/usr/bin:/bin", "HOME": "/nonexistent", "PYTHONPATH": "src",
                "PYTHONDONTWRITEBYTECODE": "1", "PYTHONNOUSERSITE": "1"}
-        process = subprocess.run([str(release / ".venv/bin/python"), "-B", "-m", "unittest",
+        allowed = test_identifiers(release)
+        code, captured, truncated = capture_test_process([str(release / ".venv/bin/python"), "-B", "-m", "unittest",
                                   "discover", "-s", "tests"], cwd=release, env=env,
-                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=300)
-        stderr = process.stderr[-131072:].decode("utf-8", errors="replace")
+                                  timeout=300)
+        stderr = captured.decode("utf-8", errors="replace")
         match = re.search(
-            r"(?m)^Ran ([0-9]+) tests? in [0-9]+(?:\.[0-9]+)?s\r?\n\r?\n"
+            r"(?m)^Ran ([0-9]{1,6}) tests? in [0-9]+(?:\.[0-9]+)?s\r?\n\r?\n"
             r"(OK(?: \([^\r\n]*\))?|FAILED(?: \([^\r\n]*\))?)\r?\n*\Z", stderr)
         if match:
             value["tests_run"] = int(match.group(1))
-        if (process.returncode == 0 and match and value["tests_run"] > 0
+        if (code == 0 and match and value["tests_run"] > 0
                 and match.group(2).startswith("OK")):
             value["tests_status"] = "PASS"
+        else:
+            value["diagnostics"] = test_diagnostics(stderr, match[2] if match else None, allowed, truncated)
     except (Failure, OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
         pass
     try:
+        if len(json.dumps(value).encode("ascii")) + 1 > DIAGNOSTIC_LIMIT:
+            return False
         write_json(TEST_OUTPUT, value)
     except (Failure, OSError):
         return False
