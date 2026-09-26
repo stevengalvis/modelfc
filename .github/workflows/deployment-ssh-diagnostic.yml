@@ -24,6 +24,7 @@ jobs:
         run: |
           import base64
           import datetime
+          import hashlib
           import json
           import os
           from pathlib import Path
@@ -32,6 +33,7 @@ jobs:
           import tempfile
 
           EXPECTED = "SHA256:IpHgSvswGdBNFT6ETalX+2rGwbhdfItuXkDS4JSN1LE"
+          EXPECTED_SECRET_SHA256 = "4bb1e4fc7970cfe754415b7a97f0b2661a2c8389795473af3d982aa25e8c8640"
 
           def run(args, **kwargs):
               # Children never inherit the production secret or other runner secrets.
@@ -88,11 +90,21 @@ jobs:
               with tempfile.TemporaryDirectory(prefix="modelfc-ssh-diagnostic-") as directory:
                   key = Path(directory) / "identity"
                   hosts = Path(directory) / "known_hosts"
+                  # Require nonempty ASCII and hash exact bytes, without normalization.
+                  encoded = os.environb.pop(b"DEPLOY_KEY_BASE64", b"")
+                  if (not encoded or not encoded.isascii()
+                          or hashlib.sha256(encoded).hexdigest() != EXPECTED_SECRET_SHA256):
+                      print("SECRET_BYTES_MISMATCH")
+                      return 1
+                  print("SECRET_BYTES_MATCH", flush=True)
                   try:
-                      encoded = os.environ.pop("DEPLOY_KEY_BASE64", "").encode("ascii")
                       decoded = base64.b64decode(encoded, validate=True)
                       if not decoded or base64.b64encode(decoded) != encoded:
                           raise ValueError
+                  except Exception:
+                      print("BASE64_DECODE_FAILED")
+                      return 1
+                  try:
                       # Exact decoded bytes, no newline normalization; umask makes mode 0600.
                       key.write_bytes(decoded)
                       public = run(["ssh-keygen", "-y", "-P", "", "-f", str(key)])

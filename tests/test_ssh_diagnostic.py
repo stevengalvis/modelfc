@@ -3,6 +3,7 @@
 import ast
 import base64
 import contextlib
+import hashlib
 import io
 import json
 import os
@@ -18,6 +19,7 @@ from unittest.mock import patch
 
 WORKFLOW = Path(__file__).resolve().parents[1] / ".github/workflows/deployment-ssh-diagnostic.yml"
 EXPECTED = "SHA256:IpHgSvswGdBNFT6ETalX+2rGwbhdfItuXkDS4JSN1LE"
+EXPECTED_SECRET_SHA256 = "4bb1e4fc7970cfe754415b7a97f0b2661a2c8389795473af3d982aa25e8c8640"
 
 
 @unittest.skipUnless(shutil.which("ssh-keygen"), "requires local OpenSSH key parser")
@@ -43,9 +45,15 @@ class SSHDiagnosticTest(unittest.TestCase):
         cls.source = textwrap.dedent(cls.workflow.split(marker, 1)[1])
         ast.parse(cls.source)
 
-    def exercise(self, encoded, *, matching=False, rc=0, response=None, failure=None):
-        calls, paths = [], []
+    def exercise(self, encoded, *, reference=None, matching=False, rc=0, response=None, failure=None):
+        calls, paths, directories = [], [], []
         real_run = subprocess.run
+        real_directory = tempfile.TemporaryDirectory
+
+        def directory(*args, **kwargs):
+            result = real_directory(*args, **kwargs)
+            directories.append(Path(result.name))
+            return result
         secrets = [self.encoded, self.private.decode(), self.public.decode().strip(),
                    "UNRELATED_SECRET_CANARY"]
         stderr = (f"debug1: Offering public key: identity ED25519 {self.fingerprint}\n"
@@ -87,6 +95,11 @@ class SSHDiagnosticTest(unittest.TestCase):
             return subprocess.CompletedProcess(args, rc, response, stderr)
 
         source = self.source
+        # Test the same digest comparison with a disposable reference, never production bytes.
+        self.assertEqual(source.count(EXPECTED_SECRET_SHA256), 1)
+        reference = self.encoded if reference is None else reference
+        digest = hashlib.sha256(reference.encode("utf-8", errors="surrogateescape")).hexdigest()
+        source = source.replace(EXPECTED_SECRET_SHA256, digest)
         if matching:
             # Substitute only the expected fingerprint with our disposable key's value.
             self.assertEqual(source.count(EXPECTED), 1)
@@ -99,7 +112,8 @@ class SSHDiagnosticTest(unittest.TestCase):
                     "HOME": self.directory.name, "DEPLOY_KEY_BASE64": encoded,
                     "DEPLOY_HOST": "192.0.2.1", "DEPLOY_HOST_KEY": "test-host-key",
                     "UNRELATED_SECRET": "UNRELATED_SECRET_CANARY"}, clear=True), patch(
-                    "subprocess.run", side_effect=invoke), contextlib.redirect_stdout(output), \
+                    "subprocess.run", side_effect=invoke), patch(
+                    "tempfile.TemporaryDirectory", side_effect=directory), contextlib.redirect_stdout(output), \
                     contextlib.redirect_stderr(output):
                 with self.assertRaises(SystemExit) as stopped:
                     exec(compile(source, str(WORKFLOW), "exec"), {})
@@ -111,6 +125,8 @@ class SSHDiagnosticTest(unittest.TestCase):
         self.assertNotIn("PRIVATE KEY", text)
         self.assertNotIn("Traceback", text)
         self.assertTrue(all(not path.parent.exists() for path in paths))
+        self.assertTrue(directories)
+        self.assertTrue(all(not path.exists() for path in directories))
         return stopped.exception.code, text, calls
 
     def test_workflow_keeps_manual_production_configuration(self):
@@ -122,31 +138,57 @@ class SSHDiagnosticTest(unittest.TestCase):
         self.assertIn("${{ vars.MODELFC_DEPLOY_HOST }}", self.workflow)
         self.assertIn("${{ vars.MODELFC_DEPLOY_HOST_KEY }}", self.workflow)
         self.assertIn(EXPECTED, self.source)
+        self.assertIn(EXPECTED_SECRET_SHA256, self.source)
+
+    def test_one_character_difference_stops_before_decode_or_ssh(self):
+        changed = ("A" if self.encoded[0] != "A" else "B") + self.encoded[1:]
+        with patch("base64.b64decode") as decode:
+            status, output, calls = self.exercise(changed)
+            self.assertEqual((status, output, calls), (1, "SECRET_BYTES_MISMATCH\n", []))
+            decode.assert_not_called()
+
+    def test_whitespace_differences_stop_before_decode_or_ssh(self):
+        for value in (" " + self.encoded, self.encoded + " ", self.encoded + "\n",
+                      self.encoded + "\r\n", self.encoded[:20] + "\n" + self.encoded[20:]):
+            with self.subTest(case_length=len(value)), patch("base64.b64decode") as decode:
+                status, output, calls = self.exercise(value)
+                self.assertEqual((status, output, calls), (1, "SECRET_BYTES_MISMATCH\n", []))
+                decode.assert_not_called()
+
+    def test_empty_and_non_ascii_fail_even_with_matching_reference_digest(self):
+        for value in ("", "é", "\udcff"):
+            with self.subTest(case_length=len(value)), patch("base64.b64decode") as decode:
+                status, output, calls = self.exercise(value, reference=value)
+                self.assertEqual((status, output, calls), (1, "SECRET_BYTES_MISMATCH\n", []))
+                decode.assert_not_called()
 
     def test_valid_single_line_decodes_exact_bytes_and_attempts_ssh_once(self):
         self.assertNotIn("\n", self.encoded)
         status, output, calls = self.exercise(self.encoded, matching=True)
         self.assertEqual(status, 0)
+        self.assertEqual(output.splitlines()[:2], ["SECRET_BYTES_MATCH", "KEY_FINGERPRINT_MATCH"])
         self.assertEqual(sum(call[0] == "ssh" for call in calls), 1)
         for label in ("EXPECTED_KEY_OFFERED", "EXPECTED_KEY_ACCEPTED", "INVALID_REQUEST",
                       "HOST_KEY_VERIFIED_ED25519", "AUTHENTICATED_PUBLICKEY"):
             self.assertIn(label, output)
 
     def test_invalid_base64_stops_before_key_parser_or_ssh(self):
-        for value in ("", "!bad!", "é", self.encoded + "\n", " " + self.encoded,
+        for value in ("!bad!", self.encoded + "\n", " " + self.encoded,
                       self.encoded[:-1], self.encoded + "=", "Zh==", "MODELFC_DEPLOY_SSH_KEY_BASE64=" + self.encoded):
             with self.subTest(case_length=len(value)):
-                status, output, calls = self.exercise(value)
-                self.assertEqual((status, output, calls), (1, "KEY_PARSE_FAILED\n", []))
+                status, output, calls = self.exercise(value, reference=value)
+                self.assertEqual((status, output, calls),
+                                 (1, "SECRET_BYTES_MATCH\nBASE64_DECODE_FAILED\n", []))
 
     def test_decoded_invalid_key_stops_before_ssh(self):
-        status, output, calls = self.exercise(base64.b64encode(b"not a private key").decode())
-        self.assertEqual((status, output), (1, "KEY_PARSE_FAILED\n"))
+        value = base64.b64encode(b"not a private key").decode()
+        status, output, calls = self.exercise(value, reference=value)
+        self.assertEqual((status, output), (1, "SECRET_BYTES_MATCH\nKEY_PARSE_FAILED\n"))
         self.assertEqual([call[0] for call in calls], ["ssh-keygen"])
 
     def test_decoded_wrong_key_stops_before_ssh(self):
         status, output, calls = self.exercise(self.encoded)
-        self.assertEqual((status, output), (1, "KEY_FINGERPRINT_MISMATCH\n"))
+        self.assertEqual((status, output), (1, "SECRET_BYTES_MATCH\nKEY_FINGERPRINT_MISMATCH\n"))
         self.assertEqual([call[0] for call in calls], ["ssh-keygen", "ssh-keygen"])
 
     def test_ssh_failure_has_one_attempt_and_safe_output(self):
