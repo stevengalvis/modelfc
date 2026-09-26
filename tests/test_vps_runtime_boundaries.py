@@ -5,7 +5,6 @@ import errno
 import json
 import os
 from pathlib import Path
-import subprocess
 import tempfile
 from types import SimpleNamespace
 import unittest
@@ -57,8 +56,8 @@ class TestNetworkProof(unittest.TestCase):
                                             side_effect=interface_error))
             bus = stack.enter_context(patch.object(deploy, "command", return_value=text, side_effect=bus_error))
             head = stack.enter_context(patch.object(deploy, "head", return_value=self.sha))
-            candidate = stack.enter_context(patch.object(deploy.subprocess, "run", return_value=
-                subprocess.CompletedProcess([], 0, b"", b"Ran 1 test in 0.01s\n\nOK\n")))
+            candidate = stack.enter_context(patch.object(deploy, "capture_test_process", return_value=
+                (0, b"Ran 1 test in 0.01s\n\nOK\n", False)))
             result = deploy.run_tests()
         return result, candidate, head, bus
 

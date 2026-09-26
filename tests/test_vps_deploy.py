@@ -51,7 +51,7 @@ class RuntimeReleaseProvenanceTest(unittest.TestCase):
     def setUp(self):
         from modelfc import ledger_storage
         self.storage = ledger_storage
-        self.temp = tempfile.TemporaryDirectory(dir=SOURCE.parents[2])
+        self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         # The test host may expose /workspace as 0777. Model only its ancestors
@@ -135,6 +135,9 @@ class RuntimeReleaseProvenanceTest(unittest.TestCase):
             self.assertEqual(self.read(development), "abc123")
             git.assert_called_once()
 
+    def test_provenance_fixtures_are_outside_source_tree(self):
+        self.assertFalse(self.root.is_relative_to(SOURCE.parents[2]))
+
 
 class FreshReleaseTest(unittest.TestCase):
     def setUp(self):
@@ -183,6 +186,7 @@ class FreshReleaseTest(unittest.TestCase):
         self.mount_events = []
         self.created = []
         self.tested = []
+        self.real_tests = deploy.tests
         self.real_acquisition = deploy.run_acquisition
         self.patches = [patch.object(deploy, "CONTROL", self.control),
                         patch.object(deploy, "ACQUISITION", self.staging),
@@ -606,6 +610,26 @@ class FreshReleaseTest(unittest.TestCase):
                          ("PASS", "ALREADY_CURRENT", 0, False, str(release)))
         self.assertEqual(len(self.created), 1)
         self.assertEqual(len(self.tested), 1)
+
+    def test_diagnostics_never_authorize_promotion_and_success_still_promotes(self):
+        self.run_deploy(self.a)
+        previous = os.readlink(self.current)
+        request = self.control / "test-request.json"
+        output = self.control / "reports/test-result.json"
+        diagnostics = {"failures":0,"errors":0,"test_ids":[],"truncated":False}
+        def report(*args):
+            value = json.loads(request.read_text())
+            output.write_text(json.dumps(dict(sha=value["sha"], release_id=value["release_id"],
+                tests_status="FAIL", tests_run=1, state_boundary_enforced=True, diagnostics=diagnostics)))
+        def runner(release, sha):
+            return self.real_tests(release, sha, request=request, output=output)
+        with patch.object(deploy, "tests", side_effect=runner), patch.object(deploy, "run_service", side_effect=report):
+            result = self.run_deploy(self.b)
+        self.assertEqual((result["status"], result["reason"], result["promotion_status"]),
+                         ("FAIL", "TESTS_FAILED", "NOT_ATTEMPTED"))
+        self.assertEqual(os.readlink(self.current), previous)
+        self.assertTrue((self.control / "last-test-failure.json").is_file())
+        self.assertEqual(self.run_deploy(self.b)["promotion_status"], "PROMOTED")
 
     def test_older_main_event_superseded_without_switching(self):
         self.run_deploy(self.b)
@@ -1909,8 +1933,7 @@ class IsolatedBoundaryTest(unittest.TestCase):
                     deploy, "REQUEST", request), patch.object(deploy, "TEST_OUTPUT", output), patch.object(
                     deploy, "head", return_value=self.sha), patch.object(
                     deploy.os, "access", return_value=False), patch.object(
-                    deploy.subprocess, "run", return_value=subprocess.CompletedProcess(
-                        [], code, stdout, stderr)) as run, patch.dict(
+                    deploy, "capture_test_process", return_value=(code, stderr, False)) as run, patch.dict(
                     os.environ, {"ODDSPAPI_API_KEY": "offline-secret", "GITHUB_TOKEN": "secret",
                                  "SSH_AUTH_SOCK": "/secret"}):
                 self.assertEqual(deploy.run_tests(), expected)
@@ -1948,6 +1971,165 @@ class IsolatedBoundaryTest(unittest.TestCase):
                 self.assertEqual(deploy.main(), 0)
                 self.assertEqual(called.call_args.args, ("",))
                 self.assertEqual(json.loads(output.getvalue())["reason"], "INVALID_REQUEST")
+
+
+class TestFailureDiagnosticsTest(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.sha = "a" * 40
+        self.release = self.root / (self.sha + "-123456789abc")
+        (self.release / "tests").mkdir(parents=True)
+        self.names = [f"test_sample.Sample.test_case_{i}" for i in range(20)]
+        (self.release / "tests/test_sample.py").write_text(
+            "class Sample:\n" + "".join(f"    def test_case_{i}(self): pass\n" for i in range(20)))
+        self.allowed = deploy.test_identifiers(self.release)
+        self.request = self.root / "test-request.json"
+        self.output = self.root / "reports/test-result.json"
+        self.output.parent.mkdir()
+
+    def diagnostic(self, kinds=("FAIL",), names=None):
+        names = names or self.names
+        text = "\n".join(f"{kind}: {name.rsplit('.', 1)[-1]} ({name})" for kind,name in zip(kinds,names))
+        return deploy.test_diagnostics(text, "FAILED (failures=1, errors=1)", self.allowed, False)
+
+    def test_failure_and_error_identifiers_and_summary_counts(self):
+        for kind in ("FAIL", "ERROR"):
+            with self.subTest(kind=kind):
+                value = self.diagnostic((kind,))
+                self.assertEqual(value["test_ids"], self.names[:1])
+                self.assertEqual((value["failures"], value["errors"]), (1, 1))
+                self.assertFalse(value["truncated"])
+                self.assertTrue(deploy.valid_test_diagnostics(value, self.allowed))
+
+    def test_real_phase5_diagnostic_identifies_all_four_test_context_failures(self):
+        names = ["test_vps_deploy.RuntimeReleaseProvenanceTest." + name for name in (
+            "test_development_checkout_retains_git_fallback",
+            "test_invalid_missing_or_writable_metadata_never_supplies_a_sha",
+            "test_successive_nonce_releases_ignore_git_ownership_rejection")]
+        names.append("test_corner_ledger.CornerLedgerTests.test_git_revision_is_resolved_from_modelfc_repository")
+        stderr = "\n".join(f"{kind}: {name.rsplit('.',1)[1]} ({name})" for kind,name in zip(
+            ["ERROR", "ERROR", "ERROR", "FAIL"], names))
+        value = deploy.test_diagnostics(stderr, "FAILED (failures=1, errors=3, skipped=1)",
+                                        deploy.test_identifiers(SOURCE.parents[2]), False)
+        self.assertEqual(value, dict(failures=1, errors=3, test_ids=names, truncated=False))
+
+    def test_worker_exit_and_final_summary_control_status_not_diagnostics(self):
+        self.request.write_text(json.dumps(dict(release_id=self.release.name, sha=self.sha, controller_netns=[4,2])))
+        header = f"FAIL: test_case_0 ({self.names[0]})\n".encode()
+        for code, summary, expected in ((1,b"OK",False), (0,b"FAILED (failures=1)",False),
+                                         (0,b"OK",True)):
+            stderr = header + b"Ran 1 test in 0.01s\n\n" + summary + b"\n"
+            with self.subTest(code=code, summary=summary), patch.object(deploy, "REQUEST", self.request), patch.object(
+                    deploy, "TEST_OUTPUT", self.output), patch.object(deploy, "RELEASES", self.root), patch.object(
+                    deploy, "head", return_value=self.sha), patch.object(deploy, "verify_test_network"), patch.object(
+                    deploy.os, "access", return_value=False), patch.object(
+                    deploy, "capture_test_process", return_value=(code,stderr,False)):
+                self.assertEqual(deploy.run_tests(), expected)
+            result = json.loads(self.output.read_text())
+            self.assertEqual(result["tests_run"], 1)
+            if expected:
+                self.assertNotIn("diagnostics", result)
+            else:
+                self.assertEqual(result["diagnostics"]["test_ids"], self.names[:1])
+
+    def test_many_failures_are_bounded_and_payloads_never_retained(self):
+        value = self.diagnostic(("FAIL",) * 20)
+        self.assertEqual(len(value["test_ids"]), deploy.DIAGNOSTIC_IDS)
+        self.assertTrue(value["truncated"])
+        self.assertLess(len(json.dumps(value)), deploy.DIAGNOSTIC_LIMIT)
+        text = (f"FAIL: test_case_0 ({self.names[0]}) (credential='secret')\n"
+                "ERROR: test_secret (test_sample.Sample.test_secret)\n"
+                "Traceback: history contents and token=secret\n")
+        value = deploy.test_diagnostics(text, None, self.allowed, False)
+        self.assertEqual(value["test_ids"], self.names[:1])
+        self.assertTrue(value["truncated"])
+        self.assertNotIn("secret", json.dumps(value))
+        self.assertIsNone(value["errors"])
+
+    def test_bounded_capture_discards_stdout_and_drains_excess_stderr(self):
+        script = ("import os\n"
+                  "for i in range(256):\n"
+                  " os.write(1,b'x'*8192); os.write(2,b'y'*8192)\n"
+                  "os.write(2,b'\\nRan 1 test in 0.01s\\n\\nOK\\n')\n")
+        real_popen = subprocess.Popen
+        descriptors = []
+        def start(*args, **kwargs):
+            process = real_popen(*args, **kwargs)
+            descriptors.append(process.stderr.fileno())
+            self.assertEqual(kwargs["stdout"], subprocess.DEVNULL)
+            return process
+        with patch.object(deploy.subprocess, "Popen", side_effect=start), patch.object(deploy.os, "read", wraps=os.read) as read:
+            code, tail, truncated = deploy.capture_test_process(
+                [sys.executable, "-c", script], cwd=self.root, env={"PATH":"/usr/bin:/bin"})
+        self.assertEqual(code, 0)
+        self.assertEqual(len(tail), deploy.TEST_STDERR_LIMIT)
+        self.assertTrue(tail.endswith(b"OK\n"))
+        self.assertNotIn(b"x", tail)
+        self.assertTrue(truncated)
+        sizes = [call.args[1] for call in read.call_args_list if call.args[0] == descriptors[0]]
+        self.assertTrue(sizes)
+        self.assertLessEqual(max(sizes), 4096)
+
+    def test_capture_timeout_reaps_child(self):
+        real_popen = subprocess.Popen
+        children = []
+        def start(*args, **kwargs):
+            child = real_popen(*args, **kwargs)
+            children.append(child)
+            return child
+        with patch.object(deploy.subprocess, "Popen", side_effect=start):
+            with self.assertRaises(subprocess.TimeoutExpired):
+                deploy.capture_test_process([sys.executable, "-c", "import time; time.sleep(60)"],
+                                            cwd=self.root, env={}, timeout=0.05)
+        self.assertIsNotNone(children[0].poll())
+
+    def run_report(self, status, count, diagnostics=None, **changes):
+        def service(*args):
+            report = dict(sha=self.sha, release_id=self.release.name, tests_status=status,
+                          tests_run=count, state_boundary_enforced=True)
+            if diagnostics is not None:
+                report["diagnostics"] = diagnostics
+            report.update(changes)
+            self.output.write_text(json.dumps(report))
+        with patch.object(deploy, "run_service", side_effect=service):
+            return deploy.tests(self.release, self.sha, request=self.request, output=self.output)
+
+    def test_failure_retained_outside_reports_after_service_finishes(self):
+        value = self.diagnostic()
+        with self.assertRaisesRegex(deploy.Failure, "TESTS_FAILED"):
+            self.run_report("FAIL", 4, value)
+        retained = self.root / "last-test-failure.json"
+        record = json.loads(retained.read_text())
+        self.assertEqual(record, dict(sha=self.sha, release_id=self.release.name,
+                                     tests_run=4, diagnostics=value))
+        self.assertLessEqual(retained.stat().st_size, deploy.DIAGNOSTIC_LIMIT)
+        self.assertNotEqual(retained.parent, self.output.parent)
+        self.assertFalse(self.output.exists())
+        self.assertFalse(self.request.exists())
+
+    def test_malformed_diagnostics_fail_closed_and_cannot_turn_fail_into_pass(self):
+        good = self.diagnostic()
+        bad = [[], "PASS", {**good,"status":"PASS"}, {**good,"truncated":1},
+               {**good,"failures":True}, {**good,"errors":1000000},
+               {**good,"test_ids":["test_sample.Sample.test_secret"]},
+               {**good,"test_ids":[self.names[0]+"\nsecret"]},
+               {**good,"test_ids":self.names}, {**good,"test_ids":[{}]}]
+        for value in bad:
+            with self.subTest(value=value), self.assertRaisesRegex(deploy.Failure, "STATE_BOUNDARY_FAILED"):
+                self.run_report("FAIL", 4, value)
+        # Even well-formed diagnostics on a purported PASS are unexpected data.
+        with self.assertRaisesRegex(deploy.Failure, "STATE_BOUNDARY_FAILED"):
+            self.run_report("PASS", 4, good)
+        with self.assertRaisesRegex(deploy.Failure, "TESTS_FAILED"):
+            self.run_report("FAIL", 4, {**good,"failures":0,"errors":0,"test_ids":[]})
+        self.assertEqual(self.run_report("PASS", 4), 4)
+        with self.assertRaisesRegex(deploy.Failure, "TESTS_FAILED"):
+            self.run_report("PASS", 0)
+        for changes in ({"tests_run":True}, {"state_boundary_enforced":False}, {"extra":"PASS"}):
+            with self.subTest(changes=changes), self.assertRaisesRegex(deploy.Failure, "STATE_BOUNDARY_FAILED"):
+                self.run_report("PASS", 4, **changes)
 
 
 class AcquisitionBoundaryTest(unittest.TestCase):

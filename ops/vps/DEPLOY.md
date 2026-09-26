@@ -166,8 +166,18 @@ nonzero tests, verify the current symlink's direct target and retained `.git`,
 then retry that SHA. Test invalid SHA, an older event, dependency failure and
 test failure in a controlled acceptance environment. Confirm historical CSVs,
 refresh locks and `/root/modelfc-state` remain unchanged; confirm the installed
-systemd test process cannot read them or reach the network. Inspect local VPS
-journal if tests fail; GitHub receives only the fixed JSON report. The normal
+systemd test process cannot read them or reach the network. On a completed test
+failure, inspect `/var/lib/modelfc-deploy/last-test-failure.json`. The controller
+retains at most 4096 bytes outside the test-writable reports directory, after
+service termination. It contains the release ID, SHA, test count and informational
+diagnostics: failure/error counts (null when unavailable), at most eight
+source-declared test identifiers (160 ASCII characters each), and `truncated`.
+Subtest values, traceback text, stdout and unknown identifiers are never retained.
+Stdout is discarded; stderr is drained in 4096-byte chunks into a 65536-byte tail
+while reading, under the existing 300-second deadline. `truncated` also indicates
+omitted/unrecognized identifiers. A later failure replaces this single record;
+success leaves it unchanged, so always check its SHA/release ID. It does not
+authorize promotion or change the fixed GitHub JSON report. The normal
 host execution context is used, independent of coding-agent mount restrictions.
 
 Release retention and the one-time runtime path migration are administrator

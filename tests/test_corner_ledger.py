@@ -170,10 +170,11 @@ class CornerLedgerTests(unittest.TestCase):
             record_corner_result(self.ledger, forecast_id, 4, 2)
 
     def test_git_revision_is_resolved_from_modelfc_repository(self):
-        expected_root = Path(ledger_storage.__file__).resolve().parents[2]
         completed = type("Completed", (), {"stdout": "abc123\n"})()
         with patch("modelfc.ledger_storage.subprocess.run",
-                   return_value=completed) as run:
+                   return_value=completed) as run, patch.object(
+                       ledger_storage, "__file__", str(self.ledger / "development/src/modelfc/ledger_storage.py")):
+            expected_root = self.ledger / "development"
             self.assertEqual(git_commit_sha(), "abc123")
         run.assert_called_once_with(
             ("git", "-C", str(expected_root), "rev-parse", "HEAD"),
