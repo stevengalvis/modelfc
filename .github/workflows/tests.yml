@@ -45,7 +45,7 @@ jobs:
       - name: Build and activate reviewed release on VPS
         timeout-minutes: 75
         env:
-          DEPLOY_KEY: ${{ secrets.MODELFC_DEPLOY_SSH_KEY }}
+          DEPLOY_KEY_BASE64: ${{ secrets.MODELFC_DEPLOY_SSH_KEY_BASE64 }}
           DEPLOY_HOST: ${{ vars.MODELFC_DEPLOY_HOST }}
           DEPLOY_HOST_KEY: ${{ vars.MODELFC_DEPLOY_HOST_KEY }}
           EXPECTED_SHA: ${{ github.sha }}
@@ -53,13 +53,45 @@ jobs:
         run: |
           set -euo pipefail
           [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]
-          [[ -n "$DEPLOY_KEY" && -n "$DEPLOY_HOST" && -n "$DEPLOY_HOST_KEY" ]]
+          [[ -n "$DEPLOY_HOST" && -n "$DEPLOY_HOST_KEY" ]]
           umask 077
+          key_file='' hosts_file='' report_file=''
+          trap 'rm -f "$key_file" "$hosts_file" "$report_file"' EXIT
           key_file="$(mktemp)"
           hosts_file="$(mktemp)"
           report_file="$(mktemp)"
-          trap 'rm -f "$key_file" "$hosts_file" "$report_file"' EXIT
-          printf '%s\n' "$DEPLOY_KEY" > "$key_file"
+          python3 - "$key_file" <<'KEY_PY'
+          import base64
+          import os
+          from pathlib import Path
+          import subprocess
+          import sys
+
+          try:
+              encoded = os.environ.pop("DEPLOY_KEY_BASE64", "").encode("ascii")
+              if not encoded:
+                  raise ValueError
+              decoded = base64.b64decode(encoded, validate=True)
+              if not decoded or base64.b64encode(decoded) != encoded:
+                  raise ValueError
+              Path(sys.argv[1]).write_bytes(decoded)
+              env = {"PATH": "/usr/bin:/bin", "LANG": "C"}
+              public = subprocess.run(
+                  ["ssh-keygen", "-y", "-P", "", "-f", sys.argv[1]],
+                  stdin=subprocess.DEVNULL, capture_output=True, env=env, timeout=10)
+              if public.returncode:
+                  raise ValueError
+              fingerprint = subprocess.run(
+                  ["ssh-keygen", "-lf", "-", "-E", "sha256"],
+                  input=public.stdout, capture_output=True, env=env, timeout=10)
+              if (fingerprint.returncode or fingerprint.stdout.decode("ascii").split()[1]
+                      != "SHA256:IpHgSvswGdBNFT6ETalX+2rGwbhdfItuXkDS4JSN1LE"):
+                  raise ValueError
+          except Exception:
+              print('{"status":"FAIL","reason":"DEPLOY_KEY_INVALID"}')
+              sys.exit(1)
+          KEY_PY
+          unset DEPLOY_KEY_BASE64
           printf '%s\n' "$DEPLOY_HOST_KEY" > "$hosts_file"
           if ! ssh -T -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
             -o UserKnownHostsFile="$hosts_file" -o ForwardAgent=no \
