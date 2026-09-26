@@ -90,7 +90,9 @@ or the systemd unit. This PR only provides source; it does not install anything.
    request produces `INVALID_REQUEST`.
 
 4. Independently verify and pin the VPS SSH host key. Set GitHub environment
-   `production` to accept `main`; configure `MODELFC_DEPLOY_SSH_KEY` (secret),
+   `production` to accept `main`; configure `MODELFC_DEPLOY_SSH_KEY_BASE64`
+   (environment secret containing the canonical single-line base64 encoding of
+   the dedicated OpenSSH deployment private-key bytes),
    `MODELFC_DEPLOY_HOST` and `MODELFC_DEPLOY_HOST_KEY` (variables containing
    host and known_hosts line). Never put OddsPapi keys, validator tokens, state
    contents or other production secrets in GitHub Actions.
