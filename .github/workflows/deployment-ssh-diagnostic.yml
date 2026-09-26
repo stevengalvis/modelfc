@@ -17,11 +17,12 @@ jobs:
     steps:
       - name: Validate deployment identity and diagnose SSH authentication
         env:
-          DEPLOY_KEY: ${{ secrets.MODELFC_DEPLOY_SSH_KEY }}
+          DEPLOY_KEY_BASE64: ${{ secrets.MODELFC_DEPLOY_SSH_KEY_BASE64 }}
           DEPLOY_HOST: ${{ vars.MODELFC_DEPLOY_HOST }}
           DEPLOY_HOST_KEY: ${{ vars.MODELFC_DEPLOY_HOST_KEY }}
         shell: python3 {0}
         run: |
+          import base64
           import datetime
           import json
           import os
@@ -87,9 +88,13 @@ jobs:
               with tempfile.TemporaryDirectory(prefix="modelfc-ssh-diagnostic-") as directory:
                   key = Path(directory) / "identity"
                   hosts = Path(directory) / "known_hosts"
-                  # Same byte reconstruction as production's printf '%s\n'; mode 0600.
-                  key.write_bytes((os.environ.pop("DEPLOY_KEY", "") + "\n").encode())
                   try:
+                      encoded = os.environ.pop("DEPLOY_KEY_BASE64", "").encode("ascii")
+                      decoded = base64.b64decode(encoded, validate=True)
+                      if not decoded or base64.b64encode(decoded) != encoded:
+                          raise ValueError
+                      # Exact decoded bytes, no newline normalization; umask makes mode 0600.
+                      key.write_bytes(decoded)
                       public = run(["ssh-keygen", "-y", "-P", "", "-f", str(key)])
                       if public.returncode:
                           raise ValueError
