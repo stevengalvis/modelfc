@@ -1,6 +1,7 @@
 """Run the production Bash step offline with disposable keys and simulated SSH."""
 
 import base64
+import binascii
 import hashlib
 import json
 import os
@@ -138,10 +139,24 @@ class DeployWorkflowTest(unittest.TestCase):
                 self.assert_rejected(value)
 
     def test_noncanonical_base64_never_reaches_ssh(self):
-        for value in ("Zh==", "YWJj=", "YWJj===="):
+        for value in ("Zh==", "Zm9="):
             with self.subTest(length=len(value)):
-                # These decode with validate=True; canonical equality must reject them.
+                # Nonzero unused pad bits decode strictly but fail canonical equality.
                 self.assertNotEqual(base64.b64encode(base64.b64decode(value, validate=True)).decode(), value)
+                self.assert_rejected(value)
+
+    def test_excess_padding_never_reaches_ssh(self):
+        for value in ("YWJj=", "YWJj===="):
+            # Python patch versions differ on strict excess-padding acceptance.
+            # Either strict decoding or canonical equality must reject the input.
+            try:
+                decoded = base64.b64decode(value, validate=True)
+            except binascii.Error:
+                classification = "invalid"
+            else:
+                classification = "noncanonical"
+                self.assertNotEqual(base64.b64encode(decoded).decode("ascii"), value)
+            with self.subTest(value=value, classification=classification):
                 self.assert_rejected(value)
 
     def test_decoded_invalid_key_never_reaches_ssh(self):
@@ -151,6 +166,8 @@ class DeployWorkflowTest(unittest.TestCase):
         self.assert_rejected(self.encoded)
 
     def test_accepted_key_reaches_one_ssh_and_preserves_success_semantics(self):
+        self.assertEqual(base64.b64encode(base64.b64decode(self.encoded, validate=True)).decode("ascii"),
+                         self.encoded)
         for reason in ("OK", "ALREADY_CURRENT", "SUPERSEDED"):
             with self.subTest(reason=reason):
                 value = self.report(reason)
