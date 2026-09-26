@@ -1,0 +1,17 @@
+{
+  "source": "Real VPS Phase 5 acceptance, 2026-09-25; Ubuntu/systemd 255",
+  "dependency_mountinfo": "384 276 8:1 /tmp/systemd-private-25f8bd47955c4cacb1987f01934f3e81-modelfc-postmerge-dependencies@b0ad329c09bc793bf2831e23dfeb82caa02897fa-c6b2b69d857d.service-TdpUeq/tmp /tmp rw,nosuid,relatime shared:298 master:1 - ext4 /dev/sda1 rw\n386 276 8:1 /var/tmp/systemd-private-25f8bd47955c4cacb1987f01934f3e81-modelfc-postmerge-dependencies@b0ad329c09bc793bf2831e23dfeb82caa02897fa-c6b2b69d857d.service-L9TsEH/tmp /var/tmp rw,nosuid,relatime shared:300 master:1 - ext4 /dev/sda1 rw\n",
+  "test_network_namespace": "net:[4026532432]",
+  "host_network_namespace": "net:[4026531840]",
+  "namespace_access": [
+    {
+      "path": "/proc/self/ns/net",
+      "inode": 4026531840
+    },
+    {
+      "path": "/proc/1/ns/net",
+      "errno": 13,
+      "error": "Permission denied"
+    }
+  ]
+}
