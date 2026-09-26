@@ -52,7 +52,11 @@ def launch():
     env = {'PATH': '/usr/bin:/bin', 'HOME': '/nonexistent', 'LANG': 'C.UTF-8',
            'PYTHONPATH': str(release / 'src'), 'PYTHONNOUSERSITE': '1',
            'PYTHONDONTWRITEBYTECODE': '1'}
-    os.execve(str(python), [str(python), '-B', '-s', '-m', 'modelfc.corner_refresh',
+    record = {'event': 'modelfc_refresh_start', 'release': str(release), 'sha': match[1],
+              'interpreter': str(python), 'import_path': str(release / 'src'),
+              'uid': os.getuid(), 'gid': os.getgid(), 'config': str(CONFIG)}
+    print(json.dumps(record, sort_keys=True, separators=(',', ':')), file=sys.stderr, flush=True)
+    os.execve(str(python), [str(python), '-B', '-P', '-s', '-m', 'modelfc.corner_refresh',
               '--config', str(CONFIG), '--validator-read-user', 'modelfc-validator'], env)
 
 

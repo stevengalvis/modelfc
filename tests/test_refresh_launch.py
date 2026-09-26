@@ -2,11 +2,14 @@
 import importlib.util
 import json
 import os
+import subprocess
 from pathlib import Path
 import sys
 import tempfile
 import unittest
 from unittest.mock import patch
+from contextlib import redirect_stderr
+from io import StringIO
 
 ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location('refresh_launch', ROOT / 'ops/vps/refresh_launch.py')
@@ -57,20 +60,68 @@ class RefreshLaunchTest(unittest.TestCase):
             current.unlink()
             current.symlink_to(self.b)
             return self.a
+        output = StringIO()
         with patch.object(Path, 'cwd', side_effect=entered_a) as cwd, patch.object(os, 'execve') as execute, patch.dict(
-                os.environ, {'PYTHONPATH': '/evil', 'ODDSPAPI_API_KEY': 'fake', 'LD_PRELOAD': '/evil', 'PWD': str(current)}):
+                os.environ, {'PYTHONPATH': '/evil', 'ODDSPAPI_API_KEY': 'fake', 'LD_PRELOAD': '/evil', 'PWD': str(current)}), redirect_stderr(output):
             launcher.launch()
             cwd.assert_called_once()
         executable, argv, env = execute.call_args.args
         self.assertEqual(executable, str(self.a / '.venv/bin/python'))
-        self.assertEqual(argv, [executable, '-B', '-s', '-m', 'modelfc.corner_refresh',
+        self.assertEqual(argv, [executable, '-B', '-P', '-s', '-m', 'modelfc.corner_refresh',
                                '--config', str(self.config), '--validator-read-user', 'modelfc-validator'])
         self.assertEqual(env, {'PATH': '/usr/bin:/bin', 'HOME': '/nonexistent', 'LANG': 'C.UTF-8',
                               'PYTHONPATH': str(self.a / 'src'), 'PYTHONNOUSERSITE': '1', 'PYTHONDONTWRITEBYTECODE': '1'})
         self.assertNotEqual(executable, str((self.a / '.venv/bin/python').resolve()))
-        with patch.object(Path, 'cwd', return_value=self.b), patch.object(os, 'execve') as next_run:
+        record = json.loads(output.getvalue())
+        self.assertEqual(record, {'event': 'modelfc_refresh_start', 'release': str(self.a),
+            'sha': 'a' * 40, 'interpreter': executable, 'import_path': str(self.a / 'src'),
+            'uid': os.getuid(), 'gid': os.getgid(), 'config': str(self.config)})
+        self.assertNotIn('fake', output.getvalue())
+        with patch.object(Path, 'cwd', return_value=self.b), patch.object(os, 'execve') as next_run, redirect_stderr(StringIO()):
             launcher.launch()
         self.assertEqual(next_run.call_args.args[0], str(self.b / '.venv/bin/python'))
+
+    def test_real_subprocess_prefers_pinned_src_over_release_root(self):
+        intended = self.a / 'src/modelfc'
+        (intended / '__init__.py').write_text('')
+        (intended / 'corner_refresh.py').write_text(
+            "import json,sys; print(json.dumps({'module':'pinned-src','argv':sys.argv[1:]}))\n")
+        conflict = self.a / 'modelfc'
+        conflict.mkdir()
+        (conflict / '__init__.py').write_text('raise RuntimeError("release-root-imported")\n')
+        (conflict / 'corner_refresh.py').write_text('raise RuntimeError("release-root-imported")\n')
+        script = r"""
+import importlib.util, os, pathlib
+spec = importlib.util.spec_from_file_location('fixture_launcher', os.environ['LAUNCHER_SOURCE'])
+launcher = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(launcher)
+launcher.RELEASES = pathlib.Path(os.environ['FIXTURE_RELEASES'])
+launcher.CONFIG = pathlib.Path(os.environ['FIXTURE_CONFIG'])
+launcher.pwd.getpwnam = lambda name: type('Account', (), {'pw_uid': os.getuid()})()
+original = launcher.protected
+def fixture_protected(path, owner, **kwargs):
+    config = launcher.CONFIG
+    if path in (config, config.parent, config.parent.parent):
+        owner = os.getuid()
+    return original(path, owner, **kwargs)
+launcher.protected = fixture_protected
+launcher.launch()
+"""
+        env = {'PATH': '/usr/bin:/bin', 'LANG': 'C.UTF-8',
+               'LAUNCHER_SOURCE': str(ROOT / 'ops/vps/refresh_launch.py'),
+               'FIXTURE_RELEASES': str(self.releases), 'FIXTURE_CONFIG': str(self.config)}
+        result = subprocess.run([sys.executable, '-I', '-B', '-c', script], cwd=self.a,
+                                env=env, capture_output=True, text=True, timeout=15)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        value = json.loads(result.stdout)
+        self.assertEqual(value, {'module': 'pinned-src', 'argv': [
+            '--config', str(self.config), '--validator-read-user', 'modelfc-validator']})
+        record = json.loads(result.stderr)
+        self.assertEqual(record['release'], str(self.a))
+        self.assertEqual(record['sha'], 'a' * 40)
+        self.assertEqual(record['interpreter'], str(self.a / '.venv/bin/python'))
+        self.assertEqual(record['import_path'], str(self.a / 'src'))
+        self.assertNotIn('release-root-imported', result.stdout + result.stderr)
 
     def test_invalid_release_marker_or_required_path_never_executes(self):
         with patch.object(Path, 'cwd', return_value=self.root), patch.object(os, 'execve') as execute:
@@ -97,10 +148,13 @@ class RefreshLaunchTest(unittest.TestCase):
         for setting in ('User=modelfc-runtime', 'Group=modelfc-runtime', 'WorkingDirectory=/srv/modelfc/current',
                         'UMask=0077', 'ProtectHome=yes', 'ProtectSystem=strict', 'StandardInput=null',
                         'ReadOnlyPaths=/srv/modelfc /etc/modelfc', 'ReadWritePaths=/var/lib/modelfc/history',
-                        'ExecStart=/usr/bin/python3 -I /usr/local/libexec/modelfc-refresh-launch.py'):
+                        'ExecStart=/usr/bin/python3 -I -B /usr/local/libexec/modelfc-refresh-launch.py',
+                        'UnsetEnvironment=ODDSPAPI_API_KEY GITHUB_TOKEN GH_TOKEN SSH_AUTH_SOCK PYTHONPATH PYTHONHOME LD_PRELOAD LD_LIBRARY_PATH LD_AUDIT'):
             self.assertIn(setting, unit)
         for prefix in ('Environment=', 'EnvironmentFile=', 'LoadCredential=', 'ExecStartPre=', 'ExecStartPost=', 'ExecStopPost='):
             self.assertFalse(any(line.startswith(prefix) for line in unit.splitlines()))
+        self.assertEqual([line for line in unit.splitlines() if line.startswith('UnsetEnvironment=')],
+                         ['UnsetEnvironment=ODDSPAPI_API_KEY GITHUB_TOKEN GH_TOKEN SSH_AUTH_SOCK PYTHONPATH PYTHONHOME LD_PRELOAD LD_LIBRARY_PATH LD_AUDIT'])
         timer = (ROOT / 'deploy/modelfc-corner-refresh.timer').read_text()
         self.assertIn('OnCalendar=Mon,Thu *-*-* 06:00:00 UTC', timer)
         self.assertIn('Persistent=true', timer)
