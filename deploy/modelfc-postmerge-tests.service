@@ -20,6 +20,7 @@ ProtectSystem=strict
 ReadOnlyPaths=/srv/modelfc/releases
 ReadOnlyPaths=/var/lib/modelfc-deploy
 ReadWritePaths=/var/lib/modelfc-deploy/reports
+InaccessiblePaths=/var/lib/modelfc
 InaccessiblePaths=/root/modelfc-state
 InaccessiblePaths=/root/dev/modelfc
 InaccessiblePaths=/etc/modelfc-validator

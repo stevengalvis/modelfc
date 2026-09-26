@@ -1220,7 +1220,7 @@ class IsolatedBoundaryTest(unittest.TestCase):
                       "StandardInput=null\nUser=modelfc-deploy\nGroup=modelfc-deploy\nSupplementaryGroups=\nProtectSystem=strict\n"
                       f"ReadOnlyPaths={self.releases}\n"
                       f"ReadWritePaths={self.release / '.venv'}\n"
-                      "InaccessiblePaths=/root/modelfc-state /root/dev/modelfc "
+                      "InaccessiblePaths=/var/lib/modelfc /root/modelfc-state /root/dev/modelfc "
                       "/var/lib/modelfc-deploy\n"
                       "PrivateTmp=no\nPrivateDevices=yes\nNoNewPrivileges=yes\nKillMode=control-group\n"
                       "TimeoutStartUSec=8min 30s\nTimeoutStopUSec=30s\nSendSIGKILL=yes\n"
@@ -1261,6 +1261,7 @@ class IsolatedBoundaryTest(unittest.TestCase):
                          ("/var/lib/modelfc-deploy", "/tmp/control"),
                          ("/root/modelfc-state", "/tmp"),
                          ("/root/dev/modelfc", "/tmp"),
+                         ("/var/lib/modelfc ", ""),
                          ("PrivateTmp=no", "PrivateTmp=yes"),
                          ("PrivateDevices=yes", "PrivateDevices=no"),
                          ("NoNewPrivileges=yes", "NoNewPrivileges=no"),
@@ -1572,7 +1573,7 @@ class IsolatedBoundaryTest(unittest.TestCase):
         properties = ("Environment=PYTHONDONTWRITEBYTECODE=1\nEnvironmentFiles=\nPassEnvironment=\n"
                       "UnsetEnvironment=ODDSPAPI_API_KEY GITHUB_TOKEN SSH_AUTH_SOCK LD_PRELOAD LD_LIBRARY_PATH LD_AUDIT PYTHONPATH PYTHONHOME\n"
                       "TimeoutStartUSec=5min 30s\nTimeoutStopUSec=30s\nSendSIGKILL=yes\n"
-                      "PrivateNetwork=yes\nPrivateTmp=yes\nNoNewPrivileges=yes\nKillMode=control-group\nInaccessiblePaths=/root/modelfc-state "
+                      "PrivateNetwork=yes\nPrivateTmp=yes\nNoNewPrivileges=yes\nKillMode=control-group\nInaccessiblePaths=/var/lib/modelfc /root/modelfc-state "
                       "/root/dev/modelfc /etc/modelfc-validator\nProtectSystem=strict\n"
                       f"ReadOnlyPaths={self.releases} {self.control}\nReadWritePaths="
                       f"{self.control / 'reports'}\nBindPaths=\nBindReadOnlyPaths=\nMountImages=\nLoadCredential=\nLoadCredentialEncrypted=\nImportCredential=\nSetCredential=\nSetCredentialEncrypted=\nExecCondition=\nExecStartPre=\nExecStartPost=\nExecStop=\nExecStopPost=\nAmbientCapabilities=\nTemporaryFileSystem=\n"
@@ -1716,6 +1717,7 @@ class IsolatedBoundaryTest(unittest.TestCase):
                                   "cap_sys_admin cap_dac_override"))
         cases.extend(("ExecStartEx", value) for value in invalid_exec_ex(
             "/usr/bin/python3", "-I", str(deploy.TRUSTED), "--run-tests"))
+        cases.append(("InaccessiblePaths", "/root/modelfc-state /root/dev/modelfc /etc/modelfc-validator"))
         cases.extend(("StandardInput", value) for value in
                      (None, "", "[unprintable]", "file:/root/secret", "socket", "tty", "data", "inherit"))
         for name, mode in cases:
@@ -1754,6 +1756,7 @@ class IsolatedBoundaryTest(unittest.TestCase):
                          ("NoNewPrivileges=yes\n", ""),
                          ("/root/modelfc-state", "/tmp"),
                          ("/root/dev/modelfc", "/tmp"),
+                         ("/var/lib/modelfc ", ""),
                          ("User=modelfc-deploy", "User=root"),
                          ("Group=modelfc-deploy", "Group=root"),
                          ("Group=modelfc-deploy\n", ""),
@@ -1834,7 +1837,7 @@ class IsolatedBoundaryTest(unittest.TestCase):
             self.assertIn(required, unit)
 
     def test_test_service_privilege_failure_prevents_tests_and_promotion(self):
-        base = ("PrivateNetwork=yes\nNoNewPrivileges=yes\nInaccessiblePaths=/root/modelfc-state "
+        base = ("PrivateNetwork=yes\nNoNewPrivileges=yes\nInaccessiblePaths=/var/lib/modelfc /root/modelfc-state "
                 "/root/dev/modelfc /etc/modelfc-validator\nProtectSystem=strict\n"
                 f"ReadOnlyPaths={self.releases} {self.control}\nReadWritePaths="
                 f"{self.control / 'reports'}\nBindPaths=\nBindReadOnlyPaths=\nMountImages=\nLoadCredential=\nLoadCredentialEncrypted=\nImportCredential=\nSetCredential=\nSetCredentialEncrypted=\nExecCondition=\nExecStartPre=\nExecStartPost=\nExecStop=\nExecStopPost=\nAmbientCapabilities=\nTemporaryFileSystem=\n"
@@ -2377,7 +2380,7 @@ def acquisition_properties(ident):
         "LoadCredential": "", "LoadCredentialEncrypted": "", "ImportCredential": "", "SetCredential": "", "SetCredentialEncrypted": "",
         "ExecCondition": "", "ExecStartPre": "", "ExecStartPost": "", "ExecStop": "", "ExecStopPost": "",
         "AmbientCapabilities": "", "Delegate": "no", "StandardInput": "null",
-        "InaccessiblePaths": f"{deploy.STATE} {deploy.HISTORY} {deploy.CONTROL} /etc/modelfc-validator",
+        "InaccessiblePaths": f"{deploy.RUNTIME_DATA} {deploy.STATE} {deploy.HISTORY} {deploy.CONTROL} /etc/modelfc-validator",
         "ExecStart": effective_exec("/usr/bin/python3", "-I", str(deploy.TRUSTED), "--acquire-service", ident),
     }
     return "".join(f"{key}={value}\n" for key, value in values.items())
@@ -2413,7 +2416,8 @@ class AcquisitionResourceTest(unittest.TestCase):
             self.assertIn(property, show.call_args.args[0])
 
     def test_missing_wrong_unlimited_resources_and_lifecycle_rejected(self):
-        fields = {"StandardInput": (None, "", "[unprintable]", "file:/root/secret", "socket", "tty", "data", "inherit"),
+        fields = {"InaccessiblePaths": (f"{deploy.STATE} {deploy.HISTORY} {deploy.CONTROL} /etc/modelfc-validator",),
+                  "StandardInput": (None, "", "[unprintable]", "file:/root/secret", "socket", "tty", "data", "inherit"),
                   "ExecStartEx": invalid_exec_ex("/usr/bin/python3", "-I", str(deploy.TRUSTED), "--acquire-service", self.ident),
                   "Environment": (None, "LD_PRELOAD=/tmp/evil.so", "PYTHONHOME=/tmp"),
                   "EnvironmentFiles": (None, "/tmp/env"), "PassEnvironment": (None, "LD_PRELOAD"),
@@ -2477,7 +2481,7 @@ ImportCredential=
 SupplementaryGroups=
 ReadWritePaths=/var/lib/modelfc-deploy/reports
 ReadOnlyPaths=/srv/modelfc/releases /var/lib/modelfc-deploy
-InaccessiblePaths=/root/modelfc-state /root/dev/modelfc /etc/modelfc-validator
+InaccessiblePaths=/var/lib/modelfc /root/modelfc-state /root/dev/modelfc /etc/modelfc-validator
 PrivateTmp=yes
 PrivateDevices=no
 PrivateNetwork=yes
@@ -2515,6 +2519,29 @@ def systemd255_text(text):
             line = name + "=[unprintable]"
         rows.append(line)
     return "\n".join(rows)
+
+
+class RuntimeDataProtectionTest(unittest.TestCase):
+    def test_deployment_account_any_runtime_data_access_blocks_execution(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'cgroup.controllers').touch()
+            for permitted in (os.R_OK, os.W_OK, os.X_OK):
+                with self.subTest(mode=permitted), patch.object(deploy, 'CGROUP_ROOT', root), patch.object(
+                        deploy, 'deployment_account_groups'), patch.object(deploy.os, 'geteuid', return_value=1234), patch.object(
+                        deploy.pwd, 'getpwuid', return_value=type('User', (), {'pw_name': 'modelfc-deploy'})()), patch.object(
+                        deploy.os, 'access', side_effect=lambda path, mode: path == deploy.RUNTIME_DATA and mode == permitted), patch.object(
+                        deploy, 'command') as service:
+                    with self.assertRaisesRegex(deploy.Failure, 'STATE_BOUNDARY_FAILED'):
+                        deploy.boundary()
+                    service.assert_not_called()
+
+    def test_all_postmerge_units_keep_legacy_and_new_protections(self):
+        for name in ('tests', 'dependencies@', 'acquisition@'):
+            text = (SOURCE.parents[2] / f'deploy/modelfc-postmerge-{name}.service').read_text()
+            for path in ('/var/lib/modelfc', '/root/modelfc-state', '/root/dev/modelfc', '/etc/modelfc-validator'):
+                with self.subTest(unit=name, path=path):
+                    self.assertIn('InaccessiblePaths=' + path + '\n', text)
 
 
 class Systemd255SerializationTest(unittest.TestCase):

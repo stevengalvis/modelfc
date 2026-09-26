@@ -5,8 +5,24 @@ After=network-online.target
 
 [Service]
 Type=oneshot
-User=root
-WorkingDirectory=/root/dev/modelfc
-Environment=PYTHONPATH=src
-ExecStart=/usr/bin/python3 -m modelfc.corner_refresh --config /root/dev/modelfc/corner_data.json
+User=modelfc-runtime
+Group=modelfc-runtime
+WorkingDirectory=/srv/modelfc/current
+ExecStart=/usr/bin/python3 -I /usr/local/libexec/modelfc-refresh-launch.py
+UMask=0077
+StandardInput=null
 TimeoutStartSec=10min
+KillMode=control-group
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ReadOnlyPaths=/srv/modelfc /etc/modelfc
+ReadWritePaths=/var/lib/modelfc/history
+InaccessiblePaths=-/var/lib/modelfc-deploy -/run/modelfc-acquisition
+InaccessiblePaths=-/etc/modelfc-validator -/var/lib/modelfc-validator
+InaccessiblePaths=-/opt/modelfc-deploy -/opt/modelfc-validator
+InaccessiblePaths=-/root/modelfc-state -/var/lib/modelfc/state
+CapabilityBoundingSet=
+RestrictSUIDSGID=yes

@@ -33,6 +33,7 @@ CONTROL = Path("/var/lib/modelfc-deploy")
 REPORTS = CONTROL / "reports"
 STATE = Path("/root/modelfc-state")
 HISTORY = Path("/root/dev/modelfc")
+RUNTIME_DATA = Path("/var/lib/modelfc")
 TRUSTED = Path("/opt/modelfc-deploy/deploy_main.py")
 SERVICE = "modelfc-postmerge-tests.service"
 ACQUISITION_SERVICE = "modelfc-postmerge-acquisition@{}.service"
@@ -442,7 +443,8 @@ def boundary(*, root=ROOT, releases=RELEASES, control=CONTROL, state=STATE,
     reports = control / "reports"
     if os.geteuid() == 0 or pwd.getpwuid(os.geteuid()).pw_name != "modelfc-deploy":
         raise Failure("STATE_BOUNDARY_FAILED")
-    if os.access(state, os.R_OK) or os.access(state, os.W_OK):
+    if (os.access(state, os.R_OK) or os.access(state, os.W_OK)
+            or any(os.access(RUNTIME_DATA, mode) for mode in (os.R_OK, os.W_OK, os.X_OK))):
         raise Failure("STATE_BOUNDARY_FAILED")
     if (root.is_symlink() or releases.is_symlink() or control.is_symlink()
             or reports.is_symlink()
@@ -487,6 +489,7 @@ def boundary(*, root=ROOT, releases=RELEASES, control=CONTROL, state=STATE,
             or fields.get("NoNewPrivileges") != "yes"
             or fields.get("KillMode") != "control-group"
             or str(state) not in hidden or str(HISTORY) not in hidden
+            or str(RUNTIME_DATA) not in hidden
             or fields.get("ProtectSystem") != "strict"
             or str(releases) not in fields.get("ReadOnlyPaths", "").split()
             or str(control) not in fields.get("ReadOnlyPaths", "").split()
@@ -548,6 +551,7 @@ def dependency_boundary(release, *, releases=None):
             or str(releases) not in fields.get("ReadOnlyPaths", "").split()
             or fields.get("ReadWritePaths") != str(release / ".venv")
             or str(STATE) not in hidden or str(HISTORY) not in hidden
+            or str(RUNTIME_DATA) not in hidden
             or str(CONTROL) not in hidden
             or fields.get("PrivateTmp") != "no"
             or fields.get("KillMode") != "control-group"
@@ -638,7 +642,7 @@ def acquisition_boundary(release_id):
         fields = service_properties(unit, output)
         if (not service_environment_valid(fields, bytecode=True)
                 or any(fields.get(key) != value for key, value in expected.items())
-                or not {str(STATE), str(HISTORY), str(CONTROL), "/etc/modelfc-validator"}
+                or not {str(STATE), str(HISTORY), str(CONTROL), str(RUNTIME_DATA), "/etc/modelfc-validator"}
                 <= set(fields.get("InaccessiblePaths", "").split())
                 or not trusted_exec_start(fields.get("ExecStart"),
                     ["/usr/bin/python3", "-I", str(TRUSTED), "--acquire-service", release_id])
@@ -1391,7 +1395,8 @@ def run_tests():
     value = {"sha": "", "release_id": "", "tests_status": "FAIL", "tests_run": 0,
              "state_boundary_enforced": False}
     try:
-        if os.access(STATE, os.R_OK) or os.access(STATE, os.W_OK):
+        if (os.access(STATE, os.R_OK) or os.access(STATE, os.W_OK)
+                or any(os.access(RUNTIME_DATA, mode) for mode in (os.R_OK, os.W_OK, os.X_OK))):
             raise Failure("STATE_BOUNDARY_FAILED")
         request = json.loads(REQUEST.read_text(encoding="utf-8"))
         if (set(request) != {"release_id", "sha", "controller_netns"} or not isinstance(request["sha"], str)
