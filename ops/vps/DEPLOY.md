@@ -99,6 +99,14 @@ or the systemd unit. This PR only provides source; it does not install anything.
 
 ## Runtime and historical-data wiring
 
+For the staged refresh-only migration to `/var/lib/modelfc/history`, use
+[RUNTIME.md](RUNTIME.md). It supersedes the legacy refresh wiring below only after
+separate host acceptance. Deployment protects `/var/lib/modelfc` in all three
+postmerge units and checks deployment-account R/W/X exclusion. Install the trusted
+controller and units together before migrating history. Original checkout history
+and `/root/modelfc-state` remain protected; this PR does not move either.
+
+
 Deployments do not move or copy historical CSVs. Their current location remains
 `/root/dev/modelfc`; refreshing those CSVs and acquiring `data/corner-refresh/
 refresh.lock` remain separate operations. The release's committed

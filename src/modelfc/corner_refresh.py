@@ -9,6 +9,8 @@ from http.client import HTTPException
 import json
 import os
 from pathlib import Path
+import pwd
+import subprocess
 from tempfile import NamedTemporaryFile
 from urllib.request import urlopen
 
@@ -32,7 +34,7 @@ def download_csv(url: str) -> bytes:
     return payload
 
 
-def atomic_write(path: Path, payload: bytes) -> None:
+def atomic_write(path: Path, payload: bytes, *, validator_read_user: str | None = None) -> None:
     """Publish one complete file on the same filesystem, cleaning up on error."""
     temporary = None
     try:
@@ -41,10 +43,22 @@ def atomic_write(path: Path, payload: bytes) -> None:
             target.write(payload)
             target.flush()
             os.fsync(target.fileno())
+        if validator_read_user is not None:
+            prepare_validator_read(temporary, validator_read_user)
         temporary.replace(path)
     finally:
         if temporary is not None:
             temporary.unlink(missing_ok=True)
+
+
+def prepare_validator_read(path: Path, user: str) -> None:
+    """Grant only the selected user read access before canonical publication."""
+    try:
+        uid = pwd.getpwnam(user).pw_uid
+        subprocess.run(['/usr/bin/setfacl', '-m', f'u:{uid}:r--', '--', str(path)],
+                       check=True, timeout=10, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except (KeyError, OSError, subprocess.SubprocessError):
+        raise ValueError('validator read ACL preparation failed; replacement not published') from None
 
 
 @contextmanager
@@ -109,7 +123,8 @@ def snapshot(path: Path, league: str, season: str, today: date) -> dict:
     return values
 
 
-def refresh_league(config: CornerDataConfig, league: str, today: date, state: Path) -> dict:
+def refresh_league(config: CornerDataConfig, league: str, today: date, state: Path,
+                   *, validator_read_user: str | None = None) -> dict:
     season = current_season(today)
     target = config.directory / f"{league}_{season}.csv"
     url = f"https://www.football-data.co.uk/mmz4281/{season}/{league}.csv"
@@ -129,7 +144,10 @@ def refresh_league(config: CornerDataConfig, league: str, today: date, state: Pa
             backups = state / "backups"
             backups.mkdir(exist_ok=True)
             atomic_write(backups / target.name, old_bytes)
-        atomic_write(target, payload)
+        if validator_read_user is not None and league in ("E1", "SP1"):
+            atomic_write(target, payload, validator_read_user=validator_read_user)
+        else:
+            atomic_write(target, payload)
     latest = max(key[0] for key in incoming)
     return {
         "league": league, "file": str(target), "source": url,
@@ -141,7 +159,8 @@ def refresh_league(config: CornerDataConfig, league: str, today: date, state: Pa
     }
 
 
-def refresh_data(config: CornerDataConfig, today: date | None = None) -> dict:
+def refresh_data(config: CornerDataConfig, today: date | None = None,
+                 *, validator_read_user: str | None = None) -> dict:
     today = today or datetime.now(timezone.utc).date()
     config.directory.mkdir(parents=True, exist_ok=True)
     state = config.directory / "data" / "corner-refresh"
@@ -149,7 +168,7 @@ def refresh_data(config: CornerDataConfig, today: date | None = None) -> dict:
         results = []
         for league in config.leagues:
             try:
-                results.append(refresh_league(config, league, today, state))
+                results.append(refresh_league(config, league, today, state, validator_read_user=validator_read_user))
             except (OSError, ValueError, csv.Error, HTTPException) as error:
                 results.append({"league": league, "status": "failed", "error": str(error)})
         report = {
@@ -184,6 +203,7 @@ def format_report(report: dict, today: date, max_age_days: int) -> tuple[str, bo
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, default=Path("corner_data.json"))
+    parser.add_argument("--validator-read-user", help="grant read ACLs on published E1/SP1 CSVs before rename")
     parser.add_argument("--status", action="store_true", help="show saved results without downloading; recalculate data age")
     args = parser.parse_args()
     try:
@@ -192,7 +212,7 @@ def main() -> None:
             path = config.directory / "data" / "corner-refresh" / "status.json"
             report = json.loads(path.read_text(encoding="utf-8"))
         else:
-            report = refresh_data(config)
+            report = refresh_data(config, validator_read_user=args.validator_read_user)
         text, unhealthy = format_report(report, datetime.now(timezone.utc).date(), config.max_age_days)
     except (OSError, ValueError) as error:
         parser.error(str(error))

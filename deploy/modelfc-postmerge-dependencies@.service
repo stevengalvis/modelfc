@@ -23,6 +23,7 @@ NoNewPrivileges=yes
 ProtectSystem=strict
 ReadOnlyPaths=/srv/modelfc/releases
 ReadWritePaths=/srv/modelfc/releases/%i/.venv
+InaccessiblePaths=/var/lib/modelfc
 InaccessiblePaths=/root/modelfc-state
 InaccessiblePaths=/root/dev/modelfc
 InaccessiblePaths=/var/lib/modelfc-deploy

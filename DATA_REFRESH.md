@@ -4,13 +4,12 @@ The refresh command downloads current-season Football-Data CSVs for the seven
 European leagues in `corner_data.json`. Historical files remain on the VPS.
 It does not change the model, place bets, or require an API account.
 
-## First run on the VPS
+## Manual development refresh (not the production migration)
 
-After the PR is merged, pull the code and refresh from the repository directory:
+For an explicitly requested development refresh against local configuration:
 
 ```sh
 cd ~/dev/modelfc
-git pull --ff-only
 PYTHONPATH=src python3 -m modelfc.corner_refresh --config corner_data.json
 ```
 
@@ -91,22 +90,18 @@ calibration adjustment has been added.
 
 ## Enable scheduled refresh on the Ubuntu VPS
 
-The supplied system service uses the existing `/root/dev/modelfc` checkout and
-root account. If your checkout or account differs, edit the service paths and
-`User` before installation. The timer runs **Monday and Thursday at 06:00 UTC**,
-covering both weekend and midweek updates. It also catches up after downtime.
-Installation is a one-time VPS step; merging the PR does not enable a timer.
+The supplied service now runs as `modelfc-runtime` from a pinned deployed release
+selected through `/srv/modelfc/current`, with `/etc/modelfc/corner_data.json` and
+history under `/var/lib/modelfc/history`. It requires a separately installed root
+launcher and coordinated permissions/ACL migration. Follow [RUNTIME.md](ops/vps/RUNTIME.md)
+for distinct review, deployment, migration and acceptance stages. Do not enable or
+start it just because this repository was merged. The timer remains Monday and
+Thursday at 06:00 UTC with `Persistent=true`; catch-up may run immediately.
 
-```sh
-cd ~/dev/modelfc
-install -m 0644 deploy/modelfc-corner-refresh.service /etc/systemd/system/
-install -m 0644 deploy/modelfc-corner-refresh.timer /etc/systemd/system/
-systemctl daemon-reload
-systemctl enable --now modelfc-corner-refresh.timer
-systemctl start modelfc-corner-refresh.service
-systemctl list-timers modelfc-corner-refresh.timer --all
-journalctl -u modelfc-corner-refresh.service -n 50 --no-pager
-```
+Optional `--validator-read-user USER` prepares read ACLs on changed canonical E1/SP1
+CSV temporary files before publication, including new seasons. Failure blocks
+that replacement, not successful other leagues. It grants no ACLs on other
+leagues, backups or status. Existing behavior is unchanged when omitted.
 
 Inspect saved results without downloading:
 

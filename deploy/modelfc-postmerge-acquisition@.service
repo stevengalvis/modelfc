@@ -21,6 +21,7 @@ NoNewPrivileges=yes
 ProtectSystem=strict
 ReadOnlyPaths=/srv/modelfc
 ReadWritePaths=/run/modelfc-acquisition
+InaccessiblePaths=/var/lib/modelfc
 InaccessiblePaths=/root/modelfc-state
 InaccessiblePaths=/root/dev/modelfc
 InaccessiblePaths=/var/lib/modelfc-deploy
