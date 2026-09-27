@@ -103,7 +103,7 @@ class ProspectiveApiTests(unittest.TestCase):
         ))
         self.assertEqual(client.get("/api/v1/opportunities").json(), [])
         self.assertEqual(client.get("/api/v1/predictions").json(), [])
-        self.assertEqual(client.get("/api/v1/performance").json(), {
+        self.assertEqual(client.get("/api/v1/prospective/performance").json(), {
             "model_performance": {
                 "total_prediction_runs": 0,
                 "total_unique_prediction_targets": 0,
@@ -121,6 +121,20 @@ class ProspectiveApiTests(unittest.TestCase):
         })
         self.assertEqual(list(empty.iterdir()), [])
 
+    def test_prospective_routes_do_not_collide_with_reserved_v1_contracts(self):
+        paths = [route.path for route in self.client.app.routes]
+        self.assertEqual(paths.count("/api/v1/prospective/performance"), 1)
+        self.assertEqual(paths.count("/api/v1/opportunities"), 1)
+        self.assertEqual(paths.count("/api/v1/opportunities/{opportunity_id}"), 1)
+        self.assertEqual(paths.count("/api/v1/predictions"), 1)
+        self.assertNotIn("/api/v1/performance", paths)
+        # The documented pick-performance contract is reserved but was not yet
+        # implemented on main.  This PR must not claim it, with or without its
+        # documented filters.
+        for query in ("", "?competition=E1",
+                      "?competition=E1&from_date=2026-09-01&to_date=2026-09-30"):
+            self.assertEqual(self.client.get(f"/api/v1/performance{query}").status_code, 404)
+
     def test_analysis_and_outcome_only_state_is_empty_and_non_mutating(self):
         self.write_result()
         outcome_only = self.setup.root / "outcome-only-state"
@@ -137,7 +151,7 @@ class ProspectiveApiTests(unittest.TestCase):
 
         self.assertEqual(client.get("/api/v1/opportunities").json(), [])
         self.assertEqual(client.get("/api/v1/predictions").json(), [])
-        performance = client.get("/api/v1/performance")
+        performance = client.get("/api/v1/prospective/performance")
         self.assertEqual(performance.status_code, 200, performance.text)
         self.assertEqual(
             performance.json()["model_performance"]["total_prediction_runs"], 0,
@@ -192,7 +206,7 @@ class ProspectiveApiTests(unittest.TestCase):
         encoded = json.dumps({
             "opportunities": self.client.get("/api/v1/opportunities").json(),
             "predictions": self.client.get("/api/v1/predictions").json(),
-            "performance": self.client.get("/api/v1/performance").json(),
+            "performance": self.client.get("/api/v1/prospective/performance").json(),
         })
         self.assertIn("EXPIRED_UNSETTLED", encoded)
         self.assertNotIn("allowance", encoded)
@@ -232,7 +246,7 @@ class ProspectiveApiTests(unittest.TestCase):
     def test_performance_deduplicates_targets_but_counts_exact_offers(self):
         self.store_later_observation()
         self.write_result(away=3)
-        body = self.client.get("/api/v1/performance").json()
+        body = self.client.get("/api/v1/prospective/performance").json()
         model = body["model_performance"]
         offers = body["opportunity_performance"]
         self.assertEqual(model["total_prediction_runs"], 1)
@@ -259,7 +273,7 @@ class ProspectiveApiTests(unittest.TestCase):
         record = json.loads(path.read_text(encoding="utf-8"))
         record["history"]["latest_history_date"] = "bad"
         path.write_text(json.dumps(record), encoding="utf-8")
-        for endpoint in ("opportunities", "predictions", "performance"):
+        for endpoint in ("opportunities", "predictions", "prospective/performance"):
             response = self.client.get(f"/api/v1/{endpoint}")
             self.assertEqual(response.status_code, 409)
             self.assertEqual(response.json()["error"]["code"],
@@ -285,7 +299,7 @@ class ProspectiveApiTests(unittest.TestCase):
         path = next((
             self.state / "prediction-targets" / self.prediction["prediction_id"]
         ).glob("*.json"))
-        self.assert_malformed_record_is_integrity_failure(path, "performance")
+        self.assert_malformed_record_is_integrity_failure(path, "prospective/performance")
 
     def test_malformed_observation_json_is_integrity_failure(self):
         path = next((self.state / "market-observations").glob("*/*.json"))
@@ -294,13 +308,65 @@ class ProspectiveApiTests(unittest.TestCase):
     def test_malformed_relevant_outcome_json_is_integrity_failure(self):
         self.write_result()
         path = next((self.state / "analysis-outcomes").glob("*/*.json"))
-        self.assert_malformed_record_is_integrity_failure(path, "performance")
+        self.assert_malformed_record_is_integrity_failure(path, "prospective/performance")
 
-    def test_orphan_observation_fails_closed(self):
-        source = next((self.state / "market-observations").glob("*/*.json"))
-        orphan = self.state / "market-observations" / ("0" * 32)
-        orphan.mkdir()
-        shutil.copy2(source, orphan / source.name)
+    def test_observation_only_state_is_ignored_until_prediction_exists(self):
+        observation_only = self.setup.root / "observation-only-state"
+        observation_only.mkdir()
+        shutil.copytree(
+            self.state / "market-observations",
+            observation_only / "market-observations",
+        )
+        before = {
+            str(path.relative_to(observation_only)): path.read_bytes()
+            for path in observation_only.rglob("*") if path.is_file()
+        }
+        client = TestClient(create_app(
+            data_config_path=self.setup.config, state_dir=observation_only,
+        ))
+        self.assertEqual(client.get("/api/v1/predictions").json(), [])
+        self.assertEqual(client.get("/api/v1/opportunities").json(), [])
+        performance = client.get("/api/v1/prospective/performance")
+        self.assertEqual(performance.status_code, 200, performance.text)
+        self.assertEqual(performance.json()["model_performance"]["total_prediction_runs"], 0)
+        self.assertEqual(
+            performance.json()["opportunity_performance"]["total_opportunity_events"], 0,
+        )
+        after = {
+            str(path.relative_to(observation_only)): path.read_bytes()
+            for path in observation_only.rglob("*") if path.is_file()
+        }
+        self.assertEqual(after, before)
+        self.assertFalse((observation_only / ".lock").exists())
+        self.assertFalse((observation_only / "prospective").exists())
+
+        shutil.copytree(self.state / "analyses", observation_only / "analyses")
+        prediction, _ = opportunities.store_prediction_from_capture(
+            observation_only, self.analysis_id,
+        )
+        prospective = observation_only / "prospective"
+        prospective.mkdir()
+        (prospective / "runner.lock").touch()
+        predictions = client.get("/api/v1/predictions")
+        self.assertEqual(predictions.status_code, 200, predictions.text)
+        self.assertEqual(
+            [item["prediction_id"] for item in predictions.json()],
+            [prediction["prediction_id"]],
+        )
+
+    def test_missing_source_observation_fails_closed(self):
+        source_id = self.prediction["source_observation"]["observation_id"]
+        next((self.state / "market-observations").glob(f"*/{source_id}.json")).unlink()
+        response = self.client.get("/api/v1/predictions")
+        self.assertEqual(response.status_code, 409, response.text)
+        self.assertEqual(response.json()["error"]["code"],
+                         "LEDGER_INTEGRITY_FAILURE")
+
+    def test_opportunity_with_missing_later_observation_fails_closed(self):
+        observation = self.store_later_observation()
+        next((self.state / "market-observations").glob(
+            f"*/{observation['observation_id']}.json"
+        )).unlink()
         response = self.client.get("/api/v1/opportunities")
         self.assertEqual(response.status_code, 409, response.text)
         self.assertEqual(response.json()["error"]["code"],
@@ -323,14 +389,14 @@ class ProspectiveApiTests(unittest.TestCase):
         target = (self.state / "prediction-targets" / self.prediction["prediction_id"]
                   / f"{opportunity['target_id']}.json")
         target.unlink()
-        for endpoint in ("opportunities", "performance"):
+        for endpoint in ("opportunities", "prospective/performance"):
             response = self.client.get(f"/api/v1/{endpoint}")
             self.assertEqual(response.status_code, 409)
             self.assertEqual(response.json()["error"]["code"],
                              "LEDGER_INTEGRITY_FAILURE")
 
     def test_concurrent_publication_produces_one_coherent_snapshot(self):
-        before = self.client.get("/api/v1/performance").json()
+        before = self.client.get("/api/v1/prospective/performance").json()
         self.assertEqual(before["opportunity_performance"]["total_opportunity_events"], 3)
         raw = self.later_observation()
         observation_published = Event()
@@ -349,14 +415,16 @@ class ProspectiveApiTests(unittest.TestCase):
         with ThreadPoolExecutor(max_workers=2) as executor:
             writer = executor.submit(publish)
             self.assertTrue(observation_published.wait(2))
-            reader = executor.submit(self.client.get, "/api/v1/performance")
+            reader = executor.submit(
+                self.client.get, "/api/v1/prospective/performance",
+            )
             self.assertFalse(reader.done())
             complete_publication.set()
             during = reader.result(timeout=2)
             observation = writer.result(timeout=2)
 
         self.assertEqual(during.status_code, 200, during.text)
-        after = self.client.get("/api/v1/performance").json()
+        after = self.client.get("/api/v1/prospective/performance").json()
         self.assertEqual(during.json(), after)
         self.assertEqual(after["model_performance"]["total_unique_prediction_targets"],
                          before["model_performance"]["total_unique_prediction_targets"])
@@ -428,7 +496,7 @@ class ProspectiveApiTests(unittest.TestCase):
             "modelfc.corner_analysis_outcomes._evidence",
             side_effect=AssertionError("history consulted"),
         ):
-            for path in ("opportunities", "predictions", "performance"):
+            for path in ("opportunities", "predictions", "prospective/performance"):
                 self.assertEqual(self.client.get(f"/api/v1/{path}").status_code, 200)
             opportunity_id = self.client.get("/api/v1/opportunities").json()[0]["opportunity_id"]
             self.assertEqual(self.client.get(

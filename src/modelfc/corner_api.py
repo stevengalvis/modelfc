@@ -236,7 +236,7 @@ class OpportunityPerformanceResponse(StrictModel):
     unresolved_open_opportunities: int
 
 
-class PerformanceResponse(StrictModel):
+class ProspectivePerformanceResponse(StrictModel):
     model_performance: ModelPerformanceResponse
     opportunity_performance: OpportunityPerformanceResponse
 
@@ -395,8 +395,11 @@ def create_app(
         except LedgerError as error:
             return _domain_error(error)
 
-    @app.get("/api/v1/performance", response_model=PerformanceResponse)
-    def get_performance() -> dict[str, Any]:
+    @app.get(
+        "/api/v1/prospective/performance",
+        response_model=ProspectivePerformanceResponse,
+    )
+    def get_prospective_performance() -> dict[str, Any]:
         try:
             return read_performance(state)
         except LedgerError as error:
