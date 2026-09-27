@@ -31,6 +31,36 @@ jobs:
       - name: Compile Python sources and tests
         run: '"$RUNNER_TEMP/modelfc-locked/bin/python" -m compileall -q src tests'
 
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Type check frontend
+        run: npm run typecheck
+
+      - name: Run frontend tests
+        run: npm test
+
+      - name: Build production frontend
+        env:
+          NEXT_PUBLIC_MODELFC_API_MODE: mock
+        run: npm run build
+
   deploy:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: test
