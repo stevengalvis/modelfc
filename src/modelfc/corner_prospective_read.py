@@ -8,6 +8,7 @@ from typing import Any
 from modelfc.corner_analysis_outcomes import load_outcome_chain_readonly
 from modelfc.corner_markets import american_odds_terms
 from modelfc.corner_opportunities import (
+    fixture_record_id,
     opportunity_records,
     prediction_observations,
     prediction_records,
@@ -120,8 +121,10 @@ def _empty_inventory() -> dict[str, Any]:
 
 
 def _contains_prospective_records(state: Path) -> bool:
+    # Outcomes also belong to the older analysis workflow.  Only the
+    # prospective record families establish that this inventory exists.
     for name in ("predictions", "prediction-targets", "market-observations",
-                 "opportunities", "analysis-outcomes"):
+                 "opportunities"):
         directory = _state_directory(state, name)
         if directory.exists() and any(directory.rglob("*.json")):
             return True
@@ -134,7 +137,7 @@ def _locked_inventory(
     _state_directory(state, "predictions")
     targets_dir = _state_directory(state, "prediction-targets")
     opportunities_dir = _state_directory(state, "opportunities")
-    _state_directory(state, "market-observations")
+    observations_dir = _state_directory(state, "market-observations")
     _state_directory(state, "analysis-outcomes")
 
     predictions = prediction_records(state)
@@ -143,6 +146,18 @@ def _locked_inventory(
         raise LedgerError("INVALID_PROSPECTIVE_RECORD")
     if (_child_directories(targets_dir) - prediction_ids
             or _child_directories(opportunities_dir) - prediction_ids):
+        raise LedgerError("INVALID_PROSPECTIVE_RECORD")
+    try:
+        fixture_ids = {
+            fixture_record_id(
+                item["fixture"]["provider"], item["fixture"]["competition"],
+                item["fixture"]["provider_fixture_id"],
+            )
+            for item in predictions
+        }
+    except (KeyError, TypeError, ValueError, LedgerError):
+        raise LedgerError("INVALID_PROSPECTIVE_RECORD") from None
+    if _child_directories(observations_dir) - fixture_ids:
         raise LedgerError("INVALID_PROSPECTIVE_RECORD")
 
     prediction_views = []

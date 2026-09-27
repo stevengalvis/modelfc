@@ -121,6 +121,38 @@ class ProspectiveApiTests(unittest.TestCase):
         })
         self.assertEqual(list(empty.iterdir()), [])
 
+    def test_analysis_and_outcome_only_state_is_empty_and_non_mutating(self):
+        self.write_result()
+        outcome_only = self.setup.root / "outcome-only-state"
+        outcome_only.mkdir()
+        for name in ("analyses", "analysis-outcomes"):
+            shutil.copytree(self.state / name, outcome_only / name)
+        before = {
+            str(path.relative_to(outcome_only)): path.read_bytes()
+            for path in outcome_only.rglob("*") if path.is_file()
+        }
+        client = TestClient(create_app(
+            data_config_path=self.setup.config, state_dir=outcome_only,
+        ))
+
+        self.assertEqual(client.get("/api/v1/opportunities").json(), [])
+        self.assertEqual(client.get("/api/v1/predictions").json(), [])
+        performance = client.get("/api/v1/performance")
+        self.assertEqual(performance.status_code, 200, performance.text)
+        self.assertEqual(
+            performance.json()["model_performance"]["total_prediction_runs"], 0,
+        )
+        self.assertEqual(
+            performance.json()["opportunity_performance"]["total_opportunity_events"], 0,
+        )
+        after = {
+            str(path.relative_to(outcome_only)): path.read_bytes()
+            for path in outcome_only.rglob("*") if path.is_file()
+        }
+        self.assertEqual(after, before)
+        self.assertFalse((outcome_only / "prospective").exists())
+        self.assertFalse((outcome_only / ".lock").exists())
+
     def test_prediction_without_opportunity(self):
         for path in (self.state / "opportunities" / self.prediction["prediction_id"]).glob("*.json"):
             path.unlink()
@@ -232,6 +264,57 @@ class ProspectiveApiTests(unittest.TestCase):
             self.assertEqual(response.status_code, 409)
             self.assertEqual(response.json()["error"]["code"],
                              "LEDGER_INTEGRITY_FAILURE")
+
+    def assert_malformed_record_is_integrity_failure(self, path, endpoint):
+        path.write_text('{"truncated":', encoding="utf-8")
+        response = self.client.get(f"/api/v1/{endpoint}")
+        self.assertEqual(response.status_code, 409, response.text)
+        self.assertEqual(response.json()["error"], {
+            "code": "LEDGER_INTEGRITY_FAILURE",
+            "message": "Prospective evidence failed validation.",
+            "details": {},
+            "retryable": False,
+        })
+        self.assertNotIn(str(path), response.text)
+
+    def test_malformed_prediction_json_is_integrity_failure(self):
+        path = self.state / "predictions" / f"{self.prediction['prediction_id']}.json"
+        self.assert_malformed_record_is_integrity_failure(path, "predictions")
+
+    def test_malformed_target_json_is_integrity_failure(self):
+        path = next((
+            self.state / "prediction-targets" / self.prediction["prediction_id"]
+        ).glob("*.json"))
+        self.assert_malformed_record_is_integrity_failure(path, "performance")
+
+    def test_malformed_observation_json_is_integrity_failure(self):
+        path = next((self.state / "market-observations").glob("*/*.json"))
+        self.assert_malformed_record_is_integrity_failure(path, "opportunities")
+
+    def test_malformed_relevant_outcome_json_is_integrity_failure(self):
+        self.write_result()
+        path = next((self.state / "analysis-outcomes").glob("*/*.json"))
+        self.assert_malformed_record_is_integrity_failure(path, "performance")
+
+    def test_orphan_observation_fails_closed(self):
+        source = next((self.state / "market-observations").glob("*/*.json"))
+        orphan = self.state / "market-observations" / ("0" * 32)
+        orphan.mkdir()
+        shutil.copy2(source, orphan / source.name)
+        response = self.client.get("/api/v1/opportunities")
+        self.assertEqual(response.status_code, 409, response.text)
+        self.assertEqual(response.json()["error"]["code"],
+                         "LEDGER_INTEGRITY_FAILURE")
+
+    def test_missing_read_lock_is_retryable_and_not_recreated(self):
+        runner_lock = self.state / "prospective" / "runner.lock"
+        runner_lock.unlink()
+        response = self.client.get("/api/v1/opportunities")
+        self.assertEqual(response.status_code, 503, response.text)
+        self.assertEqual(response.json()["error"]["code"],
+                         "STATE_STORAGE_UNAVAILABLE")
+        self.assertTrue(response.json()["error"]["retryable"])
+        self.assertFalse(runner_lock.exists())
 
     def test_missing_referenced_target_fails_closed(self):
         opportunity = opportunities.opportunity_records(

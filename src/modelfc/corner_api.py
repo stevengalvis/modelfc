@@ -260,6 +260,12 @@ def _domain_error(error: Exception) -> JSONResponse:
         return _error("STATE_STORAGE_UNAVAILABLE", message, 503, retryable=True)
     if message.startswith("invalid corner analysis record"):
         return _error("LEDGER_INTEGRITY_FAILURE", message, 409)
+    if message.startswith(("invalid prospective record ",
+                           "invalid analysis outcome record ")):
+        return _error(
+            "LEDGER_INTEGRITY_FAILURE",
+            "Prospective evidence failed validation.", 409,
+        )
     if message in ("INVALID_PROSPECTIVE_RECORD", "INVALID_SOURCE_OBSERVATION",
                    "INVALID_OUTCOME", "INVALID_REVISION_CHAIN"):
         return _error("LEDGER_INTEGRITY_FAILURE", "Prospective evidence failed validation.", 409)
