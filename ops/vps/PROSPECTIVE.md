@@ -46,9 +46,9 @@ accounting.
 
 ## 3. Explicit active-period enrollment
 
-The inspected active pilot control has allowance `40`, reserved `1`, and an
-exclusive period end of `2026-10-01`. Recheck those exact facts after copying. If
-they differ, stop and reconcile rather than substituting new values.
+The inspected active pilot control is `2026-09-23` through the exclusive end
+`2026-10-01`, with allowance `40` and reserved `1`. Recheck those exact facts after
+copying. If they differ, stop and reconcile rather than substituting new values.
 
 While holding the copied state's prospective runner lock, run the pinned release's
 explicit enrollment command as `modelfc-runtime` with the clean launcher-style
@@ -62,14 +62,16 @@ python -B -P -s -m modelfc.corner_prospective enroll-calendar-budget \
 
 Use the pinned absolute virtualenv interpreter and `PYTHONPATH=<release>/src`; the
 word `python` above is descriptive, not permission to use PATH resolution. The
-operation changes the active allowance `40 -> 180`, preserves `reserved=1`, and
-first publishes immutable enrollment evidence under
+operation preserves the partial `2026-09-23 -> 2026-10-01` dates, changes only the
+active allowance `40 -> 180`, preserves `reserved=1`, and first publishes immutable enrollment evidence under
 `prospective/budget-events/`. Hash and retain the before/after control and new event.
 Never edit `reserved` manually and never call `initialize-period` as a timer or
 cutover shortcut.
 
-After enrollment, `run-once` advances accounting only when the UTC calendar month
-changes. It writes rollover evidence before changing control, so an interrupted
+After enrollment, that one explicitly marked partial period remains valid only
+through its existing exclusive end. On or after `2026-10-01`, `run-once` advances
+to `2026-10-01 -> 2026-11-01` with allowance `180` and reserved `0`; all later
+periods are complete UTC calendar months. It writes rollover evidence before changing control, so an interrupted
 rollover is completed idempotently. The new month always receives exactly 180
 reservations with zero carried usage or credit. Missed months do not accumulate;
 unused requests do not carry over; exhaustion cannot cause renewal. Reservations

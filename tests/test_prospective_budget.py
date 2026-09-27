@@ -19,7 +19,7 @@ class ProspectiveBudgetTests(unittest.TestCase):
         self.now = datetime(2026, 9, 27, 3, 0, tzinfo=timezone.utc)
         patch.object(runner, "_now", side_effect=lambda: self.now).start()
         self.addCleanup(patch.stopall)
-        runner.initialize_period(self.state, date(2026, 9, 1), date(2026, 10, 1), 40)
+        runner.initialize_period(self.state, date(2026, 9, 23), date(2026, 10, 1), 40)
         self.path = self.state / "prospective/control.json"
 
     def control(self):
@@ -38,21 +38,26 @@ class ProspectiveBudgetTests(unittest.TestCase):
         self.enroll(1)
         value = self.control()
         self.assertEqual(value["version"], 2)
-        self.assertEqual(value["budget"], {"kind": "UTC_CALENDAR_MONTH", "monthly_allowance": 180})
-        self.assertEqual(value["period"], {"start": "2026-09-01", "end": "2026-10-01",
+        self.assertEqual(value["budget"], {"kind": "UTC_CALENDAR_MONTH", "monthly_allowance": 180,
+                                           "transitional_period": {
+                                               "start": "2026-09-23", "end": "2026-10-01",
+                                               "enrolled_reserved": 1}})
+        self.assertEqual(value["period"], {"start": "2026-09-23", "end": "2026-10-01",
                                            "allowance": 180, "reserved": 1})
         self.assertEqual(len(self.events()), 1)
         event = json.loads(self.events()[0].read_text())
-        self.assertEqual(event["before"]["reserved"], 1)
-        self.assertEqual(event["after"]["reserved"], 1)
+        self.assertEqual(event["before"], {"start": "2026-09-23", "end": "2026-10-01",
+                                           "allowance": 40, "reserved": 1})
+        self.assertEqual(event["after"], {"start": "2026-09-23", "end": "2026-10-01",
+                                          "allowance": 180, "reserved": 1})
 
     def test_enrollment_never_refunds_or_accepts_unexpected_live_accounting(self):
         self.enroll(7)
         with self.assertRaises(runner.RunnerError):
-            runner.initialize_period(self.state, date(2026, 9, 1), date(2026, 10, 1), 180)
+            runner.initialize_period(self.state, date(2026, 9, 23), date(2026, 10, 1), 180)
         self.assertEqual(self.control()["period"]["reserved"], 7)
         state = Path(self.temp.name) / "wrong"
-        runner.initialize_period(state, date(2026, 9, 1), date(2026, 10, 1), 40)
+        runner.initialize_period(state, date(2026, 9, 23), date(2026, 10, 1), 40)
         with self.assertRaises(budget.BudgetError):
             runner.enroll_production_budget(state, 40, 1)
 
@@ -73,6 +78,8 @@ class ProspectiveBudgetTests(unittest.TestCase):
         self.assertTrue(budget.rollover_if_needed(self.path, value, now=self.now, save=runner._save))
         self.assertEqual(self.control()["period"], {"start": "2026-10-01", "end": "2026-11-01",
                                                     "allowance": 180, "reserved": 0})
+        self.assertEqual(self.control()["budget"], {
+            "kind": "UTC_CALENDAR_MONTH", "monthly_allowance": 180})
         value = self.control()
         self.assertFalse(budget.rollover_if_needed(self.path, value, now=self.now, save=runner._save))
         self.assertEqual(len(self.events()), 2)
@@ -85,7 +92,7 @@ class ProspectiveBudgetTests(unittest.TestCase):
         self.assertEqual(self.control()["period"], {"start": "2027-02-01", "end": "2027-03-01",
                                                     "allowance": 180, "reserved": 0})
         rollover = json.loads(self.events()[-1].read_text())
-        self.assertEqual(rollover["before"]["start"], "2026-09-01")
+        self.assertEqual(rollover["before"]["start"], "2026-09-23")
         self.assertEqual(rollover["after"]["start"], "2027-02-01")
 
     def test_interrupted_rollover_is_recovered_idempotently(self):
@@ -95,7 +102,7 @@ class ProspectiveBudgetTests(unittest.TestCase):
         with patch.object(runner, "_save", side_effect=OSError("crash")):
             with self.assertRaises(OSError):
                 budget.rollover_if_needed(self.path, value, now=self.now, save=runner._save)
-        self.assertEqual(self.control()["period"]["start"], "2026-09-01")
+        self.assertEqual(self.control()["period"]["start"], "2026-09-23")
         self.assertEqual(len(self.events()), 2)
         value = self.control()
         budget.rollover_if_needed(self.path, value, now=self.now, save=runner._save)
@@ -115,6 +122,31 @@ class ProspectiveBudgetTests(unittest.TestCase):
         self.assertEqual(result["prospective_budget_remaining"], 180)
         self.assertEqual(self.control()["period"]["reserved"], 0)
         provider_work.assert_called_once()
+
+    def test_post_rollover_partial_month_is_rejected(self):
+        self.enroll()
+        self.now = datetime(2026, 10, 1, tzinfo=timezone.utc)
+        value = self.control()
+        budget.rollover_if_needed(self.path, value, now=self.now, save=runner._save)
+        value = self.control()
+        value["period"].update(start="2026-10-15")
+        runner._save(self.path, value)
+        with self.assertRaises(runner.RunnerError):
+            runner._load(self.path)
+
+    def test_enrollment_rejects_wrong_boundary_or_period_not_containing_now(self):
+        cases = ({"start": "2026-09-23", "end": "2026-10-15"},
+                 {"start": "2026-09-01", "end": "2026-09-26"},
+                 {"start": "2026-09-28", "end": "2026-10-01"})
+        for dates in cases:
+            with self.subTest(dates=dates):
+                value = self.control()
+                value["period"].update(dates)
+                runner._save(self.path, value)
+                with self.assertRaises(budget.BudgetError):
+                    runner.enroll_production_budget(self.state, 40, 0)
+                self.tearDown_fixture()
+                self.setUp_fixture(enroll=False)
 
     def test_missing_or_corrupt_accounting_fails_closed(self):
         self.enroll()
@@ -141,6 +173,20 @@ class ProspectiveBudgetTests(unittest.TestCase):
         inventory.assert_not_called()
         provider_work.assert_not_called()
 
+    def test_inconsistent_enrollment_evidence_fails_closed(self):
+        self.enroll(1)
+        event_path = self.events()[0]
+        event = json.loads(event_path.read_text())
+        event["before"]["reserved"] = 0
+        event["after"]["reserved"] = 0
+        event_path.write_text(json.dumps(event))
+        with patch.object(runner, "_inventory") as inventory, patch.object(
+                runner, "_provider_work") as provider_work:
+            result = runner.run_once(state_dir=self.state, data_config_path=self.state / "unused.json")
+        self.assertEqual(result["status"], "FAIL")
+        inventory.assert_not_called()
+        provider_work.assert_not_called()
+
     def test_production_mode_rejects_unenrolled_pilot_control(self):
         with patch.object(runner, "_inventory") as inventory, patch.object(
                 runner, "_provider_work") as provider_work:
@@ -155,9 +201,10 @@ class ProspectiveBudgetTests(unittest.TestCase):
         import shutil
         shutil.rmtree(self.state / "prospective")
 
-    def setUp_fixture(self):
-        runner.initialize_period(self.state, date(2026, 9, 1), date(2026, 10, 1), 40)
-        self.enroll()
+    def setUp_fixture(self, *, enroll=True):
+        runner.initialize_period(self.state, date(2026, 9, 23), date(2026, 10, 1), 40)
+        if enroll:
+            self.enroll()
 
 
 if __name__ == "__main__":

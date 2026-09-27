@@ -21,8 +21,13 @@ def month_bounds(day: date) -> tuple[date, date]:
 
 
 def validate_calendar_control(control: dict) -> None:
-    if control.get("version") != 2 or control.get("budget") != {
-            "kind": "UTC_CALENDAR_MONTH", "monthly_allowance": MONTHLY_ALLOWANCE}:
+    budget = control.get("budget")
+    if control.get("version") != 2 or not isinstance(budget, dict):
+        raise BudgetError("CONTROL_INVALID")
+    expected_budget = {"kind": "UTC_CALENDAR_MONTH", "monthly_allowance": MONTHLY_ALLOWANCE}
+    if set(budget) not in (set(expected_budget), {*expected_budget, "transitional_period"}):
+        raise BudgetError("CONTROL_INVALID")
+    if any(budget.get(name) != value for name, value in expected_budget.items()):
         raise BudgetError("CONTROL_INVALID")
     period = control.get("period")
     if not isinstance(period, dict) or set(period) != {"start", "end", "allowance", "reserved"}:
@@ -31,7 +36,18 @@ def validate_calendar_control(control: dict) -> None:
         start, end = date.fromisoformat(period["start"]), date.fromisoformat(period["end"])
     except (TypeError, ValueError):
         raise BudgetError("CONTROL_INVALID") from None
-    if month_bounds(start) != (start, end) or period["allowance"] != MONTHLY_ALLOWANCE:
+    transitional = budget.get("transitional_period")
+    if transitional is None:
+        valid_dates = month_bounds(start) == (start, end)
+    else:
+        valid_dates = (isinstance(transitional, dict)
+                       and set(transitional) == {"start", "end", "enrolled_reserved"}
+                       and transitional["start"] == period["start"]
+                       and transitional["end"] == period["end"]
+                       and type(transitional["enrolled_reserved"]) is int
+                       and 0 <= transitional["enrolled_reserved"] <= period["reserved"]
+                       and start < end and month_bounds(start)[1] == end)
+    if not valid_dates or period["allowance"] != MONTHLY_ALLOWANCE:
         raise BudgetError("CONTROL_INVALID")
     if type(period["reserved"]) is not int or not 0 <= period["reserved"] <= MONTHLY_ALLOWANCE:
         raise BudgetError("CONTROL_INVALID")
@@ -71,6 +87,20 @@ def _validate_event(value: object, expected: dict | None = None) -> dict:
             raise BudgetError("CONTROL_INVALID")
         if not 0 <= period["reserved"] <= period["allowance"]:
             raise BudgetError("CONTROL_INVALID")
+    before, after = value["before"], value["after"]
+    before_start, before_end = date.fromisoformat(before["start"]), date.fromisoformat(before["end"])
+    after_start, after_end = date.fromisoformat(after["start"]), date.fromisoformat(after["end"])
+    if value["event_type"] == "ENROLLMENT":
+        if (before["start"] != after["start"] or before["end"] != after["end"]
+                or month_bounds(before_start)[1] != before_end
+                or before["allowance"] >= MONTHLY_ALLOWANCE
+                or after["allowance"] != MONTHLY_ALLOWANCE
+                or before["reserved"] != after["reserved"]):
+            raise BudgetError("CONTROL_INVALID")
+    elif (before["allowance"] != MONTHLY_ALLOWANCE or after["allowance"] != MONTHLY_ALLOWANCE
+          or after["reserved"] != 0 or month_bounds(after_start) != (after_start, after_end)
+          or before_end > after_start):
+        raise BudgetError("CONTROL_INVALID")
     if expected is not None:
         for name in ("event_id", "event_type", "before", "after"):
             if value[name] != expected[name]:
@@ -133,11 +163,19 @@ def enroll(control_path: Path, control: dict, *, expected_allowance: int,
     """Explicitly enroll one active pilot period without refunding reservations."""
     if control.get("version") != 1 or "budget" in control:
         raise BudgetError("ENROLLMENT_INVALID")
+    today = now.astimezone(timezone.utc).date()
     period = control.get("period")
-    start, end = month_bounds(now.astimezone(timezone.utc).date())
+    if not isinstance(period, dict) or set(period) != {"start", "end", "allowance", "reserved"}:
+        raise BudgetError("ENROLLMENT_INVALID")
+    try:
+        start, end = date.fromisoformat(period["start"]), date.fromisoformat(period["end"])
+    except (TypeError, ValueError):
+        raise BudgetError("ENROLLMENT_INVALID") from None
     expected = {"start": start.isoformat(), "end": end.isoformat(),
                 "allowance": expected_allowance, "reserved": expected_reserved}
-    if period != expected or not 0 <= expected_reserved <= expected_allowance < MONTHLY_ALLOWANCE:
+    if (period != expected or not start <= today < end or month_bounds(today)[1] != end
+            or month_bounds(start)[1] != end
+            or not 0 <= expected_reserved <= expected_allowance < MONTHLY_ALLOWANCE):
         raise BudgetError("ENROLLMENT_INVALID")
     after = dict(expected, allowance=MONTHLY_ALLOWANCE)
     event = {"version": EVENT_VERSION, "event_id": f"enrollment:{start:%Y-%m}",
@@ -145,7 +183,9 @@ def enroll(control_path: Path, control: dict, *, expected_allowance: int,
              "before": expected, "after": after}
     _publish_event(control_path, event)
     control["version"] = 2
-    control["budget"] = {"kind": "UTC_CALENDAR_MONTH", "monthly_allowance": MONTHLY_ALLOWANCE}
+    control["budget"] = {"kind": "UTC_CALENDAR_MONTH", "monthly_allowance": MONTHLY_ALLOWANCE,
+                         "transitional_period": {"start": period["start"], "end": period["end"],
+                                                 "enrolled_reserved": expected_reserved}}
     control["period"] = after
     save(control_path, control)
 
@@ -158,9 +198,15 @@ def rollover_if_needed(control_path: Path, control: dict, *, now: datetime, save
     current_start, current_end = month_bounds(today)
     period = control["period"]
     old_start, old_end = date.fromisoformat(period["start"]), date.fromisoformat(period["end"])
-    matching = [event for event in events if event["after"]["start"] == period["start"]
+    transitional = "transitional_period" in control["budget"]
+    expected_event_type = "ENROLLMENT" if transitional else "MONTH_ROLLOVER"
+    expected_event_reserved = (control["budget"]["transitional_period"]["enrolled_reserved"]
+                               if transitional else 0)
+    matching = [event for event in events if event["event_type"] == expected_event_type
+                and event["after"]["start"] == period["start"]
                 and event["after"]["end"] == period["end"]
-                and event["after"]["allowance"] == period["allowance"]]
+                and event["after"]["allowance"] == period["allowance"]
+                and event["after"]["reserved"] == expected_event_reserved]
     if len(matching) != 1:
         raise BudgetError("CONTROL_INVALID")
     if old_start <= today < old_end:
@@ -177,6 +223,7 @@ def rollover_if_needed(control_path: Path, control: dict, *, now: datetime, save
              "before": before, "after": after}
     _publish_event(control_path, event)
     control["period"] = after
+    control["budget"].pop("transitional_period", None)
     # Discovery and attempt evidence remain intact. Only a daily discovery is
     # naturally replaced; missed months never mint more than one current period.
     save(control_path, control)
