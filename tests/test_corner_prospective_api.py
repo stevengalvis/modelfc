@@ -1,9 +1,12 @@
 """Offline API tests for read-only prospective evidence views."""
 
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from datetime import timedelta
 import json
 from pathlib import Path
+import shutil
+from threading import Event
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
@@ -15,6 +18,7 @@ from modelfc import corner_opportunities as opportunities
 from modelfc.corner_analysis import CornerMarketRequest
 from modelfc.corner_api import create_app
 from modelfc.corner_market_data import CornerMarketObservation, MarketSelection
+from modelfc.corner_prospective import _lock as prospective_runner_lock
 from modelfc.providers import oddspapi as provider
 from tests import test_oddspapi as recorded
 
@@ -36,6 +40,9 @@ class ProspectiveApiTests(unittest.TestCase):
         opportunities.assess_observation(
             self.state, self.prediction, self.observation,
         )
+        prospective = self.state / "prospective"
+        prospective.mkdir(exist_ok=True)
+        (prospective / "runner.lock").touch()
         self.client = TestClient(create_app(
             data_config_path=self.setup.config, state_dir=self.state,
         ))
@@ -55,7 +62,7 @@ class ProspectiveApiTests(unittest.TestCase):
         return {str(path.relative_to(self.state)): path.read_bytes()
                 for path in self.state.rglob("*") if path.is_file()}
 
-    def store_later_observation(self, *, line=None):
+    def later_observation(self, *, line=None):
         when = recorded.NOW + timedelta(minutes=1)
         if line is None:
             selections = tuple(replace(item, retrieved_at=when.isoformat())
@@ -75,19 +82,24 @@ class ProspectiveApiTests(unittest.TestCase):
         fixture = provider.OddsPapiMarketData.fixture_from_provenance(
             self.setup.quotes.fixture, recorded.NOW,
         )
-        raw = CornerMarketObservation(
+        return CornerMarketObservation(
             fixture=fixture, selections=selections,
             availability={"draftkings": {"status": "AVAILABLE"}},
             provenance=SimpleNamespace(retrieved_at=when.isoformat()),
         )
+
+    def store_later_observation(self, *, line=None):
+        raw = self.later_observation(line=line)
         observation, _ = opportunities.store_market_observation(self.state, raw)
         opportunities.assess_observation(self.state, self.prediction, observation)
         return observation
 
     def test_empty_state(self):
+        empty = self.setup.root / "empty-state"
+        empty.mkdir()
         client = TestClient(create_app(
             data_config_path=self.setup.config,
-            state_dir=self.setup.root / "empty-state",
+            state_dir=empty,
         ))
         self.assertEqual(client.get("/api/v1/opportunities").json(), [])
         self.assertEqual(client.get("/api/v1/predictions").json(), [])
@@ -107,6 +119,7 @@ class ProspectiveApiTests(unittest.TestCase):
                 "unresolved_open_opportunities": 0,
             },
         })
+        self.assertEqual(list(empty.iterdir()), [])
 
     def test_prediction_without_opportunity(self):
         for path in (self.state / "opportunities" / self.prediction["prediction_id"]).glob("*.json"):
@@ -219,6 +232,109 @@ class ProspectiveApiTests(unittest.TestCase):
             self.assertEqual(response.status_code, 409)
             self.assertEqual(response.json()["error"]["code"],
                              "LEDGER_INTEGRITY_FAILURE")
+
+    def test_missing_referenced_target_fails_closed(self):
+        opportunity = opportunities.opportunity_records(
+            self.state, self.prediction["prediction_id"],
+        )[0]
+        target = (self.state / "prediction-targets" / self.prediction["prediction_id"]
+                  / f"{opportunity['target_id']}.json")
+        target.unlink()
+        for endpoint in ("opportunities", "performance"):
+            response = self.client.get(f"/api/v1/{endpoint}")
+            self.assertEqual(response.status_code, 409)
+            self.assertEqual(response.json()["error"]["code"],
+                             "LEDGER_INTEGRITY_FAILURE")
+
+    def test_concurrent_publication_produces_one_coherent_snapshot(self):
+        before = self.client.get("/api/v1/performance").json()
+        self.assertEqual(before["opportunity_performance"]["total_opportunity_events"], 3)
+        raw = self.later_observation()
+        observation_published = Event()
+        complete_publication = Event()
+
+        def publish():
+            with prospective_runner_lock(self.state):
+                observation, _ = opportunities.store_market_observation(self.state, raw)
+                observation_published.set()
+                self.assertTrue(complete_publication.wait(2))
+                opportunities.assess_observation(
+                    self.state, self.prediction, observation,
+                )
+            return observation
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            writer = executor.submit(publish)
+            self.assertTrue(observation_published.wait(2))
+            reader = executor.submit(self.client.get, "/api/v1/performance")
+            self.assertFalse(reader.done())
+            complete_publication.set()
+            during = reader.result(timeout=2)
+            observation = writer.result(timeout=2)
+
+        self.assertEqual(during.status_code, 200, during.text)
+        after = self.client.get("/api/v1/performance").json()
+        self.assertEqual(during.json(), after)
+        self.assertEqual(after["model_performance"]["total_unique_prediction_targets"],
+                         before["model_performance"]["total_unique_prediction_targets"])
+        self.assertEqual(after["opportunity_performance"]["total_opportunity_events"], 6)
+        new_ids = {
+            item["opportunity_id"] for item in self.client.get(
+                "/api/v1/opportunities"
+            ).json() if item["observation_id"] == observation["observation_id"]
+        }
+        self.assertEqual(len(new_ids), 3)
+        for opportunity_id in new_ids:
+            detail = self.client.get(f"/api/v1/opportunities/{opportunity_id}")
+            self.assertEqual(detail.status_code, 200, detail.text)
+
+    def test_opportunity_detail_is_before_or_after_concurrent_publication(self):
+        raw = self.later_observation()
+        shadow = self.setup.root / "shadow-state"
+        shutil.copytree(self.state, shadow)
+        shadow_observation, _ = opportunities.store_market_observation(shadow, raw)
+        opportunities.assess_observation(shadow, self.prediction, shadow_observation)
+        original_ids = {
+            item["opportunity_id"] for item in opportunities.opportunity_records(
+                self.state, self.prediction["prediction_id"],
+            )
+        }
+        expected = {
+            item["opportunity_id"] for item in opportunities.opportunity_records(
+                shadow, self.prediction["prediction_id"],
+            )
+        } - original_ids
+        self.assertEqual(len(expected), 3)
+        opportunity_id = sorted(expected)[0]
+        observation_published = Event()
+        complete_publication = Event()
+
+        def publish():
+            with prospective_runner_lock(self.state):
+                observation, _ = opportunities.store_market_observation(self.state, raw)
+                observation_published.set()
+                self.assertTrue(complete_publication.wait(2))
+                opportunities.assess_observation(
+                    self.state, self.prediction, observation,
+                )
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            writer = executor.submit(publish)
+            self.assertTrue(observation_published.wait(2))
+            reader = executor.submit(
+                self.client.get, f"/api/v1/opportunities/{opportunity_id}",
+            )
+            self.assertFalse(reader.done())
+            complete_publication.set()
+            during = reader.result(timeout=2)
+            writer.result(timeout=2)
+
+        self.assertEqual(during.status_code, 200, during.text)
+        self.assertEqual(during.json()["observation_id"],
+                         shadow_observation["observation_id"])
+        after = self.client.get(f"/api/v1/opportunities/{opportunity_id}")
+        self.assertEqual(after.status_code, 200, after.text)
+        self.assertEqual(after.json()["observation_id"], shadow_observation["observation_id"])
 
     def test_get_routes_do_not_mutate_state(self):
         before = self.state_bytes()

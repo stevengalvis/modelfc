@@ -13,7 +13,9 @@ from modelfc.corner_opportunities import (
     prediction_records,
     prediction_target_records,
 )
-from modelfc.ledger_storage import LedgerError
+from modelfc.ledger_storage import (
+    LedgerError, LedgerStorageUnavailable, existing_read_lock, ledger_read_lock,
+)
 
 
 def _time(value: Any) -> datetime:
@@ -113,11 +115,22 @@ def _profit(outcome: str | None, american_odds: int) -> float | None:
     return profit if outcome == "WIN" else -1.0 if outcome == "LOSS" else 0.0
 
 
-def _inventory(state_dir: str | Path, *, now: datetime | None = None) -> dict[str, Any]:
-    state = Path(state_dir)
-    if state.exists() and (state.is_symlink() or not state.is_dir()):
-        raise LedgerError("INVALID_PROSPECTIVE_RECORD")
-    now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+def _empty_inventory() -> dict[str, Any]:
+    return {"predictions": [], "opportunities": [], "targets": {}}
+
+
+def _contains_prospective_records(state: Path) -> bool:
+    for name in ("predictions", "prediction-targets", "market-observations",
+                 "opportunities", "analysis-outcomes"):
+        directory = _state_directory(state, name)
+        if directory.exists() and any(directory.rglob("*.json")):
+            return True
+    return False
+
+
+def _locked_inventory(
+    state: Path, *, now: datetime,
+) -> dict[str, Any]:
     _state_directory(state, "predictions")
     targets_dir = _state_directory(state, "prediction-targets")
     opportunities_dir = _state_directory(state, "opportunities")
@@ -259,6 +272,25 @@ def _inventory(state_dir: str | Path, *, now: datetime | None = None) -> dict[st
         "opportunities": opportunity_views,
         "targets": target_views,
     }
+
+
+def _inventory(state_dir: str | Path, *, now: datetime | None = None) -> dict[str, Any]:
+    state = Path(state_dir)
+    if not state.exists():
+        return _empty_inventory()
+    if state.is_symlink() or not state.is_dir():
+        raise LedgerError("INVALID_PROSPECTIVE_RECORD")
+    now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    if not _contains_prospective_records(state):
+        return _empty_inventory()
+    runner_lock = state / "prospective" / "runner.lock"
+    if not runner_lock.exists() or not (state / ".lock").exists():
+        raise LedgerStorageUnavailable("prospective read boundary is unavailable")
+    # Match the writer order: the runner owns its lock for the complete run and
+    # individual immutable publications use the state lock beneath it.
+    with existing_read_lock(runner_lock):
+        with ledger_read_lock(state):
+            return _locked_inventory(state, now=now)
 
 
 def read_predictions(state_dir: str | Path) -> list[dict[str, Any]]:
