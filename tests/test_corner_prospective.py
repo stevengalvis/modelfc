@@ -319,27 +319,41 @@ class PilotTests(unittest.TestCase):
                 self.assertEqual(len(self.calls) - before, 3 if eligible else 1)
                 self.assertEqual(result["captures_skipped_no_team_totals"], int(eligible))
 
-    def test_no_markets_one_final_hour_opportunity_no_third(self):
+    def test_no_team_totals_never_grants_later_observation(self):
         self.no_team_totals()
         first = self.run_pilot()
         self.assertEqual(first["provider_requests"], 3)
         self.assertEqual(first["market_observations_created"], 1)
         self.assertEqual(self.run_pilot()["provider_requests"], 0)
         self.now = self.now.replace(hour=10, minute=0, second=0)
-        self.assertEqual(self.run_pilot()["provider_requests"], 2)
+        self.assertEqual(self.run_pilot()["provider_requests"], 0)
         self.now += timedelta(minutes=10)
         self.assertEqual(self.run_pilot()["provider_requests"], 0)
         attempt = next(iter(self.control()["attempts"].values()))
-        self.assertEqual(attempt["count"], 2)
+        self.assertEqual(attempt["count"], 1)
+        self.assertEqual(attempt["state"], "NO_TEAM_TOTAL")
 
-    def test_markets_appear_later_capture_once(self):
+    def test_team_totals_appearing_later_do_not_revive_unwatchlisted_fixture(self):
         original = deepcopy(self.payload)
         self.no_team_totals()
         self.run_pilot()
         self.payload = original
         self.now = self.now.replace(hour=10)
-        self.assertEqual(self.run_pilot()["captures_created"], 1)
+        self.assertEqual(self.run_pilot()["captures_created"], 0)
         self.assertEqual(self.run_pilot()["provider_requests"], 0)
+
+    def test_complete_but_unwatchlisted_pair_does_not_receive_later_observation(self):
+        real = opportunities.assess_observation
+        def unwatchlisted(*args, **kwargs):
+            result = real(*args, **kwargs)
+            return dict(result, watchlisted=False)
+        with patch.object(runner, "assess_observation", side_effect=unwatchlisted):
+            self.assertEqual(self.run_pilot()["captures_created"], 1)
+            self.now = self.now.replace(hour=10)
+            self.assertEqual(self.run_pilot()["provider_requests"], 0)
+        fixture_id = self.fixtures[0]["fixtureId"]
+        self.assertEqual(len(runner.fixture_observations(
+            self.state, "oddspapi", "E1", fixture_id)), 1)
 
     def test_per_run_budget_reserves_complete_quote_pair(self):
         self.fixtures = [dict(self.fixtures[0], fixtureId=f"fixture-{i}") for i in range(7)]

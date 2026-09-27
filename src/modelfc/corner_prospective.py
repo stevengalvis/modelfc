@@ -1,8 +1,8 @@
-"""Manually invoked E1 prospective pilot. No scheduling, retries or corrections.
+"""One-shot E1 prospective collection. Scheduling remains an external concern.
 
-Explicitly initialize an allowance period before run-once. Expired periods may
-be renewed explicitly; discovery/attempt/pacing state survives renewal. Request
-reservations are conservative: crashes can waste allowance, never refund it.
+Request reservations are conservative: crashes can waste allowance, never refund
+it. Production calendar-budget enrollment is an explicit operator action; after
+enrollment, run-once performs durable UTC-month rollover when required.
 """
 
 import argparse
@@ -27,6 +27,10 @@ from modelfc.corner_opportunities import (
 )
 from modelfc.ledger_storage import LedgerError, ledger_lock
 from modelfc.corner_market_data import MarketDataError, MarketDataSource
+from modelfc.corner_prospective_budget import (
+    BudgetError, enroll as enroll_calendar_budget,
+    rollover_if_needed, validate_calendar_control,
+)
 from modelfc.providers.oddspapi import OddsPapiMarketData
 
 class RunnerError(ValueError):
@@ -86,13 +90,19 @@ def _load(path, market_data_type=OddsPapiMarketData):
         raise RunnerError("CONTROL_MISSING")
     try:
         control = json.loads(path.read_text())
-        _require(set(control) == {"version", "period", "discovery", "attempts", "last_request"})
-        _require(type(control["version"]) is int and control["version"] == 1)
+        version = control.get("version")
+        _require(type(version) is int and version in (1, 2))
+        fields = {"version", "period", "discovery", "attempts", "last_request"}
+        if version == 2:
+            fields.add("budget")
+        _require(set(control) == fields)
         period = control["period"]
         _require(set(period) == {"start", "end", "allowance", "reserved"})
         _require(date.fromisoformat(period["start"]) < date.fromisoformat(period["end"]))
         _require(type(period["allowance"]) is int and period["allowance"] > 0)
         _require(type(period["reserved"]) is int and 0 <= period["reserved"] <= period["allowance"])
+        if version == 2:
+            validate_calendar_control(control)
         last = control["last_request"]
         _require(last is None or type(last) in (int, float) and math.isfinite(last) and 0 <= last <= _now().timestamp())
         _require(isinstance(control["attempts"], dict))
@@ -132,6 +142,14 @@ def initialize_period(state_dir, start, end, allowance=180):
         control["period"] = {"start": start.isoformat(), "end": end.isoformat(),
                              "allowance": allowance, "reserved": 0}
         _save(path, control)
+
+
+def enroll_production_budget(state_dir, expected_allowance, expected_reserved):
+    """Explicit one-time transition from pilot accounting to UTC-month accounting."""
+    with _lock(state_dir) as path:
+        control = _load(path)
+        enroll_calendar_budget(path, control, expected_allowance=expected_allowance,
+                               expected_reserved=expected_reserved, now=_now(), save=_save)
 
 
 class _RequestBudgetGuard:
@@ -312,12 +330,8 @@ def _provider_work(path, control, state, config, summary, captured, market_data_
         if not (initial_slot or latest_slot):
             continue
         previous = control["attempts"].get(fid)
-        no_market_retry = (existing_capture is None and previous
-                           and previous["count"] == 1
-                           and previous["state"] == "NO_TEAM_TOTAL"
-                           and seconds <= 5400 and _now() > _timestamp(previous["at"]))
         successful_latest = (latest_slot and (previous is None or previous["count"] == 1))
-        if previous and not (no_market_retry or successful_latest):
+        if previous and not successful_latest:
             if previous["state"] == "RESERVED":
                 _reason(summary, "ATTEMPT_INCOMPLETE")
             continue
@@ -422,7 +436,8 @@ def _provider_work(path, control, state, config, summary, captured, market_data_
         _save(path, control)
 
 
-def run_once(*, state_dir, data_config_path, market_data_type: type[MarketDataSource] = OddsPapiMarketData):
+def run_once(*, state_dir, data_config_path, market_data_type: type[MarketDataSource] = OddsPapiMarketData,
+             require_calendar_budget=False):
     summary = {"status": "OK", **dict.fromkeys(("fixtures_discovered", "captures_created",
         "captures_existing", "captures_skipped_no_team_totals", "captures_with_history_warnings",
         "captures_awaiting_kickoff", "outcomes_created", "outcomes_pending", "outcomes_settled",
@@ -432,6 +447,10 @@ def run_once(*, state_dir, data_config_path, market_data_type: type[MarketDataSo
     try:
         with _lock(state_dir) as path:
             control = _load(path, market_data_type)
+            if require_calendar_budget and control["version"] != 2:
+                raise RunnerError("CONTROL_INVALID")
+            if control["version"] == 2:
+                rollover_if_needed(path, control, now=_now(), save=_save)
             captured = _inventory(Path(state_dir), data_config_path, summary, market_data_type)
             _provider_work(path, control, Path(state_dir), data_config_path, summary, captured, market_data_type)
     except RunnerError as error:
@@ -449,12 +468,15 @@ def run_once(*, state_dir, data_config_path, market_data_type: type[MarketDataSo
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("run-once", "initialize-period"))
+    parser.add_argument("command", choices=("run-once", "initialize-period", "enroll-calendar-budget"))
     parser.add_argument("--state-dir", type=Path, required=True)
     parser.add_argument("--data-config", type=Path, default=Path("corner_data.json"))
     parser.add_argument("--period-start", type=date.fromisoformat)
     parser.add_argument("--period-end", type=date.fromisoformat)
     parser.add_argument("--allowance", type=int, default=180)
+    parser.add_argument("--expected-allowance", type=int)
+    parser.add_argument("--expected-reserved", type=int)
+    parser.add_argument("--require-calendar-budget", action="store_true")
     args = parser.parse_args(argv)
     if args.command == "initialize-period":
         if args.period_start is None or args.period_end is None:
@@ -464,10 +486,19 @@ def main(argv=None):
             report = {"status": "INITIALIZED"}
         except (ValueError, OSError):
             report = {"status": "FAIL", "reasons": ["PERIOD_INITIALIZATION_FAILED"]}
+    elif args.command == "enroll-calendar-budget":
+        if args.expected_allowance is None or args.expected_reserved is None:
+            parser.error("enroll-calendar-budget requires --expected-allowance and --expected-reserved")
+        try:
+            enroll_production_budget(args.state_dir, args.expected_allowance, args.expected_reserved)
+            report = {"status": "ENROLLED"}
+        except (BudgetError, ValueError, OSError):
+            report = {"status": "FAIL", "reasons": ["BUDGET_ENROLLMENT_FAILED"]}
     else:
-        report = run_once(state_dir=args.state_dir, data_config_path=args.data_config)
+        report = run_once(state_dir=args.state_dir, data_config_path=args.data_config,
+                          require_calendar_budget=args.require_calendar_budget)
     print(json.dumps(report, sort_keys=True))
-    return 0 if report["status"] in ("OK", "INITIALIZED") else 1
+    return 0 if report["status"] in ("OK", "INITIALIZED", "ENROLLED") else 1
 
 
 if __name__ == "__main__":
