@@ -25,7 +25,7 @@ Total O9.5 +105`;
 interface RetryState {
   fingerprint: string;
   key: string;
-  retryable: boolean;
+  status: "submitting" | "succeeded" | "failed";
 }
 
 interface AnalysisEntry {
@@ -46,7 +46,6 @@ export function AnalyzeWorkspace() {
   const [capabilitiesAttempt, setCapabilitiesAttempt] = useState(0);
   const [model, setModel] = useState("");
   const [analyses, setAnalyses] = useState<AnalysisEntry[]>([]);
-  const [analysisKey, setAnalysisKey] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<ReturnType<typeof describeApiError> | null>(null);
   const versionRef = useRef(0);
@@ -98,7 +97,16 @@ export function AnalyzeWorkspace() {
 
   function updateBlock(blockId: string, update: (block: ParsedInputBlock) => ParsedInputBlock) {
     if (!parsed) return;
-    invalidateAnalysis();
+    requestRef.current?.abort();
+    requestRef.current = null;
+    versionRef.current += 1;
+    for (const [id, state] of retryRef.current) {
+      if (state.status === "submitting") retryRef.current.set(id, { ...state, status: "failed" });
+    }
+    retryRef.current.delete(blockId);
+    setAnalyses((current) => current.filter((entry) => entry.blockId !== blockId));
+    setError(null);
+    setBusy(false);
     const blocks = parsed.blocks.map((block) => {
       if (block.block_id !== blockId) return block;
       const updated = update(block);
@@ -131,22 +139,24 @@ export function AnalyzeWorkspace() {
     }
 
     const version = versionRef.current;
+    const requests = readyBlocks.flatMap(({ block, validation }) => {
+      const fixture = validation.fixture!;
+      const fingerprint = requestFingerprint(fixture, model, validation.validMarkets);
+      const existing = retryRef.current.get(block.block_id);
+      if (existing?.fingerprint === fingerprint && existing.status === "succeeded") return [];
+      const idempotencyKey = existing?.fingerprint === fingerprint ? existing.key : crypto.randomUUID();
+      retryRef.current.set(block.block_id, { fingerprint, key: idempotencyKey, status: "submitting" });
+      return [{ blockId: block.block_id, fingerprint, idempotencyKey, fixture, markets: validation.validMarkets }];
+    });
+    if (requests.length === 0) {
+      setError(null);
+      return;
+    }
     const controller = new AbortController();
     requestRef.current?.abort();
     requestRef.current = controller;
     setBusy(true);
     setError(null);
-    setAnalyses([]);
-    const requests = readyBlocks.map(({ block, validation }) => {
-      const fixture = validation.fixture!;
-      const fingerprint = requestFingerprint(fixture, model, validation.validMarkets);
-      const existing = retryRef.current.get(block.block_id);
-      const idempotencyKey = existing?.fingerprint === fingerprint && existing.retryable
-        ? existing.key
-        : crypto.randomUUID();
-      retryRef.current.set(block.block_id, { fingerprint, key: idempotencyKey, retryable: true });
-      return { blockId: block.block_id, fingerprint, idempotencyKey, fixture, markets: validation.validMarkets };
-    });
     try {
       const results = await Promise.allSettled(requests.map((request) => api.analyze({
         idempotency_key: request.idempotencyKey,
@@ -160,14 +170,21 @@ export function AnalyzeWorkspace() {
       results.forEach((result, index) => {
         const request = requests[index];
         if (result.status === "fulfilled") {
-          retryRef.current.set(request.blockId, { fingerprint: request.fingerprint, key: request.idempotencyKey, retryable: false });
+          retryRef.current.set(request.blockId, { fingerprint: request.fingerprint, key: request.idempotencyKey, status: "succeeded" });
           successes.push({ blockId: request.blockId, response: result.value });
-        } else if (!firstError) {
-          firstError = describeApiError(result.reason);
+        } else {
+          retryRef.current.set(request.blockId, { fingerprint: request.fingerprint, key: request.idempotencyKey, status: "failed" });
+          if (!firstError) firstError = describeApiError(result.reason);
         }
       });
-      setAnalysisKey(requests.map((request) => request.idempotencyKey).join(":"));
-      setAnalyses(successes);
+      setAnalyses((current) => {
+        const byBlock = new Map(current.map((entry) => [entry.blockId, entry]));
+        successes.forEach((entry) => byBlock.set(entry.blockId, entry));
+        return parsed.blocks.flatMap((block) => {
+          const entry = byBlock.get(block.block_id);
+          return entry ? [entry] : [];
+        });
+      });
       setError(firstError);
     } finally {
       if (version === versionRef.current && requestRef.current === controller) {
@@ -277,7 +294,7 @@ export function AnalyzeWorkspace() {
       ) : null}
 
       {error ? <div className="error-banner" role="alert"><strong>{error.title}</strong><span>{error.message}</span></div> : null}
-      {analyses.map(({ blockId, response }) => <AnalysisResults key={`${analysisKey}:${blockId}`} analysis={response} />)}
+      {analyses.map(({ blockId, response }) => <AnalysisResults key={`${response.analysis_id}:${blockId}`} analysis={response} />)}
     </div>
   );
 }

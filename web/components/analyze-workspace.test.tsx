@@ -79,6 +79,10 @@ Birmingham team corners O4 -110`);
     await waitFor(() => expect(analyze).toHaveBeenCalledTimes(2));
     expect(screen.getAllByText("Analysis complete")).toHaveLength(2);
     expect(screen.getAllByText("Original source")).toHaveLength(2);
+    fireEvent.click(screen.getByRole("button", { name: /analyze all/i }));
+    await act(async () => {});
+    expect(analyze).toHaveBeenCalledTimes(2);
+    expect(screen.getAllByText("Analysis complete")).toHaveLength(2);
   });
 
   it("rejects impossible calendar dates and empty numeric fields", async () => {
@@ -203,10 +207,13 @@ Birmingham team corners O4 -110`);
     expect(screen.queryByText("Analysis complete")).not.toBeInTheDocument();
   });
 
-  it("reuses retry keys, then starts a fresh request and selection after success", async () => {
+  it("reuses an unchanged failed key, skips unchanged success, and creates a new key after editing", async () => {
     const analyze = vi.spyOn(api, "analyze")
       .mockRejectedValueOnce(new ModelFCApiError("Temporary failure", "TEMPORARY", true, 503))
-      .mockImplementation(mockAnalyze);
+      .mockImplementation((request, signal) => mockAnalyze({
+        ...request,
+        markets: request.markets.map((market) => ({ ...market, line: 4 })),
+      }, signal));
     render(<AnalyzeWorkspace />);
     await pasteAndParse();
     fireEvent.click(screen.getByRole("button", { name: /analyze all/i }));
@@ -216,9 +223,65 @@ Birmingham team corners O4 -110`);
     fireEvent.click(screen.getByRole("checkbox"));
     expect(screen.getByText("1 selected")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /analyze all/i }));
-    await waitFor(() => expect(analyze).toHaveBeenCalledTimes(3));
-    await screen.findByText("0 selected");
+    await act(async () => {});
+    expect(analyze).toHaveBeenCalledTimes(2);
+    expect(screen.getByText("1 selected")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Market 1 line"), { target: { value: "4.5" } });
+    expect(screen.queryByText("Analysis complete")).not.toBeInTheDocument();
+    await analyzeDemo();
+    expect(analyze).toHaveBeenCalledTimes(3);
     expect(analyze.mock.calls[2][0].idempotency_key).not.toBe(analyze.mock.calls[1][0].idempotency_key);
+  });
+
+  it("retries only the failed block after a mixed Analyze all result", async () => {
+    let call = 0;
+    const analyze = vi.spyOn(api, "analyze").mockImplementation((request, signal) => {
+      call += 1;
+      if (call === 2) return Promise.reject(new ModelFCApiError("Temporary failure", "TEMPORARY", true, 503));
+      return mockAnalyze(request, signal);
+    });
+    render(<AnalyzeWorkspace />);
+    await pasteAndParse(`${sportsbookText}\n\n${sportsbookText}`);
+    fireEvent.click(screen.getByRole("button", { name: /analyze all/i }));
+    await waitFor(() => expect(analyze).toHaveBeenCalledTimes(2));
+    expect(await screen.findByText(/TEMPORARY: Temporary failure/i)).toBeInTheDocument();
+    expect(screen.getAllByText("Analysis complete")).toHaveLength(1);
+
+    const successfulKey = analyze.mock.calls[0][0].idempotency_key;
+    const failedKey = analyze.mock.calls[1][0].idempotency_key;
+    fireEvent.click(screen.getByRole("button", { name: /analyze all/i }));
+    await waitFor(() => expect(analyze).toHaveBeenCalledTimes(3));
+    await waitFor(() => expect(screen.getAllByText("Analysis complete")).toHaveLength(2));
+    expect(analyze.mock.calls[2][0].idempotency_key).toBe(failedKey);
+    expect(analyze.mock.calls.filter(([request]) => request.idempotency_key === successfulKey)).toHaveLength(1);
+
+    fireEvent.change(screen.getAllByLabelText("Market 1 line")[0], { target: { value: "4.5" } });
+    expect(screen.getAllByText("Analysis complete")).toHaveLength(1);
+    fireEvent.click(screen.getByRole("button", { name: /analyze all/i }));
+    await waitFor(() => expect(analyze).toHaveBeenCalledTimes(4));
+    expect(analyze.mock.calls[3][0].idempotency_key).not.toBe(successfulKey);
+    expect(analyze.mock.calls[3][0].markets[0].line).toBe(4.5);
+  });
+
+  it("uses a new request identity when the failed block is edited", async () => {
+    let call = 0;
+    const analyze = vi.spyOn(api, "analyze").mockImplementation((request, signal) => {
+      call += 1;
+      if (call === 2) return Promise.reject(new ModelFCApiError("Temporary failure", "TEMPORARY", true, 503));
+      return mockAnalyze(request, signal);
+    });
+    render(<AnalyzeWorkspace />);
+    await pasteAndParse(`${sportsbookText}\n\n${sportsbookText}`);
+    fireEvent.click(screen.getByRole("button", { name: /analyze all/i }));
+    await waitFor(() => expect(analyze).toHaveBeenCalledTimes(2));
+    expect(await screen.findByText(/TEMPORARY: Temporary failure/i)).toBeInTheDocument();
+
+    const failedKey = analyze.mock.calls[1][0].idempotency_key;
+    fireEvent.change(screen.getAllByLabelText("Market 1 line")[1], { target: { value: "4.5" } });
+    fireEvent.click(screen.getByRole("button", { name: /analyze all/i }));
+    await waitFor(() => expect(analyze).toHaveBeenCalledTimes(3));
+    expect(analyze.mock.calls[2][0].idempotency_key).not.toBe(failedKey);
+    expect(analyze.mock.calls[2][0].markets[0].line).toBe(4.5);
   });
 
   it.each([
