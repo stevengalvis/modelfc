@@ -28,6 +28,8 @@ function decodeAnalysisResponse(value: unknown): AnalysisResponse {
   const stringOrNull = (item: unknown): item is string | null => item === null || typeof item === "string";
   const finiteNumber = (item: unknown): item is number => typeof item === "number" && Number.isFinite(item);
   const finiteNumberOrNull = (item: unknown): item is number | null => item === null || finiteNumber(item);
+  const probabilityOrNull = (item: unknown): item is number | null => item === null
+    || (finiteNumber(item) && item >= 0 && item <= 1);
   const warning = (item: unknown) => record(item)
     && typeof item.code === "string"
     && typeof item.message === "string";
@@ -47,10 +49,10 @@ function decodeAnalysisResponse(value: unknown): AnalysisResponse {
     && stringOrNull(item.team)
     && (item.status === "SUPPORTED" || item.status === "UNSUPPORTED")
     && stringOrNull(item.unsupported_reason)
-    && finiteNumberOrNull(item.model_probability)
-    && finiteNumberOrNull(item.push_probability)
-    && finiteNumberOrNull(item.decisive_model_probability)
-    && finiteNumberOrNull(item.implied_probability)
+    && probabilityOrNull(item.model_probability)
+    && probabilityOrNull(item.push_probability)
+    && probabilityOrNull(item.decisive_model_probability)
+    && probabilityOrNull(item.implied_probability)
     && finiteNumberOrNull(item.probability_edge)
     && finiteNumberOrNull(item.expected_profit)
     && finiteNumberOrNull(item.expected_corners)

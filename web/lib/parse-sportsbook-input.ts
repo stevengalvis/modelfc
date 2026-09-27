@@ -113,6 +113,7 @@ function identifyTeam(
   label: string,
   fixture: EditableFixtureInput,
   primaryTeamSide: TeamSide | null,
+  contradictoryPrimarySides = false,
 ): { teamSide: TeamSide | ""; issue: string | null; namedSide: TeamSide | null } {
   const name = normalized(label);
   const home = normalized(fixture.home_team);
@@ -125,7 +126,9 @@ function identifyTeam(
   if (name === "opponent") {
     return {
       teamSide: "",
-      issue: "Opponent is ambiguous until another market identifies the primary team.",
+      issue: contradictoryPrimarySides
+        ? "Opponent is ambiguous because named markets identify both fixture teams."
+        : "Opponent is ambiguous until another market identifies the primary team.",
       namedSide: null,
     };
   }
@@ -186,7 +189,16 @@ function parseBlock(source: string, blockIndex: number): ParsedInputBlock {
   }
 
   const markets: EditableMarketInput[] = [];
-  let primaryTeamSide: TeamSide | null = null;
+  const namedPrimarySides = new Set<TeamSide>();
+  for (const line of marketLines) {
+    if ((line.match(EXPLICIT_TOTAL_PATTERN) ?? line.match(SHORT_TOTAL_PATTERN))) continue;
+    const team = line.match(EXPLICIT_TEAM_PATTERN) ?? line.match(SHORT_TEAM_PATTERN);
+    if (!team) continue;
+    const identity = identifyTeam(team[1].trim(), fixture, null);
+    if (identity.namedSide) namedPrimarySides.add(identity.namedSide);
+  }
+  const contradictoryPrimarySides = namedPrimarySides.size > 1;
+  const primaryTeamSide = namedPrimarySides.size === 1 ? [...namedPrimarySides][0] : null;
   for (const line of marketLines) {
     const total = line.match(EXPLICIT_TOTAL_PATTERN) ?? line.match(SHORT_TOTAL_PATTERN);
     if (total) {
@@ -204,7 +216,7 @@ function parseBlock(source: string, blockIndex: number): ParsedInputBlock {
     const shorthand = explicit ? null : line.match(SHORT_TEAM_PATTERN);
     const team = explicit ?? shorthand;
     if (team) {
-      const identity = identifyTeam(team[1].trim(), fixture, primaryTeamSide);
+      const identity = identifyTeam(team[1].trim(), fixture, primaryTeamSide, contradictoryPrimarySides);
       markets.push(row(line, {
         market_type: "TEAM_TOTAL",
         team_side: identity.teamSide,
@@ -213,7 +225,6 @@ function parseBlock(source: string, blockIndex: number): ParsedInputBlock {
         american_odds: team[4] ?? "",
         parse_issue: identity.issue ?? (team[4] ? null : "American odds are missing."),
       }));
-      if (identity.namedSide && !primaryTeamSide) primaryTeamSide = identity.namedSide;
       continue;
     }
 

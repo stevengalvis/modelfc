@@ -4,6 +4,18 @@ import { MAX_MARKETS_PER_ANALYSIS, isCalendarDate, validateAnalysisInput } from 
 import { parseSportsbookInput } from "./parse-sportsbook-input";
 
 describe("sportsbook parsing and validation", () => {
+  function normalizedMarkets(text: string) {
+    return parseSportsbookInput(text).markets.map((market) => ({
+      source_text: market.source_text,
+      market_type: market.market_type,
+      team_side: market.team_side,
+      side: market.side,
+      line: market.line,
+      american_odds: market.american_odds,
+      parse_issue: market.parse_issue,
+    })).sort((left, right) => left.source_text.localeCompare(right.source_text));
+  }
+
   it.each([
     ["E1", "bare E1"],
     ["Competition: E1", "prefixed E1"],
@@ -50,6 +62,38 @@ first-half corners 4.5 -110`);
     expect(parsed.markets[0].parse_issue).toMatch(/ambiguous/i);
     expect(parsed.markets[1].source_text).toBe("first-half corners 4.5 -110");
     expect(parsed.markets[1].parse_issue).toMatch(/could not determine/i);
+  });
+
+  it("resolves a home primary team's opponent identically in either row order", () => {
+    const header = "Championship\n2026-09-20\nCoventry City vs Birmingham City\n";
+    const namedFirst = normalizedMarkets(header + "Coventry City O4.5 -145\nOpponent O3.5 -120");
+    const opponentFirst = normalizedMarkets(header + "Opponent O3.5 -120\nCoventry City O4.5 -145");
+    expect(opponentFirst).toEqual(namedFirst);
+    expect(namedFirst.find((market) => market.source_text.startsWith("Opponent")))
+      .toMatchObject({ team_side: "AWAY", parse_issue: null });
+  });
+
+  it("resolves an away primary team's opponent identically in either row order", () => {
+    const header = "Championship\n2026-09-20\nCoventry City vs Birmingham City\n";
+    const namedFirst = normalizedMarkets(header + "Birmingham City O3.5 -120\nOpponent O4.5 -145");
+    const opponentFirst = normalizedMarkets(header + "Opponent O4.5 -145\nBirmingham City O3.5 -120");
+    expect(opponentFirst).toEqual(namedFirst);
+    expect(namedFirst.find((market) => market.source_text.startsWith("Opponent")))
+      .toMatchObject({ team_side: "HOME", parse_issue: null });
+  });
+
+  it("keeps opponent rows unresolved without one unambiguous named primary side", () => {
+    const header = "Championship\n2026-09-20\nCoventry City vs Birmingham City\n";
+    const noNamedTeam = parseSportsbookInput(header + "Opponent O3.5 -120");
+    expect(noNamedTeam.markets[0]).toMatchObject({ team_side: "", parse_issue: expect.stringMatching(/ambiguous/i) });
+
+    const contradictory = parseSportsbookInput(header
+      + "Coventry City O4.5 -145\nOpponent O3.5 -120\nBirmingham City U4.5 -110");
+    expect(contradictory.markets[1]).toMatchObject({
+      source_text: "Opponent O3.5 -120",
+      team_side: "",
+      parse_issue: expect.stringMatching(/both fixture teams/i),
+    });
   });
 
   it("keeps multiple pasted fixtures as source-preserving blocks", () => {

@@ -18,11 +18,29 @@ function responseWith(change: (value: Record<string, any>) => void): Response {
   return new Response(JSON.stringify(value), { status: 200 });
 }
 
+async function analyzeWith(change: (value: Record<string, any>) => void) {
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(responseWith(change)));
+  return createApiClient("live", "https://api.example.test/api/v1").analyze(request);
+}
+
 describe("analysis response boundary", () => {
   it("accepts the complete backend-owned analysis fixture", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(responseWith(() => {})));
-    await expect(createApiClient("live", "https://api.example.test/api/v1").analyze(request))
-      .resolves.toEqual(wholeLineFixture);
+    await expect(analyzeWith(() => {})).resolves.toEqual(wholeLineFixture);
+  });
+
+  it.each([
+    "model_probability",
+    "push_probability",
+    "decisive_model_probability",
+    "implied_probability",
+  ])("requires %s to be null or within the inclusive probability range", async (field) => {
+    for (const accepted of [0, 1, null]) {
+      await expect(analyzeWith((value) => { value.markets[0][field] = accepted; })).resolves.toBeDefined();
+    }
+    for (const rejected of [-0.0001, 1.0001]) {
+      await expect(analyzeWith((value) => { value.markets[0][field] = rejected; }))
+        .rejects.toMatchObject({ code: "ANALYSIS_CONTRACT_MISMATCH" });
+    }
   });
 
   it.each([
@@ -34,8 +52,7 @@ describe("analysis response boundary", () => {
     ["malformed market line", (value: Record<string, any>) => { value.markets[0].line = "4"; }],
     ["malformed market probability", (value: Record<string, any>) => { value.markets[0].probability_edge = "0.1"; }],
   ])("rejects a successful response with %s", async (_name, change) => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(responseWith(change)));
-    await expect(createApiClient("live", "https://api.example.test/api/v1").analyze(request))
+    await expect(analyzeWith(change))
       .rejects.toMatchObject({ code: "ANALYSIS_CONTRACT_MISMATCH" });
   });
 });
