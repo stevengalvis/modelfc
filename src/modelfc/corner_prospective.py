@@ -136,6 +136,7 @@ def initialize_period(state_dir, start, end, allowance=180):
         _require(type(allowance) is int and allowance > 0 and start <= _now().date() < end)
         if path.exists():
             control = _load(path)
+            _require(control["version"] == 1)
             _require(date.fromisoformat(control["period"]["end"]) <= start)
         else:
             control = {"version": 1, "discovery": None, "attempts": {}, "last_request": None}

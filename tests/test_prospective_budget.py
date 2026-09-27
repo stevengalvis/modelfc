@@ -61,6 +61,36 @@ class ProspectiveBudgetTests(unittest.TestCase):
         with self.assertRaises(budget.BudgetError):
             runner.enroll_production_budget(state, 40, 1)
 
+    def test_initialize_period_cannot_modify_enrolled_production_accounting(self):
+        self.enroll(7)
+        control_before = self.path.read_bytes()
+        events_before = {path.name: path.read_bytes() for path in self.events()}
+        self.now = datetime(2026, 10, 2, tzinfo=timezone.utc)
+        with self.assertRaisesRegex(runner.RunnerError, "CONTROL_INVALID"):
+            runner.initialize_period(self.state, date(2026, 10, 1), date(2026, 11, 1), 180)
+        self.assertEqual(self.path.read_bytes(), control_before)
+        self.assertEqual({path.name: path.read_bytes() for path in self.events()}, events_before)
+        self.assertEqual(self.control()["period"]["reserved"], 7)
+
+        value = self.control()
+        self.assertTrue(budget.rollover_if_needed(
+            self.path, value, now=self.now, save=runner._save,
+        ))
+        self.assertEqual(self.control()["period"], {
+            "start": "2026-10-01", "end": "2026-11-01",
+            "allowance": 180, "reserved": 0,
+        })
+
+    def test_initialize_period_retains_version_one_bootstrap_behavior(self):
+        self.now = datetime(2026, 10, 2, tzinfo=timezone.utc)
+        runner.initialize_period(self.state, date(2026, 10, 1), date(2026, 11, 1), 40)
+        self.assertEqual(self.control(), {
+            "version": 1, "discovery": None, "attempts": {}, "last_request": None,
+            "period": {"start": "2026-10-01", "end": "2026-11-01",
+                       "allowance": 40, "reserved": 0},
+        })
+        self.assertFalse((self.path.parent / "budget-events").exists())
+
     def test_same_month_does_not_reset_even_when_exhausted(self):
         self.enroll(1)
         value = self.control()
