@@ -64,6 +64,7 @@ class OpportunityEvidenceTests(unittest.TestCase):
             self.setup.state, self.prediction, self.observation,
         )
         self.assertTrue(result["watchlisted"])
+        self.assertEqual(result["review_required_reasons"], [])
         self.assertEqual(result["opportunities_created"], 3)
         records = self.opportunities()
         self.assertEqual({item["offer"]["bookmaker"] for item in records},
@@ -125,6 +126,88 @@ class OpportunityEvidenceTests(unittest.TestCase):
                     )
                 self.assertEqual(result["watchlisted"], watchlisted)
                 self.assertEqual(result["opportunities_created"], opportunities_created)
+                self.assertEqual(result["review_required_reasons"], [])
+
+    def test_inconsistent_price_is_evidence_but_its_pair_is_excluded(self):
+        source = self.setup.quotes
+        selected = next(item for item in source.selections
+                        if item.bookmaker == "draftkings"
+                        and item.request.market_type == "TEAM_TOTAL"
+                        and item.request.team_side == "HOME"
+                        and item.request.side == "OVER")
+        pair_client_ids = {item.request.client_market_id for item in source.selections
+                           if item.bookmaker == selected.bookmaker
+                           and item.request.market_type == selected.request.market_type
+                           and item.request.team_side == selected.request.team_side
+                           and item.request.line == selected.request.line}
+        retrieved_at = "2026-09-20T02:02:00+00:00"
+        selections = tuple(
+            replace(item, decimal_odds=9.99 if item == selected else item.decimal_odds,
+                    retrieved_at=retrieved_at)
+            for item in source.selections
+        )
+        quotes = replace(source, selections=selections, retrieved_at=retrieved_at)
+        fixture = provider.OddsPapiMarketData.fixture_from_provenance(
+            source.fixture, recorded.NOW,
+        )
+        raw = CornerMarketObservation(fixture, selections, quotes.availability, quotes)
+        observation, created = opportunities.store_market_observation(
+            self.setup.state, raw,
+        )
+        self.assertTrue(created)
+        persisted = next(item for item in observation["selections"]
+                         if item["client_market_id"] == selected.request.client_market_id)
+        self.assertEqual((persisted["decimal_odds"], persisted["american_odds"]),
+                         (9.99, selected.request.american_odds))
+
+        result = opportunities.assess_observation(
+            self.setup.state, self.prediction, observation,
+        )
+        self.assertEqual(result["review_required_reasons"],
+                         [opportunities.PRICE_INCONSISTENCY_REVIEW])
+        self.assertGreater(result["opportunities_created"], 0)
+        current = [item for item in self.opportunities()
+                   if item["observation_id"] == observation["observation_id"]]
+        self.assertTrue(current)
+        pair_selection_ids = {item["selection_id"] for item in observation["selections"]
+                              if item["client_market_id"] in pair_client_ids}
+        self.assertEqual(len(pair_selection_ids), 2)
+        self.assertFalse(any(item["selection_id"] in pair_selection_ids for item in current))
+
+    def test_inconsistent_pair_cannot_qualify_or_make_watchlist(self):
+        source = [deepcopy(item) for item in self.observation["selections"]
+                  if item["bookmaker"] == "draftkings"
+                  and item["market_type"] == "TEAM_TOTAL"
+                  and item["team_side"] == "HOME"]
+        line = source[0]["line"]
+        source = [item for item in source if item["line"] == line]
+        selected = next(item for item in source if item["direction"] == "OVER")
+        counterpart = next(item for item in source if item["direction"] == "UNDER")
+        selected.update(american_odds=100, decimal_odds=2.5)
+        counterpart.update(american_odds=-250, decimal_odds=1.4)
+        observation = deepcopy(self.observation)
+        observation["observation_id"] = "f" * 32
+        observation["selections"] = source
+
+        def target(_state, prediction, selection, *, materialized_at):
+            decisive = 0.9 if selection["direction"] == "OVER" else 0.1
+            return ({
+                "status": "SUPPORTED",
+                "target_id": opportunities.target_id(
+                    prediction["prediction_id"], selection["market_type"],
+                    selection["team_side"], selection["direction"], selection["line"],
+                ),
+                "decisive_model_probability": decisive,
+            }, False)
+
+        with patch.object(opportunities, "materialize_target", side_effect=target):
+            result = opportunities.assess_observation(
+                self.setup.state, self.prediction, observation,
+            )
+        self.assertFalse(result["watchlisted"])
+        self.assertEqual(result["opportunities_created"], 0)
+        self.assertEqual(result["review_required_reasons"],
+                         [opportunities.PRICE_INCONSISTENCY_REVIEW])
 
     def test_frozen_targets_match_existing_supported_analysis_probabilities(self):
         opportunities.assess_observation(

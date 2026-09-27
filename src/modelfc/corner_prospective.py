@@ -176,6 +176,14 @@ def _reason(summary, code):
         summary["status"] = "PARTIAL"
 
 
+def _assessment_review(summary, assessment):
+    reasons = assessment["review_required_reasons"]
+    if reasons:
+        summary["review_required"] += 1
+        for code in reasons:
+            _reason(summary, code)
+
+
 def _inventory(state, config, summary, market_data_type):
     captured = {}
     for path in sorted((state / "analyses").glob("*.json")):
@@ -200,6 +208,8 @@ def _inventory(state, config, summary, market_data_type):
             state, market_data_type.provider_name, "E1", normalized.provider_fixture_id,
         )
         assessments = [assess_observation(state, prediction, item) for item in observations]
+        for assessment in assessments:
+            _assessment_review(summary, assessment)
         captured[normalized.provider_fixture_id] = {
             "prediction": prediction,
             "watchlisted": any(item["watchlisted"] for item in assessments),
@@ -320,6 +330,7 @@ def _provider_work(path, control, state, config, summary, captured, market_data_
                 state, concurrent_capture,
             )
             assessment = assess_observation(state, prediction, observation)
+            _assessment_review(summary, assessment)
             captured[fid] = {"prediction": prediction,
                              "watchlisted": assessment["watchlisted"],
                              "observation_count": len(fixture_observations(
@@ -355,6 +366,7 @@ def _provider_work(path, control, state, config, summary, captured, market_data_
                 assessment = assess_observation(
                     state, existing_capture["prediction"], observation,
                 )
+                _assessment_review(summary, assessment)
                 existing_capture["watchlisted"] |= assessment["watchlisted"]
                 existing_capture["observation_count"] += int(observation_created)
                 summary["opportunities_created"] += assessment["opportunities_created"]
@@ -365,6 +377,7 @@ def _provider_work(path, control, state, config, summary, captured, market_data_
                 analysis_id = response["analysis_id"]
                 prediction, _ = store_prediction_from_capture(state, analysis_id)
                 assessment = assess_observation(state, prediction, observation)
+                _assessment_review(summary, assessment)
                 captured[fid] = {"prediction": prediction,
                                  "watchlisted": assessment["watchlisted"],
                                  "observation_count": len(fixture_observations(

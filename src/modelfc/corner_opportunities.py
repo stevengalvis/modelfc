@@ -31,6 +31,11 @@ MINIMUM_AMERICAN_ODDS = -200
 MINIMUM_NO_VIG_EDGE = 0.05
 WATCHLIST_NO_VIG_EDGE = -0.05
 EDGE_COMPARISON_TOLERANCE = 1e-12
+# OddsPapi sometimes supplies decimal prices rounded to two places while its
+# American integer maps to a repeating decimal.  Nearest-cent rounding can
+# differ by at most 0.005; the recorded provider maximum is 0.003333... .
+DECIMAL_AMERICAN_ODDS_TOLERANCE = 0.005
+PRICE_INCONSISTENCY_REVIEW = "PRICE_INCONSISTENCY_REVIEW"
 
 
 def _id(namespace: str, value: Any) -> str:
@@ -453,6 +458,15 @@ def _meets_edge_threshold(edge: float, threshold: float) -> bool:
     )
 
 
+def _prices_are_consistent(selection: dict[str, Any]) -> bool:
+    profit, _ = american_odds_terms(selection["american_odds"])
+    american_decimal = 1 + profit
+    return math.isclose(
+        selection["decimal_odds"], american_decimal, rel_tol=0.0,
+        abs_tol=DECIMAL_AMERICAN_ODDS_TOLERANCE,
+    )
+
+
 def assess_observation(
     state_dir: str | Path, prediction: dict[str, Any], observation: dict[str, Any],
 ) -> dict[str, Any]:
@@ -474,8 +488,15 @@ def assess_observation(
             materialized_at=observation["retrieved_at_utc"],
         )
         targets[selection["selection_id"]] = target
+    inconsistent = {
+        selection["selection_id"] for selection in observation["selections"]
+        if not _prices_are_consistent(selection)
+    }
     created, watchlisted = 0, False
     for _, sides in _paired_selections(observation):
+        if any(selection["selection_id"] in inconsistent
+               for selection in sides.values()):
+            continue
         try:
             implied = {direction: 1 / selection["decimal_odds"]
                        for direction, selection in sides.items()}
@@ -533,7 +554,10 @@ def assess_observation(
             )
             created += int(was_created)
     return {"opportunities_created": created, "watchlisted": watchlisted,
-            "targets": len(targets)}
+            "targets": len(targets),
+            "review_required_reasons": (
+                [PRICE_INCONSISTENCY_REVIEW] if inconsistent else []
+            )}
 
 
 def opportunity_records(state_dir: str | Path, prediction_id: str) -> list[dict[str, Any]]:

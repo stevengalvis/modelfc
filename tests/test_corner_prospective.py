@@ -222,6 +222,23 @@ class PilotTests(unittest.TestCase):
         self.assertEqual(self.run_pilot()["provider_requests"], 0)
         self.assertEqual(self.control()["attempts"][fixture_id]["count"], 2)
 
+    def test_price_inconsistency_is_persisted_and_reported_for_review(self):
+        price = (self.payload["bookmakerOdds"]["draftkings"]["markets"]["101432"]
+                 ["outcomes"]["101432"]["players"]["0"])
+        self.assertEqual(price["priceAmerican"], "-115")
+        price["price"] = 9.99
+        result = self.run_pilot()
+        self.assertIn("PRICE_INCONSISTENCY_REVIEW", result["reasons"])
+        self.assertEqual(result["review_required"], 1)
+        self.assertGreater(result["opportunities_created"], 0)
+        observation = runner.fixture_observations(
+            self.state, "oddspapi", "E1", self.fixtures[0]["fixtureId"],
+        )[0]
+        saved = next(item for item in observation["selections"]
+                     if item["provider_market_id"] == "101432"
+                     and item["provider_outcome_id"] == "101432")
+        self.assertEqual((saved["decimal_odds"], saved["american_odds"]), (9.99, -115))
+
     def test_manual_capture_prevents_all_quotes(self):
         quotes = provider.normalize_odds(self.payload, recorded.recorded("odds-markets"), self.fixtures[0],
                                         retrieved_at=self.now.isoformat(), now=self.now)
