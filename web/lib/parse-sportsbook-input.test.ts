@@ -36,6 +36,29 @@ describe("sportsbook parsing and validation", () => {
     expect(parsed.markets[0].parse_issue).toMatch(/could not determine/i);
   });
 
+  it.each(["E0", "E1", "SP1", "I1", "D1", "F1", "P1"])(
+    "recognizes backend competition code %s without turning its header into a market",
+    (code) => {
+      const competitions = [{ code, name: `Configured ${code}` }];
+      const parsed = parseSportsbookInput(`${code}\n2026-09-20\nCoventry City vs Birmingham City\nCoventry City O4.5 -145`, competitions);
+      expect(parsed.fixture.competition).toBe(code);
+      expect(parsed.markets).toHaveLength(1);
+      expect(parsed.markets[0].source_text).toBe("Coventry City O4.5 -145");
+    },
+  );
+
+  it("recognizes an exact backend competition name but not arbitrary non-code text", () => {
+    const competitions = [{ code: "E0", name: "Premier League" }];
+    expect(parseSportsbookInput("Premier League\n2026-09-20\nArsenal vs Chelsea\nArsenal O4.5 -110", competitions)
+      .fixture.competition).toBe("E0");
+    const unknown = parseSportsbookInput("Premier weekend picks\n2026-09-20\nArsenal vs Chelsea\nArsenal O4.5 -110", competitions);
+    expect(unknown.fixture.competition).toBe("");
+    expect(unknown.markets[0]).toMatchObject({
+      source_text: "Premier weekend picks",
+      parse_issue: expect.stringMatching(/could not determine/i),
+    });
+  });
+
   it("parses the reproduced Championship shorthand without guessing", () => {
     const parsed = parseSportsbookInput(`Championship
 2026-09-20
@@ -113,6 +136,48 @@ Opponent O3.5 -120`);
     expect(parsed.blocks[1].warnings.join(" ")).toMatch(/incomplete|unresolved/i);
     expect(parsed.blocks[1].markets[0].source_text).toBe("not-a-date");
     expect(parsed.blocks[1].markets.some((market) => market.source_text === "unresolved fixture text")).toBe(true);
+  });
+
+  it.each([
+    ["no blank", "E1\n2026-09-20\nCoventry City vs Birmingham City\nCoventry City O4.5 -145"],
+    ["one decorative blank", "E1\n2026-09-20\nCoventry City vs Birmingham City\n\nCoventry City O4.5 -145"],
+    ["multiple decorative blanks", "E1\n2026-09-20\nCoventry City vs Birmingham City\n\n\n\nCoventry City O4.5 -145"],
+    ["a blank between markets", "E1\n2026-09-20\nCoventry City vs Birmingham City\nCoventry City O4.5 -145\n\nOpponent U3.5 -125"],
+  ])("keeps fixture and markets together with %s", (_label, text) => {
+    const parsed = parseSportsbookInput(text);
+    expect(parsed.blocks).toHaveLength(1);
+    expect(parsed.fixture).toMatchObject({ competition: "E1", home_team: "Coventry City", away_team: "Birmingham City" });
+    expect(parsed.warnings).toEqual([]);
+    expect(parsed.markets.every((market) => market.parse_issue === null)).toBe(true);
+  });
+
+  it("keeps two fixtures separated by whitespace as distinct blocks without repeated competition headers", () => {
+    const parsed = parseSportsbookInput(`E1
+2026-09-20
+Coventry City vs Birmingham City
+Coventry City O4.5 -145
+
+2026-09-21
+Millwall vs Watford
+Millwall O4.5 -110`);
+    expect(parsed.blocks).toHaveLength(2);
+    expect(parsed.blocks.map((block) => block.fixture.home_team)).toEqual(["Coventry City", "Millwall"]);
+    expect(parsed.blocks[1].markets).toHaveLength(1);
+  });
+
+  it("keeps fixtures with repeated competition headers as distinct blocks", () => {
+    const parsed = parseSportsbookInput(`E1
+2026-09-20
+Coventry City vs Birmingham City
+Coventry City O4.5 -145
+
+E1
+2026-09-21
+Millwall vs Watford
+Millwall O4.5 -110`);
+    expect(parsed.blocks).toHaveLength(2);
+    expect(parsed.blocks.map((block) => block.fixture.competition)).toEqual(["E1", "E1"]);
+    expect(parsed.blocks.every((block) => block.warnings.length === 0)).toBe(true);
   });
 
   it("validates real dates, odds, line precision, and batch size without coercing blanks", () => {

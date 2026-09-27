@@ -92,7 +92,7 @@ export function AnalyzeWorkspace() {
 
   function parseInput() {
     invalidateAnalysis();
-    setParsed(parseSportsbookInput(rawInput));
+    setParsed(parseSportsbookInput(rawInput, capabilities?.competitions ?? []));
   }
 
   function updateBlock(blockId: string, update: (block: ParsedInputBlock) => ParsedInputBlock) {

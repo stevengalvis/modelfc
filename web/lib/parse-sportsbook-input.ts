@@ -1,4 +1,4 @@
-import type { BetSide, MarketType, TeamSide } from "./api/types";
+import type { BetSide, CompetitionCapability, MarketType, TeamSide } from "./api/types";
 
 // This is deliberately a lossless browser-side input adapter, not a second
 // source of truth. The API owns canonical fixture/team resolution, grounding,
@@ -69,6 +69,9 @@ const COMPETITION_PATTERNS = [
   { code: "SP1", pattern: /^(?:(?:league|competition)\s*[:=-]?\s*)?(?:la\s*liga|SP1)$/i },
 ] as const;
 
+const COMPETITION_CODE_PATTERN = /^([A-Z]{1,3}\d{1,2})$/i;
+const COMPETITION_PREFIX_PATTERN = /^(?:league|competition)(?:\s*[:=-]\s*|\s+)(.+)$/i;
+
 const FIXTURE_PATTERN = /^(.+?)\s+(?:vs?\.?|versus)\s+(.+)$/i;
 const DATE_PATTERN = /^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})$/;
 const EXPLICIT_TEAM_PATTERN = /^(.+?)\s+(?:team\s+)?corners?\s+(over|under|o|u)\s*(\d+(?:\.\d+)?)\s*([+-]?\d+)?$/i;
@@ -86,6 +89,20 @@ function cleanLine(line: string): string {
 
 function normalized(value: string): string {
   return value.toLocaleLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+function competitionCode(
+  line: string,
+  competitions: readonly Pick<CompetitionCapability, "code" | "name">[],
+): string | null {
+  const known = COMPETITION_PATTERNS.find(({ pattern }) => pattern.test(line));
+  if (known) return known.code;
+  const candidate = line.match(COMPETITION_PREFIX_PATTERN)?.[1] ?? line;
+  const configured = competitions.find(({ code, name }) =>
+    normalized(candidate) === normalized(code) || normalized(candidate) === normalized(name));
+  if (configured) return configured.code.trim().toUpperCase();
+  const code = candidate.match(COMPETITION_CODE_PATTERN)?.[1];
+  return code ? code.toUpperCase() : null;
 }
 
 function betSide(value: string): BetSide {
@@ -139,39 +156,63 @@ function identifyTeam(
   };
 }
 
-function splitBlocks(text: string): string[] {
+function splitBlocks(
+  text: string,
+  competitions: readonly Pick<CompetitionCapability, "code" | "name">[],
+): string[] {
   const sourceLines = text.split(/\r?\n/);
   const blocks: string[] = [];
   let current: string[] = [];
+  let pendingSeparator = false;
   const flush = () => {
     const source = current.join("\n").trim();
     if (source) blocks.push(source);
     current = [];
   };
-  for (const rawLine of sourceLines) {
+  const nextNonblankLine = (start: number): string | null => {
+    for (let index = start; index < sourceLines.length; index += 1) {
+      const line = cleanLine(sourceLines[index]);
+      if (line) return line;
+    }
+    return null;
+  };
+  for (let index = 0; index < sourceLines.length; index += 1) {
+    const rawLine = sourceLines[index];
     const line = cleanLine(rawLine);
-    const startsCompetition = COMPETITION_PATTERNS.some(({ pattern }) => pattern.test(line));
-    // Blank lines are the normal separator. A repeated competition line also
-    // starts a block so copied boards do not need perfect whitespace.
+    if (!line) {
+      if (current.length > 0) pendingSeparator = true;
+      continue;
+    }
+    const startsCompetition = competitionCode(line, competitions) !== null;
     const hasFixture = current.some((entry) => FIXTURE_PATTERN.test(cleanLine(entry)));
-    // Ignore decorative whitespace inside an incomplete header, but use a
-    // blank line after a fixture as the unambiguous block separator.
-    if ((!line && hasFixture) || (startsCompetition && hasFixture)) flush();
-    if (line) current.push(rawLine);
+    const startsFixture = FIXTURE_PATTERN.test(line);
+    const startsDatedFixture = DATE_PATTERN.test(line)
+      && Boolean(nextNonblankLine(index + 1)?.match(FIXTURE_PATTERN));
+    // Whitespace is only a pending separator. It becomes a boundary when the
+    // next content starts a new fixture/header, never merely because markets
+    // are visually separated from their fixture or from one another.
+    if (hasFixture && (startsCompetition || startsFixture
+      || (pendingSeparator && startsDatedFixture))) flush();
+    current.push(rawLine);
+    pendingSeparator = false;
   }
   flush();
   return blocks;
 }
 
-function parseBlock(source: string, blockIndex: number): ParsedInputBlock {
+function parseBlock(
+  source: string,
+  blockIndex: number,
+  competitions: readonly Pick<CompetitionCapability, "code" | "name">[],
+): ParsedInputBlock {
   const lines = source.split(/\r?\n/).map(cleanLine).filter(Boolean);
   const fixture: EditableFixtureInput = { competition: "", date: "", home_team: "", away_team: "" };
   const marketLines: string[] = [];
 
   for (const line of lines) {
-    const competition = COMPETITION_PATTERNS.find(({ pattern }) => pattern.test(line));
+    const competition = competitionCode(line, competitions);
     if (competition && !fixture.competition) {
-      fixture.competition = competition.code;
+      fixture.competition = competition;
       continue;
     }
     const date = line.match(DATE_PATTERN);
@@ -249,9 +290,12 @@ function parseBlock(source: string, blockIndex: number): ParsedInputBlock {
   return block;
 }
 
-export function parseSportsbookInput(text: string): ParsedSportsbookInput {
-  const blocks = splitBlocks(text).map(parseBlock);
-  if (blocks.length === 0) blocks.push(parseBlock("", 0));
+export function parseSportsbookInput(
+  text: string,
+  competitions: readonly Pick<CompetitionCapability, "code" | "name">[] = [],
+): ParsedSportsbookInput {
+  const blocks = splitBlocks(text, competitions).map((source, index) => parseBlock(source, index, competitions));
+  if (blocks.length === 0) blocks.push(parseBlock("", 0, competitions));
   const warnings = blocks.flatMap((block) => block.warnings);
   return {
     blocks,
