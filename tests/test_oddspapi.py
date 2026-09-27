@@ -4,6 +4,7 @@ Fault tests remove/change fields in recorded responses. Forecasting is mocked
 only when testing orchestration; the capability regression runs the real engine.
 """
 from contextlib import redirect_stdout
+from copy import deepcopy
 from dataclasses import replace
 from datetime import date, datetime, timedelta, timezone
 from io import BytesIO, StringIO
@@ -676,6 +677,48 @@ class OddsPapiTests(unittest.TestCase):
         self.assertEqual(parse_qs(urlsplit(request.full_url).query)["apiKey"], [client._key])
         self.assertEqual(request.get_method(), "GET")
         self.assertIsNone(provider._NoRedirect().redirect_request(request, None, 302, "redirect", {}, "https://example.invalid"))
+
+    def test_standalone_market_data_keeps_one_shot_request_behavior(self):
+        fixture = provider.OddsPapiMarketData.fixture_from_provenance(
+            self.fixtures[0], NOW,
+        )
+        with patch.dict(os.environ, {"ODDSPAPI_API_KEY": "offline-test-key"}):
+            client = provider.OddsPapiMarketData("E1")
+        calls = []
+        values = [self.metadata, self.payload, self.metadata, self.payload]
+        def offline(endpoint, **params):
+            calls.append(endpoint)
+            return deepcopy(values.pop(0))
+        with patch.object(client, "_get", side_effect=offline):
+            client.get_corner_markets(fixture)
+            client.get_corner_markets(fixture)
+        self.assertEqual(calls, ["markets", "odds", "markets", "odds"])
+        self.assertEqual(client.corner_market_request_count(), 2)
+
+    def test_run_scoped_validated_metadata_serves_multiple_fixtures(self):
+        first = provider.OddsPapiMarketData.fixture_from_provenance(
+            self.fixtures[0], NOW,
+        )
+        second_raw = dict(self.fixtures[0], fixtureId="second-fixture")
+        second = provider.OddsPapiMarketData.fixture_from_provenance(second_raw, NOW)
+        with patch.dict(os.environ, {"ODDSPAPI_API_KEY": "offline-test-key"}):
+            client = provider.OddsPapiMarketData("E1")
+        client.enable_run_metadata_reuse()
+        calls = []
+        def offline(endpoint, **params):
+            calls.append(endpoint)
+            if endpoint == "markets":
+                value = deepcopy(self.metadata)
+                client._validate_market_metadata(value)
+                return value
+            fixture = self.fixtures[0] if params["fixtureId"] == first.provider_fixture_id else second_raw
+            return dict(deepcopy(self.payload), **fixture)
+        with patch.object(client, "_get", side_effect=offline):
+            self.assertEqual(client.corner_market_request_count(), 2)
+            client.get_corner_markets(first)
+            self.assertEqual(client.corner_market_request_count(), 1)
+            client.get_corner_markets(second)
+        self.assertEqual(calls, ["markets", "odds", "odds"])
 
 
 class PrematchCaptureTests(unittest.TestCase):
