@@ -189,6 +189,7 @@ class OddsPapiQuotes:
     selections: tuple[OddsPapiSelection, ...]
     availability: dict
     competition: str = "E1"
+    retrieved_at: str | None = None
 
 
 def normalize_odds(payload, metadata, fixture, *, retrieved_at, now=None, competition="E1"):
@@ -303,7 +304,9 @@ def _normalize_odds(payload, metadata, fixture, retrieved_at, now, competition):
         state["status"] = "CORNERS_RETURNED" if sum(counts.values()) else (
             "NO_USABLE_CORNERS" if seen else "METADATA_INCOMPLETE" if state["issues"]
             else "CORNER_MARKETS_UNAVAILABLE")
-    return OddsPapiQuotes(dict(fixture), tuple(selections), availability, competition)
+    return OddsPapiQuotes(
+        dict(fixture), tuple(selections), availability, competition, retrieved_at,
+    )
 
 
 def _validate_current_quotes(quotes):
@@ -489,8 +492,8 @@ class OddsPapiClient:
 class OddsPapiMarketData(OddsPapiClient):
     """Existing OddsPapi boundary presented as normalized corner capabilities.
 
-    A future search can reuse shared market metadata inside this adapter; the
-    current runner still fetches it once per fixture as before.
+    Standalone calls retain one-shot behavior.  A runner may explicitly enable
+    validated market-metadata reuse for this client instance only.
     """
 
     provider_name = "oddspapi"
@@ -504,6 +507,16 @@ class OddsPapiMarketData(OddsPapiClient):
         except OddsPapiError:
             raise MarketDataError("PROVIDER_CONFIGURATION") from None
         self.request_guard = request_guard
+        self._reuse_market_metadata = False
+        self._market_metadata = None
+
+    def enable_run_metadata_reuse(self) -> None:
+        """Reuse validated shared metadata only for this client instance."""
+        self._reuse_market_metadata = True
+
+    def corner_market_request_count(self) -> int:
+        """Return the requests the next observation will reserve."""
+        return 1 if self._reuse_market_metadata and self._market_metadata is not None else 2
 
     @staticmethod
     def fixture_from_provenance(raw: dict, as_of: datetime, competition="E1") -> MarketFixture:
@@ -546,7 +559,21 @@ class OddsPapiMarketData(OddsPapiClient):
         if fixture.provider != self.provider_name or fixture.competition != self.config.code:
             raise MarketDataError("FIXTURE_REVIEW")
         try:
-            quotes = self.quotes(fixture.provenance)
+            if not self._reuse_market_metadata:
+                quotes = self.quotes(fixture.provenance)
+            else:
+                validate_fixture(fixture.provenance, _now(), self.config.code)
+                if self._market_metadata is None:
+                    self._market_metadata = self._get("markets", language="en")
+                payload = self._get(
+                    "odds", fixtureId=fixture.provider_fixture_id,
+                    bookmakers=",".join(BOOKMAKERS), verbosity=3,
+                    language="en", oddsFormat="american",
+                )
+                quotes = normalize_odds(
+                    payload, self._market_metadata, fixture.provenance,
+                    retrieved_at=_now().isoformat(), competition=self.config.code,
+                )
             return CornerMarketObservation(fixture, quotes.selections, quotes.availability, quotes)
         except OddsPapiError:
             raise MarketDataError("FIXTURE_REVIEW") from None

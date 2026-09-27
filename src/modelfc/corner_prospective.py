@@ -20,6 +20,10 @@ import uuid
 
 from modelfc.corner_analysis_store import load_analysis_capture
 from modelfc.corner_analysis_outcomes import OutcomeError, load_outcome_chain, record_outcome
+from modelfc.corner_opportunities import (
+    assess_observation, fixture_observations, store_market_observation,
+    store_observation_from_capture, store_prediction_from_capture,
+)
 from modelfc.ledger_storage import LedgerError, ledger_lock
 from modelfc.corner_market_data import MarketDataError, MarketDataSource
 from modelfc.providers.oddspapi import OddsPapiMarketData
@@ -173,7 +177,7 @@ def _reason(summary, code):
 
 
 def _inventory(state, config, summary, market_data_type):
-    captured = set()
+    captured = {}
     for path in sorted((state / "analyses").glob("*.json")):
         if path.stem != uuid.UUID(path.stem).hex or path.is_symlink():
             raise LedgerError("Noncanonical capture path")
@@ -190,7 +194,21 @@ def _inventory(state, config, summary, market_data_type):
         if (_timestamp(response["fixture"]["kickoff_at"]) != kickoff
                 or response["fixture"]["competition"] != "E1"):
             raise LedgerError("Invalid capture identity")
-        captured.add(normalized.provider_fixture_id)
+        prediction, _ = store_prediction_from_capture(state, path.stem)
+        observation, observation_created = store_observation_from_capture(state, path.stem)
+        observations = fixture_observations(
+            state, market_data_type.provider_name, "E1", normalized.provider_fixture_id,
+        )
+        assessments = [assess_observation(state, prediction, item) for item in observations]
+        captured[normalized.provider_fixture_id] = {
+            "prediction": prediction,
+            "watchlisted": any(item["watchlisted"] for item in assessments),
+            "observation_count": len(observations),
+        }
+        summary["market_observations_created"] += int(observation_created)
+        summary["opportunities_created"] += sum(
+            item["opportunities_created"] for item in assessments
+        )
         _, tip = load_outcome_chain(state, path.stem)
         if tip is not None:
             reference = tip["capture"]
@@ -229,6 +247,9 @@ def _provider_work(path, control, state, config, summary, captured, market_data_
             guard = _RequestBudgetGuard(path, control, summary)
             try:
                 client = market_data_type("E1", guard)
+                enable_reuse = getattr(client, "enable_run_metadata_reuse", None)
+                if enable_reuse is not None:
+                    enable_reuse()
             except MarketDataError as error:
                 raise RunnerError(str(error)) from None
         return client
@@ -262,15 +283,26 @@ def _provider_work(path, control, state, config, summary, captured, market_data_
     for fixture in sorted(fixtures, key=lambda f: (f.kickoff_utc, f.provider_fixture_id)):
         fid = fixture.provider_fixture_id
         seconds = (fixture.kickoff_utc - _now()).total_seconds()
-        if fid in captured or not 900 < seconds <= 21600:
+        existing_capture = captured.get(fid)
+        initial_slot = existing_capture is None and 900 < seconds <= 21600
+        latest_slot = (existing_capture is not None
+                       and existing_capture["watchlisted"]
+                       and existing_capture["observation_count"] < 2
+                       and 900 < seconds <= 5400)
+        if not (initial_slot or latest_slot):
             continue
         previous = control["attempts"].get(fid)
-        if previous and not (previous["count"] == 1 and previous["state"] == "NO_TEAM_TOTAL"
-                             and seconds <= 3600 and _now() > _timestamp(previous["at"])):
+        no_market_retry = (existing_capture is None and previous
+                           and previous["count"] == 1
+                           and previous["state"] == "NO_TEAM_TOTAL"
+                           and seconds <= 5400 and _now() > _timestamp(previous["at"]))
+        successful_latest = (latest_slot and (previous is None or previous["count"] == 1))
+        if previous and not (no_market_retry or successful_latest):
             if previous["state"] == "RESERVED":
                 _reason(summary, "ATTEMPT_INCOMPLETE")
             continue
         # Recheck evidence immediately before quotes, including manual captures.
+        concurrent_capture = None
         with ledger_lock(state):
             for existing in (state / "analyses").glob("*.json"):
                 saved = load_analysis_capture(state, existing.stem)
@@ -280,28 +312,66 @@ def _provider_work(path, control, state, config, summary, captured, market_data_
                         and market_data_type.fixture_from_provenance(
                             pm["fixture"], _timestamp(saved["response"]["created_at"]), "E1"
                         ).provider_fixture_id == fid):
-                    captured.add(fid)
-        if fid in captured:
+                    concurrent_capture = existing.stem
+                    break
+        if concurrent_capture is not None:
+            prediction, _ = store_prediction_from_capture(state, concurrent_capture)
+            observation, observation_created = store_observation_from_capture(
+                state, concurrent_capture,
+            )
+            assessment = assess_observation(state, prediction, observation)
+            captured[fid] = {"prediction": prediction,
+                             "watchlisted": assessment["watchlisted"],
+                             "observation_count": len(fixture_observations(
+                                 state, fixture.provider, "E1", fid))}
+            summary["market_observations_created"] += int(observation_created)
+            summary["opportunities_created"] += assessment["opportunities_created"]
+        existing_capture = captured.get(fid)
+        if initial_slot and existing_capture is not None:
+            continue
+        if latest_slot and (existing_capture is None
+                            or existing_capture["observation_count"] >= 2):
             continue
         client = get_client()
-        guard.reserve(2)
-        attempt = {"count": 1 if previous is None else 2, "state": "RESERVED", "at": _now().isoformat()}
+        request_count = getattr(client, "corner_market_request_count", lambda: 2)()
+        if type(request_count) is not int or request_count not in (1, 2):
+            raise RunnerError("REQUEST_BUDGET")
+        guard.reserve(request_count)
+        attempt = {"count": 1 if previous is None and existing_capture is None else 2,
+                   "state": "RESERVED", "at": _now().isoformat()}
         control["attempts"][fid] = attempt
         _save(path, control)
         try:
             quotes = client.get_corner_markets(fixture)
+            observation, observation_created = store_market_observation(state, quotes)
+            summary["market_observations_created"] += int(observation_created)
             if not any(s.request.market_type == "TEAM_TOTAL" for s in quotes.selections):
                 attempt["state"] = "NO_TEAM_TOTAL"
                 summary["captures_skipped_no_team_totals"] += 1
             elif (fixture.kickoff_utc - _now()).total_seconds() <= 900:
                 attempt["state"] = "DONE"
                 _reason(summary, "CAPTURE_WINDOW_CLOSED")
+            elif existing_capture is not None:
+                assessment = assess_observation(
+                    state, existing_capture["prediction"], observation,
+                )
+                existing_capture["watchlisted"] |= assessment["watchlisted"]
+                existing_capture["observation_count"] += int(observation_created)
+                summary["opportunities_created"] += assessment["opportunities_created"]
+                attempt["state"] = "DONE"
             else:
                 response, created = client.capture(quotes, data_config_path=config,
                     state_dir=state, capture_key=f"prospective:v1:{fixture.provider}:E1:{fid}")
-                captured.add(fid)
+                analysis_id = response["analysis_id"]
+                prediction, _ = store_prediction_from_capture(state, analysis_id)
+                assessment = assess_observation(state, prediction, observation)
+                captured[fid] = {"prediction": prediction,
+                                 "watchlisted": assessment["watchlisted"],
+                                 "observation_count": len(fixture_observations(
+                                     state, fixture.provider, "E1", fid))}
                 attempt["state"] = "DONE"
                 summary["captures_created"] += int(created)
+                summary["opportunities_created"] += assessment["opportunities_created"]
                 warning_codes = {w["code"] for w in response["warnings"]}
                 warning_codes.update(w["code"] for m in response["markets"] for w in m["warnings"])
                 summary["captures_with_history_warnings"] += int(bool(warning_codes & {
@@ -329,6 +399,7 @@ def run_once(*, state_dir, data_config_path, market_data_type: type[MarketDataSo
     summary = {"status": "OK", **dict.fromkeys(("fixtures_discovered", "captures_created",
         "captures_existing", "captures_skipped_no_team_totals", "captures_with_history_warnings",
         "captures_awaiting_kickoff", "outcomes_created", "outcomes_pending", "outcomes_settled",
+        "market_observations_created", "opportunities_created",
         "review_required", "provider_requests"), 0), "prospective_budget_remaining": None, "reasons": []}
     control = None
     try:

@@ -196,12 +196,31 @@ class PilotTests(unittest.TestCase):
     def test_discovery_once_and_successful_capture_once(self):
         first = self.run_pilot()
         self.assertEqual((first["status"], first["provider_requests"], first["captures_created"]), ("OK", 3, 1))
+        self.assertEqual(first["market_observations_created"], 1)
+        self.assertGreater(first["opportunities_created"], 0)
         second = self.run_pilot()
         self.assertEqual(second["provider_requests"], 0)
         self.assertEqual(second["captures_existing"], 1)
         self.assertEqual(len(self.capture_paths()), 1)
         capture = json.loads(self.capture_paths()[0].read_text())
         self.assertEqual(capture["request"]["idempotency_key"], "prospective:v1:oddspapi:E1:" + self.fixtures[0]["fixtureId"])
+
+    def test_watchlisted_capture_gets_one_latest_observation_without_rerun(self):
+        first = self.run_pilot()
+        capture_path = self.capture_paths()[0]
+        original = capture_path.read_bytes()
+        self.now = self.now.replace(hour=10)
+        second = self.run_pilot()
+        self.assertEqual(second["provider_requests"], 2)
+        self.assertEqual(second["captures_created"], 0)
+        self.assertEqual(second["market_observations_created"], 1)
+        self.assertGreater(second["opportunities_created"], 0)
+        self.assertEqual(capture_path.read_bytes(), original)
+        fixture_id = self.fixtures[0]["fixtureId"]
+        parent = runner.fixture_observations(self.state, "oddspapi", "E1", fixture_id)
+        self.assertEqual(len(parent), 2)
+        self.assertEqual(self.run_pilot()["provider_requests"], 0)
+        self.assertEqual(self.control()["attempts"][fixture_id]["count"], 2)
 
     def test_manual_capture_prevents_all_quotes(self):
         quotes = provider.normalize_odds(self.payload, recorded.recorded("odds-markets"), self.fixtures[0],
@@ -248,7 +267,9 @@ class PilotTests(unittest.TestCase):
 
     def test_no_markets_one_final_hour_opportunity_no_third(self):
         self.no_team_totals()
-        self.assertEqual(self.run_pilot()["provider_requests"], 3)
+        first = self.run_pilot()
+        self.assertEqual(first["provider_requests"], 3)
+        self.assertEqual(first["market_observations_created"], 1)
         self.assertEqual(self.run_pilot()["provider_requests"], 0)
         self.now = self.now.replace(hour=10, minute=0, second=0)
         self.assertEqual(self.run_pilot()["provider_requests"], 2)
@@ -267,14 +288,14 @@ class PilotTests(unittest.TestCase):
         self.assertEqual(self.run_pilot()["provider_requests"], 0)
 
     def test_per_run_budget_reserves_complete_quote_pair(self):
-        self.fixtures = [dict(self.fixtures[0], fixtureId=f"fixture-{i}") for i in range(6)]
+        self.fixtures = [dict(self.fixtures[0], fixtureId=f"fixture-{i}") for i in range(7)]
         self.no_team_totals()
         result = self.run_pilot()
-        self.assertEqual(result["provider_requests"], 7)
+        self.assertEqual(result["provider_requests"], 8)
         self.assertIn("REQUEST_BUDGET", result["reasons"])
         result = self.run_pilot()
-        self.assertEqual(result["provider_requests"], 6)
-        self.assertEqual(self.control()["period"]["reserved"], 13)
+        self.assertEqual(result["provider_requests"], 2)
+        self.assertEqual(self.control()["period"]["reserved"], 10)
 
     def test_period_budget_no_partial_quote_fetch(self):
         self.write_control(lambda c: c["period"].update(allowance=2))
@@ -337,6 +358,7 @@ class PilotTests(unittest.TestCase):
         result = self.run_pilot()
         self.assertIn("INSUFFICIENT_HISTORY", result["reasons"])
         self.assertFalse(self.capture_paths())
+        self.assertEqual(result["market_observations_created"], 1)
 
     def test_stale_history_warns_does_not_change_model_gate(self):
         self.setup.config.write_text(json.dumps({"data_directory": ".", "leagues": ["E1"], "max_age_days": 1}))
@@ -483,13 +505,13 @@ class PilotTests(unittest.TestCase):
                 self.assertFalse(self.capture_paths())
 
     def test_full_eight_request_limit_with_cached_discovery(self):
-        self.fixtures = [dict(self.fixtures[0], fixtureId=f"fixture-{i}") for i in range(6)]
+        self.fixtures = [dict(self.fixtures[0], fixtureId=f"fixture-{i}") for i in range(8)]
         self.write_control(lambda c: c.update(discovery={"date": self.now.date().isoformat(),
             "status": "DONE", "fixtures": self.fixtures}))
         self.no_team_totals()
         result = self.run_pilot()
         self.assertEqual(result["provider_requests"], 8)
-        self.assertEqual(result["captures_skipped_no_team_totals"], 4)
+        self.assertEqual(result["captures_skipped_no_team_totals"], 7)
         self.assertEqual(result["reasons"], ["REQUEST_BUDGET"])
 
     def test_next_day_discovers_again_only_once(self):
@@ -605,29 +627,20 @@ class PilotTests(unittest.TestCase):
             return response
         self.opened.side_effect = malformed_odds
         result = self.run_pilot()
-        self.assertEqual([name for name, _ in self.calls], ["fixtures", "markets", "odds", "markets", "odds"])
+        self.assertEqual([name for name, _ in self.calls], ["fixtures", "markets", "odds", "odds"])
         self.assertEqual(result["review_required"], 1)
         self.assertEqual(result["captures_created"], 1)
         self.assertEqual(result["reasons"], ["FIXTURE_REVIEW"])
         self.assertNotIn("offline-secret", json.dumps(result))
 
-    def test_metadata_failure_preserves_completed_capture_and_reservations(self):
+    def test_validated_metadata_is_reused_for_all_fixtures_in_one_run(self):
         self.fixtures = [dict(self.fixtures[0], fixtureId=f"fixture-{i}") for i in range(3)]
-        original = self.http
-        def fail_second_metadata(request, **kwargs):
-            if urlsplit(request.full_url).path.endswith("/markets") and any(name == "odds" for name, _ in self.calls):
-                self.metadata = [{"marketId": 1}, {"marketId": 1}]
-            return original(request, **kwargs)
-        self.opened.side_effect = fail_second_metadata
         result = self.run_pilot()
-        self.assertEqual(result["captures_created"], 1)
-        self.assertEqual(result["provider_requests"], 4)
-        self.assertEqual(result["reasons"], ["MARKET_METADATA_INVALID"])
+        self.assertEqual(result["captures_created"], 3)
+        self.assertEqual(result["provider_requests"], 5)
+        self.assertEqual([name for name, _ in self.calls],
+                         ["fixtures", "markets", "odds", "odds", "odds"])
         self.assertEqual(self.control()["period"]["reserved"], 5)
-        self.assertEqual(len(self.control()["attempts"]), 2)
-        self.assertEqual(len(self.capture_paths()), 1)
-        capture = runner.load_analysis_capture(self.state, self.capture_paths()[0].stem)
-        self.assertEqual(capture["request"]["prematch"]["fixture"]["fixtureId"], "fixture-0")
 
     def test_metadata_failure_preserves_completed_settlement(self):
         self.run_pilot()
