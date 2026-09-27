@@ -210,8 +210,13 @@ def load_outcome(state_dir, analysis_id, outcome_id):
 
 
 def _chain(state, analysis_id):
-    records = [load_outcome(state, analysis_id, p.stem)
-               for p in _directory(state, analysis_id).glob("*.json")]
+    directory = _directory(state, analysis_id)
+    if directory.exists() and (directory.is_symlink() or not directory.is_dir()):
+        raise OutcomeError("INVALID_OUTCOME")
+    paths = sorted(directory.glob("*.json")) if directory.exists() else ()
+    if any(path.is_symlink() or not path.is_file() for path in paths):
+        raise OutcomeError("INVALID_OUTCOME")
+    records = [load_outcome(state, analysis_id, path.stem) for path in paths]
     roots = [r for r in records if r["supersedes_outcome_id"] is None]
     if not records:
         return [], None
@@ -232,6 +237,15 @@ def load_outcome_chain(state_dir, analysis_id):
     """Read and validate the immutable revision inventory without consulting CSVs."""
     with ledger_lock(Path(state_dir)):
         return _chain(state_dir, analysis_id)
+
+
+def load_outcome_chain_readonly(state_dir, analysis_id):
+    """Read a validated chain without creating or acquiring the state lock.
+
+    Immutable outcome files are atomically published, so read-only consumers see
+    either the chain before an append or the complete appended record.
+    """
+    return _chain(state_dir, analysis_id)
 
 
 def record_outcome(*, state_dir, analysis_id, data_config_path, idempotency_key,
