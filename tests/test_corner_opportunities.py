@@ -4,6 +4,7 @@ from copy import deepcopy
 from dataclasses import replace
 import json
 import unittest
+from unittest.mock import patch
 
 from modelfc import corner_opportunities as opportunities
 from modelfc.corner_market_data import CornerMarketObservation
@@ -75,6 +76,55 @@ class OpportunityEvidenceTests(unittest.TestCase):
             self.assertGreaterEqual(item["no_vig_probability_edge"], 0.05)
             self.assertGreaterEqual(item["offer"]["american_odds"], -200)
             self.assertEqual(item["policy"]["no_vig_price_source"], "decimal_odds")
+
+    def test_watchlist_edge_boundaries_do_not_change_qualification_threshold(self):
+        source = [item for item in self.observation["selections"]
+                  if item["bookmaker"] == "draftkings"
+                  and item["market_type"] == "TEAM_TOTAL"
+                  and item["team_side"] == "HOME"]
+        line = source[0]["line"]
+        source = [deepcopy(item) for item in source if item["line"] == line]
+        self.assertEqual({item["direction"] for item in source}, {"OVER", "UNDER"})
+        selected = next(item for item in source if item["direction"] == "OVER")
+        counterpart = next(item for item in source if item["direction"] == "UNDER")
+        selected.update(american_odds=100, decimal_odds=2.0)
+        counterpart.update(american_odds=-250, decimal_odds=1.4)
+        implied = {item["direction"]: 1 / item["decimal_odds"] for item in source}
+        no_vig = implied["OVER"] / sum(implied.values())
+
+        cases = (
+            (0.05, True, 1),
+            (0.0, True, 0),
+            (-0.049999, True, 0),
+            (-0.05, True, 0),
+            (-0.050001, False, 0),
+        )
+        for index, (edge, watchlisted, opportunities_created) in enumerate(cases, 1):
+            with self.subTest(edge=edge):
+                observation = deepcopy(self.observation)
+                observation["observation_id"] = f"{index:032x}"
+                observation["selections"] = source
+
+                def target(_state, prediction, selection, *, materialized_at):
+                    direction = selection["direction"]
+                    selected_probability = no_vig + edge
+                    decisive = (selected_probability if direction == "OVER"
+                                else 1 - selected_probability)
+                    return ({
+                        "status": "SUPPORTED",
+                        "target_id": opportunities.target_id(
+                            prediction["prediction_id"], selection["market_type"],
+                            selection["team_side"], direction, selection["line"],
+                        ),
+                        "decisive_model_probability": decisive,
+                    }, False)
+
+                with patch.object(opportunities, "materialize_target", side_effect=target):
+                    result = opportunities.assess_observation(
+                        self.setup.state, self.prediction, observation,
+                    )
+                self.assertEqual(result["watchlisted"], watchlisted)
+                self.assertEqual(result["opportunities_created"], opportunities_created)
 
     def test_frozen_targets_match_existing_supported_analysis_probabilities(self):
         opportunities.assess_observation(

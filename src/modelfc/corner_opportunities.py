@@ -29,7 +29,8 @@ PREDICTION_RULE_VERSION = "frozen-team-count-distribution-v1"
 QUALIFICATION_POLICY_VERSION = "team-total-no-vig-v1"
 MINIMUM_AMERICAN_ODDS = -200
 MINIMUM_NO_VIG_EDGE = 0.05
-WATCHLIST_NO_VIG_EDGE = 0.0
+WATCHLIST_NO_VIG_EDGE = -0.05
+EDGE_COMPARISON_TOLERANCE = 1e-12
 
 
 def _id(namespace: str, value: Any) -> str:
@@ -446,6 +447,12 @@ def _paired_selections(observation: dict[str, Any]):
             yield key, sides
 
 
+def _meets_edge_threshold(edge: float, threshold: float) -> bool:
+    return edge > threshold or math.isclose(
+        edge, threshold, rel_tol=0.0, abs_tol=EDGE_COMPARISON_TOLERANCE,
+    )
+
+
 def assess_observation(
     state_dir: str | Path, prediction: dict[str, Any], observation: dict[str, Any],
 ) -> dict[str, Any]:
@@ -485,8 +492,11 @@ def assess_observation(
             no_vig = implied[direction] / total
             edge = target["decisive_model_probability"] - no_vig
             eligible_price = selection["american_odds"] >= MINIMUM_AMERICAN_ODDS
-            watchlisted |= eligible_price and edge >= WATCHLIST_NO_VIG_EDGE
-            if not eligible_price or edge < MINIMUM_NO_VIG_EDGE:
+            watchlisted |= eligible_price and _meets_edge_threshold(
+                edge, WATCHLIST_NO_VIG_EDGE,
+            )
+            if not eligible_price or not _meets_edge_threshold(
+                    edge, MINIMUM_NO_VIG_EDGE):
                 continue
             payload = {
                 "prediction_id": prediction["prediction_id"],
