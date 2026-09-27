@@ -138,6 +138,15 @@ def store_prediction_from_capture(state_dir: str | Path, analysis_id: str) -> tu
     except (KeyError, TypeError, ValueError):
         raise LedgerError("INVALID_PROSPECTIVE_CAPTURE") from None
     prediction_id = prediction_id_for_analysis(analysis_id)
+    path = _record_path(state, "predictions", prediction_id)
+    if path.exists():
+        existing = _load(path, "prediction", prediction_id)
+        _source_observation(state, existing)
+        return existing, False
+    source_observation, _ = store_observation_from_capture(state, analysis_id)
+    if (_timestamp(source_observation["retrieved_at_utc"]) > created
+            or source_observation["fixture"]["kickoff_utc"] != fixture["kickoff_at"]):
+        raise LedgerError("INVALID_PROSPECTIVE_CAPTURE")
     record = {
         "schema_version": SCHEMA_VERSION,
         "record_type": "prediction",
@@ -169,8 +178,13 @@ def store_prediction_from_capture(state_dir: str | Path, analysis_id: str) -> tu
             "request_hash": capture["request_hash"],
             "response_hash": capture["response_hash"],
         },
+        "source_observation": {
+            "observation_id": source_observation["observation_id"],
+            "record_hash": source_observation["record_hash"],
+            "retrieved_at_utc": source_observation["retrieved_at_utc"],
+        },
     }
-    return _publish(state, _record_path(state, "predictions", prediction_id), record)
+    return _publish(state, path, record)
 
 
 def load_prediction(state_dir: str | Path, prediction_id: str) -> dict[str, Any]:
@@ -366,6 +380,67 @@ def fixture_observations(
     return sorted(records, key=lambda item: (item["retrieved_at_utc"], item["observation_id"]))
 
 
+def _source_observation(
+    state: Path, prediction: dict[str, Any],
+) -> dict[str, Any]:
+    try:
+        reference = prediction["source_observation"]
+        fixture = prediction["fixture"]
+        parent = fixture_record_id(
+            fixture["provider"], fixture["competition"], fixture["provider_fixture_id"],
+        )
+        source = load_market_observation(state, parent, reference["observation_id"])
+        if (source["record_hash"] != reference["record_hash"]
+                or source["retrieved_at_utc"] != reference["retrieved_at_utc"]
+                or source["fixture"] != {
+                    "competition": fixture["competition"],
+                    "home_team": fixture["home_team"],
+                    "away_team": fixture["away_team"],
+                    "kickoff_utc": fixture["kickoff_at"],
+                    "provider": fixture["provider"],
+                    "provider_fixture_id": fixture["provider_fixture_id"],
+                }):
+            raise ValueError
+        source_time = _timestamp(source["retrieved_at_utc"])
+        prediction_time = _timestamp(prediction["created_at_utc"])
+        kickoff = _timestamp(fixture["kickoff_at"])
+        if source_time > prediction_time or prediction_time >= kickoff:
+            raise ValueError
+    except (KeyError, TypeError, ValueError, AttributeError, LedgerError):
+        raise LedgerError("INVALID_SOURCE_OBSERVATION") from None
+    return source
+
+
+def prediction_observations(
+    state_dir: str | Path, prediction: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Return the exact source observation and only valid later observations."""
+    state = Path(state_dir)
+    source = _source_observation(state, prediction)
+    fixture = prediction["fixture"]
+    source_time = _timestamp(source["retrieved_at_utc"])
+    prediction_time = _timestamp(prediction["created_at_utc"])
+    kickoff = _timestamp(fixture["kickoff_at"])
+    records = fixture_observations(
+        state, fixture["provider"], fixture["competition"],
+        fixture["provider_fixture_id"],
+    )
+    if sum(item["observation_id"] == source["observation_id"] for item in records) != 1:
+        raise LedgerError("INVALID_SOURCE_OBSERVATION")
+    selected = [source]
+    for observation in records:
+        if observation["observation_id"] == source["observation_id"]:
+            continue
+        observed_at = _timestamp(observation["retrieved_at_utc"])
+        if observed_at >= kickoff:
+            raise LedgerError("INVALID_SOURCE_OBSERVATION")
+        if observed_at > source_time and observed_at >= prediction_time:
+            selected.append(observation)
+    return sorted(selected, key=lambda item: (
+        _timestamp(item["retrieved_at_utc"]), item["observation_id"],
+    ))
+
+
 def target_id(prediction_id: str, market_type: str, team_side: str | None,
               direction: str, line: float) -> str:
     return _id("prediction-target", {
@@ -473,13 +548,21 @@ def assess_observation(
     """Materialize all targets and append only qualifying opportunity events."""
     state = Path(state_dir)
     predicted_fixture, observed_fixture = prediction["fixture"], observation["fixture"]
+    source = _source_observation(state, prediction)
+    observed_at = _timestamp(observation["retrieved_at_utc"])
+    source_at = _timestamp(source["retrieved_at_utc"])
+    prediction_at = _timestamp(prediction["created_at_utc"])
+    is_source = observation["observation_id"] == source["observation_id"]
     if ({"competition": predicted_fixture["competition"],
          "home_team": predicted_fixture["home_team"],
          "away_team": predicted_fixture["away_team"],
          "kickoff_utc": predicted_fixture["kickoff_at"],
          "provider": predicted_fixture["provider"],
          "provider_fixture_id": predicted_fixture["provider_fixture_id"]} != observed_fixture
-            or _timestamp(observation["retrieved_at_utc"]) >= _timestamp(predicted_fixture["kickoff_at"])):
+            or observed_at >= _timestamp(predicted_fixture["kickoff_at"])
+            or (is_source and observation != source)
+            or (not is_source and (observed_at <= source_at
+                                   or observed_at < prediction_at))):
         raise LedgerError("PREDICTION_OBSERVATION_MISMATCH")
     targets = {}
     for selection in observation["selections"]:
@@ -578,10 +661,7 @@ def opportunity_views(state_dir: str | Path, prediction_id: str) -> list[dict[st
     """Derive first, best and latest-observed views without rewriting evidence."""
     prediction = load_prediction(state_dir, prediction_id)
     fixture = prediction["fixture"]
-    observations = fixture_observations(
-        state_dir, fixture["provider"], fixture["competition"],
-        fixture["provider_fixture_id"],
-    )
+    observations = prediction_observations(state_dir, prediction)
     kickoff = _timestamp(fixture["kickoff_at"])
     offers: dict[tuple[str, str], list[tuple[dict[str, Any], dict[str, Any]]]] = {}
     for observation in observations:

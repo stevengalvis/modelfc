@@ -2,6 +2,7 @@
 
 from copy import deepcopy
 from dataclasses import replace
+from datetime import timedelta
 import json
 import unittest
 from unittest.mock import patch
@@ -33,6 +34,26 @@ class OpportunityEvidenceTests(unittest.TestCase):
         directory = self.setup.state / "opportunities" / self.prediction["prediction_id"]
         return [json.loads(path.read_text()) for path in sorted(directory.glob("*.json"))]
 
+    def second_prediction(self, when):
+        retrieved_at = when.isoformat()
+        selections = tuple(replace(item, retrieved_at=retrieved_at)
+                           for item in self.setup.quotes.selections)
+        quotes = replace(self.setup.quotes, selections=selections,
+                         retrieved_at=retrieved_at)
+        self.setup.clock.return_value = when
+        response, created = provider.capture_quotes(
+            quotes, data_config_path=self.setup.config, state_dir=self.setup.state,
+            capture_key="capture-2",
+        )
+        self.assertTrue(created)
+        observation, _ = opportunities.store_observation_from_capture(
+            self.setup.state, response["analysis_id"],
+        )
+        prediction, _ = opportunities.store_prediction_from_capture(
+            self.setup.state, response["analysis_id"],
+        )
+        return prediction, observation
+
     def test_prediction_is_odds_free_and_preserves_frozen_distribution(self):
         encoded = json.dumps(self.prediction, sort_keys=True)
         for forbidden in ("american_odds", "decimal_odds", "bookmaker",
@@ -46,6 +67,10 @@ class OpportunityEvidenceTests(unittest.TestCase):
         self.assertEqual(self.prediction["distribution"]["dispersion_size"],
                          forecast["configuration"]["dispersion_size"])
         self.assertEqual(self.prediction["model"]["configuration"]["max_age_days"], 14)
+        self.assertEqual(self.prediction["source_observation"]["observation_id"],
+                         self.observation["observation_id"])
+        self.assertEqual(self.prediction["source_observation"]["record_hash"],
+                         self.observation["record_hash"])
 
     def test_observation_preserves_all_selections_and_availability(self):
         capture = json.loads(self.capture_bytes)
@@ -104,6 +129,9 @@ class OpportunityEvidenceTests(unittest.TestCase):
             with self.subTest(edge=edge):
                 observation = deepcopy(self.observation)
                 observation["observation_id"] = f"{index:032x}"
+                observation["retrieved_at_utc"] = (
+                    recorded.NOW + timedelta(seconds=index)
+                ).isoformat()
                 observation["selections"] = source
 
                 def target(_state, prediction, selection, *, materialized_at):
@@ -187,6 +215,9 @@ class OpportunityEvidenceTests(unittest.TestCase):
         counterpart.update(american_odds=-250, decimal_odds=1.4)
         observation = deepcopy(self.observation)
         observation["observation_id"] = "f" * 32
+        observation["retrieved_at_utc"] = (
+            recorded.NOW + timedelta(seconds=1)
+        ).isoformat()
         observation["selections"] = source
 
         def target(_state, prediction, selection, *, materialized_at):
@@ -208,6 +239,95 @@ class OpportunityEvidenceTests(unittest.TestCase):
         self.assertEqual(result["opportunities_created"], 0)
         self.assertEqual(result["review_required_reasons"],
                          [opportunities.PRICE_INCONSISTENCY_REVIEW])
+
+    def test_predictions_only_assess_their_source_and_later_observations(self):
+        prediction_b, observation_b = self.second_prediction(
+            recorded.NOW + timedelta(minutes=30),
+        )
+        eligible_a = opportunities.prediction_observations(
+            self.setup.state, self.prediction,
+        )
+        eligible_b = opportunities.prediction_observations(
+            self.setup.state, prediction_b,
+        )
+        self.assertEqual([item["observation_id"] for item in eligible_a],
+                         [self.observation["observation_id"],
+                          observation_b["observation_id"]])
+        self.assertEqual([item["observation_id"] for item in eligible_b],
+                         [observation_b["observation_id"]])
+
+        with self.assertRaisesRegex(LedgerError, "PREDICTION_OBSERVATION_MISMATCH"):
+            opportunities.assess_observation(
+                self.setup.state, prediction_b, self.observation,
+            )
+        self.assertFalse(opportunities.opportunity_records(
+            self.setup.state, prediction_b["prediction_id"],
+        ))
+        source_result = opportunities.assess_observation(
+            self.setup.state, prediction_b, observation_b,
+        )
+        later_result = opportunities.assess_observation(
+            self.setup.state, self.prediction, observation_b,
+        )
+        self.assertGreater(source_result["opportunities_created"], 0)
+        self.assertGreater(later_result["opportunities_created"], 0)
+
+    def test_pre_prediction_observation_cannot_create_opportunity(self):
+        earlier = deepcopy(self.observation)
+        earlier["observation_id"] = "a" * 32
+        earlier["retrieved_at_utc"] = (
+            recorded.NOW - timedelta(seconds=1)
+        ).isoformat()
+        with self.assertRaisesRegex(LedgerError, "PREDICTION_OBSERVATION_MISMATCH"):
+            opportunities.assess_observation(
+                self.setup.state, self.prediction, earlier,
+            )
+        self.assertFalse(opportunities.opportunity_records(
+            self.setup.state, self.prediction["prediction_id"],
+        ))
+
+    def test_same_timestamp_observation_is_not_mistaken_for_source(self):
+        fixture = provider.OddsPapiMarketData.fixture_from_provenance(
+            self.setup.quotes.fixture, recorded.NOW,
+        )
+        availability = deepcopy(self.setup.quotes.availability)
+        availability["source_tie_test"] = True
+        raw = CornerMarketObservation(
+            fixture, self.setup.quotes.selections, availability, self.setup.quotes,
+        )
+        tied, created = opportunities.store_market_observation(self.setup.state, raw)
+        self.assertTrue(created)
+        self.assertNotEqual(tied["observation_id"], self.observation["observation_id"])
+        self.assertEqual(tied["retrieved_at_utc"], self.observation["retrieved_at_utc"])
+        eligible = opportunities.prediction_observations(
+            self.setup.state, self.prediction,
+        )
+        self.assertEqual([item["observation_id"] for item in eligible],
+                         [self.observation["observation_id"]])
+        opportunities.assess_observation(
+            self.setup.state, self.prediction, self.observation,
+        )
+        with self.assertRaisesRegex(LedgerError, "PREDICTION_OBSERVATION_MISMATCH"):
+            opportunities.assess_observation(self.setup.state, self.prediction, tied)
+
+    def test_invalid_source_observation_provenance_fails_closed(self):
+        invalid = []
+        missing = deepcopy(self.prediction)
+        missing["source_observation"]["observation_id"] = "0" * 32
+        invalid.append(missing)
+        corrupt = deepcopy(self.prediction)
+        corrupt["source_observation"]["record_hash"] = "0" * 64
+        invalid.append(corrupt)
+        ambiguous = deepcopy(self.prediction)
+        del ambiguous["source_observation"]["observation_id"]
+        invalid.append(ambiguous)
+        for prediction in invalid:
+            with self.subTest(source=prediction["source_observation"]), self.assertRaisesRegex(
+                    LedgerError, "INVALID_SOURCE_OBSERVATION"):
+                opportunities.prediction_observations(self.setup.state, prediction)
+        self.assertFalse(opportunities.opportunity_records(
+            self.setup.state, self.prediction["prediction_id"],
+        ))
 
     def test_frozen_targets_match_existing_supported_analysis_probabilities(self):
         opportunities.assess_observation(

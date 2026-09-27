@@ -1,6 +1,7 @@
 """Deterministic pilot tests. HTTP is replaced with recorded response bodies."""
 from contextlib import redirect_stdout
 from copy import deepcopy
+from dataclasses import replace
 from datetime import date, datetime, timedelta, timezone
 from io import BytesIO, StringIO
 import inspect
@@ -14,6 +15,7 @@ import uuid
 
 from modelfc import corner_prospective as runner
 from modelfc import corner_analysis_outcomes as outcomes
+from modelfc import corner_opportunities as opportunities
 from modelfc.corner_market_data import (
     CornerMarketObservation, MarketDataError, MarketFixture, MarketSelection,
 )
@@ -221,6 +223,41 @@ class PilotTests(unittest.TestCase):
         self.assertEqual(len(parent), 2)
         self.assertEqual(self.run_pilot()["provider_requests"], 0)
         self.assertEqual(self.control()["attempts"][fixture_id]["count"], 2)
+
+    def test_inventory_never_backfills_later_prediction_from_earlier_odds(self):
+        self.run_pilot()
+        prediction_a = json.loads(next((self.state / "predictions").glob("*.json")).read_text())
+        observation_a = prediction_a["source_observation"]["observation_id"]
+        self.now += timedelta(minutes=30)
+        retrieved_at = self.now.isoformat()
+        selections = tuple(replace(item, retrieved_at=retrieved_at)
+                           for item in self.setup.quotes.selections)
+        quotes = replace(self.setup.quotes, selections=selections,
+                         retrieved_at=retrieved_at)
+        response_b, created = provider.capture_quotes(
+            quotes, data_config_path=self.config, state_dir=self.state,
+            capture_key="manual-capture-2",
+        )
+        self.assertTrue(created)
+        with patch.object(runner, "_provider_work"):
+            result = self.run_pilot()
+        self.assertEqual(result["captures_existing"], 2)
+        prediction_b = opportunities.load_prediction(
+            self.state, opportunities.prediction_id_for_analysis(response_b["analysis_id"]),
+        )
+        observation_b = prediction_b["source_observation"]["observation_id"]
+        self.assertNotEqual(observation_a, observation_b)
+        later_records = opportunities.opportunity_records(
+            self.state, prediction_b["prediction_id"],
+        )
+        self.assertTrue(later_records)
+        self.assertEqual({item["observation_id"] for item in later_records},
+                         {observation_b})
+        earlier_records = opportunities.opportunity_records(
+            self.state, prediction_a["prediction_id"],
+        )
+        self.assertIn(observation_b,
+                      {item["observation_id"] for item in earlier_records})
 
     def test_price_inconsistency_is_persisted_and_reported_for_review(self):
         price = (self.payload["bookmakerOdds"]["draftkings"]["markets"]["101432"]
