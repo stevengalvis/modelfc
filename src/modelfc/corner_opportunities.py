@@ -192,6 +192,18 @@ def load_prediction(state_dir: str | Path, prediction_id: str) -> dict[str, Any]
                  "prediction", prediction_id)
 
 
+def prediction_records(state_dir: str | Path) -> list[dict[str, Any]]:
+    """Return every validated immutable prediction in deterministic order."""
+    state = Path(state_dir)
+    directory = state / "predictions"
+    records = []
+    for path in sorted(directory.glob("*.json")) if directory.exists() else ():
+        if path.is_symlink() or not path.is_file():
+            raise LedgerError("INVALID_PROSPECTIVE_RECORD")
+        records.append(load_prediction(state, path.stem))
+    return records
+
+
 def _observation_payload(observation: CornerMarketObservation) -> dict[str, Any]:
     fixture = observation.fixture
     if (fixture.competition != "E1" or fixture.provider != "oddspapi"
@@ -510,6 +522,39 @@ def materialize_target(
         if path.exists():
             return _load(path, "target", identity), False
     return _publish(state, path, record)
+
+
+def load_prediction_target(
+    state_dir: str | Path, prediction_id: str, target_id: str,
+) -> dict[str, Any]:
+    record = _load(
+        _record_path(Path(state_dir), "prediction-targets", target_id, prediction_id),
+        "target", target_id,
+    )
+    try:
+        if record["prediction_id"] != uuid.UUID(hex=prediction_id).hex:
+            raise ValueError
+    except (KeyError, ValueError, TypeError, AttributeError):
+        raise LedgerError("INVALID_PROSPECTIVE_RECORD") from None
+    return record
+
+
+def prediction_target_records(
+    state_dir: str | Path, prediction_id: str,
+) -> list[dict[str, Any]]:
+    """Return a prediction's validated, de-duplicated target evidence."""
+    state = Path(state_dir)
+    try:
+        normalized = uuid.UUID(hex=prediction_id).hex
+    except (AttributeError, ValueError):
+        raise LedgerError("INVALID_PROSPECTIVE_ID") from None
+    directory = state / "prediction-targets" / normalized
+    records = []
+    for path in sorted(directory.glob("*.json")) if directory.exists() else ():
+        if path.is_symlink() or not path.is_file():
+            raise LedgerError("INVALID_PROSPECTIVE_RECORD")
+        records.append(load_prediction_target(state, normalized, path.stem))
+    return records
 
 
 def _paired_selections(observation: dict[str, Any]):

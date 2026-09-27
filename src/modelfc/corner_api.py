@@ -14,6 +14,9 @@ from pydantic import BaseModel, Field
 from modelfc.corner_analysis import MAX_MARKETS_PER_ANALYSIS, CornerMarketRequest
 from modelfc.corner_analysis_store import analyze_and_store, load_analysis
 from modelfc.corner_capabilities import api_capabilities
+from modelfc.corner_prospective_read import (
+    read_opportunities, read_opportunity, read_performance, read_predictions,
+)
 from modelfc.ledger_storage import LedgerError, LedgerStorageUnavailable
 
 
@@ -159,6 +162,85 @@ class CapabilitiesResponse(StrictModel):
     competitions: list[CompetitionCapabilityResponse]
 
 
+class OpportunityResponse(StrictModel):
+    opportunity_id: str
+    prediction_id: str
+    target_id: str
+    observation_id: str
+    provider: str
+    provider_fixture_id: str
+    competition: str
+    kickoff_utc: str
+    home_team: str
+    away_team: str
+    bookmaker: str
+    market_type: str
+    team_side: str
+    team: str
+    direction: str
+    line: float
+    american_odds: int
+    decimal_odds: float
+    qualified_at_utc: str
+    model_decisive_probability: float
+    no_vig_market_probability: float
+    no_vig_probability_edge: float
+    policy_version: str
+    settlement_status: str
+    result: str | None
+    actual_team_corners: int | None
+    realized_profit_units: float | None
+
+
+class PredictionResponse(StrictModel):
+    prediction_id: str
+    source_observation_id: str
+    created_at_utc: str
+    competition: str
+    provider: str
+    provider_fixture_id: str
+    kickoff_utc: str
+    home_team: str
+    away_team: str
+    model_name: str
+    model_version: str
+    expected_home_corners: float
+    expected_away_corners: float
+    expected_match_corners: float
+    dispersion_size: float | None
+    latest_history_date: date
+    source_data_hashes: list[SourceHashResponse]
+    target_count: int
+    opportunity_count: int
+    settlement_status: str
+    actual_home_corners: int | None
+    actual_away_corners: int | None
+
+
+class ModelPerformanceResponse(StrictModel):
+    total_prediction_runs: int
+    total_unique_prediction_targets: int
+    supported_prediction_targets: int
+    settled_prediction_targets: int
+    unsettled_supported_prediction_targets: int
+
+
+class OpportunityPerformanceResponse(StrictModel):
+    total_opportunity_events: int
+    settled_opportunities: int
+    wins: int
+    losses: int
+    pushes: int
+    win_rate_excluding_pushes: float | None
+    realized_profit_units: float
+    unresolved_open_opportunities: int
+
+
+class ProspectivePerformanceResponse(StrictModel):
+    model_performance: ModelPerformanceResponse
+    opportunity_performance: OpportunityPerformanceResponse
+
+
 def _error(code: str, message: str, status: int, *, retryable: bool = False) -> JSONResponse:
     return JSONResponse(status_code=status, content={"error": {
         "code": code, "message": message, "details": {},
@@ -172,10 +254,21 @@ def _domain_error(error: Exception) -> JSONResponse:
         return _error("IDEMPOTENCY_CONFLICT", "Idempotency key was reused with a different request.", 409)
     if message.startswith("unknown analysis ID"):
         return _error("ANALYSIS_NOT_FOUND", message, 404)
+    if message == "UNKNOWN_OPPORTUNITY":
+        return _error("OPPORTUNITY_NOT_FOUND", "Opportunity was not found.", 404)
     if isinstance(error, LedgerStorageUnavailable):
         return _error("STATE_STORAGE_UNAVAILABLE", message, 503, retryable=True)
     if message.startswith("invalid corner analysis record"):
         return _error("LEDGER_INTEGRITY_FAILURE", message, 409)
+    if message.startswith(("invalid prospective record ",
+                           "invalid analysis outcome record ")):
+        return _error(
+            "LEDGER_INTEGRITY_FAILURE",
+            "Prospective evidence failed validation.", 409,
+        )
+    if message in ("INVALID_PROSPECTIVE_RECORD", "INVALID_SOURCE_OBSERVATION",
+                   "INVALID_OUTCOME", "INVALID_REVISION_CHAIN"):
+        return _error("LEDGER_INTEGRITY_FAILURE", "Prospective evidence failed validation.", 409)
     if ("could not read corner data config" in message
             or "config requires" in message
             or "data_directory must" in message
@@ -275,6 +368,40 @@ def create_app(
     def get_analysis(analysis_id: str) -> dict[str, Any]:
         try:
             return load_analysis(state, analysis_id)
+        except LedgerError as error:
+            return _domain_error(error)
+
+    @app.get("/api/v1/opportunities", response_model=list[OpportunityResponse])
+    def get_opportunities() -> list[dict[str, Any]]:
+        try:
+            return read_opportunities(state)
+        except LedgerError as error:
+            return _domain_error(error)
+
+    @app.get(
+        "/api/v1/opportunities/{opportunity_id}",
+        response_model=OpportunityResponse,
+    )
+    def get_opportunity(opportunity_id: str) -> dict[str, Any]:
+        try:
+            return read_opportunity(state, opportunity_id)
+        except LedgerError as error:
+            return _domain_error(error)
+
+    @app.get("/api/v1/predictions", response_model=list[PredictionResponse])
+    def get_predictions() -> list[dict[str, Any]]:
+        try:
+            return read_predictions(state)
+        except LedgerError as error:
+            return _domain_error(error)
+
+    @app.get(
+        "/api/v1/prospective/performance",
+        response_model=ProspectivePerformanceResponse,
+    )
+    def get_prospective_performance() -> dict[str, Any]:
+        try:
+            return read_performance(state)
         except LedgerError as error:
             return _domain_error(error)
 

@@ -12,6 +12,7 @@ import re
 import stat
 import subprocess
 import tempfile
+import time
 from typing import Any, Callable, Iterable, Iterator
 
 
@@ -150,6 +151,49 @@ def ledger_lock(ledger: Path) -> Iterator[None]:
         raise LedgerStorageUnavailable(
             f"could not lock ledger {ledger}: {error}"
         ) from error
+
+
+@contextmanager
+def existing_read_lock(lock_path: Path, *, timeout_seconds: float = 5.0) -> Iterator[None]:
+    """Bounded shared lock on an existing regular file, without mutation."""
+    if timeout_seconds < 0:
+        raise ValueError("timeout_seconds must be non-negative")
+    descriptor = None
+    locked = False
+    try:
+        descriptor = os.open(
+            lock_path,
+            os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW | os.O_NONBLOCK,
+        )
+        info = os.fstat(descriptor)
+        if not stat.S_ISREG(info.st_mode):
+            raise LedgerStorageUnavailable("ledger read lock is not a regular file")
+        deadline = time.monotonic() + timeout_seconds
+        while True:
+            try:
+                fcntl.flock(descriptor, fcntl.LOCK_SH | fcntl.LOCK_NB)
+                locked = True
+                break
+            except BlockingIOError:
+                if time.monotonic() >= deadline:
+                    raise LedgerStorageUnavailable("ledger read lock timed out") from None
+                time.sleep(min(0.05, max(0.0, deadline - time.monotonic())))
+    except FileNotFoundError as error:
+        raise LedgerStorageUnavailable("ledger read lock is unavailable") from error
+    except OSError as error:
+        raise LedgerStorageUnavailable("ledger read lock is unavailable") from error
+    try:
+        yield
+    finally:
+        if descriptor is not None:
+            if locked:
+                fcntl.flock(descriptor, fcntl.LOCK_UN)
+            os.close(descriptor)
+
+
+def ledger_read_lock(ledger: Path, *, timeout_seconds: float = 5.0):
+    """Bounded shared lock matching the existing state publication lock."""
+    return existing_read_lock(ledger / ".lock", timeout_seconds=timeout_seconds)
 
 
 def read_json_record(path: Path, kind: str, unknown: str) -> dict[str, Any]:
