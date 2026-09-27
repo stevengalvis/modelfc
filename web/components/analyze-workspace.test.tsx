@@ -40,6 +40,28 @@ describe("AnalyzeWorkspace", () => {
     expect((screen.getByRole("textbox", { name: /sportsbook fixture/i }) as HTMLTextAreaElement).value).toContain("Birmingham City");
   });
 
+  it("recomputes parser warnings from corrected fixture and market fields", async () => {
+    render(<AnalyzeWorkspace />);
+    await pasteAndParse(`Championship
+2026-09-17
+Birmingham team corners O4 -110`);
+    expect(screen.getByText(/fixture details are incomplete/i)).toBeInTheDocument();
+    expect(screen.getByText(/1 market row is unresolved/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /analyze all/i })).toBeDisabled();
+
+    fireEvent.change(screen.getByLabelText("Home team"), { target: { value: "Birmingham" } });
+    fireEvent.change(screen.getByLabelText("Away team"), { target: { value: "Millwall" } });
+    expect(screen.queryByText(/fixture details are incomplete/i)).not.toBeInTheDocument();
+    expect(screen.getByText(/1 market row is unresolved/i)).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Market 1 team"), { target: { value: "HOME" } });
+    expect(screen.queryByText(/market row is unresolved/i)).not.toBeInTheDocument();
+    expect(screen.getByText("1 of 1 markets ready")).toBeInTheDocument();
+    await analyzeDemo();
+    expect(screen.queryByText(/fixture details are incomplete/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/market row is unresolved/i)).not.toBeInTheDocument();
+  });
+
   it("accepts the backend E1 code end to end without an unresolved competition row", async () => {
     render(<AnalyzeWorkspace />);
     await pasteAndParse(sportsbookText.replace("Championship", "E1"));
@@ -209,6 +231,19 @@ describe("AnalyzeWorkspace", () => {
     await pasteAndParse();
     fireEvent.click(screen.getByRole("button", { name: /analyze all/i }));
     expect(await screen.findByText(title)).toBeInTheDocument();
+    expect(screen.queryByText("Analysis complete")).not.toBeInTheDocument();
+  });
+
+  it("shows an analysis contract mismatch without attempting to render malformed results", async () => {
+    vi.spyOn(api, "analyze").mockRejectedValue(new ModelFCApiError(
+      "The API returned an analysis response outside the V1 contract.",
+      "ANALYSIS_CONTRACT_MISMATCH",
+      false,
+    ));
+    render(<AnalyzeWorkspace />);
+    await pasteAndParse();
+    fireEvent.click(screen.getByRole("button", { name: /analyze all/i }));
+    expect(await screen.findByText(/ANALYSIS_CONTRACT_MISMATCH/)).toBeInTheDocument();
     expect(screen.queryByText("Analysis complete")).not.toBeInTheDocument();
   });
 

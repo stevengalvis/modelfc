@@ -25,23 +25,62 @@ async function requestJson<T>(baseUrl: string, path: string, init?: RequestInit)
 
 function decodeAnalysisResponse(value: unknown): AnalysisResponse {
   const record = (item: unknown): item is Record<string, unknown> => Boolean(item && typeof item === "object" && !Array.isArray(item));
+  const stringOrNull = (item: unknown): item is string | null => item === null || typeof item === "string";
+  const finiteNumber = (item: unknown): item is number => typeof item === "number" && Number.isFinite(item);
+  const finiteNumberOrNull = (item: unknown): item is number | null => item === null || finiteNumber(item);
+  const warning = (item: unknown) => record(item)
+    && typeof item.code === "string"
+    && typeof item.message === "string";
+  const warnings = (item: unknown) => Array.isArray(item) && item.every(warning);
+  const configuration = (item: unknown) => record(item)
+    && Object.values(item).every((entry) => entry === null || typeof entry === "string" || finiteNumber(entry));
+  const sourceHash = (item: unknown) => record(item)
+    && typeof item.filename === "string"
+    && typeof item.sha256 === "string";
+  const market = (item: unknown) => record(item)
+    && typeof item.client_market_id === "string"
+    && (item.market_type === "TEAM_TOTAL" || item.market_type === "MATCH_TOTAL")
+    && (item.team_side === null || item.team_side === "HOME" || item.team_side === "AWAY")
+    && (item.side === "OVER" || item.side === "UNDER")
+    && finiteNumber(item.line)
+    && Number.isSafeInteger(item.american_odds)
+    && stringOrNull(item.team)
+    && (item.status === "SUPPORTED" || item.status === "UNSUPPORTED")
+    && stringOrNull(item.unsupported_reason)
+    && finiteNumberOrNull(item.model_probability)
+    && finiteNumberOrNull(item.push_probability)
+    && finiteNumberOrNull(item.decisive_model_probability)
+    && finiteNumberOrNull(item.implied_probability)
+    && finiteNumberOrNull(item.probability_edge)
+    && finiteNumberOrNull(item.expected_profit)
+    && finiteNumberOrNull(item.expected_corners)
+    && warnings(item.warnings);
   const valid = record(value)
     && typeof value.analysis_id === "string"
     && typeof value.forecast_id === "string"
     && typeof value.created_at === "string"
     && record(value.pick_logging)
     && (value.pick_logging.status === "SUPPORTED" || value.pick_logging.status === "DISABLED")
-    && (value.pick_logging.reason === null || typeof value.pick_logging.reason === "string")
+    && stringOrNull(value.pick_logging.reason)
     && record(value.fixture)
     && typeof value.fixture.competition === "string"
     && typeof value.fixture.date === "string"
     && typeof value.fixture.home_team === "string"
     && typeof value.fixture.away_team === "string"
+    && stringOrNull(value.fixture.kickoff_at)
     && record(value.forecast)
     && typeof value.forecast.model === "string"
     && typeof value.forecast.model_version === "string"
+    && configuration(value.forecast.configuration)
+    && finiteNumber(value.forecast.home_expected_corners)
+    && finiteNumber(value.forecast.away_expected_corners)
+    && finiteNumber(value.forecast.match_expected_corners)
+    && typeof value.forecast.latest_history_date === "string"
+    && Array.isArray(value.forecast.source_data_hashes)
+    && value.forecast.source_data_hashes.every(sourceHash)
     && Array.isArray(value.markets)
-    && Array.isArray(value.warnings);
+    && value.markets.every(market)
+    && warnings(value.warnings);
   if (!valid) {
     throw new ModelFCApiError(
       "The API returned an analysis response outside the V1 contract.",

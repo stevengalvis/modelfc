@@ -40,6 +40,29 @@ export interface ParsedSportsbookInput {
   markets: EditableMarketInput[];
 }
 
+function marketNeedsCorrection(market: EditableMarketInput): boolean {
+  return Boolean(market.parse_issue
+    || !market.market_type
+    || (market.market_type === "TEAM_TOTAL" && !market.team_side)
+    || !market.side
+    || !market.line.trim()
+    || !market.american_odds.trim());
+}
+
+/** Derive parser-level warnings from the current editable values. */
+export function deriveBlockWarnings(block: Pick<ParsedInputBlock, "fixture" | "markets">): string[] {
+  const warnings: string[] = [];
+  if (!block.fixture.competition.trim()) {
+    warnings.push("Competition was not recognized; choose a backend-reported competition.");
+  }
+  if (!block.fixture.date.trim() || !block.fixture.home_team.trim() || !block.fixture.away_team.trim()) {
+    warnings.push("Fixture details are incomplete; correct the fields before analysis.");
+  }
+  const unresolved = block.markets.filter(marketNeedsCorrection).length;
+  if (unresolved) warnings.push(`${unresolved} market row${unresolved === 1 ? " is" : "s are"} unresolved and needs correction.`);
+  return warnings;
+}
+
 const COMPETITION_PATTERNS = [
   { code: "E1", pattern: /^(?:(?:(?:league|competition)\s*[:=-]?\s*)?(?:english\s+)?championship(?:\s*\(?(?:E1)\)?)?|(?:competition\s*[:=-]?\s*)?E1)$/i },
   { code: "SP2", pattern: /^(?:(?:league|competition)\s*[:=-]?\s*)?(?:la\s*liga\s*2|laliga\s*2|segunda(?:\s+divisi[oó]n)?|SP2)$/i },
@@ -204,20 +227,15 @@ function parseBlock(source: string, blockIndex: number): ParsedInputBlock {
       parse_issue: "Enter at least one corner market.",
     }));
   }
-  const warnings: string[] = [];
-  if (!fixture.competition) warnings.push("Competition was not recognized; choose a backend-reported competition.");
-  if (!fixture.date || !fixture.home_team || !fixture.away_team) {
-    warnings.push("Fixture details are incomplete; correct the fields before analysis.");
-  }
-  const unresolved = markets.filter((market) => market.parse_issue).length;
-  if (unresolved) warnings.push(`${unresolved} market row${unresolved === 1 ? " is" : "s are"} unresolved and needs correction.`);
-  return {
+  const block = {
     block_id: `block-${blockIndex + 1}`,
     source_text: source,
     fixture,
     markets,
-    warnings,
+    warnings: [] as string[],
   };
+  block.warnings = deriveBlockWarnings(block);
+  return block;
 }
 
 export function parseSportsbookInput(text: string): ParsedSportsbookInput {

@@ -8,7 +8,7 @@ import { api, apiMode } from "@/lib/api/client";
 import { describeApiError } from "@/lib/api/errors";
 import { eligibleTeams, findCompetition, unavailableMarketReason } from "@/lib/api/capabilities";
 import { MAX_MARKETS_PER_ANALYSIS, requestFingerprint, validateAnalysisBlocks, type BlockValidation } from "@/lib/analysis-input";
-import { competitionLabels, parseSportsbookInput, type EditableFixtureInput, type ParsedInputBlock, type ParsedSportsbookInput } from "@/lib/parse-sportsbook-input";
+import { competitionLabels, deriveBlockWarnings, parseSportsbookInput, type EditableFixtureInput, type ParsedInputBlock, type ParsedSportsbookInput } from "@/lib/parse-sportsbook-input";
 import type { AnalysisResponse, CapabilitiesResponse } from "@/lib/api/types";
 
 const exampleInput = `Championship
@@ -99,7 +99,18 @@ export function AnalyzeWorkspace() {
   function updateBlock(blockId: string, update: (block: ParsedInputBlock) => ParsedInputBlock) {
     if (!parsed) return;
     invalidateAnalysis();
-    setParsed({ ...parsed, blocks: parsed.blocks.map((block) => block.block_id === blockId ? update(block) : block) });
+    const blocks = parsed.blocks.map((block) => {
+      if (block.block_id !== blockId) return block;
+      const updated = update(block);
+      return { ...updated, warnings: deriveBlockWarnings(updated) };
+    });
+    setParsed({
+      ...parsed,
+      blocks,
+      warnings: blocks.flatMap((block) => block.warnings),
+      fixture: blocks[0].fixture,
+      markets: blocks[0].markets,
+    });
   }
 
   function updateFixture(blockId: string, patch: Partial<EditableFixtureInput>) {
