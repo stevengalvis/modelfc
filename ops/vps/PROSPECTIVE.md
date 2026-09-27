@@ -21,6 +21,15 @@ timer/unit already exists. Require the refresh-runtime migration and validator
 history access to be healthy first. Keep the existing refresh unit and timer
 unchanged.
 
+Preserve the original failed Gate C record as `FAIL`. Its verifier changed Git
+administrative metadata in the deployed release even though later investigation
+proved that application/source bytes, all 129 tracked files, all 2,171 virtualenv
+entries, runtime provenance and the selected release remained intact. Do not edit
+that evidence or reclassify the attempt as successful. The verified
+post-investigation release state is the baseline for the next separately authorized
+Gate C attempt; retain the current release and do not reconstruct historical
+`.git/index` bytes, inode or timestamps.
+
 Stop and quiesce every old/manual prospective invocation. The current pilot is not
 scheduled, but prove no process holds its runner lock. Inventory all of
 `/root/modelfc-state`, not merely the inspected `prospective/control.json` and
@@ -99,7 +108,56 @@ Reject `EnvironmentFile`, lifecycle hooks, retries, additional credentials, alte
 paths, or inherited secrets. Ordinary GitHub/VPS post-merge deployment remains
 code-only and must not install these trusted files or restart the service.
 
-## 5. Offline host acceptance
+## 5. Gate C offline host acceptance
+
+### Read-only release verification invariant
+
+Coordinate with deployment before taking the Gate C baseline. Prove deployment
+workers are quiescent, pin the exact physical direct child of
+`/srv/modelfc/releases` selected by `/srv/modelfc/current`, and keep that path fixed
+for the entire attempt. Record the physical path and directly verify the protected
+deployed-SHA marker, expected SHA, HEAD where required, source/runtime file hashes,
+virtualenv manifest and hashes where required, ownership and modes, and relevant
+lock identities. Capture these protected artifacts before and after acceptance.
+
+Treat the production release as read-only. Gate C must not run Git working-tree
+commands against it. Prohibited acceptance commands include:
+
+- `git diff`;
+- `git status`;
+- `git update-index`;
+- `git reset`;
+- `git checkout`;
+- any other Git operation that may refresh or write working-tree, index or
+  repository administrative metadata.
+
+`GIT_OPTIONAL_LOCKS=0` is not sufficient: commands such as `git diff` can refresh
+and replace `.git/index` when `diff.autoRefreshIndex` is enabled and cached stat
+information is stale.
+
+If verification beyond the protected deployed-SHA marker and directly read HEAD is
+required, copy the required Git object database and metadata into an independent,
+disposable verification location. Perform commit-object and tree inspection only
+against that disposable copy. Compare production source and runtime files to the
+expected tree using direct file hashes without asking Git to refresh, inspect or
+compare the production working tree. Remove only the disposable verifier copy after
+retaining its sanitized result.
+
+Before accepting Gate C, compare the before/after manifests and fail if application,
+virtualenv, deployed-SHA provenance, ownership/mode, lock identity or another
+protected runtime artifact changed unexpectedly. An unexpected `.git/index` or
+other administrative-metadata change remains evidence that the verifier wrote to
+the release and therefore makes the attempt fail. Historical `.git/index` stat-cache
+bytes, inode and mtime are not themselves application authenticity or runtime
+provenance. The launchers pin the physical release and validate its protected
+`.git/modelfc-deployed-sha` marker; they do not depend on `.git/index`.
+
+Do not use same-SHA deployment as recovery or index reconstruction. The deployment
+controller returns `ALREADY_CURRENT` for the active SHA and does not recreate that
+release. A new Gate C attempt starts from the recorded post-investigation baseline
+and remains a distinct attempt from the preserved failure.
+
+### Host checks
 
 With network access blocked and the real `modelfc-runtime` identity, verify:
 
