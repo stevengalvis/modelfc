@@ -1,0 +1,38 @@
+[Unit]
+Description=Collect one Model FC prospective Championship observation pass
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=modelfc-runtime
+Group=modelfc-runtime
+WorkingDirectory=/srv/modelfc/current
+ExecStart=/usr/bin/python3 -I -B /usr/local/libexec/modelfc-prospective-launch.py
+LoadCredential=oddspapi.key:/etc/modelfc/credentials/oddspapi.key
+UMask=0077
+StandardInput=null
+UnsetEnvironment=GITHUB_TOKEN GH_TOKEN SSH_AUTH_SOCK PYTHONPATH PYTHONHOME LD_PRELOAD LD_LIBRARY_PATH LD_AUDIT ODDSPAPI_API_KEY
+TimeoutStartSec=20min
+TimeoutStopSec=30
+KillMode=control-group
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ReadOnlyPaths=/srv/modelfc /etc/modelfc /var/lib/modelfc/history
+ReadWritePaths=/var/lib/modelfc/state /var/lib/modelfc/history/data/corner-refresh/refresh.lock
+InaccessiblePaths=-/var/lib/modelfc-deploy -/run/modelfc-acquisition
+InaccessiblePaths=-/etc/modelfc-validator -/var/lib/modelfc-validator
+InaccessiblePaths=-/opt/modelfc-deploy -/opt/modelfc-validator
+InaccessiblePaths=-/etc/modelfc/credentials
+InaccessiblePaths=-/root/modelfc-state -/root
+InaccessiblePaths=-/var/lib/modelfc/history/data/corner-refresh/backups
+InaccessiblePaths=-/var/lib/modelfc/history/data/corner-refresh/status.json
+InaccessiblePaths=-/var/lib/modelfc/history/data/corner-refresh/refresh-run.lock
+CapabilityBoundingSet=
+RestrictSUIDSGID=yes
+
+[Install]
+# Installation and activation are separately authorized host operations.

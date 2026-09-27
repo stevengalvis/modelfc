@@ -1,0 +1,11 @@
+[Unit]
+Description=Run Model FC prospective collection hourly at minute 05 UTC
+
+[Timer]
+OnCalendar=*-*-* *:05:00 UTC
+Persistent=false
+RandomizedDelaySec=0
+Unit=modelfc-corner-prospective.service
+
+[Install]
+WantedBy=timers.target

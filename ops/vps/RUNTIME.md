@@ -2,7 +2,9 @@
 
 This is a staged installation runbook, not authorization to execute it. Repository
 review, merge/code deployment, VPS migration, and a real refresh are four separate
-approval stages. No runner or `/root/modelfc-state` migration is included.
+approval stages. No runner or `/root/modelfc-state` migration is included here;
+the separately staged prospective cutover is documented in
+[PROSPECTIVE.md](PROSPECTIVE.md).
 
 ## 1. Repository review and code deployment
 
@@ -199,4 +201,6 @@ keep compatible new runtime code or perform the full reconciled legacy-runtime
 rollback above so ACL enforcement and validator lock identity are explicit.
 
 Prospective collection, runner state, `/root/modelfc-state`, scheduling changes,
-settlement and provider access remain outside this migration.
+settlement and provider access remain outside this migration. After this refresh
+migration is accepted, use [PROSPECTIVE.md](PROSPECTIVE.md) for the separate runner
+state, credential, launcher and timer cutover.

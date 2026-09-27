@@ -106,6 +106,11 @@ postmerge units and checks deployment-account R/W/X exclusion. Install the trust
 controller and units together before migrating history. Original checkout history
 and `/root/modelfc-state` remain protected; this PR does not move either.
 
+For the later, independently approved prospective-runner cutover to
+`/var/lib/modelfc/state`, use [PROSPECTIVE.md](PROSPECTIVE.md). Normal post-merge
+deployment remains code-only: it does not install that launcher/unit, provision its
+credential, migrate or enroll state, start the service, or enable its timer.
+
 
 Deployments do not move or copy historical CSVs. Their current location remains
 `/root/dev/modelfc`; refreshing those CSVs and acquiring `data/corner-refresh/
