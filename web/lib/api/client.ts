@@ -1,7 +1,8 @@
 import { isApiErrorBody, ModelFCApiError } from "./errors";
-import { mockAnalyze, mockCapabilities } from "./mock";
+import { mockAnalyze, mockCapabilities, mockPredictions, mockOpportunities, mockPerformance } from "./mock";
+import { decodePredictions, decodeOpportunities, decodePerformance } from "./prospective";
 import { decodeCapabilities } from "./capabilities";
-import type { AnalysisRequest, AnalysisResponse, CapabilitiesResponse } from "./types";
+import type { AnalysisRequest, AnalysisResponse, CapabilitiesResponse, ProspectivePrediction, ProspectiveOpportunity, ProspectivePerformance } from "./types";
 
 const API_BASE = process.env.NEXT_PUBLIC_MODELFC_API_URL;
 // A deployment must opt into mock mode explicitly. Missing configuration is
@@ -157,6 +158,24 @@ export function createApiClient(mode: string | undefined, baseUrl?: string) {
       const value = mode === "mock" ? structuredClone(mockCapabilities)
         : await requestJson<unknown>(baseUrl!, "/capabilities", { signal });
       return decodeCapabilities(value);
+    },
+    async predictions(signal?: AbortSignal): Promise<ProspectivePrediction[]> {
+      checkConfiguration();
+      signal?.throwIfAborted();
+      return decodePredictions(mode === "mock" ? structuredClone(mockPredictions)
+        : await requestJson<unknown>(baseUrl!, "/predictions", { signal }));
+    },
+    async opportunities(signal?: AbortSignal): Promise<ProspectiveOpportunity[]> {
+      checkConfiguration();
+      signal?.throwIfAborted();
+      return decodeOpportunities(mode === "mock" ? structuredClone(mockOpportunities)
+        : await requestJson<unknown>(baseUrl!, "/opportunities", { signal }));
+    },
+    async performance(signal?: AbortSignal): Promise<ProspectivePerformance> {
+      checkConfiguration();
+      signal?.throwIfAborted();
+      return decodePerformance(mode === "mock" ? structuredClone(mockPerformance)
+        : await requestJson<unknown>(baseUrl!, "/prospective/performance", { signal }));
     },
     async analyze(payload: AnalysisRequest, signal?: AbortSignal): Promise<AnalysisResponse> {
       checkConfiguration();

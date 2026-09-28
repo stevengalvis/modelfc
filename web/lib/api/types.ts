@@ -105,3 +105,81 @@ export interface CapabilitiesResponse {
   }>;
   competitions: CompetitionCapability[];
 }
+
+export type ProspectiveStatus = "UPCOMING" | "SETTLED" | "EXPIRED_UNSETTLED";
+export type OpportunityResult = "WIN" | "LOSS" | "PUSH";
+
+export interface ProspectivePrediction {
+  prediction_id: string;
+  source_observation_id: string;
+  created_at_utc: string;
+  competition: string;
+  provider: string;
+  provider_fixture_id: string;
+  kickoff_utc: string;
+  home_team: string;
+  away_team: string;
+  model_name: string;
+  model_version: string;
+  expected_home_corners: number;
+  expected_away_corners: number;
+  expected_match_corners: number;
+  dispersion_size: number | null;
+  latest_history_date: string;
+  source_data_hashes: Array<{ filename: string; sha256: string }>;
+  target_count: number;
+  opportunity_count: number;
+  settlement_status: ProspectiveStatus;
+  actual_home_corners: number | null;
+  actual_away_corners: number | null;
+}
+
+export interface ProspectiveOpportunity {
+  opportunity_id: string;
+  prediction_id: string;
+  target_id: string;
+  observation_id: string;
+  provider: string;
+  provider_fixture_id: string;
+  competition: string;
+  kickoff_utc: string;
+  home_team: string;
+  away_team: string;
+  bookmaker: string;
+  market_type: "TEAM_TOTAL";
+  team_side: TeamSide;
+  team: string;
+  direction: BetSide;
+  line: number;
+  american_odds: number;
+  decimal_odds: number;
+  qualified_at_utc: string;
+  model_decisive_probability: number;
+  no_vig_market_probability: number;
+  no_vig_probability_edge: number;
+  policy_version: string;
+  settlement_status: ProspectiveStatus;
+  result: OpportunityResult | null;
+  actual_team_corners: number | null;
+  realized_profit_units: number | null;
+}
+
+export interface ProspectivePerformance {
+  model_performance: {
+    total_prediction_runs: number;
+    total_unique_prediction_targets: number;
+    supported_prediction_targets: number;
+    settled_prediction_targets: number;
+    unsettled_supported_prediction_targets: number;
+  };
+  opportunity_performance: {
+    total_opportunity_events: number;
+    settled_opportunities: number;
+    wins: number;
+    losses: number;
+    pushes: number;
+    win_rate_excluding_pushes: number | null;
+    realized_profit_units: number;
+    unresolved_open_opportunities: number;
+  };
+}
