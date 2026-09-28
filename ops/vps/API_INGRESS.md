@@ -45,7 +45,7 @@ temporary files created as `0600`.
 An empty prospective state may have no `state/.lock`: the writer creates it lazily
 on the first state publication. Treat that absence as valid during installation;
 do not create a placeholder lock or change the writer's lock inode. Verify the
-existing lock is a singly linked regular file owned by the runtime account before granting
+existing lock is an empty, singly linked regular file owned by the runtime account before granting
 its one-time read ACL, if present. The one-time ACL on `runner.lock` is still
 required even for an empty state.
 
@@ -58,6 +58,9 @@ clean child environment. Only the six evidence record families receive a read
 ACL on the temporary file **before** atomic publication; their new parent
 directories receive narrowly scoped traversal/read ACLs. ACL failure aborts
 that record before publication and does not refund provider reservations.
+The writer keeps the serialized temporary record open and applies its read ACL
+through that validated descriptor before the exclusive link; replacement of
+the temporary pathname prevents publication.
 For the first evidence publication, the writer creates and holds the real
 `state/.lock`, validates it as a regular file owned by its runtime UID, and
 rejects additional hard links. It grants the API identity read access through
