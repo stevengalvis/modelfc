@@ -82,8 +82,10 @@ class ProspectiveLaunchTests(unittest.TestCase):
                                 "run-once", "--data-config", str(self.config),
                                 "--state-dir", str(self.state), "--require-calendar-budget"])
         self.assertEqual(set(env), {"PATH", "HOME", "LANG", "PYTHONPATH", "PYTHONNOUSERSITE",
-                                    "PYTHONDONTWRITEBYTECODE", "ODDSPAPI_API_KEY"})
+                                    "PYTHONDONTWRITEBYTECODE", "ODDSPAPI_API_KEY",
+                                    "MODELFC_EVIDENCE_ACL_USER"})
         self.assertEqual(env["ODDSPAPI_API_KEY"], "offline-secret")
+        self.assertEqual(env["MODELFC_EVIDENCE_ACL_USER"], "modelfc-api")
         record = json.loads(output.getvalue())
         self.assertEqual(record["release"], str(self.a))
         self.assertEqual(record["sha"], "a" * 40)

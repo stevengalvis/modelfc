@@ -105,6 +105,7 @@ def ensure_directory(path: Path, label: str) -> None:
 
 def write_new_record(
     path: Path, record: dict[str, Any], *, before_publish: Callable[[], None] | None = None,
+    evidence_state: Path | None = None,
 ) -> None:
     """Atomically create a complete JSON record without replacing a file."""
     try:
@@ -121,6 +122,8 @@ def write_new_record(
             output.write(serialized)
             output.flush()
             os.fsync(output.fileno())
+        if evidence_state is not None:
+            _grant_evidence_read(temporary_path, path, evidence_state)
         # Run after serialization/fsync, immediately before exclusive publication.
         if before_publish is not None:
             before_publish()
@@ -137,6 +140,43 @@ def write_new_record(
                 temporary_path.unlink()
             except FileNotFoundError:
                 pass
+
+
+def _grant_evidence_read(temporary: Path, target: Path, state: Path) -> None:
+    """Grant the dedicated API UID read access before immutable publication.
+
+    The opt-in is supplied only by the root-installed prospective launcher.
+    Other ledger records, especially budget/control state, never call this path.
+    """
+    if os.environ.get("MODELFC_EVIDENCE_ACL_USER") != "modelfc-api":
+        return
+    allowed = {"analyses", "analysis-outcomes", "predictions", "prediction-targets",
+               "market-observations", "opportunities"}
+    try:
+        relative = target.relative_to(state)
+        if (len(relative.parts) not in (2, 3) or relative.parts[0] not in allowed
+                or target.suffix != ".json" or temporary.parent != target.parent):
+            raise ValueError("invalid public evidence location")
+        uid = pwd.getpwnam("modelfc-api").pw_uid
+        directories = [state, *(state.joinpath(*relative.parts[:index])
+                               for index in range(1, len(relative.parts)))]
+        for index, directory in enumerate(directories):
+            info = directory.lstat()
+            if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid():
+                raise ValueError("invalid public evidence directory")
+            permission = "--x" if index == 0 else "r-x"
+            subprocess.run(("/usr/bin/setfacl", "-m", f"u:{uid}:{permission}",
+                            "--", str(directory)), check=True, timeout=10,
+                           env={"PATH": "/usr/bin:/bin"},
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        info = temporary.lstat()
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid():
+            raise ValueError("invalid public evidence file")
+        subprocess.run(("/usr/bin/setfacl", "-m", f"u:{uid}:r--", "--", str(temporary)),
+                       check=True, timeout=10, env={"PATH": "/usr/bin:/bin"},
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except (ValueError, KeyError, OSError, subprocess.SubprocessError):
+        raise LedgerStorageUnavailable("public evidence read ACL failed; record not published") from None
 
 
 @contextmanager

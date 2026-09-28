@@ -31,6 +31,9 @@ def launch():
         raise ValueError("invalid API release")
     deploy_owner = pwd.getpwnam("modelfc-deploy").pw_uid
     runtime_owner = pwd.getpwnam("modelfc-runtime").pw_uid
+    api_owner = pwd.getpwnam("modelfc-api").pw_uid
+    if api_owner == runtime_owner or os.getuid() != api_owner:
+        raise ValueError("API must run under a separate identity")
     for path in (RELEASES.parent, RELEASES, release, release / ".git", release / "src",
                  release / "src/modelfc", release / ".venv", release / ".venv/bin"):
         protected(path, deploy_owner, directory=True)

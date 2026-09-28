@@ -252,5 +252,6 @@ def store_analysis_capture(
         existing = replay()
         if existing is not None:
             return existing, False
-        write_new_record(analysis_path, record, before_publish=before_publish)
+        write_new_record(analysis_path, record, before_publish=before_publish,
+                         evidence_state=state)
     return response, True

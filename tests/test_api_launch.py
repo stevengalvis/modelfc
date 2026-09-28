@@ -41,7 +41,8 @@ class ApiLaunchTests(unittest.TestCase):
                             ("HISTORY", self.history)):
             item = patch.object(launcher, name, value)
             item.start(); self.addCleanup(item.stop)
-        item = patch.object(launcher.pwd, "getpwnam", return_value=type("UID", (), {"pw_uid": os.getuid()})())
+        item = patch.object(launcher.pwd, "getpwnam", side_effect=lambda name: type(
+            "UID", (), {"pw_uid": os.getuid() + 10001 if name == "modelfc-runtime" else os.getuid()})())
         item.start(); self.addCleanup(item.stop)
         original = launcher.protected
         item = patch.object(launcher, "protected", side_effect=lambda path, _uid, **kw: original(path, os.getuid(), **kw))
@@ -97,10 +98,19 @@ class ApiLaunchTests(unittest.TestCase):
                 launcher.launch()
             execute.assert_not_called()
 
+    def test_api_must_have_distinct_uid_from_writer(self):
+        with patch.object(Path, "cwd", return_value=self.first), \
+                patch.object(launcher.pwd, "getpwnam", return_value=type("UID", (), {"pw_uid": os.getuid()})()), \
+                patch.object(os, "execve") as execute:
+            with self.assertRaisesRegex(ValueError, "separate identity"):
+                launcher.launch()
+            execute.assert_not_called()
+
     def test_installed_unit_and_exact_public_routes(self):
         unit = (ROOT / "deploy/modelfc-corner-api.service").read_text()
         caddy = (ROOT / "deploy/modelfc-api.Caddyfile").read_text()
-        for required in ("User=modelfc-runtime", "WorkingDirectory=/srv/modelfc/current",
+        for required in ("User=modelfc-api", "Group=modelfc-api",
+                         "WorkingDirectory=/srv/modelfc/current",
                          "ProtectSystem=strict", "ProtectHome=yes", "PrivateTmp=yes",
                          "NoNewPrivileges=yes", "RestrictSUIDSGID=yes",
                          "ReadOnlyPaths=/srv/modelfc /etc/modelfc /var/lib/modelfc/state",

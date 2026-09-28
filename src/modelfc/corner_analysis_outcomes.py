@@ -300,7 +300,7 @@ def record_outcome(*, state_dir, analysis_id, data_config_path, idempotency_key,
                   "supersedes_outcome_id": supersedes_outcome_id, "correction_reason": correction_reason}
         record["record_hash"] = _canonical_hash(record)
         ensure_directory(directory, "analysis outcome directory")
-        write_new_record(directory / f"{outcome_id}.json", record)
+        write_new_record(directory / f"{outcome_id}.json", record, evidence_state=state)
     return record, True
 
 

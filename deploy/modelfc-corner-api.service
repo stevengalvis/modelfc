@@ -4,8 +4,8 @@ After=network.target
 
 [Service]
 Type=simple
-User=modelfc-runtime
-Group=modelfc-runtime
+User=modelfc-api
+Group=modelfc-api
 WorkingDirectory=/srv/modelfc/current
 ExecStart=/usr/bin/python3 -I -B /usr/local/libexec/modelfc-api-launch.py
 UMask=0077

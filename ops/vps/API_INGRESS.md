@@ -11,6 +11,8 @@ policy, not the access-control boundary.
 
 Review `ops/vps/api_launch.py`, `deploy/modelfc-corner-api.service`,
 `deploy/modelfc-api.Caddyfile`, public error handling and frontend behavior.
+Review the narrowly scoped prospective evidence ACL changes and trusted
+`ops/vps/prospective_launch.py` update as part of the same compatibility gate.
 Merging deploys a release through the existing controller. It does not install
 trusted files, install Caddy, start the API, enable the API unit, switch Vercel,
 alter DNS or touch the prospective timer/state. The deployed release includes
@@ -20,7 +22,40 @@ the Python dependencies already used by the existing FastAPI tests.
 
 Before any host change, record current release SHA, effective services, listeners,
 firewall state, owners/modes, and history/state lock inodes. Preserve copies of
-any files replaced. Install the reviewed launcher as root:root, mode 0755 at
+any files replaced. Create a dedicated non-sudo `modelfc-api` account with no
+membership in `modelfc-runtime`, deploy, validator or credential groups. Check
+that the account cannot inspect the running writer's `/proc/<pid>/environ`,
+send it signals, read the source credential or traverse private budget paths.
+Do not give the API account blanket access to state or history.
+
+Under the existing state and prospective runner locks, grant the new identity
+traversal on `/var/lib/modelfc`, traversal on state, read access to the two
+existing lock files (`state/.lock`, `state/prospective/runner.lock`), and read
+plus traversal **only** on the six public evidence directories and their
+existing nested directories: `analyses`, `analysis-outcomes`, `predictions`,
+`prediction-targets`, `market-observations`, `opportunities`. Grant read access
+only to their existing referenced JSON records. Record before/after metadata,
+bytes and hashes; do not replace, edit or reserialize any immutable evidence.
+Do not grant traversal/read to `prospective/control.json`, `budget-events`,
+refresh internals or provider credentials. Check an unrelated root-owned or
+runtime-private file remains unreadable. Existing `0600` records need an
+explicit one-time read ACL; directory inheritance alone cannot expose future
+temporary files created as `0600`.
+
+Install the reviewed updated `prospective_launch.py` as the root-owned trusted
+launcher only after the account, ACL tool, migration and compatible reviewed
+release are verified. Coordinate with the hourly timer, wait for the current
+run to exit, and preserve the old launcher for rollback. The new trusted
+launcher opts the writer into `MODELFC_EVIDENCE_ACL_USER=modelfc-api` in its
+clean child environment. Only the six evidence record families receive a read
+ACL on the temporary file **before** atomic publication; their new parent
+directories receive narrowly scoped traversal/read ACLs. ACL failure aborts
+that record before publication and does not refund provider reservations.
+Older installed launchers do not opt in even when new code is deployed, so
+code merge alone does not change the active writer or its state. Verify new
+file ACL behavior using disposable offline fixture state, not real collection.
+
+Install the reviewed API launcher as root:root, mode 0755 at
 `/usr/local/libexec/modelfc-api-launch.py`, and the reviewed unit as root:root,
 mode 0644 at `/etc/systemd/system/modelfc-corner-api.service`. Supply the
 verified production Vercel origin, for example `https://modelfc.vercel.app`,
@@ -39,17 +74,18 @@ is `/etc/modelfc/corner_data.json`, `MODELFC_STATE_DIR` is
 `/var/lib/modelfc/state`, and `MODELFC_CORS_ORIGINS` comes from the verified
 origin file. There is no OddsPapi credential or provider environment.
 
-The API shares the `modelfc-runtime` UID so it can read future `0600` evidence
-without changing immutable publication. `ProtectSystem=strict` and no write
-exceptions make its production filesystem read-only inside the API unit;
+The API runs under the distinct `modelfc-api` UID. Its selected read ACLs let it
+open future `0600` evidence while it cannot inspect the writer process or its
+environment. `ProtectSystem=strict` and no write exceptions make its
+production filesystem read-only inside the API unit;
 credential directories, including systemd's `/run/credentials`, are hidden.
 Confirm this **on the host** with a safe,
 separately created disposable fixture: it can read future-style private files
 and take shared locks, but cannot write a fixture within state. Do not test a
 write against real evidence or mutate a live lock. Verify effective sandbox,
 environment and loopback bind, and external inability to reach port 8000.
-Unlike account-level separation, this boundary depends on effective systemd
-namespace isolation; root or another `modelfc-runtime` process is outside it.
+Confirm that this account cannot read other state files, history, budget events
+or the writer's credential even if the API unit's mount sandbox were absent.
 
 After a verified start, this long-running process continues using its pinned
 physical release through any deployment promotion. `RuntimeMaxSec=30min` and
@@ -98,7 +134,8 @@ unknown paths, trailing slashes, and non-GET methods fail at Caddy. Test exact
 origin CORS from the production frontend; `OPTIONS` should not be required for
 the simple browser GETs after their unnecessary Content-Type header is removed.
 Test that even direct loopback POST from the API's sandbox cannot write state.
-Inspect that no state, provider credentials, or prospective timer changed.
+Inspect that evidence bytes, provider credentials, and prospective timer remain
+unchanged; only the separately approved access ACL metadata may differ.
 The read routes may return transient 503 while the writer holds its lock;
 do not weaken locking to avoid that status.
 
@@ -118,6 +155,8 @@ Restore the previous Vercel environment/build if necessary, and stop/disable
 the new API/Caddy units or remove the new ingress under separate host approval.
 If rolling back application code, verify its compatibility with current
 prospective state, including discovery retry fields, before selecting an older
-release. Never restore or delete immutable evidence, reset budget control, or
+release. If reverting the trusted prospective launcher to one without ACL
+publication, take the public API offline first: new immutable files otherwise
+become unreadable to the API account. Never restore or delete immutable evidence, reset budget control, or
 stop the prospective runner as a shortcut. Preserve existing release and host
 manifests for comparison; revoke only the new exposure, leaving writers active.
