@@ -212,6 +212,30 @@ Do not point `current` at such code and leave the timer active. Restoring older 
 requires a coordinated compatible state/schema decision, not silent control-file
 editing.
 
+PR #76 adds `queries` and `last_attempt_at` to the persisted `discovery` object
+without changing the version-2 control schema number. The new runner reads both
+the old three-field object and the extended object, but pre-#76 runners require
+exactly `date`, `status`, and `fixtures`. Once a #76 runner saves an extended
+object, a pre-#76 runner rejects that control as `CONTROL_INVALID` before provider
+work. A code-only rollback is therefore not a working runtime rollback, even if
+the release and timer themselves can be switched back.
+
+For a rollback after #76 has run: first stop future timer triggers and let any
+active invocation finish or establish its exact interrupted state. Keep the
+authoritative state untouched while recording the pinned release, control and
+budget-event contents, reservations, discovery query count/time, cached fixture
+union, attempts, and immutable capture/observation/settlement inventory. If the
+control still has the legacy discovery shape, verify the entire state against the
+target release's schema and launcher before restoring that release. If the control
+has the extended shape, keep a #76-compatible runner in service or prepare a
+separately reviewed state-aware migration and compatible rollback release; verify
+that it preserves discovery/attempt history, every reservation and all immutable
+evidence, and cannot issue a duplicate same-day query or quote. Do not strip the
+two fields, reset control, refund reservations, copy an old state tree over new
+records, or resume the timer with a pre-#76 runner against extended control.
+Resume the timer only after the chosen release and authoritative state have been
+verified together under the approved rollback plan.
+
 Known release-lifetime limitation: failed-promotion cleanup can delete a candidate
 briefly visible through `current`. A launcher which already pinned that release can
 lose files. This change does not alter deployment release lifetime. Record explicit
