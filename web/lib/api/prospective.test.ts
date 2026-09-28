@@ -59,6 +59,20 @@ describe("prospective response boundary", () => {
     ["win with impossible negative profit", changed(mockPerformance, (v) => {
       v.opportunity_performance.realized_profit_units = -1;
     }), "performance"],
+    ["targets without prediction runs", changed(mockPerformance, (v) => {
+      v.model_performance.total_prediction_runs = 0;
+    }), "performance"],
+    ["opportunities without prediction runs", changed(mockPerformance, (v) => {
+      v.model_performance.total_prediction_runs = 0;
+      v.model_performance.total_unique_prediction_targets = 0;
+      v.model_performance.supported_prediction_targets = 0;
+      v.model_performance.settled_prediction_targets = 0;
+      v.model_performance.unsettled_supported_prediction_targets = 0;
+    }), "performance"],
+    ["settled opportunities without settled targets", changed(mockPerformance, (v) => {
+      v.model_performance.settled_prediction_targets = 0;
+      v.model_performance.unsettled_supported_prediction_targets = 5;
+    }), "performance"],
     ["invalid totals", changed(mockPerformance, (v) => { v.opportunity_performance.settled_opportunities = 7; }), "performance"],
   ] as const)("rejects %s", async (_name, value, method) => {
     await expect(live(value)[method]()).rejects.toMatchObject({ code: "PROSPECTIVE_CONTRACT_MISMATCH" });

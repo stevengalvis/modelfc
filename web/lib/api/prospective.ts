@@ -82,6 +82,9 @@ export function decodePerformance(value: unknown): ProspectivePerformance {
     || !finite(offers.realized_profit_units)
     || (offers.wins === 0 && offers.realized_profit_units !== -(offers.losses as number))
     || ((offers.wins as number) > 0 && (offers.realized_profit_units as number) <= -(offers.losses as number))
+    || (model.total_prediction_runs === 0 && ((model.total_unique_prediction_targets as number) !== 0 || (offers.total_opportunity_events as number) !== 0))
+    || ((offers.total_opportunity_events as number) > 0 && model.supported_prediction_targets === 0)
+    || ((offers.settled_opportunities as number) > 0 && model.settled_prediction_targets === 0)
     || model.settled_prediction_targets as number > (model.supported_prediction_targets as number)
     || model.supported_prediction_targets as number > (model.total_unique_prediction_targets as number)
     || (model.settled_prediction_targets as number) + (model.unsettled_supported_prediction_targets as number) !== model.supported_prediction_targets
