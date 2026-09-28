@@ -77,6 +77,11 @@ describe("prospective response boundary", () => {
       v.opportunity_performance.wins = 0; v.opportunity_performance.pushes = 2;
       v.opportunity_performance.win_rate_excluding_pushes = 0;
     }), "performance"],
+    ["win below minimum payout", changed(mockPerformance, (v) => {
+      v.opportunity_performance.losses = 0; v.opportunity_performance.pushes = 2;
+      v.opportunity_performance.win_rate_excluding_pushes = 1;
+      v.opportunity_performance.realized_profit_units = 0.1;
+    }), "performance"],
     ["win with impossible negative profit", changed(mockPerformance, (v) => {
       v.opportunity_performance.realized_profit_units = -1;
     }), "performance"],

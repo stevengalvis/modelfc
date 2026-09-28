@@ -96,7 +96,7 @@ export function decodePerformance(value: unknown): ProspectivePerformance {
     || (offers.win_rate_excluding_pushes !== null && !probability(offers.win_rate_excluding_pushes))
     || !finite(offers.realized_profit_units)
     || (offers.wins === 0 && offers.realized_profit_units !== -(offers.losses as number))
-    || ((offers.wins as number) > 0 && (offers.realized_profit_units as number) <= -(offers.losses as number))
+    || ((offers.wins as number) > 0 && (offers.realized_profit_units as number) < 0.5 * (offers.wins as number) - (offers.losses as number) - 1e-8)
     || (model.total_prediction_runs === 0 && ((model.total_unique_prediction_targets as number) !== 0 || (offers.total_opportunity_events as number) !== 0))
     || ((offers.total_opportunity_events as number) > 0 && model.supported_prediction_targets === 0)
     || ((offers.settled_opportunities as number) > 0 && model.settled_prediction_targets === 0)
