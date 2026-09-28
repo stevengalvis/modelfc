@@ -37,6 +37,12 @@ class RunnerError(ValueError):
     pass
 
 
+# One later same-day discovery, with enough time for a useful prematch quote.
+DISCOVERY_RETRY_HOUR = 12
+DISCOVERY_CUTOFF_HOUR = 18
+DISCOVERY_RETRY_DELAY = timedelta(hours=6)
+
+
 def _now():
     return datetime.now(timezone.utc)
 
@@ -114,11 +120,18 @@ def _load(path, market_data_type=OddsPapiMarketData):
             _timestamp(attempt["at"])
         discovery = control["discovery"]
         if discovery is not None:
-            _require(set(discovery) == {"date", "status", "fixtures"})
+            legacy = set(discovery) == {"date", "status", "fixtures"}
+            _require(legacy or set(discovery) == {
+                "date", "status", "fixtures", "queries", "last_attempt_at"})
             day = date.fromisoformat(discovery["date"])
             _require(discovery["status"] in ("RESERVED", "DONE", "FAILED"))
             _require(isinstance(discovery["fixtures"], list))
-            _require(discovery["status"] == "DONE" or not discovery["fixtures"])
+            if not legacy:
+                _require(type(discovery["queries"]) is int and discovery["queries"] in (1, 2))
+                attempted = _timestamp(discovery["last_attempt_at"])
+                _require(attempted.date() == day and attempted <= _now())
+            else:
+                _require(discovery["status"] == "DONE" or not discovery["fixtures"])
             ids = set()
             for fixture in discovery["fixtures"]:
                 normalized = market_data_type.cached_fixture(
@@ -293,21 +306,56 @@ def _provider_work(path, control, state, config, summary, captured, market_data_
                 raise RunnerError(str(error)) from None
         return client
 
-    day = _now().date().isoformat()
+    current = _now()
+    day = current.date().isoformat()
     discovery = control["discovery"]
-    if discovery is None or discovery["date"] != day:
+    new_day = discovery is None or discovery["date"] != day
+    retry = False
+    if not new_day and discovery["status"] == "DONE" and discovery.get("queries", 1) == 1:
+        if "last_attempt_at" in discovery:
+            last_attempt = _timestamp(discovery["last_attempt_at"])
+        else:
+            # For legacy controls, a same-day provider request is a conservative
+            # lower bound on when discovery finished.
+            last_request = control["last_request"]
+            last_attempt = (datetime.fromtimestamp(last_request, timezone.utc)
+                            if last_request is not None else
+                            datetime.combine(current.date(), datetime.min.time(), timezone.utc))
+            if last_attempt.date() != current.date():
+                last_attempt = datetime.combine(current.date(), datetime.min.time(), timezone.utc)
+        retry = (DISCOVERY_RETRY_HOUR <= current.hour < DISCOVERY_CUTOFF_HOUR
+                 and current - last_attempt >= DISCOVERY_RETRY_DELAY)
+    if new_day or retry:
         client = get_client()
         guard.reserve(1)
-        discovery = {"date": day, "status": "RESERVED", "fixtures": []}
-        control["discovery"] = discovery
+        if new_day:
+            discovery = {"date": day, "status": "RESERVED", "fixtures": [],
+                         "queries": 1, "last_attempt_at": current.isoformat()}
+            control["discovery"] = discovery
+        else:
+            discovery.update(status="RESERVED", queries=2, last_attempt_at=current.isoformat())
         _save(path, control)
         try:
             fixtures = client.discover_fixtures("E1", date.fromisoformat(day))
-            discovery["fixtures"] = [market_data_type.cache_fixture(f) for f in fixtures]
+            additions = [market_data_type.cache_fixture(f) for f in fixtures]
+            as_of = datetime.combine(current.date(), datetime.min.time(), timezone.utc) - timedelta(seconds=1)
+            ids = {market_data_type.cached_fixture(raw,
+                as_of, "E1").provider_fixture_id
+                for raw in discovery["fixtures"]}
+            seen = set()
+            novel = []
+            for raw in additions:
+                normalized = market_data_type.cached_fixture(raw, as_of, "E1")
+                if normalized.kickoff_utc.date() != current.date() or normalized.provider_fixture_id in seen:
+                    raise MarketDataError("DISCOVERY_INVALID")
+                seen.add(normalized.provider_fixture_id)
+                if normalized.provider_fixture_id not in ids:
+                    novel.append(raw)
+            discovery["fixtures"].extend(novel)
             discovery["status"] = "DONE"
             _save(path, control)
         except MarketDataError as error:
-            if str(error) != "DISCOVERY_INVALID":
+            if str(error) not in ("DISCOVERY_INVALID", "FIXTURE_REVIEW"):
                 raise RunnerError(str(error)) from None
             discovery["status"] = "FAILED"
             _save(path, control)
@@ -332,7 +380,16 @@ def _provider_work(path, control, state, config, summary, captured, market_data_
             continue
         previous = control["attempts"].get(fid)
         successful_latest = (latest_slot and (previous is None or previous["count"] == 1))
-        if previous and not successful_latest:
+        late_no_team = False
+        if (initial_slot and previous is not None
+                and previous["state"] == "NO_TEAM_TOTAL" and previous["count"] == 1
+                and 900 < seconds <= 5400):
+            original = fixture_observations(state, fixture.provider, "E1", fid)
+            if len(original) == 1:
+                first_retrieved = _timestamp(original[0]["retrieved_at_utc"])
+                late_no_team = (first_retrieved >= _timestamp(previous["at"])
+                                and _now() - first_retrieved >= timedelta(hours=1))
+        if previous and not (successful_latest or late_no_team):
             if previous["state"] == "RESERVED":
                 _reason(summary, "ATTEMPT_INCOMPLETE")
             continue

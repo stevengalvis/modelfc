@@ -36,6 +36,7 @@ class PilotTests(unittest.TestCase):
         self.sleeps, self.calls = [], []
         patch.object(runner.time, "sleep", side_effect=self.sleep).start()
         self.fixtures = [recorded.recorded("odds-fixtures")[0]]
+        self.discovery_override = None
         self.payload = recorded.recorded("wolves-west-brom-odds")
         self.error = None
         self.metadata = recorded.recorded("odds-markets")
@@ -61,7 +62,7 @@ class PilotTests(unittest.TestCase):
         if self.error is not None:
             raise self.error
         if endpoint == "fixtures":
-            value = deepcopy(self.fixtures)
+            value = deepcopy(self.fixtures if self.discovery_override is None else self.discovery_override)
         elif endpoint == "markets":
             value = deepcopy(self.metadata)
         else:
@@ -319,28 +320,108 @@ class PilotTests(unittest.TestCase):
                 self.assertEqual(len(self.calls) - before, 3 if eligible else 1)
                 self.assertEqual(result["captures_skipped_no_team_totals"], int(eligible))
 
-    def test_no_team_totals_never_grants_later_observation(self):
+    def test_no_team_totals_gets_one_later_observation_only(self):
         self.no_team_totals()
         first = self.run_pilot()
         self.assertEqual(first["provider_requests"], 3)
         self.assertEqual(first["market_observations_created"], 1)
         self.assertEqual(self.run_pilot()["provider_requests"], 0)
-        self.now = self.now.replace(hour=10, minute=0, second=0)
-        self.assertEqual(self.run_pilot()["provider_requests"], 0)
+        self.now = self.now.replace(hour=10, minute=1, second=0)
+        self.assertEqual(self.run_pilot()["provider_requests"], 2)
         self.now += timedelta(minutes=10)
         self.assertEqual(self.run_pilot()["provider_requests"], 0)
         attempt = next(iter(self.control()["attempts"].values()))
-        self.assertEqual(attempt["count"], 1)
+        self.assertEqual(attempt["count"], 2)
         self.assertEqual(attempt["state"], "NO_TEAM_TOTAL")
+        self.assertEqual(len(runner.fixture_observations(
+            self.state, "oddspapi", "E1", self.fixtures[0]["fixtureId"])), 2)
 
-    def test_team_totals_appearing_later_do_not_revive_unwatchlisted_fixture(self):
+    def test_team_totals_appearing_later_capture_once_and_keep_first_observation(self):
         original = deepcopy(self.payload)
         self.no_team_totals()
         self.run_pilot()
+        fixture_id = self.fixtures[0]["fixtureId"]
+        first = runner.fixture_observations(self.state, "oddspapi", "E1", fixture_id)[0]
+        saved = (self.state / "market-observations"
+                 / opportunities.fixture_record_id("oddspapi", "E1", fixture_id)
+                 / (first["observation_id"] + ".json"))
+        original_bytes = saved.read_bytes()
         self.payload = original
         self.now = self.now.replace(hour=10)
-        self.assertEqual(self.run_pilot()["captures_created"], 0)
+        result = self.run_pilot()
+        self.assertEqual((result["captures_created"], result["provider_requests"]), (1, 2))
+        self.assertEqual(saved.read_bytes(), original_bytes)
+        self.assertEqual(len(runner.fixture_observations(self.state, "oddspapi", "E1", fixture_id)), 2)
+        self.assertEqual(len(self.capture_paths()), 1)
         self.assertEqual(self.run_pilot()["provider_requests"], 0)
+
+    def test_no_team_retry_waits_and_closes_before_kickoff(self):
+        self.no_team_totals()
+        self.run_pilot()
+        self.now = self.now.replace(hour=9, minute=59)
+        self.assertEqual(self.run_pilot()["provider_requests"], 0)
+        self.now = self.now.replace(hour=10, minute=0)
+        self.fixtures[0]["startTime"] = (self.now + timedelta(minutes=15)).isoformat()
+        # The cached fixture remains authoritative and is independently gated.
+        self.write_control(lambda c: c["discovery"]["fixtures"][0].update(
+            startTime=(self.now + timedelta(minutes=15)).isoformat()))
+        self.assertEqual(self.run_pilot()["provider_requests"], 0)
+        self.now += timedelta(minutes=16)
+        self.assertEqual(self.run_pilot()["provider_requests"], 0)
+
+    def test_no_team_retry_period_budget_blocks_complete_quote_pair(self):
+        self.no_team_totals()
+        self.run_pilot()
+        self.write_control(lambda c: c["period"].update(allowance=4))
+        self.now = self.now.replace(hour=10)
+        report = self.run_pilot()
+        self.assertEqual(report["provider_requests"], 0)
+        self.assertIn("REQUEST_BUDGET", report["reasons"])
+        self.assertEqual(self.control()["attempts"][self.fixtures[0]["fixtureId"]]["count"], 1)
+
+    def test_no_team_retry_rechecks_window_after_quotes(self):
+        self.no_team_totals()
+        self.run_pilot()
+        self.payload = recorded.recorded("wolves-west-brom-odds")
+        self.now = self.now.replace(hour=10)
+        original = provider.OddsPapiMarketData.get_corner_markets
+        def expire(client, fixture):
+            quotes = original(client, fixture)
+            self.now = fixture.kickoff_utc + timedelta(seconds=1)
+            return quotes
+        with patch.object(provider.OddsPapiMarketData, "get_corner_markets", expire):
+            result = self.run_pilot()
+        self.assertEqual(result["provider_requests"], 2)
+        self.assertEqual(result["captures_created"], 0)
+        self.assertIn("CAPTURE_WINDOW_CLOSED", result["reasons"])
+        self.assertFalse(self.capture_paths())
+        self.assertEqual(self.run_pilot()["provider_requests"], 0)
+
+    def test_no_team_retry_crash_does_not_repeat_reserved_attempt(self):
+        self.no_team_totals()
+        self.run_pilot()
+        self.now = self.now.replace(hour=10)
+        self.error = KeyboardInterrupt()
+        with self.assertRaises(KeyboardInterrupt):
+            self.run_pilot()
+        self.error = None
+        attempt = self.control()["attempts"][self.fixtures[0]["fixtureId"]]
+        self.assertEqual((attempt["count"], attempt["state"]), (2, "RESERVED"))
+        self.assertEqual(self.run_pilot()["provider_requests"], 0)
+
+    def test_no_team_retry_delay_starts_at_first_observation_not_reservation(self):
+        self.fixtures[0]["startTime"] = self.now.replace(hour=11, minute=30).isoformat()
+        self.no_team_totals()
+        original = provider.OddsPapiMarketData.get_corner_markets
+        def slow_first(client, fixture):
+            self.now += timedelta(minutes=40)
+            return original(client, fixture)
+        with patch.object(provider.OddsPapiMarketData, "get_corner_markets", slow_first):
+            self.run_pilot()
+        self.now = self.now.replace(hour=10, minute=0)
+        self.assertEqual(self.run_pilot()["provider_requests"], 0)
+        self.now = self.now.replace(minute=41)
+        self.assertEqual(self.run_pilot()["provider_requests"], 2)
 
     def test_complete_but_unwatchlisted_pair_does_not_receive_later_observation(self):
         real = opportunities.assess_observation
@@ -413,6 +494,99 @@ class PilotTests(unittest.TestCase):
         result = self.run_pilot()
         self.assertEqual(result["reasons"], ["DISCOVERY_INVALID"])
         self.assertEqual(self.run_pilot()["provider_requests"], 0)
+
+    def test_empty_discovery_one_delayed_same_day_retry_and_late_fixture(self):
+        fixture = deepcopy(self.fixtures[0])
+        fixture["startTime"] = (self.now.replace(hour=20)).isoformat()
+        self.fixtures = []
+        self.assertEqual(self.run_pilot()["provider_requests"], 1)
+        self.assertEqual(self.control()["discovery"]["queries"], 1)
+        self.now = self.now.replace(hour=10)
+        self.assertEqual(self.run_pilot()["provider_requests"], 0)
+        self.fixtures = [fixture]
+        self.now = self.now.replace(hour=15)
+        result = self.run_pilot()
+        self.assertEqual((result["provider_requests"], result["captures_created"]), (3, 1))
+        self.assertEqual(self.control()["discovery"]["queries"], 2)
+        self.assertEqual(self.run_pilot()["provider_requests"], 0)
+        self.now = self.now.replace(hour=16)
+        self.assertEqual(self.run_pilot()["provider_requests"], 0)
+        self.assertEqual(len(self.capture_paths()), 1)
+
+    def test_discovery_union_keeps_previous_fixture_when_provider_shrinks(self):
+        self.fixtures[0]["startTime"] = self.now.replace(hour=20).isoformat()
+        fixture = deepcopy(self.fixtures[0])
+        self.run_pilot()
+        cached = deepcopy(self.control()["discovery"]["fixtures"])
+        self.discovery_override = []
+        self.now = self.now.replace(hour=15)
+        result = self.run_pilot()
+        self.assertEqual(result["provider_requests"], 3)
+        self.assertEqual(self.control()["discovery"]["fixtures"], cached)
+        self.assertEqual(len(self.capture_paths()), 1)
+        self.assertEqual(fixture["fixtureId"], cached[0]["fixtureId"])
+
+    def test_discovery_retry_adds_new_fixture_without_replacing_old(self):
+        self.fixtures[0]["startTime"] = self.now.replace(hour=20).isoformat()
+        self.run_pilot()
+        old = deepcopy(self.control()["discovery"]["fixtures"][0])
+        extra = dict(self.fixtures[0], fixtureId="later-fixture")
+        self.fixtures.append(extra)
+        self.now = self.now.replace(hour=15)
+        result = self.run_pilot()
+        self.assertEqual((result["provider_requests"], result["captures_created"]), (4, 2))
+        self.assertEqual(self.control()["discovery"]["fixtures"][0], old)
+        self.assertEqual(len(self.capture_paths()), 2)
+
+    def test_discovery_retry_delay_cutoff_and_period_budget(self):
+        self.fixtures = []
+        self.now = self.now.replace(hour=11)
+        self.run_pilot()
+        self.now = self.now.replace(hour=12)
+        self.assertEqual(self.run_pilot()["provider_requests"], 0)
+        self.now = self.now.replace(hour=17)
+        self.write_control(lambda c: c["period"].update(allowance=1))
+        report = self.run_pilot()
+        self.assertEqual(report["provider_requests"], 0)
+        self.assertIn("REQUEST_BUDGET", report["reasons"])
+        self.assertEqual(self.control()["discovery"]["queries"], 1)
+        self.now = self.now.replace(hour=18)
+        self.assertEqual(self.run_pilot()["provider_requests"], 0)
+
+    def test_discovery_retry_failure_keeps_evidence_and_fails_closed(self):
+        self.fixtures[0]["startTime"] = self.now.replace(hour=20).isoformat()
+        self.run_pilot()
+        cached = deepcopy(self.control()["discovery"]["fixtures"])
+        self.now = self.now.replace(hour=15)
+        self.fixtures[0]["tournamentId"] = 8
+        report = self.run_pilot()
+        self.assertEqual((report["provider_requests"], report["reasons"]), (1, ["DISCOVERY_INVALID"]))
+        control = self.control()
+        self.assertEqual(control["discovery"]["fixtures"], cached)
+        self.assertEqual(control["discovery"]["status"], "FAILED")
+        self.assertEqual(self.run_pilot()["provider_requests"], 0)
+
+    def test_discovery_retry_reserved_crash_preserves_cached_fixtures(self):
+        self.fixtures[0]["startTime"] = self.now.replace(hour=20).isoformat()
+        self.run_pilot()
+        cached = deepcopy(self.control()["discovery"]["fixtures"])
+        self.now = self.now.replace(hour=15)
+        self.error = KeyboardInterrupt()
+        with self.assertRaises(KeyboardInterrupt):
+            self.run_pilot()
+        self.error = None
+        self.assertEqual(self.control()["discovery"]["fixtures"], cached)
+        self.assertEqual(self.control()["discovery"]["status"], "RESERVED")
+        self.assertEqual(self.run_pilot()["provider_requests"], 0)
+
+    def test_legacy_discovery_control_can_retry_once_without_schema_migration(self):
+        self.fixtures = []
+        self.run_pilot()
+        self.write_control(lambda c: (c["discovery"].pop("queries"),
+                                      c["discovery"].pop("last_attempt_at")))
+        self.now = self.now.replace(hour=15)
+        self.assertEqual(self.run_pilot()["provider_requests"], 1)
+        self.assertEqual(self.control()["discovery"]["queries"], 2)
 
     def test_fixture_unknown_team_review_continue(self):
         self.fixtures = [dict(self.fixtures[0], fixtureId="bad", participant1Name="Unknown"), self.fixtures[0]]
