@@ -42,6 +42,13 @@ describe("prospective response boundary", () => {
       v[0].target_count = 0;
     }), "predictions"],
     ["missing result corners", changed(mockPredictions, (v) => { v[1].actual_home_corners = null as unknown as number; }), "predictions"],
+    ["unqualified American price", changed(mockOpportunities, (v) => {
+      v[0].american_odds = -500; v[0].decimal_odds = 1.2;
+    }), "opportunities"],
+    ["unqualified no-vig edge", changed(mockOpportunities, (v) => {
+      v[0].model_decisive_probability = 0.55;
+      v[0].no_vig_probability_edge = 0.03;
+    }), "opportunities"],
     ["inconsistent decimal price", changed(mockOpportunities, (v) => {
       v[0].decimal_odds = 10;
     }), "opportunities"],
