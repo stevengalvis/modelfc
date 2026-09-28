@@ -34,6 +34,11 @@ describe("prospective response boundary", () => {
     ["wrong team side", changed(mockOpportunities, (v) => { v[0].team = "Millwall"; }), "opportunities"],
     ["non-finite edge", changed(mockOpportunities, (v) => { v[0].no_vig_probability_edge = Number.POSITIVE_INFINITY; }), "opportunities"],
     ["invalid result", changed(mockOpportunities, (v) => { (v[1] as { result: string | null }).result = "VOID"; }), "opportunities"],
+    ["result contradicts score", changed(mockOpportunities, (v) => { v[1].actual_team_corners = 3; }), "opportunities"],
+    ["profit without decisive settlement", changed(mockPerformance, (v) => {
+      v.opportunity_performance.wins = 0; v.opportunity_performance.losses = 0;
+      v.opportunity_performance.pushes = 3; v.opportunity_performance.win_rate_excluding_pushes = null as unknown as number;
+    }), "performance"],
     ["invalid totals", changed(mockPerformance, (v) => { v.opportunity_performance.settled_opportunities = 7; }), "performance"],
   ] as const)("rejects %s", async (_name, value, method) => {
     await expect(live(value)[method]()).rejects.toMatchObject({ code: "PROSPECTIVE_CONTRACT_MISMATCH" });

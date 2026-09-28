@@ -14,6 +14,14 @@ const status = (value: unknown) => value === "UPCOMING" || value === "SETTLED" |
 const fixture = (item: RecordValue) => ["competition", "provider", "provider_fixture_id", "home_team", "away_team"].every((key) => nonempty(item[key])) && timestamp(item.kickoff_utc);
 const id = (value: unknown) => nonempty(value);
 const profit = (odds: number) => odds > 0 ? odds / 100 : 100 / -odds;
+const settledResult = (item: RecordValue) => {
+  if (!count(item.actual_team_corners) || !nonnegative(item.line)) return false;
+  const actual = item.actual_team_corners as number;
+  const line = item.line as number;
+  const expected = actual === line ? "PUSH"
+    : (item.direction === "OVER" ? actual > line : actual < line) ? "WIN" : "LOSS";
+  return item.result === expected;
+};
 
 function mismatch(label: string): never {
   throw new ModelFCApiError(`The API returned ${label} outside the prospective V1 contract.`, "PROSPECTIVE_CONTRACT_MISMATCH", false);
@@ -57,6 +65,7 @@ export function decodeOpportunities(value: unknown): ProspectiveOpportunity[] {
       && status(item.settlement_status)
       && (settled
         ? (item.result === "WIN" || item.result === "LOSS" || item.result === "PUSH") && count(item.actual_team_corners) && finite(item.realized_profit_units)
+          && settledResult(item)
           && Math.abs((item.realized_profit_units as number) - (item.result === "WIN" ? profit(item.american_odds as number) : item.result === "LOSS" ? -1 : 0)) < 1e-4
         : item.result === null && item.actual_team_corners === null && item.realized_profit_units === null);
   })) mismatch("opportunities");
@@ -71,6 +80,7 @@ export function decodePerformance(value: unknown): ProspectivePerformance {
     || !["total_opportunity_events", "settled_opportunities", "wins", "losses", "pushes", "unresolved_open_opportunities"].every((key) => count(offers[key]))
     || (offers.win_rate_excluding_pushes !== null && !probability(offers.win_rate_excluding_pushes))
     || !finite(offers.realized_profit_units)
+    || ((offers.wins as number) + (offers.losses as number) === 0 && offers.realized_profit_units !== 0)
     || model.settled_prediction_targets as number > (model.supported_prediction_targets as number)
     || model.supported_prediction_targets as number > (model.total_unique_prediction_targets as number)
     || (model.settled_prediction_targets as number) + (model.unsettled_supported_prediction_targets as number) !== model.supported_prediction_targets
