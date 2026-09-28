@@ -40,6 +40,13 @@ def _number(value: Any) -> float:
     return value
 
 
+def _expected_count(value: Any) -> float:
+    count = _number(value)
+    if count < 0:
+        raise LedgerError("INVALID_PROSPECTIVE_RECORD")
+    return count
+
+
 def _state_directory(state: Path, name: str) -> Path:
     directory = state / name
     if directory.exists() and (directory.is_symlink() or not directory.is_dir()):
@@ -203,8 +210,8 @@ def _locked_inventory(
                 "away_team": fixture["away_team"],
                 "model_name": prediction["model"]["name"],
                 "model_version": prediction["model"]["version"],
-                "expected_home_corners": _number(prediction["distribution"]["home_expected_corners"]),
-                "expected_away_corners": _number(prediction["distribution"]["away_expected_corners"]),
+                "expected_home_corners": _expected_count(prediction["distribution"]["home_expected_corners"]),
+                "expected_away_corners": _expected_count(prediction["distribution"]["away_expected_corners"]),
                 "expected_match_corners": math.fsum((
                     prediction["distribution"]["home_expected_corners"],
                     prediction["distribution"]["away_expected_corners"],

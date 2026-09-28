@@ -432,6 +432,17 @@ class ProspectiveApiTests(unittest.TestCase):
                 self.assertEqual(response.status_code, 409)
                 self.assertEqual(response.json()["error"]["code"], "LEDGER_INTEGRITY_FAILURE")
 
+    def test_negative_frozen_expectation_is_public_integrity_error(self):
+        path = self.state / "predictions" / f"{self.prediction['prediction_id']}.json"
+        record = json.loads(path.read_text(encoding="utf-8"))
+        record["distribution"]["home_expected_corners"] = -2
+        record["record_hash"] = opportunities._canonical_hash(
+            {key: value for key, value in record.items() if key != "record_hash"})
+        path.write_text(json.dumps(record), encoding="utf-8")
+        response = self.client.get("/api/v1/prospective/performance")
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json()["error"]["code"], "LEDGER_INTEGRITY_FAILURE")
+
     def test_boundary_log_loss_is_finite_without_rewriting_probability(self):
         self.write_result()
         inventory = reader._inventory(self.state)
