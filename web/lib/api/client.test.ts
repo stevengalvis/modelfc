@@ -49,6 +49,22 @@ describe("analysis response boundary", () => {
       .rejects.toMatchObject({ code: "ANALYSIS_CONTRACT_MISMATCH" });
   });
 
+  it("rejects supported pick logging without a trusted kickoff", async () => {
+    await expect(analyzeWith((value) => {
+      value.pick_logging.status = "SUPPORTED";
+      value.pick_logging.reason = null;
+      value.fixture.kickoff_at = null;
+    })).rejects.toMatchObject({ code: "ANALYSIS_CONTRACT_MISMATCH" });
+  });
+
+  it("allows disabled pick logging without a trusted kickoff", async () => {
+    await expect(analyzeWith((value) => {
+      value.pick_logging.status = "DISABLED";
+      value.pick_logging.reason = "UNTRUSTED_KICKOFF";
+      value.fixture.kickoff_at = null;
+    })).resolves.toBeDefined();
+  });
+
   it.each([
     ["empty response", (value: Record<string, any>) => { value.markets = []; }],
     ["extra market", (value: Record<string, any>) => {

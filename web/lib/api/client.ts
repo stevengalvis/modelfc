@@ -103,6 +103,7 @@ function decodeAnalysisResponse(value: unknown, request: AnalysisRequest): Analy
     && typeof value.fixture.home_team === "string"
     && typeof value.fixture.away_team === "string"
     && stringOrNull(value.fixture.kickoff_at)
+    && (value.pick_logging.status !== "SUPPORTED" || typeof value.fixture.kickoff_at === "string")
     && requestFixtureMatches(value.fixture, request.fixture)
     && record(value.forecast)
     && typeof value.forecast.model === "string"

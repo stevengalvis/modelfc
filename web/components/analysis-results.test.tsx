@@ -10,19 +10,22 @@ function analysis(id: string): AnalysisResponse {
 }
 
 describe("AnalysisResults", () => {
-  it("uses a unique stable heading ID for each analysis result section", () => {
+  it("uses the rendered request identity when duplicate results share an analysis ID", () => {
     render(<>
-      <AnalysisResults analysis={analysis("analysis-one")} />
-      <AnalysisResults analysis={analysis("analysis-two")} />
+      <AnalysisResults analysis={analysis("shared-analysis")} instanceId="block-1:chunk-1" />
+      <AnalysisResults analysis={analysis("shared-analysis")} instanceId="block-2:chunk-1" />
     </>);
 
     const sections = screen.getAllByRole("region");
     const headingIds = sections.map((section) => section.getAttribute("aria-labelledby"));
-    expect(headingIds).toEqual(["results-title-analysis-one", "results-title-analysis-two"]);
+    expect(headingIds).toEqual([
+      "results-title-shared-analysis-block-1%3Achunk-1",
+      "results-title-shared-analysis-block-2%3Achunk-1",
+    ]);
     expect(new Set(headingIds).size).toBe(2);
     for (const section of sections) {
       const headingId = section.getAttribute("aria-labelledby")!;
-      expect(section.querySelector(`h2#${headingId}`)).not.toBeNull();
+      expect(document.getElementById(headingId)).not.toBeNull();
     }
   });
 
@@ -37,7 +40,7 @@ describe("AnalysisResults", () => {
       { ...unsupported, client_market_id: "match", market_type: "MATCH_TOTAL", team_side: null, team: null, line: 9.5 },
     ] as AnalyzedMarket[];
 
-    render(<AnalysisResults analysis={value} />);
+    render(<AnalysisResults analysis={value} instanceId="market-labels:chunk-1" />);
 
     expect(screen.getByText("Birmingham O4")).toBeInTheDocument();
     expect(screen.getByText("Millwall O3.5")).toBeInTheDocument();

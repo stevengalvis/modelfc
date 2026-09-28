@@ -339,7 +339,7 @@ export function AnalyzeWorkspace() {
       ) : null}
 
       {error ? <div className="error-banner" role="alert"><strong>{error.title}</strong><span>{error.message}</span></div> : null}
-      {analyses.map(({ requestId, response }) => <AnalysisResults key={`${response.analysis_id}:${requestId}`} analysis={response} />)}
+      {analyses.map(({ requestId, response }) => <AnalysisResults key={`${response.analysis_id}:${requestId}`} analysis={response} instanceId={requestId} />)}
     </div>
   );
 }

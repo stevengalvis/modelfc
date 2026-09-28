@@ -21,10 +21,10 @@ function marketName(market: AnalyzedMarket, fixture: AnalysisResponse["fixture"]
   return `${subject} ${market.side === "OVER" ? "O" : "U"}${market.line}`;
 }
 
-export function AnalysisResults({ analysis }: { analysis: AnalysisResponse }) {
+export function AnalysisResults({ analysis, instanceId }: { analysis: AnalysisResponse; instanceId: string }) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const supported = analysis.markets.filter((market) => market.status === "SUPPORTED");
-  const headingId = `results-title-${encodeURIComponent(analysis.analysis_id)}`;
+  const headingId = `results-title-${encodeURIComponent(analysis.analysis_id)}-${encodeURIComponent(instanceId)}`;
 
   function toggle(id: string) {
     setSelected((current) => {
