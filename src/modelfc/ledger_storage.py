@@ -172,17 +172,26 @@ def _grant_evidence_read(temporary: Path, target: Path, state: Path) -> None:
         # The writer created this real lock on entering ledger_lock. The API
         # needs its read ACL before any new evidence is made visible.
         lock_path = state / ".lock"
-        lock_info = lock_path.lstat()
-        if not stat.S_ISREG(lock_info.st_mode) or lock_info.st_uid != os.getuid():
-            raise ValueError("invalid public evidence lock")
-        subprocess.run(("/usr/bin/setfacl", "-m", f"u:{uid}:r--", "--", str(lock_path)),
-                       check=True, timeout=10, env={"PATH": "/usr/bin:/bin"},
-                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        current_lock = lock_path.lstat()
-        if ((current_lock.st_dev, current_lock.st_ino) != (lock_info.st_dev, lock_info.st_ino)
-                or not stat.S_ISREG(current_lock.st_mode)
-                or current_lock.st_uid != os.getuid()):
-            raise ValueError("public evidence lock changed during ACL setup")
+        descriptor = os.open(lock_path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        try:
+            lock_info = os.fstat(descriptor)
+            if (not stat.S_ISREG(lock_info.st_mode) or lock_info.st_uid != os.getuid()
+                    or lock_info.st_nlink != 1):
+                raise ValueError("invalid public evidence lock")
+            # The child inherits only this validated descriptor. A pathname
+            # replacement cannot redirect setfacl onto another private inode.
+            subprocess.run(("/usr/bin/setfacl", "-m", f"u:{uid}:r--", "--",
+                            f"/proc/self/fd/{descriptor}"),
+                           check=True, timeout=10, env={"PATH": "/usr/bin:/bin"},
+                           pass_fds=(descriptor,), stdout=subprocess.DEVNULL,
+                           stderr=subprocess.DEVNULL)
+            current_lock = lock_path.lstat()
+            if ((current_lock.st_dev, current_lock.st_ino) != (lock_info.st_dev, lock_info.st_ino)
+                    or not stat.S_ISREG(current_lock.st_mode)
+                    or current_lock.st_uid != os.getuid() or current_lock.st_nlink != 1):
+                raise ValueError("public evidence lock changed during ACL setup")
+        finally:
+            os.close(descriptor)
         info = temporary.lstat()
         if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid():
             raise ValueError("invalid public evidence file")

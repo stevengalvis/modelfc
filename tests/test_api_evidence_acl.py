@@ -30,7 +30,8 @@ class EvidenceAclTests(unittest.TestCase):
             def before_publish():
                 self.assertFalse(self.path.exists())
                 self.assertEqual(run.call_count, 5)  # state, kind, fixture, lock, temp
-                self.assertEqual(run.call_args_list[3].args[0][-1], str(self.state / ".lock"))
+                self.assertTrue(run.call_args_list[3].args[0][-1].startswith("/proc/self/fd/"))
+                self.assertEqual(len(run.call_args_list[3].kwargs["pass_fds"]), 1)
             with ledger_lock(self.state):
                 write_new_record(self.path, {"value": 1}, evidence_state=self.state,
                                  before_publish=before_publish)
@@ -62,9 +63,14 @@ class EvidenceAclTests(unittest.TestCase):
         lock = self.state / ".lock"
         uid = type("User", (), {"pw_uid": 10001})()
         self.assertFalse(lock.exists())
+        lock_acl_targets = []
+        def observe_acl(command, **kwargs):
+            if command[-1].startswith("/proc/self/fd/"):
+                self.assertEqual(kwargs["pass_fds"], (int(command[-1].split("/")[-1]),))
+                lock_acl_targets.append(Path(os.readlink(command[-1])))
         with patch.dict(os.environ, {"MODELFC_EVIDENCE_ACL_USER": "modelfc-api"}), \
                 patch("modelfc.ledger_storage.pwd.getpwnam", return_value=uid), \
-                patch("modelfc.ledger_storage.subprocess.run") as run:
+                patch("modelfc.ledger_storage.subprocess.run", side_effect=observe_acl):
             self.assertEqual(_publish(self.state, self.path, {"first": True})[1], True)
             inode = lock.stat().st_ino
             self.assertEqual(lock.stat().st_uid, os.getuid())
@@ -75,14 +81,14 @@ class EvidenceAclTests(unittest.TestCase):
             self.assertEqual(_publish(self.state, next_path, {"second": True})[1], True)
             self.assertEqual(lock.stat().st_ino, inode)
             self.assertEqual(_publish(self.state, self.path, {"first": True})[1], False)
-        self.assertEqual([call.args[0][-1] for call in run.call_args_list
-                          if call.args[0][-1] == str(lock)], [str(lock), str(lock)])
+        self.assertEqual(lock_acl_targets, [lock, lock])
 
     def test_lock_acl_failure_blocks_first_evidence_publication(self):
         lock = self.state / ".lock"
         uid = type("User", (), {"pw_uid": 10001})()
         def fail_lock_acl(command, **kwargs):
-            if command[-1] == str(lock):
+            if command[-1].startswith("/proc/self/fd/"):
+                self.assertEqual(Path(os.readlink(command[-1])), lock)
                 raise OSError("ACL unavailable")
         with patch.dict(os.environ, {"MODELFC_EVIDENCE_ACL_USER": "modelfc-api"}), \
                 patch("modelfc.ledger_storage.pwd.getpwnam", return_value=uid), \
@@ -95,6 +101,44 @@ class EvidenceAclTests(unittest.TestCase):
         self.assertFalse(self.path.exists())
         self.assertEqual(list(self.path.parent.iterdir()), [])
 
+    def test_hardlinked_private_control_cannot_receive_lock_acl(self):
+        control = self.state / "prospective" / "control.json"
+        control.parent.mkdir()
+        control.write_text('{"private":true}')
+        lock = self.state / ".lock"
+        os.link(control, lock)
+        with patch.dict(os.environ, {"MODELFC_EVIDENCE_ACL_USER": "modelfc-api"}), \
+                patch("modelfc.ledger_storage.pwd.getpwnam", return_value=type("User", (), {"pw_uid": 10001})()), \
+                patch("modelfc.ledger_storage.subprocess.run") as run:
+            with self.assertRaisesRegex(LedgerStorageUnavailable, "record not published"):
+                write_new_record(self.path, {"first": True}, evidence_state=self.state)
+        self.assertFalse(self.path.exists())
+        self.assertFalse(any(call.args[0][-1].startswith("/proc/self/fd/")
+                             for call in run.call_args_list))
+        self.assertEqual(control.read_text(), '{"private":true}')
+
+    def test_lock_replacement_during_acl_never_targets_private_inode(self):
+        lock = self.state / ".lock"
+        control = self.state / "prospective" / "control.json"
+        control.parent.mkdir()
+        control.write_text('{"private":true}')
+        original = self.state / "original-lock"
+        acl_targets = []
+        def replace_during_acl(command, **kwargs):
+            if command[-1].startswith("/proc/self/fd/"):
+                lock.rename(original)
+                os.link(control, lock)
+                acl_targets.append(Path(os.readlink(command[-1])))
+        with patch.dict(os.environ, {"MODELFC_EVIDENCE_ACL_USER": "modelfc-api"}), \
+                patch("modelfc.ledger_storage.pwd.getpwnam", return_value=type("User", (), {"pw_uid": 10001})()), \
+                patch("modelfc.ledger_storage.subprocess.run", side_effect=replace_during_acl):
+            with ledger_lock(self.state):
+                with self.assertRaisesRegex(LedgerStorageUnavailable, "record not published"):
+                    write_new_record(self.path, {"first": True}, evidence_state=self.state)
+        self.assertEqual(acl_targets, [original])
+        self.assertFalse(self.path.exists())
+        self.assertEqual(control.read_text(), '{"private":true}')
+
     def test_invalid_existing_lock_is_not_granted_acl_or_published(self):
         lock = self.state / ".lock"
         lock.symlink_to(self.path)
@@ -104,7 +148,8 @@ class EvidenceAclTests(unittest.TestCase):
             with self.assertRaisesRegex(LedgerStorageUnavailable, "record not published"):
                 write_new_record(self.path, {"first": True}, evidence_state=self.state)
         self.assertFalse(self.path.exists())
-        self.assertFalse(any(call.args[0][-1] == str(lock) for call in run.call_args_list))
+        self.assertFalse(any(call.args[0][-1].startswith("/proc/self/fd/")
+                             for call in run.call_args_list))
 
     def test_non_evidence_records_never_receive_api_acl(self):
         private = self.state / "prospective" / "budget-events" / "event.json"
