@@ -38,8 +38,24 @@ describe("prospective dashboards", () => {
     vi.spyOn(api, "opportunities").mockResolvedValue(mockOpportunities);
     vi.spyOn(api, "predictions").mockResolvedValue([]);
     render(<PredictionsDashboard />);
-    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("without matching predictions"));
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("inconsistent predictions and opportunities"));
     expect(screen.queryByText("Market opportunities")).not.toBeInTheDocument();
+  });
+  it("rejects a settled opportunity that contradicts the prediction score", async () => {
+    const predictions = structuredClone(mockPredictions);
+    predictions[1].actual_home_corners = 7;
+    vi.spyOn(api, "opportunities").mockResolvedValue(mockOpportunities);
+    vi.spyOn(api, "predictions").mockResolvedValue(predictions);
+    render(<PredictionsDashboard />);
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("inconsistent predictions and opportunities"));
+  });
+  it("rejects counts from split prospective snapshots", async () => {
+    const predictions = structuredClone(mockPredictions);
+    predictions[0].opportunity_count = 2;
+    vi.spyOn(api, "opportunities").mockResolvedValue(mockOpportunities);
+    vi.spyOn(api, "predictions").mockResolvedValue(predictions);
+    render(<PredictionsDashboard />);
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("Retry to read a consistent snapshot"));
   });
   it("renders backend performance values", async () => {
     vi.spyOn(api, "performance").mockResolvedValue(mockPerformance);

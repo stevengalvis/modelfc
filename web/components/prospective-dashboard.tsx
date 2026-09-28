@@ -33,13 +33,18 @@ export function PredictionsDashboard() {
       .then(async (opportunities) => {
         const predictions = await api.predictions(controller.signal);
         const byId = new Map(predictions.map((item) => [item.prediction_id, item]));
+        const counts = new Map<string, number>();
         if (opportunities.some((item) => {
           const parent = byId.get(item.prediction_id);
+          counts.set(item.prediction_id, (counts.get(item.prediction_id) ?? 0) + 1);
           return !parent || parent.provider_fixture_id !== item.provider_fixture_id
             || parent.competition !== item.competition || parent.kickoff_utc !== item.kickoff_utc
-            || parent.home_team !== item.home_team || parent.away_team !== item.away_team;
-        })) {
-          throw new ModelFCApiError("The API returned opportunities without matching predictions.", "PROSPECTIVE_CONTRACT_MISMATCH", false);
+            || parent.home_team !== item.home_team || parent.away_team !== item.away_team
+            || parent.settlement_status !== item.settlement_status
+            || (item.settlement_status === "SETTLED" && item.actual_team_corners !==
+              (item.team_side === "HOME" ? parent.actual_home_corners : parent.actual_away_corners));
+        }) || predictions.some((item) => (counts.get(item.prediction_id) ?? 0) !== item.opportunity_count)) {
+          throw new ModelFCApiError("The API returned inconsistent predictions and opportunities. Retry to read a consistent snapshot.", "PROSPECTIVE_CONTRACT_MISMATCH", false);
         }
         if (!controller.signal.aborted) { setData({ predictions, opportunities }); setError(null); }
       })
