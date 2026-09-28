@@ -85,6 +85,11 @@ function decodeAnalysisResponse(value: unknown, request: AnalysisRequest): Analy
     && item.side === expected.side
     && item.line === expected.line
     && item.american_odds === expected.american_odds;
+  const requestFixtureMatches = (item: Record<string, unknown>, expected: AnalysisRequest["fixture"]) =>
+    item.competition === expected.competition
+    && item.date === expected.date
+    && item.home_team === expected.home_team
+    && item.away_team === expected.away_team;
   const valid = record(value)
     && typeof value.analysis_id === "string"
     && typeof value.forecast_id === "string"
@@ -98,8 +103,10 @@ function decodeAnalysisResponse(value: unknown, request: AnalysisRequest): Analy
     && typeof value.fixture.home_team === "string"
     && typeof value.fixture.away_team === "string"
     && stringOrNull(value.fixture.kickoff_at)
+    && requestFixtureMatches(value.fixture, request.fixture)
     && record(value.forecast)
     && typeof value.forecast.model === "string"
+    && value.forecast.model === request.model
     && typeof value.forecast.model_version === "string"
     && configuration(value.forecast.configuration)
     && finiteNumber(value.forecast.home_expected_corners)

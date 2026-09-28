@@ -34,8 +34,19 @@ async function analyzeWith(
 }
 
 describe("analysis response boundary", () => {
-  it("accepts the complete backend-owned analysis fixture", async () => {
+  it("accepts the complete backend-owned response matching the submitted request", async () => {
     await expect(analyzeWith(() => {})).resolves.toEqual(wholeLineFixture);
+  });
+
+  it.each([
+    ["competition", (value: Record<string, any>) => { value.fixture.competition = "SP1"; }],
+    ["fixture date", (value: Record<string, any>) => { value.fixture.date = "2026-09-18"; }],
+    ["home team", (value: Record<string, any>) => { value.fixture.home_team = "Coventry"; }],
+    ["away team", (value: Record<string, any>) => { value.fixture.away_team = "Norwich"; }],
+    ["forecast model", (value: Record<string, any>) => { value.forecast.model = "venue-opponent-poisson"; }],
+  ])("rejects a successful response with mismatched %s", async (_name, change) => {
+    await expect(analyzeWith(change))
+      .rejects.toMatchObject({ code: "ANALYSIS_CONTRACT_MISMATCH" });
   });
 
   it.each([
