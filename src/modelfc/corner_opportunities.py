@@ -69,13 +69,13 @@ def _publish(state: Path, path: Path, record: dict[str, Any]) -> tuple[dict[str,
     record["record_hash"] = _canonical_hash(record)
     ensure_directory(state, "Model FC state directory")
     ensure_directory(path.parent, "prospective evidence directory")
-    with ledger_lock(state):
+    with ledger_lock(state) as lock_fd:
         if path.exists():
             existing = read_json_record(path, "prospective", "UNKNOWN_PROSPECTIVE_RECORD")
             if existing != record:
                 raise LedgerError("IDEMPOTENCY_CONFLICT")
             return existing, False
-        write_new_record(path, record, evidence_state=state)
+        write_new_record(path, record, evidence_state=state, evidence_lock_fd=lock_fd)
     return record, True
 
 

@@ -248,10 +248,10 @@ def store_analysis_capture(
         "response_hash": _canonical_hash(response), "response": response,
     }
     ensure_directory(analysis_path.parent, "corner analysis directory")
-    with ledger_lock(state):
+    with ledger_lock(state) as lock_fd:
         existing = replay()
         if existing is not None:
             return existing, False
         write_new_record(analysis_path, record, before_publish=before_publish,
-                         evidence_state=state)
+                         evidence_state=state, evidence_lock_fd=lock_fd)
     return response, True
