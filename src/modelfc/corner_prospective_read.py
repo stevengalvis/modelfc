@@ -80,6 +80,7 @@ def _outcome_tip(state: Path, prediction: dict[str, Any]) -> dict[str, Any] | No
         for field in ("home_corners", "away_corners"):
             if isinstance(result[field], bool) or not isinstance(result[field], int) or result[field] < 0:
                 raise ValueError
+            _number(result[field])
     except (KeyError, TypeError, ValueError):
         raise LedgerError("INVALID_PROSPECTIVE_RECORD") from None
     return tip
@@ -274,7 +275,7 @@ def _locked_inventory(
                     "actual_team_corners": actual,
                     "realized_profit_units": _profit(result, american),
                 })
-        except (KeyError, TypeError, ValueError):
+        except (KeyError, TypeError, ValueError, OverflowError):
             raise LedgerError("INVALID_PROSPECTIVE_RECORD") from None
 
     prediction_views.sort(key=lambda item: (
@@ -331,20 +332,27 @@ def read_performance(state_dir: str | Path) -> dict[str, Any]:
     inventory = _inventory(state_dir)
     predictions = inventory["predictions"]
     settled_predictions = [item for item in predictions if item["settlement_status"] == "SETTLED"]
-    team_errors = [actual - predicted for item in settled_predictions for actual, predicted in (
-        (item["actual_home_corners"], item["expected_home_corners"]),
-        (item["actual_away_corners"], item["expected_away_corners"]),
-    )]
-    total_errors = [item["actual_home_corners"] + item["actual_away_corners"]
-                    - item["expected_match_corners"] for item in settled_predictions]
+    team_errors, total_errors = [], []
+    for item in settled_predictions:
+        try:
+            for side in ("home", "away"):
+                team_errors.append(_number(item[f"actual_{side}_corners"]
+                                           - item[f"expected_{side}_corners"]))
+            actual_total = _number(item["actual_home_corners"] + item["actual_away_corners"])
+            total_errors.append(_number(actual_total - item["expected_match_corners"]))
+        except OverflowError:
+            raise LedgerError("INVALID_PROSPECTIVE_RECORD") from None
 
     def errors_summary(errors: list[float]) -> tuple[float | None, float | None, float | None]:
         if not errors:
             return None, None, None
         n = len(errors)
-        return (math.fsum(abs(error) for error in errors) / n,
-                math.sqrt(math.fsum(error * error for error in errors) / n),
-                math.fsum(errors) / n)
+        try:
+            return (_number(math.fsum(abs(error) for error in errors) / n),
+                    _number(math.sqrt(math.fsum(_number(error * error) for error in errors) / n)),
+                    _number(math.fsum(errors) / n))
+        except OverflowError:
+            raise LedgerError("INVALID_PROSPECTIVE_RECORD") from None
 
     team_mae, team_rmse, team_bias = errors_summary(team_errors)
     total_mae, total_rmse, total_bias = errors_summary(total_errors)

@@ -420,6 +420,18 @@ class ProspectiveApiTests(unittest.TestCase):
         self.assertEqual(response.json()["error"]["code"], "LEDGER_INTEGRITY_FAILURE")
         self.assertNotIn(str(path), response.text)
 
+    def test_oversized_validated_outcome_count_is_public_integrity_error(self):
+        self.write_result()
+        _, tip = outcomes.load_outcome_chain_readonly(self.state, self.analysis_id)
+        for count in (10 ** 1000, 10 ** 300):
+            with self.subTest(count_digits=len(str(count))):
+                malformed_tip = {**tip, "result": {**tip["result"], "home_corners": count}}
+                with patch.object(reader, "load_outcome_chain_readonly",
+                                  return_value=([], malformed_tip)):
+                    response = self.client.get("/api/v1/prospective/performance")
+                self.assertEqual(response.status_code, 409)
+                self.assertEqual(response.json()["error"]["code"], "LEDGER_INTEGRITY_FAILURE")
+
     def test_boundary_log_loss_is_finite_without_rewriting_probability(self):
         self.write_result()
         inventory = reader._inventory(self.state)
