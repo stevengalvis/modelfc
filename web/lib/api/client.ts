@@ -27,9 +27,7 @@ function decodeAnalysisResponse(value: unknown): AnalysisResponse {
   const record = (item: unknown): item is Record<string, unknown> => Boolean(item && typeof item === "object" && !Array.isArray(item));
   const stringOrNull = (item: unknown): item is string | null => item === null || typeof item === "string";
   const finiteNumber = (item: unknown): item is number => typeof item === "number" && Number.isFinite(item);
-  const finiteNumberOrNull = (item: unknown): item is number | null => item === null || finiteNumber(item);
-  const probabilityOrNull = (item: unknown): item is number | null => item === null
-    || (finiteNumber(item) && item >= 0 && item <= 1);
+  const probability = (item: unknown): item is number => finiteNumber(item) && item >= 0 && item <= 1;
   const warning = (item: unknown) => record(item)
     && typeof item.code === "string"
     && typeof item.message === "string";
@@ -39,6 +37,37 @@ function decodeAnalysisResponse(value: unknown): AnalysisResponse {
   const sourceHash = (item: unknown) => record(item)
     && typeof item.filename === "string"
     && typeof item.sha256 === "string";
+  const marketResult = (item: Record<string, unknown>) => {
+    if (item.status === "SUPPORTED") {
+      return item.unsupported_reason === null
+        && probability(item.model_probability)
+        && probability(item.push_probability)
+        && probability(item.decisive_model_probability)
+        && probability(item.implied_probability)
+        && finiteNumber(item.probability_edge)
+        && finiteNumber(item.expected_profit)
+        && finiteNumber(item.expected_corners);
+    }
+    if (item.status !== "UNSUPPORTED"
+      || typeof item.unsupported_reason !== "string"
+      || !item.unsupported_reason) return false;
+    if (item.unsupported_reason === "NO_DECISIVE_OUTCOMES") {
+      return probability(item.model_probability)
+        && probability(item.push_probability)
+        && item.decisive_model_probability === null
+        && item.implied_probability === null
+        && item.probability_edge === null
+        && item.expected_profit === null
+        && finiteNumber(item.expected_corners);
+    }
+    return item.model_probability === null
+      && item.push_probability === null
+      && item.decisive_model_probability === null
+      && item.implied_probability === null
+      && item.probability_edge === null
+      && item.expected_profit === null
+      && item.expected_corners === null;
+  };
   const market = (item: unknown) => record(item)
     && typeof item.client_market_id === "string"
     && (item.market_type === "TEAM_TOTAL" || item.market_type === "MATCH_TOTAL")
@@ -47,15 +76,7 @@ function decodeAnalysisResponse(value: unknown): AnalysisResponse {
     && finiteNumber(item.line)
     && Number.isSafeInteger(item.american_odds)
     && stringOrNull(item.team)
-    && (item.status === "SUPPORTED" || item.status === "UNSUPPORTED")
-    && stringOrNull(item.unsupported_reason)
-    && probabilityOrNull(item.model_probability)
-    && probabilityOrNull(item.push_probability)
-    && probabilityOrNull(item.decisive_model_probability)
-    && probabilityOrNull(item.implied_probability)
-    && finiteNumberOrNull(item.probability_edge)
-    && finiteNumberOrNull(item.expected_profit)
-    && finiteNumberOrNull(item.expected_corners)
+    && marketResult(item)
     && warnings(item.warnings);
   const valid = record(value)
     && typeof value.analysis_id === "string"
