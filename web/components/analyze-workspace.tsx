@@ -91,8 +91,9 @@ export function AnalyzeWorkspace() {
   }
 
   function parseInput() {
+    if (!capabilities) return;
     invalidateAnalysis();
-    setParsed(parseSportsbookInput(rawInput, capabilities?.competitions ?? []));
+    setParsed(parseSportsbookInput(rawInput, capabilities.competitions));
   }
 
   function updateBlock(blockId: string, update: (block: ParsedInputBlock) => ParsedInputBlock) {
@@ -240,8 +241,12 @@ export function AnalyzeWorkspace() {
         <div className="paste-input-wrap">
           <textarea aria-label="Sportsbook fixture and corner markets" placeholder={exampleInput} value={rawInput} onChange={(event) => changeRawInput(event.target.value)} />
           <div className="paste-actions">
-            <span>One or more fixtures · Full-match corner markets</span>
-            <button className="secondary-button" type="button" disabled={!rawInput.trim()} onClick={parseInput}>Parse lines</button>
+            <span>{!capabilities && !capabilitiesError
+              ? "Loading backend competitions…"
+              : capabilitiesError
+                ? "Backend readiness unavailable"
+                : "One or more fixtures · Full-match corner markets"}</span>
+            <button className="secondary-button" type="button" disabled={!rawInput.trim() || !capabilities} onClick={parseInput}>Parse lines</button>
           </div>
         </div>
       </section>

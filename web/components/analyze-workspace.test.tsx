@@ -15,6 +15,7 @@ afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
 async function pasteAndParse(text = sportsbookText) {
   fireEvent.change(screen.getByRole("textbox", { name: /sportsbook fixture/i }), { target: { value: text } });
+  await waitFor(() => expect(screen.getByRole("button", { name: /parse lines/i })).toBeEnabled());
   fireEvent.click(screen.getByRole("button", { name: /parse lines/i }));
   await act(async () => {});
 }
@@ -118,6 +119,7 @@ Birmingham team corners O4 -110`);
     const analyze = vi.spyOn(api, "analyze");
     render(<AnalyzeWorkspace />);
     fireEvent.click(screen.getByRole("button", { name: "Mixed board example" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Parse lines" })).toBeEnabled());
     fireEvent.click(screen.getByRole("button", { name: "Parse lines" }));
     await analyzeDemo();
     expect(screen.getByText(/Not analyzed: HISTORICAL_EVALUATION_REQUIRED/)).toBeInTheDocument();
@@ -310,14 +312,43 @@ Birmingham team corners O4 -110`);
     expect(screen.queryByText("Analysis complete")).not.toBeInTheDocument();
   });
 
-  it("blocks analysis when capabilities fail and allows an explicit connection retry", async () => {
+  it("keeps parsing disabled until capabilities load and resolves a backend competition name", async () => {
+    let resolveCapabilities!: (value: typeof mockCapabilities) => void;
+    const caps = structuredClone(mockCapabilities);
+    caps.competitions[0] = { ...caps.competitions[0], code: "E0", name: "Premier League" };
+    vi.spyOn(api, "capabilities").mockImplementation(() => new Promise((resolve) => {
+      resolveCapabilities = resolve;
+    }));
+    render(<AnalyzeWorkspace />);
+    const input = "Premier League\n2026-09-17\nBirmingham vs Millwall\nBirmingham O4 -110";
+    fireEvent.change(screen.getByRole("textbox", { name: /sportsbook fixture/i }), { target: { value: input } });
+    const parse = screen.getByRole("button", { name: /parse lines/i });
+    expect(parse).toBeDisabled();
+    expect(screen.getByText("Loading backend competitions…")).toBeInTheDocument();
+    fireEvent.click(parse);
+    expect(screen.queryByRole("heading", { name: /review and correct/i })).not.toBeInTheDocument();
+
+    await act(async () => { resolveCapabilities(caps); });
+    await waitFor(() => expect(parse).toBeEnabled());
+    expect(screen.getByRole("textbox", { name: /sportsbook fixture/i })).toHaveValue(input);
+    fireEvent.click(parse);
+    expect(screen.getByLabelText("Competition code")).toHaveValue("E0");
+  });
+
+  it("blocks parsing when capabilities fail, preserves input, and allows an explicit connection retry", async () => {
     vi.spyOn(api, "capabilities").mockRejectedValueOnce(new TypeError("network"))
       .mockResolvedValue(mockCapabilities);
     render(<AnalyzeWorkspace />);
+    fireEvent.change(screen.getByRole("textbox", { name: /sportsbook fixture/i }), { target: { value: sportsbookText } });
     await screen.findByText("API connection failed");
-    await pasteAndParse();
-    expect(screen.getByRole("button", { name: /analyze all/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /parse lines/i })).toBeDisabled();
+    expect(screen.getByText("Backend readiness unavailable")).toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: /sportsbook fixture/i })).toHaveValue(sportsbookText);
+    fireEvent.click(screen.getByRole("button", { name: /parse lines/i }));
+    expect(screen.queryByRole("heading", { name: /review and correct/i })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Retry connection" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: /parse lines/i })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: /parse lines/i }));
     await waitFor(() => expect(screen.getByRole("button", { name: /analyze all/i })).toBeEnabled());
   });
 });

@@ -204,14 +204,20 @@ function parseBlock(
   source: string,
   blockIndex: number,
   competitions: readonly Pick<CompetitionCapability, "code" | "name">[],
+  inheritedCompetition = "",
 ): ParsedInputBlock {
   const lines = source.split(/\r?\n/).map(cleanLine).filter(Boolean);
-  const fixture: EditableFixtureInput = { competition: "", date: "", home_team: "", away_team: "" };
+  const fixture: EditableFixtureInput = {
+    competition: inheritedCompetition,
+    date: "",
+    home_team: "",
+    away_team: "",
+  };
   const marketLines: string[] = [];
 
   for (const line of lines) {
     const competition = competitionCode(line, competitions);
-    if (competition && !fixture.competition) {
+    if (competition) {
       fixture.competition = competition;
       continue;
     }
@@ -294,7 +300,16 @@ export function parseSportsbookInput(
   text: string,
   competitions: readonly Pick<CompetitionCapability, "code" | "name">[] = [],
 ): ParsedSportsbookInput {
-  const blocks = splitBlocks(text, competitions).map((source, index) => parseBlock(source, index, competitions));
+  let activeCompetition = "";
+  const blocks = splitBlocks(text, competitions).map((source, index) => {
+    const explicitCompetitions = source.split(/\r?\n/)
+      .map(cleanLine)
+      .map((line) => competitionCode(line, competitions))
+      .filter((code): code is string => code !== null);
+    const block = parseBlock(source, index, competitions, activeCompetition);
+    if (explicitCompetitions.length > 0) activeCompetition = explicitCompetitions.at(-1)!;
+    return block;
+  });
   if (blocks.length === 0) blocks.push(parseBlock("", 0, competitions));
   const warnings = blocks.flatMap((block) => block.warnings);
   return {

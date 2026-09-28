@@ -162,7 +162,78 @@ Millwall vs Watford
 Millwall O4.5 -110`);
     expect(parsed.blocks).toHaveLength(2);
     expect(parsed.blocks.map((block) => block.fixture.home_team)).toEqual(["Coventry City", "Millwall"]);
+    expect(parsed.blocks.map((block) => block.fixture.competition)).toEqual(["E1", "E1"]);
     expect(parsed.blocks[1].markets).toHaveLength(1);
+  });
+
+  it("inherits one active competition across three dated fixtures and decorative blanks", () => {
+    const parsed = parseSportsbookInput(`E1
+
+2026-09-20
+Coventry City vs Birmingham City
+
+Coventry City O4.5 -145
+
+
+2026-09-21
+Millwall vs Watford
+Millwall O4.5 -110
+
+2026-09-22
+Derby vs Hull
+
+Derby O4.5 -105`);
+    expect(parsed.blocks).toHaveLength(3);
+    expect(parsed.blocks.map((block) => block.fixture.competition)).toEqual(["E1", "E1", "E1"]);
+    expect(parsed.blocks.every((block) => block.warnings.length === 0)).toBe(true);
+  });
+
+  it("inherits the active competition across undated fixture blocks", () => {
+    const parsed = parseSportsbookInput(`E1
+Coventry City vs Birmingham City
+Coventry City O4.5 -145
+
+Millwall vs Watford
+Millwall O4.5 -110`);
+    expect(parsed.blocks).toHaveLength(2);
+    expect(parsed.blocks.map((block) => block.fixture.competition)).toEqual(["E1", "E1"]);
+    expect(parsed.blocks.map((block) => block.fixture.date)).toEqual(["", ""]);
+  });
+
+  it("changes active competition only when a later explicit header replaces it", () => {
+    const parsed = parseSportsbookInput(`E1
+2026-09-20
+Coventry City vs Birmingham City
+Coventry City O4.5 -145
+
+E1
+2026-09-21
+Millwall vs Watford
+Millwall O4.5 -110
+
+SP1
+2026-09-22
+Barcelona vs Sevilla
+Barcelona O5.5 -120
+
+2026-09-23
+Valencia vs Getafe
+Valencia O4.5 -115`);
+    expect(parsed.blocks).toHaveLength(4);
+    expect(parsed.blocks.map((block) => block.fixture.competition)).toEqual(["E1", "E1", "SP1", "SP1"]);
+  });
+
+  it("leaves every fixture unresolved when no competition context exists", () => {
+    const parsed = parseSportsbookInput(`2026-09-20
+Coventry City vs Birmingham City
+Coventry City O4.5 -145
+
+2026-09-21
+Millwall vs Watford
+Millwall O4.5 -110`);
+    expect(parsed.blocks).toHaveLength(2);
+    expect(parsed.blocks.map((block) => block.fixture.competition)).toEqual(["", ""]);
+    expect(parsed.blocks.every((block) => block.warnings.some((warning) => /competition was not recognized/i.test(warning)))).toBe(true);
   });
 
   it("keeps fixtures with repeated competition headers as distinct blocks", () => {
