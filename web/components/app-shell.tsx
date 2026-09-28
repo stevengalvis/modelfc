@@ -17,8 +17,8 @@ export function AppShell({ active, children }: { active: string; children: React
           <span>MODEL FC</span>
           <small>CONTROL ROOM</small>
         </Link>
-        <nav aria-label="Primary navigation">
-          {links.map((link) => (
+      <nav aria-label="Primary navigation">
+          {links.filter((link) => apiMode !== "live" || link.href !== "/analyze").map((link) => (
             <Link
               aria-current={active === link.label ? "page" : undefined}
               className={active === link.label ? "active" : ""}

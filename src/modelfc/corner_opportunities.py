@@ -75,7 +75,7 @@ def _publish(state: Path, path: Path, record: dict[str, Any]) -> tuple[dict[str,
             if existing != record:
                 raise LedgerError("IDEMPOTENCY_CONFLICT")
             return existing, False
-        write_new_record(path, record)
+        write_new_record(path, record, evidence_state=state)
     return record, True
 
 

@@ -12,7 +12,7 @@ export const apiMode = process.env.NEXT_PUBLIC_MODELFC_API_MODE ?? "";
 async function requestJson<T>(baseUrl: string, path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${baseUrl.replace(/\/$/, "")}${path}`, {
     ...init,
-    headers: { "Content-Type": "application/json", ...init?.headers },
+    headers: { ...(init?.body ? { "Content-Type": "application/json" } : {}), ...init?.headers },
   });
   const body: unknown = await response.json().catch(() => null);
   if (!response.ok) {
@@ -143,7 +143,9 @@ function decodeAnalysisResponse(value: unknown, request: AnalysisRequest): Analy
   return value as unknown as AnalysisResponse;
 }
 
-export function createApiClient(mode: string | undefined, baseUrl?: string) {
+export function createApiClient(
+  mode: string | undefined, baseUrl?: string, { allowLiveAnalysis = false }: { allowLiveAnalysis?: boolean } = {},
+) {
   function checkConfiguration() {
     if (!mode || !["live", "mock"].includes(mode) || (mode === "live" && !baseUrl?.trim())) {
       throw new ModelFCApiError(
@@ -179,6 +181,10 @@ export function createApiClient(mode: string | undefined, baseUrl?: string) {
     },
     async analyze(payload: AnalysisRequest, signal?: AbortSignal): Promise<AnalysisResponse> {
       checkConfiguration();
+      if (mode === "live" && !allowLiveAnalysis) {
+        throw new ModelFCApiError("Interactive analysis is unavailable on this read-only site.",
+          "ANALYSIS_UNAVAILABLE", false);
+      }
       return mode === "mock" ? mockAnalyze(payload, signal)
         : requestJson<unknown>(baseUrl!, "/analyses", { method: "POST", body: JSON.stringify(payload), signal })
           .then((value) => decodeAnalysisResponse(value, payload));

@@ -49,7 +49,7 @@ describe("capability boundary", () => {
     vi.stubGlobal("fetch", vi.fn().mockImplementation(async () => new Response(JSON.stringify({
       error: { code: "DATA_SOURCE_UNAVAILABLE", message: "Missing E1 history", retryable: true, details: {} },
     }), { status: 503 })));
-    const live = createApiClient("live", "https://api.example.test/api/v1");
+    const live = createApiClient("live", "https://api.example.test/api/v1", { allowLiveAnalysis: true });
     await expect(live.capabilities()).rejects.toMatchObject({ code: "DATA_SOURCE_UNAVAILABLE" });
     await expect(live.analyze({
       idempotency_key: "test", fixture: wholeLineFixture.fixture, model: wholeLineFixture.forecast.model, markets: [],

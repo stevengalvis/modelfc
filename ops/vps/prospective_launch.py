@@ -80,9 +80,13 @@ def launch():
     protected(HISTORY, runtime_owner, directory=True)
     protected(STATE, runtime_owner, directory=True)
     key = _credential()
+    # This launcher is installed only during the separately authorized API
+    # reader migration. The already-installed old launcher does not opt in.
+    pwd.getpwnam("modelfc-api")
     env = {"PATH": "/usr/bin:/bin", "HOME": "/nonexistent", "LANG": "C.UTF-8",
            "PYTHONPATH": str(release / "src"), "PYTHONNOUSERSITE": "1",
-           "PYTHONDONTWRITEBYTECODE": "1", "ODDSPAPI_API_KEY": key}
+           "PYTHONDONTWRITEBYTECODE": "1", "ODDSPAPI_API_KEY": key,
+           "MODELFC_EVIDENCE_ACL_USER": "modelfc-api"}
     record = {"event": "modelfc_prospective_start", "release": str(release),
               "sha": match[1], "interpreter": str(python),
               "import_path": str(release / "src"), "uid": os.getuid(), "gid": os.getgid(),

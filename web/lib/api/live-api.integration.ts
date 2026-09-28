@@ -5,7 +5,8 @@ import { parseSportsbookInput } from "../parse-sportsbook-input";
 import { validateAnalysisInput } from "../analysis-input";
 import wholeLineFixture from "../../../tests/fixtures/api_v1/analysis_whole_line.json";
 
-const live = createApiClient("live", process.env.MODELFC_TEST_API_URL ?? "http://127.0.0.1:8000/api/v1");
+// Synthetic integration alone opts into analysis writes against its temporary state.
+const live = createApiClient("live", process.env.MODELFC_TEST_API_URL ?? "http://127.0.0.1:8000/api/v1", { allowLiveAnalysis: true });
 
 describe("real FastAPI boundary with synthetic history and mocks off", () => {
   it("parses and corrects canonical input, validates capabilities, and preserves backend whole-line values", async () => {

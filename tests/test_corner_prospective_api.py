@@ -17,6 +17,7 @@ from modelfc import corner_analysis_outcomes as outcomes
 from modelfc import corner_opportunities as opportunities
 from modelfc.corner_analysis import CornerMarketRequest
 from modelfc.corner_api import create_app
+from modelfc.ledger_storage import LedgerError, LedgerStorageUnavailable
 from modelfc.corner_market_data import CornerMarketObservation, MarketSelection
 from modelfc.corner_prospective import _lock as prospective_runner_lock
 from modelfc.providers import oddspapi as provider
@@ -24,6 +25,23 @@ from tests import test_oddspapi as recorded
 
 
 class ProspectiveApiTests(unittest.TestCase):
+    def test_public_list_errors_never_return_storage_details(self):
+        client = TestClient(create_app(state_dir="/private/state"))
+        cases = (("/api/v1/predictions", "read_predictions"),
+                 ("/api/v1/opportunities", "read_opportunities"),
+                 ("/api/v1/prospective/performance", "read_performance"))
+        for path, reader in cases:
+            for failure, code, status in ((LedgerStorageUnavailable("/private/state/secrets"),
+                                           "STATE_STORAGE_UNAVAILABLE", 503),
+                                          (LedgerError("/private/ledger/internal"),
+                                           "LEDGER_INTEGRITY_FAILURE", 409)):
+                with self.subTest(path=path, code=code), patch("modelfc.corner_api." + reader,
+                                                               side_effect=failure):
+                    response = client.get(path)
+                    self.assertEqual(response.status_code, status)
+                    self.assertEqual(response.json()["error"]["code"], code)
+                    self.assertNotIn("/private", response.text)
+
     def setUp(self):
         self.setup = recorded.PrematchCaptureTests()
         self.setup.setUp()
