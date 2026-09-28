@@ -13,14 +13,18 @@ function money(value: number | null): string {
   return `${value >= 0 ? "+" : "−"}$${Math.abs(value).toFixed(2)}`;
 }
 
-function marketName(market: AnalyzedMarket): string {
-  const subject = market.market_type === "MATCH_TOTAL" ? "Match" : market.team;
+function marketName(market: AnalyzedMarket, fixture: AnalysisResponse["fixture"]): string {
+  const team = market.team ?? (market.team_side === "HOME"
+    ? fixture.home_team
+    : market.team_side === "AWAY" ? fixture.away_team : "Team");
+  const subject = market.market_type === "MATCH_TOTAL" ? "Match" : team;
   return `${subject} ${market.side === "OVER" ? "O" : "U"}${market.line}`;
 }
 
 export function AnalysisResults({ analysis }: { analysis: AnalysisResponse }) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const supported = analysis.markets.filter((market) => market.status === "SUPPORTED");
+  const headingId = `results-title-${encodeURIComponent(analysis.analysis_id)}`;
 
   function toggle(id: string) {
     setSelected((current) => {
@@ -35,11 +39,11 @@ export function AnalysisResults({ analysis }: { analysis: AnalysisResponse }) {
     : "Backend permits logging, but the selection endpoint is not available in this frontend slice yet.";
 
   return (
-    <section className="results-section" aria-labelledby="results-title">
+    <section className="results-section" aria-labelledby={headingId}>
       <div className="results-heading">
         <div>
           <p className="eyebrow">Analysis complete</p>
-          <h2 id="results-title">{analysis.fixture.home_team} <span>vs</span> {analysis.fixture.away_team}</h2>
+          <h2 id={headingId}>{analysis.fixture.home_team} <span>vs</span> {analysis.fixture.away_team}</h2>
           <p>{analysis.fixture.competition} · {analysis.fixture.date} · {analysis.forecast.model} · {analysis.forecast.model_version}</p>
         </div>
         <div className="forecast-strip">
@@ -66,9 +70,9 @@ export function AnalysisResults({ analysis }: { analysis: AnalysisResponse }) {
               const isSelected = selected.has(market.client_market_id);
               return (
                 <tr className={isSelected ? "selected" : ""} key={market.client_market_id}>
-                  <td><input aria-label={`Select ${marketName(market)}`} checked={isSelected} disabled={!isSupported} type="checkbox" onChange={() => toggle(market.client_market_id)} /></td>
+                  <td><input aria-label={`Select ${marketName(market, analysis.fixture)}`} checked={isSelected} disabled={!isSupported} type="checkbox" onChange={() => toggle(market.client_market_id)} /></td>
                   <td data-label="Market">
-                    <strong>{marketName(market)}</strong>
+                    <strong>{marketName(market, analysis.fixture)}</strong>
                     <small>{market.market_type === "TEAM_TOTAL" ? "Team total" : "Match total"}</small>
                     {market.warnings.map((warning) => <span className="market-warning" key={`${warning.code}-${warning.message}`} title={warning.message}>{warning.code}: {warning.message}</span>)}
                     {!isSupported && market.unsupported_reason ? <span className="market-warning">{market.unsupported_reason}</span> : null}
