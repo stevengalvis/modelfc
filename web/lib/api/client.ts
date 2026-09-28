@@ -90,6 +90,15 @@ function decodeAnalysisResponse(value: unknown, request: AnalysisRequest): Analy
     && item.date === expected.date
     && item.home_team === expected.home_team
     && item.away_team === expected.away_team;
+  const marketTeamMatchesFixture = (item: Record<string, unknown>, fixture: Record<string, unknown>) => {
+    if (item.market_type !== "TEAM_TOTAL") return true;
+    const expectedTeam = item.team_side === "HOME"
+      ? fixture.home_team
+      : item.team_side === "AWAY" ? fixture.away_team : null;
+    if (typeof expectedTeam !== "string") return false;
+    if (item.status === "SUPPORTED") return item.team === expectedTeam;
+    return item.team === null || item.team === expectedTeam;
+  };
   const valid = record(value)
     && typeof value.analysis_id === "string"
     && typeof value.forecast_id === "string"
@@ -119,7 +128,9 @@ function decodeAnalysisResponse(value: unknown, request: AnalysisRequest): Analy
     && Array.isArray(value.markets)
     && value.markets.every(market)
     && value.markets.length === request.markets.length
-    && value.markets.every((item, index) => record(item) && requestMarketMatches(item, request.markets[index]))
+    && value.markets.every((item, index) => record(item)
+      && requestMarketMatches(item, request.markets[index])
+      && marketTeamMatchesFixture(item, value.fixture))
     && warnings(value.warnings);
   if (!valid) {
     throw new ModelFCApiError(

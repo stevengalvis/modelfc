@@ -81,6 +81,43 @@ describe("analysis response boundary", () => {
       .rejects.toMatchObject({ code: "ANALYSIS_CONTRACT_MISMATCH" });
   });
 
+  it("requires supported team totals to use the fixture team for their side", async () => {
+    await expect(analyzeWith((value) => { value.markets[0].team = null; }))
+      .rejects.toMatchObject({ code: "ANALYSIS_CONTRACT_MISMATCH" });
+    await expect(analyzeWith((value) => { value.markets[0].team = value.fixture.away_team; }))
+      .rejects.toMatchObject({ code: "ANALYSIS_CONTRACT_MISMATCH" });
+
+    const awayRequest = {
+      ...request,
+      markets: [{ ...request.markets[0], team_side: "AWAY" as const }],
+    };
+    await expect(analyzeWith((value) => {
+      value.markets[0].team_side = "AWAY";
+      value.markets[0].team = value.fixture.away_team;
+    }, awayRequest)).resolves.toBeDefined();
+    await expect(analyzeWith((value) => {
+      value.markets[0].team_side = "AWAY";
+      value.markets[0].team = value.fixture.home_team;
+    }, awayRequest)).rejects.toMatchObject({ code: "ANALYSIS_CONTRACT_MISMATCH" });
+  });
+
+  it("continues allowing a null team label for unsupported team totals", async () => {
+    await expect(analyzeWith((value) => {
+      Object.assign(value.markets[0], {
+        team: null,
+        status: "UNSUPPORTED",
+        unsupported_reason: "HISTORICAL_EVALUATION_REQUIRED",
+        model_probability: null,
+        push_probability: null,
+        decisive_model_probability: null,
+        implied_probability: null,
+        probability_edge: null,
+        expected_profit: null,
+        expected_corners: null,
+      });
+    })).resolves.toBeDefined();
+  });
+
   it("rejects partial and reordered market responses", async () => {
     const second = {
       ...request.markets[0],
