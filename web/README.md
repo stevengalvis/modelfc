@@ -46,6 +46,13 @@ and aggregate values. They display loading, empty, and request failure states.
 Malformed successful responses fail at the API boundary with
 `PROSPECTIVE_CONTRACT_MISMATCH`.
 
+The additive prospective performance contract separates frozen count errors,
+decisive team-total probability scores and calibration, and one-unit opportunity
+returns. Undefined early-sample metrics are null and display as an em dash.
+The page shows model versions and sample sizes; all calculations are made by
+the backend. See [longitudinal evaluation](../docs/LONGITUDINAL_EVALUATION.md)
+for metric definitions and push handling.
+
 Mock mode includes fixed upcoming and settled examples with WIN, LOSS, and PUSH
 results. The header labels this as **Mock data**. Live mode never uses those
 examples and depends on separately enabled prospective collection for records.

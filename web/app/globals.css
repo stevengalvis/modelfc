@@ -307,6 +307,11 @@ label { font-size: 11px; }
 .performance-grid { padding: 0 24px 24px; margin: 0; grid-template-columns: repeat(auto-fit, minmax(175px, 1fr)); }
 .performance-grid div { padding: 18px; border: 1px solid var(--line); border-radius: 9px; }
 .performance-grid dd { font-size: 23px; }
+.performance-calibration { padding: 0 24px 24px; overflow-x: auto; }
+.performance-calibration h3 { font-size: 16px; }
+.performance-calibration table { width: 100%; border-collapse: collapse; text-align: left; font-variant-numeric: tabular-nums; }
+.performance-calibration th, .performance-calibration td { padding: 10px; border-bottom: 1px solid var(--line); }
+.performance-calibration th { color: var(--subtle); font-size: 12px; }
 @media (max-width: 560px) {
   .ledger-card { padding: 18px 15px; }
   .ledger-card-head { flex-direction: column; gap: 10px; }

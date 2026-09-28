@@ -76,16 +76,8 @@ export function PredictionsDashboard() {
   </div>;
 }
 
-const modelLabels = {
-  total_prediction_runs: "Prediction runs", total_unique_prediction_targets: "Unique targets",
-  supported_prediction_targets: "Supported targets", settled_prediction_targets: "Settled targets",
-  unsettled_supported_prediction_targets: "Unsettled supported targets",
-} as const;
-const opportunityLabels = {
-  total_opportunity_events: "Opportunity events", settled_opportunities: "Settled opportunities",
-  wins: "Wins", losses: "Losses", pushes: "Pushes", win_rate_excluding_pushes: "Win rate, excluding pushes",
-  realized_profit_units: "Realized profit, units", unresolved_open_opportunities: "Unresolved open opportunities",
-} as const;
+const metric = (value: number | null) => value === null ? "—" : number(value);
+const rate = (value: number | null) => value === null ? "—" : percent(value);
 
 export function PerformanceDashboard() {
   const [data, setData] = useState<ProspectivePerformance | null>(null);
@@ -100,11 +92,20 @@ export function PerformanceDashboard() {
     return () => controller.abort();
   }, [attempt]);
   return <div className="workspace ledger-workspace">
-    <header className="page-heading"><div><p className="eyebrow">Prospective evidence</p><h1>Performance</h1><p>Backend calculated totals from recorded predictions and settled opportunities.</p></div></header>
+    <header className="page-heading"><div><p className="eyebrow">Prospective evidence</p><h1>Performance</h1><p>Frozen pre-kickoff forecasts, validated results, and market outcomes. Backend calculated.</p></div></header>
     <StateMessage loading={loading} error={error} retry={() => { setLoading(true); setError(null); setAttempt((value) => value + 1); }} />
-    {data && <>{data.model_performance.total_prediction_runs === 0 && <p className="panel ledger-message">No prospective predictions recorded yet. Performance will appear as evidence accumulates.</p>}
-      <section className="panel ledger-panel"><div className="section-title"><span>01</span><div><h2>Model performance</h2><p>Prediction and target coverage</p></div></div><dl className="performance-grid">{(Object.keys(modelLabels) as Array<keyof typeof modelLabels>).map((key) => <div key={key}><dt>{modelLabels[key]}</dt><dd>{data.model_performance[key]}</dd></div>)}</dl></section>
-      <section className="panel ledger-panel"><div className="section-title"><span>02</span><div><h2>Opportunity performance</h2><p>Settled market events</p></div></div><dl className="performance-grid">{(Object.keys(opportunityLabels) as Array<keyof typeof opportunityLabels>).map((key) => <div key={key}><dt>{opportunityLabels[key]}</dt><dd>{key === "win_rate_excluding_pushes" ? data.opportunity_performance[key] === null ? "—" : percent(data.opportunity_performance[key]) : key === "realized_profit_units" ? number(data.opportunity_performance[key]) : data.opportunity_performance[key]}</dd></div>)}</dl></section>
+    {data && <>{data.model_performance.settled_prediction_runs === 0 && <p className="panel ledger-message">Not enough settled evidence yet. Counts are shown; error and probability metrics will appear after results are validated.</p>}
+      <section className="panel ledger-panel"><div className="section-title"><span>01</span><div><h2>Model quality</h2><p>Count error: actual − predicted · positive bias means underprediction</p></div></div>
+        <dl className="performance-grid"><div><dt>Settled prediction runs</dt><dd>{data.model_performance.settled_prediction_runs}</dd></div><div><dt>Team forecasts</dt><dd>{data.model_performance.settled_team_forecasts}</dd></div><div><dt>Team-corner MAE</dt><dd>{metric(data.model_performance.team_corner_mae)}</dd></div><div><dt>Team-corner RMSE</dt><dd>{metric(data.model_performance.team_corner_rmse)}</dd></div><div><dt>Team-corner bias</dt><dd>{metric(data.model_performance.team_corner_mean_error)}</dd></div><div><dt>Match-total MAE</dt><dd>{metric(data.model_performance.match_total_mae)}</dd></div><div><dt>Match-total RMSE</dt><dd>{metric(data.model_performance.match_total_rmse)}</dd></div><div><dt>Match-total bias</dt><dd>{metric(data.model_performance.match_total_mean_error)}</dd></div></dl>
+        <p className="ledger-meta">{data.model_performance.total_prediction_runs} prediction runs · {data.model_performance.total_unique_prediction_targets} unique targets · {data.model_performance.supported_prediction_targets} supported · {data.model_performance.unsettled_supported_prediction_targets} unsettled</p>
+        <p className="ledger-meta">Model versions: {data.model_performance.model_versions.length ? data.model_performance.model_versions.map((item) => `${item.model_name} / ${item.model_version} (${item.settled_prediction_runs} settled of ${item.total_prediction_runs})`).join(" · ") : "None yet"}</p>
+      </section>
+      <section className="panel ledger-panel"><div className="section-title"><span>02</span><div><h2>Probability quality</h2><p>Settled decisive team-total targets · pushes excluded from binary scores</p></div></div>
+        <dl className="performance-grid"><div><dt>Decisive targets scored</dt><dd>{data.model_performance.decisive_probability_targets_scored}</dd></div><div><dt>Brier score</dt><dd>{metric(data.model_performance.brier_score)}</dd></div><div><dt>Log loss</dt><dd>{metric(data.model_performance.log_loss)}</dd></div><div><dt>Pushes excluded</dt><dd>{data.model_performance.pushes_excluded_from_decisive_scoring}</dd></div></dl>
+        {data.model_performance.decisive_probability_targets_scored < 30 && <p className="ledger-meta">Small sample: not enough settled decisive targets to interpret calibration reliably.</p>}
+        <div className="performance-calibration"><h3>Calibration · {data.model_performance.decisive_probability_targets_scored} decisive targets</h3><table><thead><tr><th>Probability range</th><th>Mean predicted</th><th>Observed win rate</th><th>N</th></tr></thead><tbody>{data.model_performance.calibration.map((bucket) => <tr key={bucket.lower_bound}><td>{Math.round(bucket.lower_bound * 100)}–{Math.round(bucket.upper_bound * 100)}%</td><td>{rate(bucket.mean_predicted_probability)}</td><td>{rate(bucket.observed_win_rate)}</td><td>{bucket.sample_count}</td></tr>)}</tbody></table><p className="ledger-meta">Lower bounds included; upper bounds excluded except 100%, which is included.</p></div>
+      </section>
+      <section className="panel ledger-panel"><div className="section-title"><span>03</span><div><h2>Opportunity performance</h2><p>One unit risked per settled market event</p></div></div><dl className="performance-grid"><div><dt>Settled opportunities</dt><dd>{data.opportunity_performance.settled_opportunities}</dd></div><div><dt>W-L-P</dt><dd>{data.opportunity_performance.wins}-{data.opportunity_performance.losses}-{data.opportunity_performance.pushes}</dd></div><div><dt>Decisive win rate</dt><dd>{rate(data.opportunity_performance.win_rate_excluding_pushes)}</dd></div><div><dt>Realized profit, units</dt><dd>{number(data.opportunity_performance.realized_profit_units)}</dd></div><div><dt>ROI on settled opportunities</dt><dd>{rate(data.opportunity_performance.roi_on_settled_opportunities)}</dd></div></dl><p className="ledger-meta">{data.opportunity_performance.total_opportunity_events} events · {data.opportunity_performance.unresolved_open_opportunities} unresolved</p></section>
     </>}
   </div>;
 }

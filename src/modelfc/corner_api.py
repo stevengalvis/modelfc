@@ -217,12 +217,42 @@ class PredictionResponse(StrictModel):
     actual_away_corners: int | None
 
 
+class ModelVersionPerformanceResponse(StrictModel):
+    model_name: str
+    model_version: str
+    total_prediction_runs: int
+    settled_prediction_runs: int
+
+
+class CalibrationBucketResponse(StrictModel):
+    lower_bound: float
+    upper_bound: float
+    sample_count: int
+    mean_predicted_probability: float | None
+    observed_win_rate: float | None
+
+
 class ModelPerformanceResponse(StrictModel):
     total_prediction_runs: int
+    settled_prediction_runs: int
+    settled_team_forecasts: int
+    team_corner_mae: float | None
+    team_corner_rmse: float | None
+    team_corner_mean_error: float | None
+    match_total_mae: float | None
+    match_total_rmse: float | None
+    match_total_mean_error: float | None
+    model_versions: list[ModelVersionPerformanceResponse]
     total_unique_prediction_targets: int
     supported_prediction_targets: int
     settled_prediction_targets: int
     unsettled_supported_prediction_targets: int
+    probability_targets_scored: int
+    decisive_probability_targets_scored: int
+    pushes_excluded_from_decisive_scoring: int
+    brier_score: float | None
+    log_loss: float | None
+    calibration: list[CalibrationBucketResponse]
 
 
 class OpportunityPerformanceResponse(StrictModel):
@@ -233,6 +263,7 @@ class OpportunityPerformanceResponse(StrictModel):
     pushes: int
     win_rate_excluding_pushes: float | None
     realized_profit_units: float
+    roi_on_settled_opportunities: float | None
     unresolved_open_opportunities: int
 
 

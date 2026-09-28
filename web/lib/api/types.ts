@@ -167,10 +167,25 @@ export interface ProspectiveOpportunity {
 export interface ProspectivePerformance {
   model_performance: {
     total_prediction_runs: number;
+    settled_prediction_runs: number;
+    settled_team_forecasts: number;
+    team_corner_mae: number | null;
+    team_corner_rmse: number | null;
+    team_corner_mean_error: number | null;
+    match_total_mae: number | null;
+    match_total_rmse: number | null;
+    match_total_mean_error: number | null;
+    model_versions: Array<{ model_name: string; model_version: string; total_prediction_runs: number; settled_prediction_runs: number }>;
     total_unique_prediction_targets: number;
     supported_prediction_targets: number;
     settled_prediction_targets: number;
     unsettled_supported_prediction_targets: number;
+    probability_targets_scored: number;
+    decisive_probability_targets_scored: number;
+    pushes_excluded_from_decisive_scoring: number;
+    brier_score: number | null;
+    log_loss: number | null;
+    calibration: Array<{ lower_bound: number; upper_bound: number; sample_count: number; mean_predicted_probability: number | null; observed_win_rate: number | null }>;
   };
   opportunity_performance: {
     total_opportunity_events: number;
@@ -180,6 +195,7 @@ export interface ProspectivePerformance {
     pushes: number;
     win_rate_excluding_pushes: number | null;
     realized_profit_units: number;
+    roi_on_settled_opportunities: number | null;
     unresolved_open_opportunities: number;
   };
 }
