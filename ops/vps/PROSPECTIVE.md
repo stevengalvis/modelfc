@@ -218,6 +218,14 @@ lose files. This change does not alter deployment release lifetime. Record expli
 acceptance before activation, avoid overlapping prospective execution with promotion
 during acceptance, and do not prune a release used by a runtime process.
 
-Scheduling E1 only, at most one initial plus one watchlisted later observation, is
-intentional. This cutover does not add SP1 automation, provider retries, API/frontend
+Scheduling E1 only and the hourly `:05 UTC` timer remain intentional. The runner
+discovers today's UTC fixtures once and may make one more discovery at or after
+12:00 UTC, at least six hours after the first, before 18:00 UTC. It preserves the
+union of discovered fixtures; a failed or interrupted discovery blocks further
+discovery and quotes for that date. A fixture without team totals on its first
+observation may receive one further check at least one hour later, only within
+90 to 15 minutes before kickoff. Watchlisted captures retain their one later
+observation. These reservations count against the existing period and eight-request
+per-run limits; expired windows and exhausted budgets do not trigger catch-up.
+This cutover does not add SP1 automation, general provider retries, API/frontend
 work, notifications, a database, model changes, or a MATCH_TOTAL capability change.
