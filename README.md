@@ -287,8 +287,13 @@ half-life to approach the existing unweighted Poisson model.
 ```text
 src/modelfc/            Internal models, forecasting, evaluation, and adapters
 tests/                  Offline tests and local CSV fixture
-requirements.txt        Runtime dependency declaration (currently empty)
+web/                    Next.js internal product interface
+requirements.txt        Developer-friendly runtime dependency ranges
 ```
+
+The existing frontend provides the manual corner-analysis workspace at
+`/analyze`. See [`web/README.md`](web/README.md) for local setup, explicit mock
+and live API modes, and frontend verification.
 
 Future work may explore and evaluate alternative forecasting approaches while
 keeping their assumptions, methodology, and probabilistic results comparable.
