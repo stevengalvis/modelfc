@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { decodeCapabilities, eligibleTeams, unavailableMarketReason } from "./capabilities";
 import { createApiClient } from "./client";
 import { mockCapabilities, mockAnalyze } from "./mock";
+import capabilityFixture from "../../../tests/fixtures/api_v1/capabilities.json";
 import wholeLineFixture from "../../../tests/fixtures/api_v1/analysis_whole_line.json";
 import { parseSportsbookInput } from "../parse-sportsbook-input";
 import { validateAnalysisInput } from "../analysis-input";
@@ -70,5 +71,28 @@ describe("capability boundary", () => {
     expect(response.warnings).toEqual(wholeLineFixture.warnings);
     await expect(mockAnalyze({ ...request, model: "venue-opponent-poisson" })).rejects.toMatchObject({ code: "DEMO_FIXTURE_ONLY" });
     await expect(mockAnalyze({ ...request, markets: [{ ...request.markets[0], line: 5 }] })).rejects.toMatchObject({ code: "DEMO_FIXTURE_ONLY" });
+  });
+
+  it("advertises only mock models backed by a successful stored response", async () => {
+    const parsed = parseSportsbookInput("Championship\n2026-09-17\nBirmingham vs Millwall\nBirmingham O4 -110");
+    const validation = validateAnalysisInput(parsed.fixture, parsed.markets, mockCapabilities);
+    expect(mockCapabilities.models).toEqual(["venue-opponent-negative-binomial"]);
+
+    for (const model of mockCapabilities.models) {
+      await expect(mockAnalyze({
+        idempotency_key: `demo-${model}`,
+        fixture: validation.fixture!,
+        model,
+        markets: validation.validMarkets,
+      })).resolves.toMatchObject({ forecast: { model } });
+    }
+  });
+
+  it("keeps live capabilities fully backend-driven", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify(capabilityFixture), { status: 200 })));
+    const live = createApiClient("live", "https://api.example.test/api/v1");
+    await expect(live.capabilities()).resolves.toMatchObject({
+      models: ["venue-opponent-negative-binomial", "venue-opponent-poisson"],
+    });
   });
 });

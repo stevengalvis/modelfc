@@ -4,10 +4,14 @@ import staleAnalysisFixture from "../../../tests/fixtures/api_v1/analysis.json";
 import wholeLineFixture from "../../../tests/fixtures/api_v1/analysis_whole_line.json";
 import type { AnalysisRequest, AnalysisResponse, CapabilitiesResponse, MarketInput } from "./types";
 
-// Import the backend-owned generated responses directly from this checkout.
-// Only request correlation IDs and the subset/order of fixed markets are adapted.
-export const mockCapabilities = capabilityFixture as CapabilitiesResponse;
 const responses = [wholeLineFixture, staleAnalysisFixture] as AnalysisResponse[];
+// Import the backend-owned generated responses directly from this checkout.
+// Mock capabilities advertise only models backed by at least one stored response;
+// request correlation IDs and the subset/order of fixed markets are adapted below.
+export const mockCapabilities: CapabilitiesResponse = {
+  ...(capabilityFixture as CapabilitiesResponse),
+  models: [...new Set(responses.map((response) => response.forecast.model))],
+};
 
 function sameTerms(left: MarketInput, right: MarketInput): boolean {
   return left.market_type === right.market_type && left.team_side === right.team_side

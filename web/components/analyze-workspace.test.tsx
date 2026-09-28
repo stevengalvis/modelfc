@@ -198,17 +198,18 @@ Birmingham team corners O4 -110`);
     expect(analyze.mock.calls[4][0].idempotency_key).not.toBe(failedKey);
   });
 
-  it("shows one backend model as a disabled visible selection", async () => {
-    const caps = structuredClone(mockCapabilities);
-    caps.models = ["only-backend-model"];
-    vi.spyOn(api, "capabilities").mockResolvedValue(caps);
+  it("shows the sole fulfillable mock model as a disabled visible selection", async () => {
     render(<AnalyzeWorkspace />);
     await pasteAndParse();
-    expect(screen.getByRole("combobox", { name: "Analysis model" })).toHaveValue("only-backend-model");
+    expect(mockCapabilities.models).toEqual(["venue-opponent-negative-binomial"]);
+    expect(screen.getByRole("combobox", { name: "Analysis model" })).toHaveValue(mockCapabilities.models[0]);
     expect(screen.getByRole("combobox", { name: "Analysis model" })).toBeDisabled();
   });
 
   it("defaults to the first model and gives a changed model a new request identity", async () => {
+    const caps = structuredClone(mockCapabilities);
+    caps.models.push("venue-opponent-poisson");
+    vi.spyOn(api, "capabilities").mockResolvedValue(caps);
     const analyze = vi.spyOn(api, "analyze").mockImplementation((request, signal) => mockAnalyze({
       ...request,
       model: mockCapabilities.models[0],
@@ -220,11 +221,11 @@ Birmingham team corners O4 -110`);
     await analyzeDemo();
     const firstKey = analyze.mock.calls[0][0].idempotency_key;
 
-    fireEvent.change(selector, { target: { value: mockCapabilities.models[1] } });
-    expect(selector).toHaveValue(mockCapabilities.models[1]);
+    fireEvent.change(selector, { target: { value: caps.models[1] } });
+    expect(selector).toHaveValue(caps.models[1]);
     expect(screen.queryByText("Analysis complete")).not.toBeInTheDocument();
     await analyzeDemo();
-    expect(analyze.mock.calls[1][0].model).toBe(mockCapabilities.models[1]);
+    expect(analyze.mock.calls[1][0].model).toBe(caps.models[1]);
     expect(analyze.mock.calls[1][0].idempotency_key).not.toBe(firstKey);
   });
 
