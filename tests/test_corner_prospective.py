@@ -326,7 +326,7 @@ class PilotTests(unittest.TestCase):
         self.assertEqual(first["provider_requests"], 3)
         self.assertEqual(first["market_observations_created"], 1)
         self.assertEqual(self.run_pilot()["provider_requests"], 0)
-        self.now = self.now.replace(hour=10, minute=0, second=0)
+        self.now = self.now.replace(hour=10, minute=1, second=0)
         self.assertEqual(self.run_pilot()["provider_requests"], 2)
         self.now += timedelta(minutes=10)
         self.assertEqual(self.run_pilot()["provider_requests"], 0)
@@ -408,6 +408,20 @@ class PilotTests(unittest.TestCase):
         attempt = self.control()["attempts"][self.fixtures[0]["fixtureId"]]
         self.assertEqual((attempt["count"], attempt["state"]), (2, "RESERVED"))
         self.assertEqual(self.run_pilot()["provider_requests"], 0)
+
+    def test_no_team_retry_delay_starts_at_first_observation_not_reservation(self):
+        self.fixtures[0]["startTime"] = self.now.replace(hour=11, minute=30).isoformat()
+        self.no_team_totals()
+        original = provider.OddsPapiMarketData.get_corner_markets
+        def slow_first(client, fixture):
+            self.now += timedelta(minutes=40)
+            return original(client, fixture)
+        with patch.object(provider.OddsPapiMarketData, "get_corner_markets", slow_first):
+            self.run_pilot()
+        self.now = self.now.replace(hour=10, minute=0)
+        self.assertEqual(self.run_pilot()["provider_requests"], 0)
+        self.now = self.now.replace(minute=41)
+        self.assertEqual(self.run_pilot()["provider_requests"], 2)
 
     def test_complete_but_unwatchlisted_pair_does_not_receive_later_observation(self):
         real = opportunities.assess_observation

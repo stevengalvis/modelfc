@@ -380,11 +380,15 @@ def _provider_work(path, control, state, config, summary, captured, market_data_
             continue
         previous = control["attempts"].get(fid)
         successful_latest = (latest_slot and (previous is None or previous["count"] == 1))
-        late_no_team = (initial_slot and previous is not None
-                        and previous["state"] == "NO_TEAM_TOTAL"
-                        and previous["count"] == 1
-                        and 900 < seconds <= 5400
-                        and _now() - _timestamp(previous["at"]) >= timedelta(hours=1))
+        late_no_team = False
+        if (initial_slot and previous is not None
+                and previous["state"] == "NO_TEAM_TOTAL" and previous["count"] == 1
+                and 900 < seconds <= 5400):
+            original = fixture_observations(state, fixture.provider, "E1", fid)
+            if len(original) == 1:
+                first_retrieved = _timestamp(original[0]["retrieved_at_utc"])
+                late_no_team = (first_retrieved >= _timestamp(previous["at"])
+                                and _now() - first_retrieved >= timedelta(hours=1))
         if previous and not (successful_latest or late_no_team):
             if previous["state"] == "RESERVED":
                 _reason(summary, "ATTEMPT_INCOMPLETE")
