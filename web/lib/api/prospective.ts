@@ -8,8 +8,27 @@ const finite = (value: unknown): value is number => typeof value === "number" &&
 const nonnegative = (value: unknown) => finite(value) && value >= 0;
 const count = (value: unknown) => Number.isSafeInteger(value) && (value as number) >= 0;
 const probability = (value: unknown) => finite(value) && value >= 0 && value <= 1;
-const timestamp = (value: unknown) => nonempty(value) && /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?(?:Z|[+-]\d\d:\d\d)$/.test(value) && Number.isFinite(Date.parse(value));
-const date = (value: unknown) => nonempty(value) && /^\d{4}-\d\d-\d\d$/.test(value) && !Number.isNaN(Date.parse(value));
+const calendarDate = (value: unknown) => {
+  if (typeof value !== "string") return false;
+  const parts = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!parts) return false;
+  const year = Number(parts[1]);
+  const month = Number(parts[2]);
+  const day = Number(parts[3]);
+  const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const days = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  return year >= 1 && month >= 1 && month <= 12 && day >= 1 && day <= days[month - 1];
+};
+const timestamp = (value: unknown) => {
+  if (typeof value !== "string") return false;
+  const parts = /^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(Z|[+-]\d{2}:\d{2})$/.exec(value);
+  if (!parts || !calendarDate(parts[1])) return false;
+  const offset = parts[5];
+  return Number(parts[2]) <= 23 && Number(parts[3]) <= 59 && Number(parts[4]) <= 59
+    && (offset === "Z" || Number(offset.slice(1, 3)) <= 23 && Number(offset.slice(4, 6)) <= 59)
+    && Number.isFinite(Date.parse(value));
+};
+const date = calendarDate;
 const status = (value: unknown) => value === "UPCOMING" || value === "SETTLED" || value === "EXPIRED_UNSETTLED";
 const fixture = (item: RecordValue) => ["competition", "provider", "provider_fixture_id", "home_team", "away_team"].every((key) => nonempty(item[key])) && timestamp(item.kickoff_utc);
 const id = (value: unknown) => nonempty(value);

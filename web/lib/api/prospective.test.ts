@@ -37,12 +37,21 @@ describe("prospective response boundary", () => {
   });
   it.each([
     ["missing id", changed(mockPredictions, (v) => { delete (v[0] as unknown as Record<string, unknown>).prediction_id; }), "predictions"],
+    ["impossible kickoff date", changed(mockPredictions, (v) => {
+      v[0].kickoff_utc = "2099-02-30T14:00:00Z";
+    }), "predictions"],
+    ["invalid latest history date", changed(mockPredictions, (v) => {
+      v[0].latest_history_date = "2099-02-30";
+    }), "predictions"],
     ["invalid status", changed(mockPredictions, (v) => { (v[0] as { settlement_status: string }).settlement_status = "UNKNOWN"; }), "predictions"],
     ["duplicate prediction ID", [...mockPredictions, structuredClone(mockPredictions[0])], "predictions"],
     ["opportunities without prediction targets", changed(mockPredictions, (v) => {
       v[0].target_count = 0;
     }), "predictions"],
     ["missing result corners", changed(mockPredictions, (v) => { v[1].actual_home_corners = null as unknown as number; }), "predictions"],
+    ["impossible qualification date", changed(mockOpportunities, (v) => {
+      v[0].qualified_at_utc = "2099-02-30T11:00:00Z";
+    }), "opportunities"],
     ["duplicate opportunity ID", [...mockOpportunities, structuredClone(mockOpportunities[0])], "opportunities"],
     ["unsupported quarter line", changed(mockOpportunities, (v) => { v[0].line = 4.25; }), "opportunities"],
     ["out-of-range line", changed(mockOpportunities, (v) => { v[0].line = 1000.5; }), "opportunities"],
