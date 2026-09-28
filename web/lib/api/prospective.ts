@@ -66,7 +66,7 @@ export function decodePredictions(value: unknown): ProspectivePrediction[] {
       && nonnegative(item.expected_match_corners)
       && Math.abs((item.expected_home_corners as number) + (item.expected_away_corners as number) - (item.expected_match_corners as number)) < 1e-8
       && (item.dispersion_size === null || (finite(item.dispersion_size) && item.dispersion_size > 0))
-      && date(item.latest_history_date)
+      && date(item.latest_history_date) && (item.latest_history_date as string) < (item.kickoff_utc as string).slice(0, 10)
       && Array.isArray(item.source_data_hashes) && item.source_data_hashes.every((hash: unknown) => record(hash) && nonempty(hash.filename) && typeof hash.sha256 === "string" && /^[a-f0-9]{64}$/.test(hash.sha256))
       && count(item.target_count) && count(item.opportunity_count)
       && ((item.opportunity_count as number) === 0 || (item.target_count as number) > 0)

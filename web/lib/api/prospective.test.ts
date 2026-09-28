@@ -40,6 +40,9 @@ describe("prospective response boundary", () => {
     ["impossible kickoff date", changed(mockPredictions, (v) => {
       v[0].kickoff_utc = "2099-02-30T14:00:00Z";
     }), "predictions"],
+    ["history on fixture date", changed(mockPredictions, (v) => {
+      v[0].latest_history_date = "2099-10-02";
+    }), "predictions"],
     ["invalid latest history date", changed(mockPredictions, (v) => {
       v[0].latest_history_date = "2099-02-30";
     }), "predictions"],
