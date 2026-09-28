@@ -228,6 +228,33 @@ Birmingham team corners O4 -110`);
     expect(screen.getByRole("combobox", { name: "Analysis model" })).toBeDisabled();
   });
 
+  it("disables model switching while an analysis request is in flight", async () => {
+    const caps = structuredClone(mockCapabilities);
+    caps.models.push("venue-opponent-poisson");
+    vi.spyOn(api, "capabilities").mockResolvedValue(caps);
+    let resolveRequest!: (value: AnalysisResponse) => void;
+    let captured!: AnalysisRequest;
+    vi.spyOn(api, "analyze").mockImplementation((request) => {
+      captured = request;
+      return new Promise((resolve) => { resolveRequest = resolve; });
+    });
+
+    render(<AnalyzeWorkspace />);
+    await pasteAndParse();
+    const selector = screen.getByRole("combobox", { name: "Analysis model" });
+    expect(selector).toBeEnabled();
+
+    fireEvent.click(screen.getByRole("button", { name: /analyze all/i }));
+    await waitFor(() => expect(api.analyze).toHaveBeenCalledTimes(1));
+    expect(selector).toBeDisabled();
+    fireEvent.change(selector, { target: { value: caps.models[1] } });
+    expect(selector).toHaveValue(caps.models[0]);
+
+    await act(async () => { resolveRequest(await mockAnalyze(captured)); });
+    await screen.findByText("Analysis complete");
+    expect(selector).toBeEnabled();
+  });
+
   it("defaults to the first model and gives a changed model a new request identity", async () => {
     const caps = structuredClone(mockCapabilities);
     caps.models.push("venue-opponent-poisson");
