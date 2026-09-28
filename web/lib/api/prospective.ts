@@ -13,6 +13,8 @@ const date = (value: unknown) => nonempty(value) && /^\d{4}-\d\d-\d\d$/.test(val
 const status = (value: unknown) => value === "UPCOMING" || value === "SETTLED" || value === "EXPIRED_UNSETTLED";
 const fixture = (item: RecordValue) => ["competition", "provider", "provider_fixture_id", "home_team", "away_team"].every((key) => nonempty(item[key])) && timestamp(item.kickoff_utc);
 const id = (value: unknown) => nonempty(value);
+// Match the backend validation tolerance in corner_opportunities.py.
+const DECIMAL_AMERICAN_ODDS_TOLERANCE = 0.005;
 const profit = (odds: number) => odds > 0 ? odds / 100 : 100 / -odds;
 const settledResult = (item: RecordValue) => {
   if (!count(item.actual_team_corners) || !nonnegative(item.line)) return false;
@@ -59,6 +61,7 @@ export function decodeOpportunities(value: unknown): ProspectiveOpportunity[] {
       && (item.direction === "OVER" || item.direction === "UNDER") && nonnegative(item.line)
       && Number.isSafeInteger(item.american_odds) && Math.abs(item.american_odds as number) >= 100
       && finite(item.decimal_odds) && item.decimal_odds > 1
+      && Math.abs((item.decimal_odds as number) - (1 + profit(item.american_odds as number))) <= DECIMAL_AMERICAN_ODDS_TOLERANCE
       && timestamp(item.qualified_at_utc) && Date.parse(item.qualified_at_utc as string) < Date.parse(item.kickoff_utc as string)
       && probability(item.model_decisive_probability) && probability(item.no_vig_market_probability)
       && finite(item.no_vig_probability_edge)

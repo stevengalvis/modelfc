@@ -42,6 +42,9 @@ describe("prospective response boundary", () => {
       v[0].target_count = 0;
     }), "predictions"],
     ["missing result corners", changed(mockPredictions, (v) => { v[1].actual_home_corners = null as unknown as number; }), "predictions"],
+    ["inconsistent decimal price", changed(mockOpportunities, (v) => {
+      v[0].decimal_odds = 10;
+    }), "opportunities"],
     ["wrong team side", changed(mockOpportunities, (v) => { v[0].team = "Millwall"; }), "opportunities"],
     ["non-finite edge", changed(mockOpportunities, (v) => { v[0].no_vig_probability_edge = Number.POSITIVE_INFINITY; }), "opportunities"],
     ["invalid result", changed(mockOpportunities, (v) => { (v[1] as { result: string | null }).result = "VOID"; }), "opportunities"],
