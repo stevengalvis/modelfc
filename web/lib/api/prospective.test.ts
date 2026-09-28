@@ -22,6 +22,10 @@ describe("prospective response boundary", () => {
     expect(items[0]).toMatchObject({ bookmaker: "DraftKings", line: 4.5, american_odds: -110, model_decisive_probability: 0.62, no_vig_market_probability: 0.52, no_vig_probability_edge: 0.10 });
     expect(items.slice(1).map((item) => [item.result, item.realized_profit_units])).toEqual([["WIN", 0.83333], ["LOSS", -1], ["PUSH", 0]]);
   });
+  it("accepts a prior UTC history date across an offset boundary", async () => {
+    const items = changed(mockPredictions, (v) => { v[0].kickoff_utc = "2099-10-01T23:30:00-02:00"; });
+    expect(await live(items).predictions()).toEqual(items);
+  });
   it("accepts a loss-only aggregate with a zero win rate", async () => {
     const value = changed(mockPerformance, (v) => {
       v.opportunity_performance.wins = 0; v.opportunity_performance.losses = 1;
@@ -39,6 +43,10 @@ describe("prospective response boundary", () => {
     ["missing id", changed(mockPredictions, (v) => { delete (v[0] as unknown as Record<string, unknown>).prediction_id; }), "predictions"],
     ["impossible kickoff date", changed(mockPredictions, (v) => {
       v[0].kickoff_utc = "2099-02-30T14:00:00Z";
+    }), "predictions"],
+    ["offset kickoff with same UTC history date", changed(mockPredictions, (v) => {
+      v[0].kickoff_utc = "2099-10-02T00:30:00+01:00";
+      v[0].latest_history_date = "2099-10-01";
     }), "predictions"],
     ["history on fixture date", changed(mockPredictions, (v) => {
       v[0].latest_history_date = "2099-10-02";

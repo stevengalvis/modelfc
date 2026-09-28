@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api/client";
+import { ModelFCApiError } from "@/lib/api/errors";
 import type { ProspectiveOpportunity, ProspectivePerformance, ProspectivePrediction, ProspectiveStatus } from "@/lib/api/types";
 
 const time = (value: string) => new Intl.DateTimeFormat("en-US", { dateStyle: "medium", timeStyle: "short", timeZone: "UTC" }).format(new Date(value)) + " UTC";
@@ -26,8 +27,22 @@ export function PredictionsDashboard() {
   const [attempt, setAttempt] = useState(0);
   useEffect(() => {
     const controller = new AbortController();
-    Promise.all([api.predictions(controller.signal), api.opportunities(controller.signal)])
-      .then(([predictions, opportunities]) => { if (!controller.signal.aborted) { setData({ predictions, opportunities }); setError(null); } })
+    // Read opportunities first, then predictions: immutable opportunities cannot
+    // outrun their parent prediction in the second read as collection appends.
+    api.opportunities(controller.signal)
+      .then(async (opportunities) => {
+        const predictions = await api.predictions(controller.signal);
+        const byId = new Map(predictions.map((item) => [item.prediction_id, item]));
+        if (opportunities.some((item) => {
+          const parent = byId.get(item.prediction_id);
+          return !parent || parent.provider_fixture_id !== item.provider_fixture_id
+            || parent.competition !== item.competition || parent.kickoff_utc !== item.kickoff_utc
+            || parent.home_team !== item.home_team || parent.away_team !== item.away_team;
+        })) {
+          throw new ModelFCApiError("The API returned opportunities without matching predictions.", "PROSPECTIVE_CONTRACT_MISMATCH", false);
+        }
+        if (!controller.signal.aborted) { setData({ predictions, opportunities }); setError(null); }
+      })
       .catch((reason: unknown) => { if (!controller.signal.aborted) { setData(null); setError(reason instanceof Error ? reason.message : "Request failed."); } })
       .finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();

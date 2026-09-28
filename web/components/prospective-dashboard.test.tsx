@@ -12,6 +12,7 @@ describe("prospective dashboards", () => {
     vi.spyOn(api, "opportunities").mockResolvedValue(mockOpportunities);
     render(<PredictionsDashboard />);
     expect(screen.getByRole("status")).toHaveTextContent("Loading prospective evidence");
+    await waitFor(() => expect(api.predictions).toHaveBeenCalled());
     resolve(mockPredictions);
     expect(await screen.findByText("Prediction runs")).toBeInTheDocument();
     expect(screen.getByText("WIN")).toBeInTheDocument();
@@ -32,6 +33,13 @@ describe("prospective dashboards", () => {
     render(<PredictionsDashboard />);
     await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("API down"));
     expect(screen.queryByText("Prediction runs")).not.toBeInTheDocument();
+  });
+  it("rejects an opportunity with no matching prediction", async () => {
+    vi.spyOn(api, "opportunities").mockResolvedValue(mockOpportunities);
+    vi.spyOn(api, "predictions").mockResolvedValue([]);
+    render(<PredictionsDashboard />);
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("without matching predictions"));
+    expect(screen.queryByText("Market opportunities")).not.toBeInTheDocument();
   });
   it("renders backend performance values", async () => {
     vi.spyOn(api, "performance").mockResolvedValue(mockPerformance);
