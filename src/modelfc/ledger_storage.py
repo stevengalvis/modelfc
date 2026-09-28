@@ -192,14 +192,26 @@ def _grant_evidence_read(target: Path, state: Path, lock_descriptor: int | None,
         directories = [state, *(state.joinpath(*relative.parts[:index])
                                for index in range(1, len(relative.parts)))]
         for index, directory in enumerate(directories):
-            info = directory.lstat()
-            if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid():
-                raise ValueError("invalid public evidence directory")
-            permission = "--x" if index == 0 else "r-x"
-            subprocess.run(("/usr/bin/setfacl", "-m", f"u:{uid}:{permission}",
-                            "--", str(directory)), check=True, timeout=10,
-                           env={"PATH": "/usr/bin:/bin"},
-                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            descriptor = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+            try:
+                info = os.fstat(descriptor)
+                current = directory.lstat()
+                if (not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid()
+                        or (info.st_dev, info.st_ino) != (current.st_dev, current.st_ino)
+                        or not stat.S_ISDIR(current.st_mode) or current.st_uid != os.getuid()):
+                    raise ValueError("invalid public evidence directory")
+                permission = "--x" if index == 0 else "r-x"
+                subprocess.run(("/usr/bin/setfacl", "-m", f"u:{uid}:{permission}",
+                                "--", f"/proc/self/fd/{descriptor}"),
+                               check=True, timeout=10, env={"PATH": "/usr/bin:/bin"},
+                               pass_fds=(descriptor,), stdout=subprocess.DEVNULL,
+                               stderr=subprocess.DEVNULL)
+                current = directory.lstat()
+                if ((info.st_dev, info.st_ino) != (current.st_dev, current.st_ino)
+                        or not stat.S_ISDIR(current.st_mode) or current.st_uid != os.getuid()):
+                    raise ValueError("public evidence directory changed during ACL setup")
+            finally:
+                os.close(descriptor)
         # The writer created this real lock on entering ledger_lock. The API
         # needs its read ACL before any new evidence is made visible.
         lock_path = state / ".lock"

@@ -119,7 +119,7 @@ class EvidenceAclTests(unittest.TestCase):
                     write_new_record(self.path, {"first": True}, evidence_state=self.state,
                                      evidence_lock_fd=lock_fd)
         self.assertFalse(self.path.exists())
-        self.assertFalse(any(call.args[0][-1].startswith("/proc/self/fd/")
+        self.assertFalse(any(call.args[0][2] == "u:10001:r--"
                              for call in run.call_args_list))
         self.assertEqual(control.read_text(), '{"private":true}')
 
@@ -162,7 +162,7 @@ class EvidenceAclTests(unittest.TestCase):
                     write_new_record(self.path, {"first": True}, evidence_state=self.state,
                                      evidence_lock_fd=lock_fd)
         self.assertFalse(self.path.exists())
-        self.assertFalse(any(call.args[0][-1].startswith("/proc/self/fd/")
+        self.assertFalse(any(call.args[0][2] == "u:10001:r--"
                              for call in run.call_args_list))
         self.assertEqual(lock.read_text(), '{"private":true}')
 
@@ -179,8 +179,58 @@ class EvidenceAclTests(unittest.TestCase):
                     write_new_record(self.path, {"first": True}, evidence_state=self.state,
                                      evidence_lock_fd=lock_fd)
         self.assertFalse(self.path.exists())
-        self.assertFalse(any(call.args[0][-1].startswith("/proc/self/fd/")
+        self.assertFalse(any(call.args[0][2] == "u:10001:r--"
                              for call in run.call_args_list))
+
+    def test_directory_acl_targets_validated_inode_during_name_swap(self):
+        public = self.state / "market-observations"
+        private = self.state / "prospective"
+        private.mkdir()
+        private_inode = private.stat().st_ino
+        original_inode = public.stat().st_ino
+        inspected = []
+        def swap_during_acl(command, **kwargs):
+            if (command[2] == "u:10001:r-x"
+                    and command[-1].startswith("/proc/self/fd/")
+                    and Path(os.readlink(command[-1])) == public):
+                original = self.state / "original-public"
+                public.rename(original)
+                private.rename(public)
+                try:
+                    inspected.append(os.fstat(kwargs["pass_fds"][0]).st_ino)
+                    self.assertEqual(inspected[-1], original_inode)
+                    self.assertNotEqual(inspected[-1], private_inode)
+                finally:
+                    public.rename(private)
+                    original.rename(public)
+        with patch.dict(os.environ, {"MODELFC_EVIDENCE_ACL_USER": "modelfc-api"}), \
+                patch("modelfc.ledger_storage.pwd.getpwnam", return_value=type("User", (), {"pw_uid": 10001})()), \
+                patch("modelfc.ledger_storage.subprocess.run", side_effect=swap_during_acl):
+            with ledger_lock(self.state) as lock_fd:
+                write_new_record(self.path, {"first": True}, evidence_state=self.state,
+                                 evidence_lock_fd=lock_fd)
+        self.assertEqual(inspected, [original_inode])
+        self.assertEqual(private.stat().st_ino, private_inode)
+        self.assertTrue(self.path.exists())
+
+    def test_directory_replacement_left_in_place_blocks_publication(self):
+        public = self.state / "market-observations"
+        private = self.state / "prospective"
+        private.mkdir()
+        def swap_during_acl(command, **kwargs):
+            if (command[2] == "u:10001:r-x"
+                    and command[-1].startswith("/proc/self/fd/")
+                    and Path(os.readlink(command[-1])) == public):
+                public.rename(self.state / "original-public")
+                private.rename(public)
+        with patch.dict(os.environ, {"MODELFC_EVIDENCE_ACL_USER": "modelfc-api"}), \
+                patch("modelfc.ledger_storage.pwd.getpwnam", return_value=type("User", (), {"pw_uid": 10001})()), \
+                patch("modelfc.ledger_storage.subprocess.run", side_effect=swap_during_acl):
+            with ledger_lock(self.state) as lock_fd:
+                with self.assertRaisesRegex(LedgerStorageUnavailable, "record not published"):
+                    write_new_record(self.path, {"first": True}, evidence_state=self.state,
+                                     evidence_lock_fd=lock_fd)
+        self.assertFalse(self.path.exists())
 
     def test_publication_uses_unnamed_temporary_instead_of_writable_alias(self):
         control = self.state / "prospective" / "control.json"
@@ -246,7 +296,7 @@ class EvidenceAclTests(unittest.TestCase):
                     write_new_record(self.path, {"first": True}, evidence_state=self.state,
                                      evidence_lock_fd=lock_fd)
         self.assertFalse(self.path.exists())
-        self.assertFalse(any(call.args[0][-1].startswith("/proc/self/fd/")
+        self.assertFalse(any(call.args[0][2] == "u:10001:r--"
                              for call in run.call_args_list))
 
     def test_non_evidence_records_never_receive_api_acl(self):

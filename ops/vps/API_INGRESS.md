@@ -55,8 +55,9 @@ release are verified. Coordinate with the hourly timer, wait for the current
 run to exit, and preserve the old launcher for rollback. The new trusted
 launcher opts the writer into `MODELFC_EVIDENCE_ACL_USER=modelfc-api` in its
 clean child environment. Only the six evidence record families receive a read
-ACL on the temporary file **before** atomic publication; their new parent
-directories receive narrowly scoped traversal/read ACLs. ACL failure aborts
+ACL on the unnamed temporary inode **before** atomic publication; their new parent
+directories receive narrowly scoped traversal/read ACLs through validated
+directory descriptors, with path identity checked after each ACL. ACL failure aborts
 that record before publication and does not refund provider reservations.
 The writer creates an unnamed temporary evidence inode in the destination
 filesystem, keeps it open through serialization and ACL setup, then links the
