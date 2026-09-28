@@ -280,3 +280,38 @@ label { font-size: 11px; }
   .selection-bar > div { width: 100%; }
   .selection-bar .ghost-button, .selection-bar .primary-button { flex: 1; min-width: 120px; }
 }
+
+/* Read-only prospective evidence */
+.ledger-workspace { max-width: 1160px; }
+.ledger-panel { margin-top: 24px; }
+.ledger-list { border-top: 1px solid var(--line); }
+.ledger-card { padding: 22px 24px; border-top: 1px solid var(--line); }
+.ledger-card:first-child { border-top: 0; }
+.ledger-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; }
+.ledger-card-head small, .ledger-meta { color: var(--muted); font: 11px/1.5 var(--font-mono); }
+.ledger-card-head h3 { margin: 8px 0 0; font-size: 20px; letter-spacing: -.02em; }
+.ledger-card-head h3 span { color: var(--muted); font-weight: 400; }
+.ledger-meta { margin: 11px 0 0; overflow-wrap: anywhere; }
+.ledger-offer { margin: 18px 0 0; font-size: 16px; font-weight: 650; }
+.ledger-offer strong { color: var(--lime); margin-left: 8px; font-family: var(--font-mono); }
+.ledger-offer span { color: var(--muted); font-weight: 400; font-size: 13px; }
+.ledger-values, .performance-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(145px, 1fr)); gap: 18px; margin: 18px 0 0; }
+.ledger-values div, .performance-grid div { min-width: 0; }
+.ledger-values dt, .performance-grid dt { color: var(--subtle); font: 11px/1.4 var(--font-mono); }
+.ledger-values dd, .performance-grid dd { margin: 6px 0 0; font: 600 16px/1.3 var(--font-mono); overflow-wrap: anywhere; }
+.ledger-status { flex: none; border-radius: 20px; padding: 7px 9px; font: 600 10px/1 var(--font-mono); letter-spacing: .03em; }
+.ledger-status.upcoming { color: var(--lime); background: var(--lime-soft); }
+.ledger-status.settled { color: var(--ink); background: var(--line-bright); }
+.ledger-status.expired_unsettled { color: var(--orange); background: rgba(255,139,74,.1); }
+.ledger-message { padding: 24px; color: var(--muted); margin: 0; }
+.performance-grid { padding: 0 24px 24px; margin: 0; grid-template-columns: repeat(auto-fit, minmax(175px, 1fr)); }
+.performance-grid div { padding: 18px; border: 1px solid var(--line); border-radius: 9px; }
+.performance-grid dd { font-size: 23px; }
+@media (max-width: 560px) {
+  .ledger-card { padding: 18px 15px; }
+  .ledger-card-head { flex-direction: column; gap: 10px; }
+  .ledger-values { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .performance-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); padding: 0 15px 15px; gap: 8px; }
+  .performance-grid div { padding: 12px; }
+  .performance-grid dd { font-size: 17px; }
+}

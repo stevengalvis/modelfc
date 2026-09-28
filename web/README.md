@@ -13,7 +13,7 @@ npm run dev -- --hostname 127.0.0.1
 ```
 
 The application requires an explicit API mode. Set `NEXT_PUBLIC_MODELFC_API_MODE=mock`
-for fixed, backend-generated synthetic responses, or use `live` with a reachable
+for fixed synthetic responses, or use `live` with a reachable
 FastAPI service. Missing mode configuration is an error, never an implicit demo.
 Use **Use example** for whole-line probabilities or **Mixed board example** for
 an explicitly excluded match total and stale-history warnings. Mock mode cannot
@@ -37,6 +37,19 @@ historical teams. An alias requires explicit correction. Current eligible names
 do not guarantee enough history before an earlier fixture date; the API checks
 that cutoff on submission. Match totals remain gated by
 `HISTORICAL_EVALUATION_REQUIRED`; recognizing SP2 does not enable La Liga 2 data.
+
+## Prospective evidence pages
+
+`/predictions` reads `/predictions` and `/opportunities`; `/performance` reads
+`/prospective/performance`. Both pages are read only and preserve backend order
+and aggregate values. They display loading, empty, and request failure states.
+Malformed successful responses fail at the API boundary with
+`PROSPECTIVE_CONTRACT_MISMATCH`.
+
+Mock mode includes fixed upcoming and settled examples with WIN, LOSS, and PUSH
+results. The header labels this as **Mock data**. Live mode never uses those
+examples and depends on separately enabled prospective collection for records.
+The synthetic live integration verifies the real HTTP endpoints with empty state.
 
 ## Verify
 

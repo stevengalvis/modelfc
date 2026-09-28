@@ -68,3 +68,24 @@ describe("real FastAPI boundary with synthetic history and mocks off", () => {
     })).rejects.toMatchObject({ code: "INSUFFICIENT_HISTORY" });
   });
 });
+
+describe("real read-only prospective API with empty synthetic state", () => {
+  it("returns empty predictions and opportunities without mock fallback", async () => {
+    expect(await live.predictions()).toEqual([]);
+    expect(await live.opportunities()).toEqual([]);
+  });
+  it("returns backend zero aggregates", async () => {
+    expect(await live.performance()).toEqual({
+      model_performance: {
+        total_prediction_runs: 0, total_unique_prediction_targets: 0,
+        supported_prediction_targets: 0, settled_prediction_targets: 0,
+        unsettled_supported_prediction_targets: 0,
+      },
+      opportunity_performance: {
+        total_opportunity_events: 0, settled_opportunities: 0,
+        wins: 0, losses: 0, pushes: 0, win_rate_excluding_pushes: null,
+        realized_profit_units: 0, unresolved_open_opportunities: 0,
+      },
+    });
+  });
+});

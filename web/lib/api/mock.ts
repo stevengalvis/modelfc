@@ -44,3 +44,70 @@ export async function mockAnalyze(request: AnalysisRequest, signal?: AbortSignal
     })),
   };
 }
+
+// Fixed prospective examples, separate from live state and visibly marked by AppShell.
+export const mockPredictions = [
+  {
+    prediction_id: "demo-prediction-upcoming", source_observation_id: "demo-observation-upcoming",
+    created_at_utc: "2099-10-01T10:00:00Z", competition: "E1", provider: "OddsPapi",
+    provider_fixture_id: "demo-fixture-upcoming", kickoff_utc: "2099-10-02T14:00:00Z",
+    home_team: "Birmingham", away_team: "Millwall", model_name: "venue-opponent-negative-binomial",
+    model_version: "demo-1", expected_home_corners: 5.2, expected_away_corners: 4.1,
+    expected_match_corners: 9.3, dispersion_size: 8.2, latest_history_date: "2099-09-30",
+    source_data_hashes: [{ filename: "demo.csv", sha256: "a".repeat(64) }],
+    target_count: 2, opportunity_count: 1, settlement_status: "UPCOMING" as const,
+    actual_home_corners: null, actual_away_corners: null,
+  },
+  {
+    prediction_id: "demo-prediction-settled", source_observation_id: "demo-observation-settled",
+    created_at_utc: "2026-09-19T10:00:00Z", competition: "E1", provider: "OddsPapi",
+    provider_fixture_id: "demo-fixture-settled", kickoff_utc: "2026-09-20T14:00:00Z",
+    home_team: "Cardiff", away_team: "Charlton", model_name: "venue-opponent-negative-binomial",
+    model_version: "demo-1", expected_home_corners: 5.4, expected_away_corners: 4.5,
+    expected_match_corners: 9.9, dispersion_size: 8.2, latest_history_date: "2026-09-18",
+    source_data_hashes: [{ filename: "demo.csv", sha256: "b".repeat(64) }],
+    target_count: 3, opportunity_count: 3, settlement_status: "SETTLED" as const,
+    actual_home_corners: 6, actual_away_corners: 4,
+  },
+];
+
+export const mockOpportunities = [
+  {
+    opportunity_id: "demo-offer-upcoming", prediction_id: "demo-prediction-upcoming",
+    target_id: "demo-target-upcoming", observation_id: "demo-observation-upcoming",
+    provider: "OddsPapi", provider_fixture_id: "demo-fixture-upcoming", competition: "E1",
+    kickoff_utc: "2099-10-02T14:00:00Z", home_team: "Birmingham", away_team: "Millwall",
+    bookmaker: "DraftKings", market_type: "TEAM_TOTAL" as const, team_side: "HOME" as const,
+    team: "Birmingham", direction: "OVER" as const, line: 4.5, american_odds: -110,
+    decimal_odds: 1.90909, qualified_at_utc: "2099-10-01T11:00:00Z",
+    model_decisive_probability: 0.62, no_vig_market_probability: 0.52,
+    no_vig_probability_edge: 0.10, policy_version: "demo-1", settlement_status: "UPCOMING" as const,
+    result: null, actual_team_corners: null, realized_profit_units: null,
+  },
+  ...(["WIN", "LOSS", "PUSH"] as const).map((result, index) => ({
+    opportunity_id: `demo-offer-${result.toLowerCase()}`, prediction_id: "demo-prediction-settled",
+    target_id: `demo-target-${index}`, observation_id: `demo-observation-${index}`,
+    provider: "OddsPapi", provider_fixture_id: "demo-fixture-settled", competition: "E1",
+    kickoff_utc: "2026-09-20T14:00:00Z", home_team: "Cardiff", away_team: "Charlton",
+    bookmaker: index === 0 ? "FanDuel" : "DraftKings", market_type: "TEAM_TOTAL" as const,
+    team_side: "HOME" as const, team: "Cardiff", direction: "OVER" as const,
+    line: [5.5, 6.5, 6][index], american_odds: [-120, 110, -110][index],
+    decimal_odds: [1.83333, 2.1, 1.90909][index], qualified_at_utc: "2026-09-19T11:00:00Z",
+    model_decisive_probability: 0.62, no_vig_market_probability: 0.52,
+    no_vig_probability_edge: 0.10, policy_version: "demo-1", settlement_status: "SETTLED" as const,
+    result, actual_team_corners: 6, realized_profit_units: [0.83333, -1, 0][index],
+  })),
+];
+
+export const mockPerformance = {
+  model_performance: {
+    total_prediction_runs: 2, total_unique_prediction_targets: 5,
+    supported_prediction_targets: 5, settled_prediction_targets: 3,
+    unsettled_supported_prediction_targets: 2,
+  },
+  opportunity_performance: {
+    total_opportunity_events: 4, settled_opportunities: 3, wins: 1, losses: 1, pushes: 1,
+    win_rate_excluding_pushes: 0.5, realized_profit_units: -0.16667,
+    unresolved_open_opportunities: 1,
+  },
+};
