@@ -90,8 +90,9 @@ function decodeAnalysisResponse(value: unknown, request: AnalysisRequest): Analy
     && item.date === expected.date
     && item.home_team === expected.home_team
     && item.away_team === expected.away_team;
-  const marketTeamMatchesFixture = (item: Record<string, unknown>, fixture: Record<string, unknown>) => {
+  const marketTeamMatchesFixture = (item: Record<string, unknown>, fixture: unknown) => {
     if (item.market_type !== "TEAM_TOTAL") return true;
+    if (!record(fixture)) return false;
     const expectedTeam = item.team_side === "HOME"
       ? fixture.home_team
       : item.team_side === "AWAY" ? fixture.away_team : null;
