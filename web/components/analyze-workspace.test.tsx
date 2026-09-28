@@ -11,6 +11,10 @@ const sportsbookText = `Championship
 Birmingham vs Millwall
 Birmingham team corners O4 -110`;
 
+function boardWithMarkets(count: number): string {
+  return `Championship\n2026-09-17\nBirmingham vs Millwall\n${Array.from({ length: count }, () => "Birmingham O4 -110").join("\n")}`;
+}
+
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
 async function pasteAndParse(text = sportsbookText) {
@@ -148,18 +152,89 @@ Birmingham team corners O4 -110`);
     expect(screen.getByText("Total O9.5")).toBeInTheDocument();
   });
 
-  it("applies the 32-market limit to outbound rows while unresolved supported rows still block", async () => {
+  it("sends exactly 32 markets in one request while unresolved supported rows still block", async () => {
     const analyze = vi.spyOn(api, "analyze");
     render(<AnalyzeWorkspace />);
-    const supported = Array.from({ length: 31 }, () => "Birmingham O4 -110").join("\n");
-    await pasteAndParse(sportsbookText + "\n" + supported + "\nTotal O9.5\nTotal U10.5 -125");
+    await pasteAndParse(boardWithMarkets(32) + "\nTotal O9.5\nTotal U10.5 -125");
     expect(screen.getByText("32 of 34 markets ready")).toBeInTheDocument();
     await analyzeDemo();
     expect(analyze.mock.calls[0][0].markets).toHaveLength(32);
     fireEvent.change(screen.getByLabelText("Market 1 American odds"), { target: { value: "" } });
     expect(screen.getByRole("button", { name: /analyze all/i })).toBeDisabled();
-    await pasteAndParse(sportsbookText + "\n" + supported + "\nBirmingham O4 -110\nTotal O9.5");
-    expect(screen.getByText(/backend accepts at most 32/)).toBeInTheDocument();
+  });
+
+  it("retries only a failed market chunk with its original idempotency key", async () => {
+    let call = 0;
+    const analyze = vi.spyOn(api, "analyze").mockImplementation((request, signal) => {
+      call += 1;
+      if (call === 2) return Promise.reject(new ModelFCApiError("Temporary failure", "TEMPORARY", true, 503));
+      return mockAnalyze(request, signal);
+    });
+    render(<AnalyzeWorkspace />);
+    await pasteAndParse(boardWithMarkets(33));
+    expect(screen.getByText("33 of 33 markets ready · 2 analysis requests")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /analyze all/i }));
+    await waitFor(() => expect(analyze).toHaveBeenCalledTimes(2));
+    expect(analyze.mock.calls.map(([request]) => request.markets.length)).toEqual([32, 1]);
+    const originalIds = analyze.mock.calls.flatMap(([request]) => request.markets.map((market) => market.client_market_id));
+    expect(new Set(originalIds).size).toBe(33);
+    expect(await screen.findByText(/TEMPORARY: Temporary failure/i)).toBeInTheDocument();
+    expect(screen.getAllByText("Analysis complete")).toHaveLength(1);
+
+    const successfulKey = analyze.mock.calls[0][0].idempotency_key;
+    const failedKey = analyze.mock.calls[1][0].idempotency_key;
+    expect(successfulKey).not.toBe(failedKey);
+    fireEvent.click(screen.getByRole("button", { name: /analyze all/i }));
+    await waitFor(() => expect(analyze).toHaveBeenCalledTimes(3));
+    expect(analyze.mock.calls[2][0].idempotency_key).toBe(failedKey);
+    expect(analyze.mock.calls.filter(([request]) => request.idempotency_key === successfulKey)).toHaveLength(1);
+    await waitFor(() => expect(screen.getAllByText("Analysis complete")).toHaveLength(2));
+
+    fireEvent.change(screen.getByLabelText("Market 1 line"), { target: { value: "4.5" } });
+    expect(screen.queryByText("Analysis complete")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /analyze all/i }));
+    await waitFor(() => expect(analyze).toHaveBeenCalledTimes(5));
+    expect(analyze.mock.calls[3][0].idempotency_key).not.toBe(successfulKey);
+    expect(analyze.mock.calls[4][0].idempotency_key).not.toBe(failedKey);
+  });
+
+  it("shows one backend model as a disabled visible selection", async () => {
+    const caps = structuredClone(mockCapabilities);
+    caps.models = ["only-backend-model"];
+    vi.spyOn(api, "capabilities").mockResolvedValue(caps);
+    render(<AnalyzeWorkspace />);
+    await pasteAndParse();
+    expect(screen.getByRole("combobox", { name: "Analysis model" })).toHaveValue("only-backend-model");
+    expect(screen.getByRole("combobox", { name: "Analysis model" })).toBeDisabled();
+  });
+
+  it("defaults to the first model and gives a changed model a new request identity", async () => {
+    const analyze = vi.spyOn(api, "analyze").mockImplementation((request, signal) => mockAnalyze({
+      ...request,
+      model: mockCapabilities.models[0],
+    }, signal));
+    render(<AnalyzeWorkspace />);
+    await pasteAndParse();
+    const selector = screen.getByRole("combobox", { name: "Analysis model" });
+    expect(selector).toHaveValue(mockCapabilities.models[0]);
+    await analyzeDemo();
+    const firstKey = analyze.mock.calls[0][0].idempotency_key;
+
+    fireEvent.change(selector, { target: { value: mockCapabilities.models[1] } });
+    expect(selector).toHaveValue(mockCapabilities.models[1]);
+    expect(screen.queryByText("Analysis complete")).not.toBeInTheDocument();
+    await analyzeDemo();
+    expect(analyze.mock.calls[1][0].model).toBe(mockCapabilities.models[1]);
+    expect(analyze.mock.calls[1][0].idempotency_key).not.toBe(firstKey);
+  });
+
+  it("blocks analysis when capabilities report no supported models", async () => {
+    const caps = structuredClone(mockCapabilities);
+    caps.models = [];
+    vi.spyOn(api, "capabilities").mockResolvedValue(caps);
+    render(<AnalyzeWorkspace />);
+    await pasteAndParse();
+    expect(screen.getByRole("combobox", { name: "Analysis model" })).toHaveValue("");
     expect(screen.getByRole("button", { name: /analyze all/i })).toBeDisabled();
   });
 

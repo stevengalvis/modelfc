@@ -21,6 +21,18 @@ export interface BlockValidation extends InputValidation {
   blockId: string;
 }
 
+export function chunkMarketsForAnalysis(markets: MarketInput[]): MarketInput[][] {
+  const chunks: MarketInput[][] = [];
+  for (let index = 0; index < markets.length; index += MAX_MARKETS_PER_ANALYSIS) {
+    chunks.push(markets.slice(index, index + MAX_MARKETS_PER_ANALYSIS));
+  }
+  return chunks;
+}
+
+export function chooseSupportedModel(current: string, models: string[]): string {
+  return models.includes(current) ? current : models[0] ?? "";
+}
+
 export function isCalendarDate(value: string): boolean {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
   if (!match) return false;
@@ -125,9 +137,9 @@ export function validateAnalysisInput(
     }
   }
 
-  const batchError = validMarkets.length > MAX_MARKETS_PER_ANALYSIS
-    ? `The backend accepts at most ${MAX_MARKETS_PER_ANALYSIS} markets in one analysis.`
-    : null;
+  // Larger valid boards are deterministically split into API-sized requests
+  // by the workspace. This field remains for the existing validation shape.
+  const batchError = null;
   let competitionError: string | null = null;
   if (capabilities && fixtureInput.competition.trim() && !capability) {
     competitionError = `${fixtureInput.competition.trim()} is not listed by the backend. Choose a reported competition or wait for backend data support.`;

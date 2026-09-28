@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { mockCapabilities } from "./api/mock";
-import { MAX_MARKETS_PER_ANALYSIS, isCalendarDate, validateAnalysisInput } from "./analysis-input";
+import { chooseSupportedModel, chunkMarketsForAnalysis, MAX_MARKETS_PER_ANALYSIS, isCalendarDate, validateAnalysisInput } from "./analysis-input";
+import type { MarketInput } from "./api/types";
 import { parseSportsbookInput } from "./parse-sportsbook-input";
 
 describe("sportsbook parsing and validation", () => {
@@ -251,7 +252,7 @@ Millwall O4.5 -110`);
     expect(parsed.blocks.every((block) => block.warnings.length === 0)).toBe(true);
   });
 
-  it("validates real dates, odds, line precision, and batch size without coercing blanks", () => {
+  it("validates real dates, odds, and line precision without coercing blanks", () => {
     expect(isCalendarDate("2026-02-30")).toBe(false);
     const parsed = parseSportsbookInput(`Championship
 2026-02-30
@@ -264,6 +265,35 @@ Coventry City O4 -145`);
     expect(invalid.marketErrors[parsed.markets[0].client_market_id]).toMatchObject({ line: "Line is required." });
     expect(invalid.marketErrors[parsed.markets[0].client_market_id].american_odds).toMatch(/-100/);
     const tooMany = Array.from({ length: MAX_MARKETS_PER_ANALYSIS + 1 }, (_, index) => ({ ...parsed.markets[0], client_market_id: String(index), line: "4", american_odds: "-145" }));
-    expect(validateAnalysisInput({ ...parsed.fixture, date: "2026-09-20" }, tooMany, mockCapabilities).batchError).toMatch(/at most 32/i);
+    expect(validateAnalysisInput({ ...parsed.fixture, date: "2026-09-20" }, tooMany, mockCapabilities).batchError).toBeNull();
+  });
+
+  it.each([
+    [32, [32]],
+    [33, [32, 1]],
+    [64, [32, 32]],
+    [65, [32, 32, 1]],
+  ])("chunks %i markets into ordered API requests %j", (count, expectedSizes) => {
+    const markets: MarketInput[] = Array.from({ length: count }, (_, index) => ({
+      client_market_id: `market-${index + 1}`,
+      market_type: "TEAM_TOTAL",
+      team_side: "HOME",
+      side: "OVER",
+      line: index + 0.5,
+      american_odds: -110,
+    }));
+    const chunks = chunkMarketsForAnalysis(markets);
+    expect(chunks.map((chunk) => chunk.length)).toEqual(expectedSizes);
+    expect(chunks.flat().map((market) => market.client_market_id)).toEqual(markets.map((market) => market.client_market_id));
+    expect(new Set(chunks.flat().map((market) => market.client_market_id)).size).toBe(count);
+  });
+
+  it("preserves a supported selected model on reload and falls back when it disappears", () => {
+    expect(chooseSupportedModel("venue-opponent-poisson", [
+      "venue-opponent-negative-binomial", "venue-opponent-poisson",
+    ])).toBe("venue-opponent-poisson");
+    expect(chooseSupportedModel("venue-opponent-poisson", ["venue-opponent-negative-binomial"]))
+      .toBe("venue-opponent-negative-binomial");
+    expect(chooseSupportedModel("venue-opponent-poisson", [])).toBe("");
   });
 });

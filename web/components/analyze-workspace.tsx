@@ -7,7 +7,7 @@ import { CapabilityFeedback } from "./capability-feedback";
 import { api, apiMode } from "@/lib/api/client";
 import { describeApiError } from "@/lib/api/errors";
 import { eligibleTeams, findCompetition, unavailableMarketReason } from "@/lib/api/capabilities";
-import { MAX_MARKETS_PER_ANALYSIS, requestFingerprint, validateAnalysisBlocks, type BlockValidation } from "@/lib/analysis-input";
+import { chooseSupportedModel, chunkMarketsForAnalysis, requestFingerprint, validateAnalysisBlocks, type BlockValidation } from "@/lib/analysis-input";
 import { competitionLabels, deriveBlockWarnings, parseSportsbookInput, type EditableFixtureInput, type ParsedInputBlock, type ParsedSportsbookInput } from "@/lib/parse-sportsbook-input";
 import type { AnalysisResponse, CapabilitiesResponse } from "@/lib/api/types";
 
@@ -29,8 +29,14 @@ interface RetryState {
 }
 
 interface AnalysisEntry {
+  requestId: string;
   blockId: string;
+  chunkIndex: number;
   response: AnalysisResponse;
+}
+
+function chunkStateId(blockId: string, chunkIndex: number): string {
+  return `${blockId}:chunk-${chunkIndex + 1}`;
 }
 
 function hasBlockingMarketErrors(validation: BlockValidation): boolean {
@@ -57,8 +63,10 @@ export function AnalyzeWorkspace() {
     api.capabilities(controller.signal)
       .then((response) => {
         if (controller.signal.aborted) return;
+        const nextModel = chooseSupportedModel(model, response.models);
+        if (nextModel !== model) invalidateAnalysis();
         setCapabilities(response);
-        setModel(response.models[0] ?? "");
+        setModel(nextModel);
       })
       .catch((cause: unknown) => {
         if (controller.signal.aborted) return;
@@ -104,7 +112,9 @@ export function AnalyzeWorkspace() {
     for (const [id, state] of retryRef.current) {
       if (state.status === "submitting") retryRef.current.set(id, { ...state, status: "failed" });
     }
-    retryRef.current.delete(blockId);
+    for (const id of retryRef.current.keys()) {
+      if (id.startsWith(`${blockId}:chunk-`)) retryRef.current.delete(id);
+    }
     setAnalyses((current) => current.filter((entry) => entry.blockId !== blockId));
     setError(null);
     setBusy(false);
@@ -126,6 +136,12 @@ export function AnalyzeWorkspace() {
     updateBlock(blockId, (block) => ({ ...block, fixture: { ...block.fixture, ...patch } }));
   }
 
+  function changeModel(nextModel: string) {
+    if (nextModel === model || !capabilities?.models.includes(nextModel)) return;
+    invalidateAnalysis();
+    setModel(nextModel);
+  }
+
   async function analyze() {
     if (!parsed || !model) return;
     const readyBlocks = parsed.blocks.map((block, index) => ({ block, validation: validations[index] }))
@@ -133,7 +149,7 @@ export function AnalyzeWorkspace() {
         && Object.keys(validation.fixtureErrors).length === 0
         && validation.validMarkets.every((market) => Object.keys(validation.marketErrors[market.client_market_id] ?? {}).length === 0)
         && !hasBlockingMarketErrors(validation)
-        && !validation.batchError && !validation.competitionError));
+        && !validation.competitionError));
     if (readyBlocks.length === 0) {
       setError({ title: "Input validation failed", message: "Correct at least one complete fixture and its supported markets before analyzing." });
       return;
@@ -142,12 +158,15 @@ export function AnalyzeWorkspace() {
     const version = versionRef.current;
     const requests = readyBlocks.flatMap(({ block, validation }) => {
       const fixture = validation.fixture!;
-      const fingerprint = requestFingerprint(fixture, model, validation.validMarkets);
-      const existing = retryRef.current.get(block.block_id);
-      if (existing?.fingerprint === fingerprint && existing.status === "succeeded") return [];
-      const idempotencyKey = existing?.fingerprint === fingerprint ? existing.key : crypto.randomUUID();
-      retryRef.current.set(block.block_id, { fingerprint, key: idempotencyKey, status: "submitting" });
-      return [{ blockId: block.block_id, fingerprint, idempotencyKey, fixture, markets: validation.validMarkets }];
+      return chunkMarketsForAnalysis(validation.validMarkets).flatMap((markets, chunkIndex) => {
+        const requestId = chunkStateId(block.block_id, chunkIndex);
+        const fingerprint = requestFingerprint(fixture, model, markets);
+        const existing = retryRef.current.get(requestId);
+        if (existing?.fingerprint === fingerprint && existing.status === "succeeded") return [];
+        const idempotencyKey = existing?.fingerprint === fingerprint ? existing.key : crypto.randomUUID();
+        retryRef.current.set(requestId, { fingerprint, key: idempotencyKey, status: "submitting" });
+        return [{ requestId, blockId: block.block_id, chunkIndex, fingerprint, idempotencyKey, fixture, markets }];
+      });
     });
     if (requests.length === 0) {
       setError(null);
@@ -171,20 +190,20 @@ export function AnalyzeWorkspace() {
       results.forEach((result, index) => {
         const request = requests[index];
         if (result.status === "fulfilled") {
-          retryRef.current.set(request.blockId, { fingerprint: request.fingerprint, key: request.idempotencyKey, status: "succeeded" });
-          successes.push({ blockId: request.blockId, response: result.value });
+          retryRef.current.set(request.requestId, { fingerprint: request.fingerprint, key: request.idempotencyKey, status: "succeeded" });
+          successes.push({ requestId: request.requestId, blockId: request.blockId, chunkIndex: request.chunkIndex, response: result.value });
         } else {
-          retryRef.current.set(request.blockId, { fingerprint: request.fingerprint, key: request.idempotencyKey, status: "failed" });
+          retryRef.current.set(request.requestId, { fingerprint: request.fingerprint, key: request.idempotencyKey, status: "failed" });
           if (!firstError) firstError = describeApiError(result.reason);
         }
       });
       setAnalyses((current) => {
-        const byBlock = new Map(current.map((entry) => [entry.blockId, entry]));
-        successes.forEach((entry) => byBlock.set(entry.blockId, entry));
-        return parsed.blocks.flatMap((block) => {
-          const entry = byBlock.get(block.block_id);
-          return entry ? [entry] : [];
-        });
+        const byRequest = new Map(current.map((entry) => [entry.requestId, entry]));
+        successes.forEach((entry) => byRequest.set(entry.requestId, entry));
+        const blockOrder = new Map(parsed.blocks.map((block, index) => [block.block_id, index]));
+        return [...byRequest.values()].sort((left, right) =>
+          (blockOrder.get(left.blockId) ?? 0) - (blockOrder.get(right.blockId) ?? 0)
+          || left.chunkIndex - right.chunkIndex);
       });
       setError(firstError);
     } finally {
@@ -200,12 +219,16 @@ export function AnalyzeWorkspace() {
     && validation.validMarkets.length > 0
     && Object.keys(validation.fixtureErrors).length === 0
     && !hasBlockingMarketErrors(validation)
-    && !validation.batchError && !validation.competitionError
+    && !validation.competitionError
     && validation.validMarkets.every((market) => Object.keys(validation.marketErrors[market.client_market_id] ?? {}).length === 0)).length;
-  const readyMarketCount = validations.reduce((total, validation) => total + Math.min(validation.validMarkets.length, MAX_MARKETS_PER_ANALYSIS), 0);
+  const readyMarketCount = validations.reduce((total, validation) => total + validation.validMarkets.length, 0);
+  const analysisRequestCount = validations.reduce(
+    (total, validation) => total + chunkMarketsForAnalysis(validation.validMarkets).length,
+    0,
+  );
   const marketCountLabel = parsedBlocks.length === 1
-    ? `${readyMarketCount} of ${parsedBlocks[0].markets.length} markets ready`
-    : `${readyCount} fixture${readyCount === 1 ? "" : "s"} ready · ${readyMarketCount} markets ready`;
+    ? `${readyMarketCount} of ${parsedBlocks[0].markets.length} markets ready${analysisRequestCount > 1 ? ` · ${analysisRequestCount} analysis requests` : ""}`
+    : `${readyCount} fixture${readyCount === 1 ? "" : "s"} ready · ${readyMarketCount} markets ready${analysisRequestCount > readyCount ? ` · ${analysisRequestCount} analysis requests` : ""}`;
   const primaryCapability = findCompetition(capabilities, parsedBlocks[0]?.fixture.competition ?? "");
 
   return (
@@ -224,7 +247,7 @@ export function AnalyzeWorkspace() {
         <div className="error-banner" role="alert">
           <div><strong>{capabilitiesError.title}</strong><p>{capabilitiesError.message} Analysis is disabled.</p></div>
           <button className="secondary-button" type="button" onClick={() => {
-            invalidateAnalysis(); setCapabilities(null); setModel(""); setCapabilitiesError(null);
+            invalidateAnalysis(); setCapabilities(null); setCapabilitiesError(null);
             setCapabilitiesAttempt((attempt) => attempt + 1);
           }}>Retry connection</button>
         </div>
@@ -284,7 +307,6 @@ export function AnalyzeWorkspace() {
                 {capability ? <CapabilityFeedback competition={capability} /> : null}
                 {!capabilities && !capabilitiesError ? <p className="capability-note">Loading backend readiness…</p> : null}
                 <MarketEditor markets={block.markets} errors={validation.marketErrors} unavailable={validation.marketUnavailable} unavailableTypes={unavailableTypes} onChange={(markets) => updateBlock(block.block_id, (current) => ({ ...current, markets }))} />
-                {validation.batchError ? <div className="parse-errors" role="alert"><strong>Batch limit</strong><p>{validation.batchError}</p></div> : null}
                 {excludedCount > 0 ? <p className="exclusion-note">{excludedCount} unavailable market{excludedCount === 1 ? "" : "s"} will remain visible and will not be sent.</p> : null}
                 {hasMarketErrors ? <p className="capability-note blocked">Correct unresolved market fields before this fixture can be analyzed.</p> : null}
               </div>
@@ -292,14 +314,17 @@ export function AnalyzeWorkspace() {
           })}
           <div className="analyze-bar simple-analyze-bar">
             <span className="market-count">{marketCountLabel}</span>
+            <label><span>Model</span><select aria-label="Analysis model" value={model} disabled={(capabilities?.models.length ?? 0) <= 1} onChange={(event) => changeModel(event.target.value)}>
+              {capabilities?.models.length ? capabilities.models.map((item) => <option value={item} key={item}>{item}</option>) : <option value="">No supported model</option>}
+            </select></label>
             <span className="mode-note">{apiMode === "mock" ? "Fixed backend demo fixture" : apiMode === "live" ? "Live API response" : "API mode not configured"}</span>
-            <button className="primary-button" type="button" disabled={busy || readyCount === 0} onClick={analyze}>{busy ? "Running model…" : "Analyze all"}</button>
+            <button className="primary-button" type="button" disabled={busy || readyCount === 0 || !model} onClick={analyze}>{busy ? "Running model…" : "Analyze all"}</button>
           </div>
         </section>
       ) : null}
 
       {error ? <div className="error-banner" role="alert"><strong>{error.title}</strong><span>{error.message}</span></div> : null}
-      {analyses.map(({ blockId, response }) => <AnalysisResults key={`${response.analysis_id}:${blockId}`} analysis={response} />)}
+      {analyses.map(({ requestId, response }) => <AnalysisResults key={`${response.analysis_id}:${requestId}`} analysis={response} />)}
     </div>
   );
 }
