@@ -13,6 +13,9 @@ const date = (value: unknown) => nonempty(value) && /^\d{4}-\d\d-\d\d$/.test(val
 const status = (value: unknown) => value === "UPCOMING" || value === "SETTLED" || value === "EXPIRED_UNSETTLED";
 const fixture = (item: RecordValue) => ["competition", "provider", "provider_fixture_id", "home_team", "away_team"].every((key) => nonempty(item[key])) && timestamp(item.kickoff_utc);
 const id = (value: unknown) => nonempty(value);
+const uniqueIds = (items: Array<RecordValue>, key: string) =>
+  new Set(items.map((item) => item[key])).size === items.length;
+const cornerLine = (value: unknown) => finite(value) && value >= 0 && value <= 1000 && (value * 2) % 1 === 0;
 // Match the backend validation tolerance in corner_opportunities.py.
 const DECIMAL_AMERICAN_ODDS_TOLERANCE = 0.005;
 // These are qualification invariants owned by corner_opportunities.py.
@@ -51,7 +54,7 @@ export function decodePredictions(value: unknown): ProspectivePrediction[] {
       && status(item.settlement_status)
       && (settled ? count(item.actual_home_corners) && count(item.actual_away_corners)
         : item.actual_home_corners === null && item.actual_away_corners === null);
-  })) mismatch("predictions");
+  }) || !uniqueIds(value, "prediction_id")) mismatch("predictions");
   return value as ProspectivePrediction[];
 }
 
@@ -62,13 +65,14 @@ export function decodeOpportunities(value: unknown): ProspectiveOpportunity[] {
     return fixture(item) && ["opportunity_id", "prediction_id", "target_id", "observation_id", "bookmaker", "team", "policy_version"].every((key) => id(item[key]))
       && item.market_type === "TEAM_TOTAL" && (item.team_side === "HOME" || item.team_side === "AWAY")
       && item.team === (item.team_side === "HOME" ? item.home_team : item.away_team)
-      && (item.direction === "OVER" || item.direction === "UNDER") && nonnegative(item.line)
+      && (item.direction === "OVER" || item.direction === "UNDER") && cornerLine(item.line)
       && Number.isSafeInteger(item.american_odds) && Math.abs(item.american_odds as number) >= 100
       && (item.american_odds as number) >= MINIMUM_AMERICAN_ODDS
       && finite(item.decimal_odds) && item.decimal_odds > 1
       && Math.abs((item.decimal_odds as number) - (1 + profit(item.american_odds as number))) <= DECIMAL_AMERICAN_ODDS_TOLERANCE
       && timestamp(item.qualified_at_utc) && Date.parse(item.qualified_at_utc as string) < Date.parse(item.kickoff_utc as string)
       && probability(item.model_decisive_probability) && probability(item.no_vig_market_probability)
+      && (item.no_vig_market_probability as number) > 0 && (item.no_vig_market_probability as number) < 1
       && finite(item.no_vig_probability_edge)
       && ((item.no_vig_probability_edge as number) > MINIMUM_NO_VIG_EDGE
         || Math.abs((item.no_vig_probability_edge as number) - MINIMUM_NO_VIG_EDGE) <= EDGE_COMPARISON_TOLERANCE)
@@ -79,7 +83,7 @@ export function decodeOpportunities(value: unknown): ProspectiveOpportunity[] {
           && settledResult(item)
           && Math.abs((item.realized_profit_units as number) - (item.result === "WIN" ? profit(item.american_odds as number) : item.result === "LOSS" ? -1 : 0)) < 1e-4
         : item.result === null && item.actual_team_corners === null && item.realized_profit_units === null);
-  })) mismatch("opportunities");
+  }) || !uniqueIds(value, "opportunity_id")) mismatch("opportunities");
   return value as ProspectiveOpportunity[];
 }
 

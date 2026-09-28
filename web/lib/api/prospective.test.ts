@@ -38,10 +38,18 @@ describe("prospective response boundary", () => {
   it.each([
     ["missing id", changed(mockPredictions, (v) => { delete (v[0] as unknown as Record<string, unknown>).prediction_id; }), "predictions"],
     ["invalid status", changed(mockPredictions, (v) => { (v[0] as { settlement_status: string }).settlement_status = "UNKNOWN"; }), "predictions"],
+    ["duplicate prediction ID", [...mockPredictions, structuredClone(mockPredictions[0])], "predictions"],
     ["opportunities without prediction targets", changed(mockPredictions, (v) => {
       v[0].target_count = 0;
     }), "predictions"],
     ["missing result corners", changed(mockPredictions, (v) => { v[1].actual_home_corners = null as unknown as number; }), "predictions"],
+    ["duplicate opportunity ID", [...mockOpportunities, structuredClone(mockOpportunities[0])], "opportunities"],
+    ["unsupported quarter line", changed(mockOpportunities, (v) => { v[0].line = 4.25; }), "opportunities"],
+    ["out-of-range line", changed(mockOpportunities, (v) => { v[0].line = 1000.5; }), "opportunities"],
+    ["zero no-vig probability", changed(mockOpportunities, (v) => {
+      v[0].no_vig_market_probability = 0;
+      v[0].no_vig_probability_edge = 0.62;
+    }), "opportunities"],
     ["unqualified American price", changed(mockOpportunities, (v) => {
       v[0].american_odds = -500; v[0].decimal_odds = 1.2;
     }), "opportunities"],
