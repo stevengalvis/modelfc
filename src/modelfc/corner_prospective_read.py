@@ -173,6 +173,14 @@ def _locked_inventory(
             settlement_status = _status(kickoff, outcome, now)
             opportunities = opportunity_records(state, prediction_id)
             for target in targets:
+                if (target["prediction_id"] != prediction_id
+                        or _time(target["prediction_created_at_utc"]) != created
+                        or _time(target["materialized_at_utc"]) >= kickoff
+                        or target["status"] not in ("SUPPORTED", "UNSUPPORTED")
+                        or (target["status"] == "SUPPORTED"
+                            and (target["market_type"] != "TEAM_TOTAL"
+                                 or target["team_side"] not in ("HOME", "AWAY")))):
+                    raise ValueError
                 target_outcome, _ = _target_settlement(target, outcome)
                 target_views[target["target_id"]] = (target, target_outcome)
 
@@ -315,11 +323,71 @@ def read_opportunity(state_dir: str | Path, opportunity_id: str) -> dict[str, An
 
 def read_performance(state_dir: str | Path) -> dict[str, Any]:
     inventory = _inventory(state_dir)
+    predictions = inventory["predictions"]
+    settled_predictions = [item for item in predictions if item["settlement_status"] == "SETTLED"]
+    team_errors = [actual - predicted for item in settled_predictions for actual, predicted in (
+        (item["actual_home_corners"], item["expected_home_corners"]),
+        (item["actual_away_corners"], item["expected_away_corners"]),
+    )]
+    total_errors = [item["actual_home_corners"] + item["actual_away_corners"]
+                    - item["expected_match_corners"] for item in settled_predictions]
+
+    def errors_summary(errors: list[float]) -> tuple[float | None, float | None, float | None]:
+        if not errors:
+            return None, None, None
+        n = len(errors)
+        return (math.fsum(abs(error) for error in errors) / n,
+                math.sqrt(math.fsum(error * error for error in errors) / n),
+                math.fsum(errors) / n)
+
+    team_mae, team_rmse, team_bias = errors_summary(team_errors)
+    total_mae, total_rmse, total_bias = errors_summary(total_errors)
     targets = list(inventory["targets"].values())
     supported = [item for item in targets
                  if item[0]["status"] == "SUPPORTED"
                  and item[0]["market_type"] == "TEAM_TOTAL"]
     settled_targets = [item for item in supported if item[1] is not None]
+    scored = []
+    for target, result in supported:
+        # These values were materialized before kickoff. Never regenerate them
+        # using today's model, including for pushed selections.
+        probability = _number(target["decisive_model_probability"])
+        win = _number(target["model_probability"])
+        push = _number(target["push_probability"])
+        if (not all(0 <= value <= 1 for value in (probability, win, push))
+                or win + push > 1 + 1e-12
+                or 1 - push <= 0
+                or not math.isclose(probability, win / (1 - push), rel_tol=0, abs_tol=1e-8)):
+            raise LedgerError("INVALID_PROSPECTIVE_RECORD")
+        if result is None:
+            continue
+        if result in ("WIN", "LOSS"):
+            scored.append((probability, int(result == "WIN")))
+        elif result != "PUSH":
+            raise LedgerError("INVALID_PROSPECTIVE_RECORD")
+    # Half-open buckets except the final bucket, which includes p=1.
+    boundaries = (0.0, 0.5, 0.6, 0.7, 0.8, 1.0)
+    calibration = []
+    for index, (lower, upper) in enumerate(zip(boundaries, boundaries[1:])):
+        members = [(p, y) for p, y in scored
+                   if lower <= p and (p < upper or index == len(boundaries) - 2 and p <= upper)]
+        calibration.append({
+            "lower_bound": lower, "upper_bound": upper, "sample_count": len(members),
+            "mean_predicted_probability": None if not members else math.fsum(p for p, _ in members) / len(members),
+            "observed_win_rate": None if not members else sum(y for _, y in members) / len(members),
+        })
+    # Evaluation-only clipping at exact boundaries; persisted probabilities
+    # remain untouched. log1p avoids cancellation for probabilities near 0.
+    log_floor = 1e-15
+    versions: dict[tuple[str, str], dict[str, Any]] = {}
+    for item in predictions:
+        key = (item["model_name"], item["model_version"])
+        if not all(isinstance(part, str) and part.strip() for part in key):
+            raise LedgerError("INVALID_PROSPECTIVE_RECORD")
+        row = versions.setdefault(key, {"model_name": key[0], "model_version": key[1],
+                                        "total_prediction_runs": 0, "settled_prediction_runs": 0})
+        row["total_prediction_runs"] += 1
+        row["settled_prediction_runs"] += item["settlement_status"] == "SETTLED"
     opportunities = inventory["opportunities"]
     settled = [item for item in opportunities if item["result"] is not None]
     decisive = [item for item in settled if item["result"] in ("WIN", "LOSS")]
@@ -328,11 +396,30 @@ def read_performance(state_dir: str | Path) -> dict[str, Any]:
     pushes = sum(item["result"] == "PUSH" for item in settled)
     return {
         "model_performance": {
-            "total_prediction_runs": len(inventory["predictions"]),
+            "total_prediction_runs": len(predictions),
+            "settled_prediction_runs": len(settled_predictions),
+            "settled_team_forecasts": len(team_errors),
+            "team_corner_mae": team_mae,
+            "team_corner_rmse": team_rmse,
+            "team_corner_mean_error": team_bias,
+            "match_total_mae": total_mae,
+            "match_total_rmse": total_rmse,
+            "match_total_mean_error": total_bias,
+            "model_versions": [versions[key] for key in sorted(versions)],
             "total_unique_prediction_targets": len(targets),
             "supported_prediction_targets": len(supported),
             "settled_prediction_targets": len(settled_targets),
             "unsettled_supported_prediction_targets": len(supported) - len(settled_targets),
+            "probability_targets_scored": len(settled_targets),
+            "decisive_probability_targets_scored": len(scored),
+            "pushes_excluded_from_decisive_scoring": len(settled_targets) - len(scored),
+            "brier_score": None if not scored else math.fsum((p - y) ** 2 for p, y in scored) / len(scored),
+            "log_loss": None if not scored else math.fsum(
+                -math.log(max(p, log_floor)) if y else
+                -math.log1p(-p) if 1 - p >= log_floor else -math.log(log_floor)
+                for p, y in scored
+            ) / len(scored),
+            "calibration": calibration,
         },
         "opportunity_performance": {
             "total_opportunity_events": len(opportunities),
@@ -344,6 +431,9 @@ def read_performance(state_dir: str | Path) -> dict[str, Any]:
             "realized_profit_units": math.fsum(
                 item["realized_profit_units"] for item in settled
             ),
+            "roi_on_settled_opportunities": None if not settled else math.fsum(
+                item["realized_profit_units"] for item in settled
+            ) / len(settled),
             "unresolved_open_opportunities": len(opportunities) - len(settled),
         },
     }

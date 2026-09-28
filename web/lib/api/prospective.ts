@@ -110,6 +110,42 @@ export function decodePerformance(value: unknown): ProspectivePerformance {
   if (!record(value) || !record(value.model_performance) || !record(value.opportunity_performance)) mismatch("performance");
   const model = value.model_performance;
   const offers = value.opportunity_performance;
+  const errorFields = ["team_corner_mae", "team_corner_rmse", "team_corner_mean_error", "match_total_mae", "match_total_rmse", "match_total_mean_error"];
+  const boundaries = [0, 0.5, 0.6, 0.7, 0.8, 1];
+  if (!count(model.settled_prediction_runs) || !count(model.settled_team_forecasts)
+    || (model.settled_prediction_runs as number) > (model.total_prediction_runs as number)
+    || model.settled_team_forecasts !== 2 * (model.settled_prediction_runs as number)
+    || !errorFields.every((key) => model.settled_prediction_runs === 0 ? model[key] === null :
+      key.endsWith("mean_error") ? finite(model[key]) : nonnegative(model[key]))
+    || !Array.isArray(model.model_versions) || !model.model_versions.every((item: unknown) =>
+      record(item) && nonempty(item.model_name) && nonempty(item.model_version)
+      && count(item.total_prediction_runs) && (item.total_prediction_runs as number) > 0
+      && count(item.settled_prediction_runs) && (item.settled_prediction_runs as number) <= (item.total_prediction_runs as number))
+    || model.model_versions.some((item: { model_name: string; model_version: string }, index: number) =>
+      index > 0 && `${(model.model_versions as Array<{ model_name: string; model_version: string }>)[index - 1].model_name}\0${(model.model_versions as Array<{ model_name: string; model_version: string }>)[index - 1].model_version}` >= `${item.model_name}\0${item.model_version}`)
+    || model.model_versions.reduce((sum: number, item: { total_prediction_runs: number }) => sum + item.total_prediction_runs, 0) !== model.total_prediction_runs
+    || model.model_versions.reduce((sum: number, item: { settled_prediction_runs: number }) => sum + item.settled_prediction_runs, 0) !== model.settled_prediction_runs
+    || !count(model.probability_targets_scored) || !count(model.decisive_probability_targets_scored)
+    || !count(model.pushes_excluded_from_decisive_scoring)
+    || model.probability_targets_scored !== model.settled_prediction_targets
+    || (model.decisive_probability_targets_scored as number) + (model.pushes_excluded_from_decisive_scoring as number) !== model.probability_targets_scored
+    || (model.decisive_probability_targets_scored === 0
+      ? model.brier_score !== null || model.log_loss !== null
+      : !probability(model.brier_score) || !nonnegative(model.log_loss))
+    || !Array.isArray(model.calibration) || model.calibration.length !== 5
+    || !model.calibration.every((bucket: unknown, index: number) =>
+      record(bucket) && bucket.lower_bound === boundaries[index] && bucket.upper_bound === boundaries[index + 1]
+      && count(bucket.sample_count)
+      && (bucket.sample_count === 0 ? bucket.mean_predicted_probability === null && bucket.observed_win_rate === null
+        : probability(bucket.mean_predicted_probability) && probability(bucket.observed_win_rate)
+          && (bucket.mean_predicted_probability as number) >= boundaries[index]
+          && (index === 4 ? (bucket.mean_predicted_probability as number) <= boundaries[index + 1]
+            : (bucket.mean_predicted_probability as number) < boundaries[index + 1])))
+    || model.calibration.reduce((sum: number, bucket: { sample_count: number }) => sum + bucket.sample_count, 0) !== model.decisive_probability_targets_scored
+    || (offers.settled_opportunities === 0 ? offers.roi_on_settled_opportunities !== null
+      : !finite(offers.roi_on_settled_opportunities)
+        || Math.abs((offers.roi_on_settled_opportunities as number) * (offers.settled_opportunities as number) - (offers.realized_profit_units as number)) > 1e-8)
+  ) mismatch("performance");
   if (!["total_prediction_runs", "total_unique_prediction_targets", "supported_prediction_targets", "settled_prediction_targets", "unsettled_supported_prediction_targets"].every((key) => count(model[key]))
     || !["total_opportunity_events", "settled_opportunities", "wins", "losses", "pushes", "unresolved_open_opportunities"].every((key) => count(offers[key]))
     || (offers.win_rate_excluding_pushes !== null && !probability(offers.win_rate_excluding_pushes))

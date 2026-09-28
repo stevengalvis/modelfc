@@ -79,13 +79,24 @@ describe("real read-only prospective API with empty synthetic state", () => {
     expect(await live.performance()).toEqual({
       model_performance: {
         total_prediction_runs: 0, total_unique_prediction_targets: 0,
+        settled_prediction_runs: 0, settled_team_forecasts: 0,
+        team_corner_mae: null, team_corner_rmse: null, team_corner_mean_error: null,
+        match_total_mae: null, match_total_rmse: null, match_total_mean_error: null,
+        model_versions: [],
         supported_prediction_targets: 0, settled_prediction_targets: 0,
         unsettled_supported_prediction_targets: 0,
+        probability_targets_scored: 0, decisive_probability_targets_scored: 0,
+        pushes_excluded_from_decisive_scoring: 0, brier_score: null, log_loss: null,
+        calibration: [0, 0.5, 0.6, 0.7, 0.8].map((lower_bound, index) => ({
+          lower_bound, upper_bound: [0.5, 0.6, 0.7, 0.8, 1][index], sample_count: 0,
+          mean_predicted_probability: null, observed_win_rate: null,
+        })),
       },
       opportunity_performance: {
         total_opportunity_events: 0, settled_opportunities: 0,
         wins: 0, losses: 0, pushes: 0, win_rate_excluding_pushes: null,
-        realized_profit_units: 0, unresolved_open_opportunities: 0,
+        realized_profit_units: 0, roi_on_settled_opportunities: null,
+        unresolved_open_opportunities: 0,
       },
     });
   });

@@ -4,6 +4,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from datetime import timedelta
 import json
+import math
 from pathlib import Path
 import shutil
 from threading import Event
@@ -15,6 +16,7 @@ from fastapi.testclient import TestClient
 
 from modelfc import corner_analysis_outcomes as outcomes
 from modelfc import corner_opportunities as opportunities
+from modelfc import corner_prospective_read as reader
 from modelfc.corner_analysis import CornerMarketRequest
 from modelfc.corner_api import create_app
 from modelfc.ledger_storage import LedgerError, LedgerStorageUnavailable
@@ -124,16 +126,28 @@ class ProspectiveApiTests(unittest.TestCase):
         self.assertEqual(client.get("/api/v1/prospective/performance").json(), {
             "model_performance": {
                 "total_prediction_runs": 0,
+                "settled_prediction_runs": 0, "settled_team_forecasts": 0,
+                "team_corner_mae": None, "team_corner_rmse": None, "team_corner_mean_error": None,
+                "match_total_mae": None, "match_total_rmse": None, "match_total_mean_error": None,
+                "model_versions": [],
                 "total_unique_prediction_targets": 0,
                 "supported_prediction_targets": 0,
                 "settled_prediction_targets": 0,
                 "unsettled_supported_prediction_targets": 0,
+                "probability_targets_scored": 0, "decisive_probability_targets_scored": 0,
+                "pushes_excluded_from_decisive_scoring": 0, "brier_score": None,
+                "log_loss": None, "calibration": [
+                    {"lower_bound": lo, "upper_bound": hi, "sample_count": 0,
+                     "mean_predicted_probability": None, "observed_win_rate": None}
+                    for lo, hi in zip((0.0, 0.5, 0.6, 0.7, 0.8), (0.5, 0.6, 0.7, 0.8, 1.0))
+                ],
             },
             "opportunity_performance": {
                 "total_opportunity_events": 0, "settled_opportunities": 0,
                 "wins": 0, "losses": 0, "pushes": 0,
                 "win_rate_excluding_pushes": None,
                 "realized_profit_units": 0.0,
+                "roi_on_settled_opportunities": None,
                 "unresolved_open_opportunities": 0,
             },
         })
@@ -274,6 +288,124 @@ class ProspectiveApiTests(unittest.TestCase):
         self.assertEqual(offers["settled_opportunities"], 6)
         self.assertEqual(offers["wins"], 6)
         self.assertEqual(offers["win_rate_excluding_pushes"], 1.0)
+        self.assertEqual(offers["roi_on_settled_opportunities"],
+                         offers["realized_profit_units"] / 6)
+        self.assertEqual(model["settled_prediction_runs"], 1)
+        self.assertEqual(model["settled_team_forecasts"], 2)
+        expected_home = self.prediction["distribution"]["home_expected_corners"]
+        expected_away = self.prediction["distribution"]["away_expected_corners"]
+        team_errors = (6 - expected_home, 3 - expected_away)
+        total_error = 9 - math.fsum((expected_home, expected_away))
+        self.assertAlmostEqual(model["team_corner_mae"],
+                               sum(abs(error) for error in team_errors) / 2)
+        self.assertAlmostEqual(model["team_corner_rmse"],
+                               math.sqrt(sum(error ** 2 for error in team_errors) / 2))
+        self.assertAlmostEqual(model["team_corner_mean_error"], sum(team_errors) / 2)
+        self.assertAlmostEqual(model["match_total_mae"], abs(total_error))
+        self.assertAlmostEqual(model["match_total_rmse"], abs(total_error))
+        self.assertAlmostEqual(model["match_total_mean_error"], total_error)
+        self.assertEqual(model["probability_targets_scored"], 23)
+        self.assertEqual(model["decisive_probability_targets_scored"], 23)
+        self.assertEqual(model["pushes_excluded_from_decisive_scoring"], 0)
+        self.assertEqual(sum(bucket["sample_count"] for bucket in model["calibration"]), 23)
+        self.assertEqual(model["model_versions"], [{
+            "model_name": self.prediction["model"]["name"],
+            "model_version": self.prediction["model"]["version"],
+            "total_prediction_runs": 1, "settled_prediction_runs": 1,
+        }])
+
+    def test_performance_push_excluded_but_still_risked(self):
+        self.store_later_observation(line=4)
+        self.write_result(away=4)
+        body = self.client.get("/api/v1/prospective/performance").json()
+        model, offers = body["model_performance"], body["opportunity_performance"]
+        self.assertGreater(model["pushes_excluded_from_decisive_scoring"], 0)
+        self.assertEqual(model["decisive_probability_targets_scored"]
+                         + model["pushes_excluded_from_decisive_scoring"],
+                         model["probability_targets_scored"])
+        self.assertGreater(offers["pushes"], 0)
+        self.assertAlmostEqual(offers["roi_on_settled_opportunities"],
+                               offers["realized_profit_units"] / offers["settled_opportunities"])
+
+    def test_hand_verified_count_probability_calibration_and_versions(self):
+        def prediction(version, expected, actual, settled=True):
+            return {"model_name": "model", "model_version": version,
+                    "settlement_status": "SETTLED" if settled else "UPCOMING",
+                    "expected_home_corners": expected[0], "expected_away_corners": expected[1],
+                    "expected_match_corners": sum(expected),
+                    "actual_home_corners": actual[0] if settled else None,
+                    "actual_away_corners": actual[1] if settled else None}
+
+        probabilities = (0, 0.5, 0.6, 0.7, 0.8, 1)
+        targets = {str(i): ({"status": "SUPPORTED", "market_type": "TEAM_TOTAL",
+                             "model_probability": p, "push_probability": 0,
+                             "decisive_model_probability": p},
+                            "WIN" if i % 2 else "LOSS")
+                   for i, p in enumerate(probabilities)}
+        targets["push"] = ({"status": "SUPPORTED", "market_type": "TEAM_TOTAL",
+                            "model_probability": 0.4, "push_probability": 0.2,
+                            "decisive_model_probability": 0.5}, "PUSH")
+        targets["unsupported"] = ({"status": "UNSUPPORTED", "market_type": "MATCH_TOTAL"}, None)
+        targets["unsettled"] = ({"status": "SUPPORTED", "market_type": "TEAM_TOTAL",
+                                 "model_probability": 0.5, "push_probability": 0,
+                                 "decisive_model_probability": 0.5}, None)
+        inventory = {"predictions": [prediction("v2", (2, 3), (4, 2)),
+                                     prediction("v1", (6, 2), (4, 1)),
+                                     prediction("v1", (9, 9), (None, None), False)],
+                     "targets": targets,
+                     "opportunities": [{"result": "WIN", "realized_profit_units": 0.5},
+                                       {"result": "LOSS", "realized_profit_units": -1},
+                                       {"result": "PUSH", "realized_profit_units": 0}]}
+        with patch.object(reader, "_inventory", return_value=inventory):
+            body = reader.read_performance(self.state)
+        model = body["model_performance"]
+        # Errors: +2, -1, -2, -1; totals +1, -3.
+        self.assertEqual(model["settled_prediction_runs"], 2)
+        self.assertEqual(model["settled_team_forecasts"], 4)
+        self.assertEqual(model["team_corner_mae"], 1.5)
+        self.assertAlmostEqual(model["team_corner_rmse"], (10 / 4) ** 0.5)
+        self.assertEqual(model["team_corner_mean_error"], -0.5)
+        self.assertEqual(model["match_total_mae"], 2)
+        self.assertAlmostEqual(model["match_total_rmse"], 5 ** 0.5)
+        self.assertEqual(model["match_total_mean_error"], -1)
+        self.assertEqual(model["probability_targets_scored"], 7)
+        self.assertEqual(model["decisive_probability_targets_scored"], 6)
+        self.assertEqual(model["pushes_excluded_from_decisive_scoring"], 1)
+        self.assertAlmostEqual(model["brier_score"], sum((p - (i % 2)) ** 2 for i, p in enumerate(probabilities)) / 6)
+        self.assertAlmostEqual(model["log_loss"], sum(
+            -math.log(max(p if i % 2 else 1 - p, 1e-15))
+            for i, p in enumerate(probabilities)) / 6)
+        self.assertEqual([bucket["sample_count"] for bucket in model["calibration"]], [1, 1, 1, 1, 2])
+        self.assertEqual(model["calibration"][-1]["mean_predicted_probability"], 0.9)
+        self.assertEqual(model["calibration"][-1]["observed_win_rate"], 0.5)
+        self.assertEqual([(item["model_version"], item["settled_prediction_runs"])
+                          for item in model["model_versions"]], [("v1", 1), ("v2", 1)])
+        self.assertEqual(body["opportunity_performance"]["roi_on_settled_opportunities"], -0.5 / 3)
+
+    def test_malformed_frozen_probability_fails_closed(self):
+        self.write_result()
+        inventory = reader._inventory(self.state)
+        target, _ = next(item for item in inventory["targets"].values()
+                         if item[0]["status"] == "SUPPORTED")
+        target["decisive_model_probability"] = 1.01
+        with patch.object(reader, "_inventory", return_value=inventory):
+            with self.assertRaises(LedgerError):
+                reader.read_performance(self.state)
+
+    def test_boundary_log_loss_is_finite_without_rewriting_probability(self):
+        self.write_result()
+        inventory = reader._inventory(self.state)
+        target, result = next(item for item in inventory["targets"].values()
+                              if item[0]["status"] == "SUPPORTED" and item[1] in ("WIN", "LOSS"))
+        inventory["targets"] = {"boundary": (target, result)}
+        target["model_probability"] = 0 if result == "WIN" else 1
+        target["decisive_model_probability"] = target["model_probability"]
+        target["push_probability"] = 0
+        with patch.object(reader, "_inventory", return_value=inventory):
+            model = reader.read_performance(self.state)["model_performance"]
+        self.assertEqual(model["brier_score"], 1)
+        self.assertAlmostEqual(model["log_loss"], -math.log(1e-15))
+        self.assertEqual(target["decisive_model_probability"], 0 if result == "WIN" else 1)
 
     def test_match_total_gate_and_deterministic_ordering(self):
         first = self.client.get("/api/v1/opportunities").json()

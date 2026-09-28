@@ -31,6 +31,7 @@ describe("prospective response boundary", () => {
       v.opportunity_performance.wins = 0; v.opportunity_performance.losses = 1;
       v.opportunity_performance.pushes = 2; v.opportunity_performance.win_rate_excluding_pushes = 0;
       v.opportunity_performance.realized_profit_units = -1;
+      v.opportunity_performance.roi_on_settled_opportunities = -1 / 3;
     });
     expect(await live(value).performance()).toEqual(value);
   });
@@ -120,6 +121,15 @@ describe("prospective response boundary", () => {
       v.model_performance.unsettled_supported_prediction_targets = 5;
     }), "performance"],
     ["invalid totals", changed(mockPerformance, (v) => { v.opportunity_performance.settled_opportunities = 7; }), "performance"],
+    ["missing count error", changed(mockPerformance, (v) => { delete (v.model_performance as unknown as Record<string, unknown>).team_corner_mae; }), "performance"],
+    ["fake zero-sample Brier", changed(mockPerformance, (v) => {
+      v.model_performance.decisive_probability_targets_scored = 0;
+      v.model_performance.brier_score = 0;
+    }), "performance"],
+    ["invalid calibration bounds", changed(mockPerformance, (v) => { v.model_performance.calibration[1].lower_bound = 0.4; }), "performance"],
+    ["calibration count mismatch", changed(mockPerformance, (v) => { v.model_performance.calibration[1].sample_count = 1; }), "performance"],
+    ["lost model provenance", changed(mockPerformance, (v) => { v.model_performance.model_versions = []; }), "performance"],
+    ["invalid opportunity ROI", changed(mockPerformance, (v) => { v.opportunity_performance.roi_on_settled_opportunities = 4; }), "performance"],
   ] as const)("rejects %s", async (_name, value, method) => {
     await expect(live(value)[method]()).rejects.toMatchObject({ code: "PROSPECTIVE_CONTRACT_MISMATCH" });
   });

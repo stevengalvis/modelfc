@@ -75,6 +75,45 @@ This means a post-match result or a future historical refresh cannot be used by
 accident in a pre-kickoff prediction record. The schemas do not infer or
 silently repair timestamps.
 
+## Prospective V1 quality metrics
+
+The read-only `GET /api/v1/prospective/performance` V1 response now adds
+model-quality diagnostics derived exclusively from immutable prospective
+predictions and targets created before kickoff and linked to validated
+completed outcomes. The existing model and opportunity counts remain.
+
+* Count quality: `settled_prediction_runs` counts runs with validated results;
+  `settled_team_forecasts` counts their home and away forecasts. Team and match
+  total MAE, RMSE, and signed mean error use **actual minus predicted**.
+  Positive mean error means underprediction. The match expected value is the
+  sum of the two frozen expected corner values. No settled samples yields
+  zero counts and null error metrics.
+* Probability quality: `probability_targets_scored` counts distinct supported,
+  settled team-total targets, including pushes. `decisive_probability_targets_scored`
+  includes only WIN/LOSS, with `pushes_excluded_from_decisive_scoring` reporting
+  the excluded PUSH targets. Brier is mean `(frozen decisive probability −
+  outcome)^2`, where WIN = 1, LOSS = 0. Log loss is mean negative log of the
+  probability assigned to the observed decisive outcome. Its evaluation-only
+  log argument has a `1e-15` floor at exact zero/one; frozen probabilities
+  are never changed. Invalid probability evidence fails closed. Undefined
+  Brier and log loss are null.
+* `calibration` always has five buckets: `[0,.5)`, `[.5,.6)`, `[.6,.7)`,
+  `[.7,.8)`, `[.8,1]`. Each has its bounds, decisive sample count, mean frozen
+  probability, and observed win rate. Empty means and rates are null. These
+  are descriptive samples, not recalibration or a significance test.
+* Opportunity `roi_on_settled_opportunities` is realized profit units divided
+  by settled opportunity events. Every settled event, including a push, risks
+  one standardized unit. Zero settled events yields null ROI.
+* `model_versions` is sorted by model name and version and reports total and
+  settled prediction runs for each pair. A future version is visible even
+  before its first settlement. Aggregate count and probability metrics remain
+  lifetime metrics; compare versions cautiously.
+
+Count-distribution NLL is deferred. Existing prospective records freeze
+expected corners and dispersion size, but do not freeze a versioned likelihood
+function for the joint count outcome; rebuilding one from current model code
+would silently change what an old prediction meant.
+
 ## Production prerequisite
 
 Stable records do not create a schedule provider. Production use still
