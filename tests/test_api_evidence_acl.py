@@ -9,7 +9,8 @@ from unittest.mock import patch
 from modelfc.corner_opportunities import _publish
 from modelfc.corner_prospective_read import read_predictions
 from modelfc.ledger_storage import (
-    LedgerStorageUnavailable, ledger_lock, ledger_read_lock, write_new_record,
+    LedgerStorageUnavailable, _link_open_file, ledger_lock, ledger_read_lock,
+    write_new_record,
 )
 
 
@@ -207,6 +208,31 @@ class EvidenceAclTests(unittest.TestCase):
                                      evidence_lock_fd=lock_fd)
         self.assertEqual(len(acl_targets), 2)
         self.assertFalse(self.path.exists())
+
+    def test_temporary_path_replacement_at_link_publishes_open_inode(self):
+        control = self.state / "prospective" / "control.json"
+        control.parent.mkdir()
+        control.write_text('{"private":true}')
+        def swap_at_link(descriptor, destination):
+            temporary = next(self.path.parent.glob(".record-*.tmp"))
+            self.assertEqual(temporary.stat().st_ino, os.fstat(descriptor).st_ino)
+            original = temporary.with_name("original-record")
+            temporary.rename(original)
+            control.rename(temporary)
+            try:
+                return _link_open_file(descriptor, destination)
+            finally:
+                temporary.rename(control)
+                original.rename(temporary)
+        with patch.dict(os.environ, {"MODELFC_EVIDENCE_ACL_USER": "modelfc-api"}), \
+                patch("modelfc.ledger_storage.pwd.getpwnam", return_value=type("User", (), {"pw_uid": 10001})()), \
+                patch("modelfc.ledger_storage.subprocess.run"), \
+                patch("modelfc.ledger_storage._link_open_file", side_effect=swap_at_link):
+            with ledger_lock(self.state) as lock_fd:
+                write_new_record(self.path, {"first": True}, evidence_state=self.state,
+                                 evidence_lock_fd=lock_fd)
+        self.assertEqual(self.path.read_text(), '{\n  "first": true\n}\n')
+        self.assertEqual(control.read_text(), '{"private":true}')
 
     def test_invalid_existing_lock_is_not_granted_acl_or_published(self):
         lock = self.state / ".lock"

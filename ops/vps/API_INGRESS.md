@@ -59,8 +59,9 @@ ACL on the temporary file **before** atomic publication; their new parent
 directories receive narrowly scoped traversal/read ACLs. ACL failure aborts
 that record before publication and does not refund provider reservations.
 The writer keeps the serialized temporary record open and applies its read ACL
-through that validated descriptor before the exclusive link; replacement of
-the temporary pathname prevents publication.
+through that validated descriptor before the exclusive link. It rejects a
+detected temporary pathname replacement and links the open evidence inode, so
+a subsequent pathname swap cannot redirect publication.
 For the first evidence publication, the writer creates and holds the real
 `state/.lock`, validates it as a regular file owned by its runtime UID, and
 rejects additional hard links. It grants the API identity read access through

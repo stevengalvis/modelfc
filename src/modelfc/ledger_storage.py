@@ -1,6 +1,7 @@
 """Shared append-only JSON storage primitives for local forecast ledgers."""
 
 from contextlib import contextmanager
+import ctypes
 from datetime import datetime, timezone
 import fcntl
 import hashlib
@@ -103,6 +104,21 @@ def ensure_directory(path: Path, label: str) -> None:
         ) from error
 
 
+def _link_open_file(descriptor: int, target: Path) -> None:
+    """Link the open evidence inode, not a replaceable temporary pathname."""
+    library = ctypes.CDLL(None, use_errno=True)
+    linkat = library.linkat
+    linkat.argtypes = (ctypes.c_int, ctypes.c_char_p, ctypes.c_int,
+                       ctypes.c_char_p, ctypes.c_int)
+    linkat.restype = ctypes.c_int
+    # Linux AT_FDCWD and AT_SYMLINK_FOLLOW. Python's os.link does not reliably
+    # follow /proc/self/fd here; linkat explicitly resolves the open inode.
+    if linkat(-100, os.fsencode(f"/proc/self/fd/{descriptor}"),
+              -100, os.fsencode(target), 0x400) != 0:
+        error = ctypes.get_errno()
+        raise OSError(error, os.strerror(error), str(target))
+
+
 def write_new_record(
     path: Path, record: dict[str, Any], *, before_publish: Callable[[], None] | None = None,
     evidence_state: Path | None = None, evidence_lock_fd: int | None = None,
@@ -134,7 +150,12 @@ def write_new_record(
                 if ((saved.st_dev, saved.st_ino) != (current.st_dev, current.st_ino)
                         or not stat.S_ISREG(current.st_mode) or current.st_nlink != 1):
                     raise LedgerStorageUnavailable("public evidence file changed; record not published")
-            os.link(temporary_path, path)
+            if evidence_state is not None and os.environ.get("MODELFC_EVIDENCE_ACL_USER") == "modelfc-api":
+                # Link the inode whose bytes and ACL were validated, even if a
+                # different process swaps the temporary pathname at this point.
+                _link_open_file(output.fileno(), path)
+            else:
+                os.link(temporary_path, path)
     except FileExistsError as error:
         raise LedgerError(f"refusing to overwrite existing record: {path}") from error
     except OSError as error:
