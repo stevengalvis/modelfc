@@ -182,57 +182,56 @@ class EvidenceAclTests(unittest.TestCase):
         self.assertFalse(any(call.args[0][-1].startswith("/proc/self/fd/")
                              for call in run.call_args_list))
 
-    def test_temporary_file_substitution_never_grants_private_acl(self):
+    def test_publication_uses_unnamed_temporary_instead_of_writable_alias(self):
         control = self.state / "prospective" / "control.json"
         control.parent.mkdir()
         control.write_text('{"private":true}')
-        acl_targets = []
-        def replace_during_acl(command, **kwargs):
+        evidence_descriptors = []
+        def observe_acl(command, **kwargs):
             if command[-1].startswith("/proc/self/fd/"):
-                target = Path(os.readlink(command[-1]))
-                acl_targets.append(target)
-                if target.name.startswith(".record-"):
-                    original = target.with_name("original-record")
-                    target.rename(original)
-                    control.rename(target)
-                    self.assertEqual(os.fstat(kwargs["pass_fds"][0]).st_ino,
-                                     original.stat().st_ino)
-                    self.assertNotEqual(os.fstat(kwargs["pass_fds"][0]).st_ino,
-                                        target.stat().st_ino)
+                descriptor = kwargs["pass_fds"][0]
+                if os.fstat(descriptor).st_nlink == 0:
+                    evidence_descriptors.append(descriptor)
+                    self.assertEqual(list(self.path.parent.iterdir()), [])
+                    self.assertEqual(control.read_text(), '{"private":true}')
         with patch.dict(os.environ, {"MODELFC_EVIDENCE_ACL_USER": "modelfc-api"}), \
                 patch("modelfc.ledger_storage.pwd.getpwnam", return_value=type("User", (), {"pw_uid": 10001})()), \
-                patch("modelfc.ledger_storage.subprocess.run", side_effect=replace_during_acl):
+                patch("modelfc.ledger_storage.subprocess.run", side_effect=observe_acl):
             with ledger_lock(self.state) as lock_fd:
-                with self.assertRaisesRegex(LedgerStorageUnavailable, "record not published"):
-                    write_new_record(self.path, {"first": True}, evidence_state=self.state,
-                                     evidence_lock_fd=lock_fd)
-        self.assertEqual(len(acl_targets), 2)
-        self.assertFalse(self.path.exists())
+                write_new_record(self.path, {"first": True}, evidence_state=self.state,
+                                 evidence_lock_fd=lock_fd)
+        self.assertEqual(len(evidence_descriptors), 1)
+        self.assertEqual(self.path.stat().st_nlink, 1)
+        self.assertEqual(list(self.path.parent.iterdir()), [self.path])
 
-    def test_temporary_path_replacement_at_link_publishes_open_inode(self):
+    def test_unnamed_inode_is_only_linked_at_publication(self):
         control = self.state / "prospective" / "control.json"
         control.parent.mkdir()
         control.write_text('{"private":true}')
-        def swap_at_link(descriptor, destination):
-            temporary = next(self.path.parent.glob(".record-*.tmp"))
-            self.assertEqual(temporary.stat().st_ino, os.fstat(descriptor).st_ino)
-            original = temporary.with_name("original-record")
-            temporary.rename(original)
-            control.rename(temporary)
-            try:
-                return _link_open_file(descriptor, destination)
-            finally:
-                temporary.rename(control)
-                original.rename(temporary)
+        def observe_link(descriptor, destination):
+            self.assertEqual(os.fstat(descriptor).st_nlink, 0)
+            self.assertEqual(list(self.path.parent.iterdir()), [])
+            self.assertFalse(destination.exists())
+            _link_open_file(descriptor, destination)
+            self.assertEqual(os.fstat(descriptor).st_nlink, 1)
         with patch.dict(os.environ, {"MODELFC_EVIDENCE_ACL_USER": "modelfc-api"}), \
                 patch("modelfc.ledger_storage.pwd.getpwnam", return_value=type("User", (), {"pw_uid": 10001})()), \
                 patch("modelfc.ledger_storage.subprocess.run"), \
-                patch("modelfc.ledger_storage._link_open_file", side_effect=swap_at_link):
+                patch("modelfc.ledger_storage._link_open_file", side_effect=observe_link):
             with ledger_lock(self.state) as lock_fd:
                 write_new_record(self.path, {"first": True}, evidence_state=self.state,
                                  evidence_lock_fd=lock_fd)
         self.assertEqual(self.path.read_text(), '{\n  "first": true\n}\n')
         self.assertEqual(control.read_text(), '{"private":true}')
+
+    def test_unsupported_unnamed_temp_fails_closed(self):
+        with patch.dict(os.environ, {"MODELFC_EVIDENCE_ACL_USER": "modelfc-api"}), \
+                patch("modelfc.ledger_storage.os.open", side_effect=OSError("unsupported")):
+            with ledger_lock(self.state) as lock_fd:
+                with self.assertRaisesRegex(LedgerStorageUnavailable, "could not write"):
+                    write_new_record(self.path, {"first": True}, evidence_state=self.state,
+                                     evidence_lock_fd=lock_fd)
+        self.assertFalse(self.path.exists())
 
     def test_invalid_existing_lock_is_not_granted_acl_or_published(self):
         lock = self.state / ".lock"

@@ -130,6 +130,22 @@ def write_new_record(
         raise LedgerError(f"could not serialize ledger record {path}: {error}") from error
     temporary_path: Path | None = None
     try:
+        if (evidence_state is not None
+                and os.environ.get("MODELFC_EVIDENCE_ACL_USER") == "modelfc-api"):
+            # An unnamed inode has no writable pathname alias after publication.
+            descriptor = os.open(path.parent, os.O_TMPFILE | os.O_RDWR | os.O_CLOEXEC, 0o600)
+            with os.fdopen(descriptor, "w", encoding="utf-8") as output:
+                output.write(serialized)
+                output.flush()
+                os.fsync(output.fileno())
+                _grant_evidence_read(path, evidence_state, evidence_lock_fd,
+                                     output.fileno())
+                if before_publish is not None:
+                    before_publish()
+                if os.fstat(output.fileno()).st_nlink != 0:
+                    raise LedgerStorageUnavailable("public evidence inode changed; record not published")
+                _link_open_file(output.fileno(), path)
+            return
         with tempfile.NamedTemporaryFile(
             "w", encoding="utf-8", dir=path.parent, prefix=".record-",
             suffix=".tmp", delete=False,
@@ -138,24 +154,10 @@ def write_new_record(
             output.write(serialized)
             output.flush()
             os.fsync(output.fileno())
-            if evidence_state is not None:
-                _grant_evidence_read(temporary_path, path, evidence_state,
-                                     evidence_lock_fd, output.fileno())
             # Run after serialization/fsync, immediately before exclusive publication.
             if before_publish is not None:
                 before_publish()
-            if evidence_state is not None and os.environ.get("MODELFC_EVIDENCE_ACL_USER") == "modelfc-api":
-                saved = os.fstat(output.fileno())
-                current = temporary_path.lstat()
-                if ((saved.st_dev, saved.st_ino) != (current.st_dev, current.st_ino)
-                        or not stat.S_ISREG(current.st_mode) or current.st_nlink != 1):
-                    raise LedgerStorageUnavailable("public evidence file changed; record not published")
-            if evidence_state is not None and os.environ.get("MODELFC_EVIDENCE_ACL_USER") == "modelfc-api":
-                # Link the inode whose bytes and ACL were validated, even if a
-                # different process swaps the temporary pathname at this point.
-                _link_open_file(output.fileno(), path)
-            else:
-                os.link(temporary_path, path)
+            os.link(temporary_path, path)
     except FileExistsError as error:
         raise LedgerError(f"refusing to overwrite existing record: {path}") from error
     except OSError as error:
@@ -170,8 +172,8 @@ def write_new_record(
                 pass
 
 
-def _grant_evidence_read(temporary: Path, target: Path, state: Path,
-                         lock_descriptor: int | None, temporary_descriptor: int) -> None:
+def _grant_evidence_read(target: Path, state: Path, lock_descriptor: int | None,
+                         temporary_descriptor: int) -> None:
     """Grant the dedicated API UID read access before immutable publication.
 
     The opt-in is supplied only by the root-installed prospective launcher.
@@ -184,7 +186,7 @@ def _grant_evidence_read(temporary: Path, target: Path, state: Path,
     try:
         relative = target.relative_to(state)
         if (len(relative.parts) not in (2, 3) or relative.parts[0] not in allowed
-                or target.suffix != ".json" or temporary.parent != target.parent):
+                or target.suffix != ".json"):
             raise ValueError("invalid public evidence location")
         uid = pwd.getpwnam("modelfc-api").pw_uid
         directories = [state, *(state.joinpath(*relative.parts[:index])
@@ -226,21 +228,18 @@ def _grant_evidence_read(temporary: Path, target: Path, state: Path,
                 or current_lock.st_size != 0):
             raise ValueError("public evidence lock changed during ACL setup")
         info = os.fstat(temporary_descriptor)
-        current = temporary.lstat()
         if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid()
-                or info.st_nlink != 1 or (info.st_dev, info.st_ino) != (current.st_dev, current.st_ino)
-                or not stat.S_ISREG(current.st_mode) or current.st_uid != os.getuid()
-                or current.st_nlink != 1):
+                or info.st_nlink != 0):
             raise ValueError("invalid public evidence file")
         subprocess.run(("/usr/bin/setfacl", "-m", f"u:{uid}:r--", "--",
                         f"/proc/self/fd/{temporary_descriptor}"),
                        check=True, timeout=10, env={"PATH": "/usr/bin:/bin"},
                        pass_fds=(temporary_descriptor,), stdout=subprocess.DEVNULL,
                        stderr=subprocess.DEVNULL)
-        current = temporary.lstat()
+        current = os.fstat(temporary_descriptor)
         if ((info.st_dev, info.st_ino) != (current.st_dev, current.st_ino)
                 or not stat.S_ISREG(current.st_mode) or current.st_uid != os.getuid()
-                or current.st_nlink != 1):
+                or current.st_nlink != 0):
             raise ValueError("public evidence file changed during ACL setup")
     except (ValueError, KeyError, OSError, subprocess.SubprocessError):
         raise LedgerStorageUnavailable("public evidence read ACL failed; record not published") from None
