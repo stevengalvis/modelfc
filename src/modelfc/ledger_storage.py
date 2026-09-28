@@ -169,6 +169,20 @@ def _grant_evidence_read(temporary: Path, target: Path, state: Path) -> None:
                             "--", str(directory)), check=True, timeout=10,
                            env={"PATH": "/usr/bin:/bin"},
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        # The writer created this real lock on entering ledger_lock. The API
+        # needs its read ACL before any new evidence is made visible.
+        lock_path = state / ".lock"
+        lock_info = lock_path.lstat()
+        if not stat.S_ISREG(lock_info.st_mode) or lock_info.st_uid != os.getuid():
+            raise ValueError("invalid public evidence lock")
+        subprocess.run(("/usr/bin/setfacl", "-m", f"u:{uid}:r--", "--", str(lock_path)),
+                       check=True, timeout=10, env={"PATH": "/usr/bin:/bin"},
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        current_lock = lock_path.lstat()
+        if ((current_lock.st_dev, current_lock.st_ino) != (lock_info.st_dev, lock_info.st_ino)
+                or not stat.S_ISREG(current_lock.st_mode)
+                or current_lock.st_uid != os.getuid()):
+            raise ValueError("public evidence lock changed during ACL setup")
         info = temporary.lstat()
         if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid():
             raise ValueError("invalid public evidence file")

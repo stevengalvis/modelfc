@@ -28,9 +28,10 @@ that the account cannot inspect the running writer's `/proc/<pid>/environ`,
 send it signals, read the source credential or traverse private budget paths.
 Do not give the API account blanket access to state or history.
 
-Under the existing state and prospective runner locks, grant the new identity
-traversal on `/var/lib/modelfc`, traversal on state, read access to the two
-existing lock files (`state/.lock`, `state/prospective/runner.lock`), and read
+Under the existing prospective `runner.lock` (and the state lock if present), grant the new identity
+traversal on `/var/lib/modelfc`, traversal on state, read access to the
+existing `state/prospective/runner.lock` and, **only if it already exists**,
+`state/.lock`, and read
 plus traversal **only** on the six public evidence directories and their
 existing nested directories: `analyses`, `analysis-outcomes`, `predictions`,
 `prediction-targets`, `market-observations`, `opportunities`. Grant read access
@@ -41,6 +42,12 @@ refresh internals or provider credentials. Check an unrelated root-owned or
 runtime-private file remains unreadable. Existing `0600` records need an
 explicit one-time read ACL; directory inheritance alone cannot expose future
 temporary files created as `0600`.
+An empty prospective state may have no `state/.lock`: the writer creates it lazily
+on the first state publication. Treat that absence as valid during installation;
+do not create a placeholder lock or change the writer's lock inode. Verify the
+existing lock is a regular file owned by the runtime account before granting
+its one-time read ACL, if present. The one-time ACL on `runner.lock` is still
+required even for an empty state.
 
 Install the reviewed updated `prospective_launch.py` as the root-owned trusted
 launcher only after the account, ACL tool, migration and compatible reviewed
@@ -51,6 +58,12 @@ clean child environment. Only the six evidence record families receive a read
 ACL on the temporary file **before** atomic publication; their new parent
 directories receive narrowly scoped traversal/read ACLs. ACL failure aborts
 that record before publication and does not refund provider reservations.
+For the first evidence publication, the writer creates and holds the real
+`state/.lock`, validates it as a regular file owned by its runtime UID, and
+grants the API identity read access before linking the immutable evidence into
+place. The same validation and ACL grant occur for later publications without
+replacing the lock inode. If the lock or evidence ACL cannot be established,
+publication fails closed; investigate before relying on the public reads.
 Older installed launchers do not opt in even when new code is deployed, so
 code merge alone does not change the active writer or its state. Verify new
 file ACL behavior using disposable offline fixture state, not real collection.
