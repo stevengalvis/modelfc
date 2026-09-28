@@ -392,6 +392,20 @@ class ProspectiveApiTests(unittest.TestCase):
             with self.assertRaises(LedgerError):
                 reader.read_performance(self.state)
 
+    def test_missing_frozen_probability_is_public_integrity_error(self):
+        path = next(path for path in
+                    (self.state / "prediction-targets" / self.prediction["prediction_id"]).glob("*.json")
+                    if json.loads(path.read_text(encoding="utf-8"))["status"] == "SUPPORTED")
+        record = json.loads(path.read_text(encoding="utf-8"))
+        del record["decisive_model_probability"]
+        record["record_hash"] = opportunities._canonical_hash(
+            {key: value for key, value in record.items() if key != "record_hash"})
+        path.write_text(json.dumps(record), encoding="utf-8")
+        response = self.client.get("/api/v1/prospective/performance")
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json()["error"]["code"], "LEDGER_INTEGRITY_FAILURE")
+        self.assertNotIn(str(path), response.text)
+
     def test_boundary_log_loss_is_finite_without_rewriting_probability(self):
         self.write_result()
         inventory = reader._inventory(self.state)

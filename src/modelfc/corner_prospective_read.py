@@ -351,9 +351,12 @@ def read_performance(state_dir: str | Path) -> dict[str, Any]:
     for target, result in supported:
         # These values were materialized before kickoff. Never regenerate them
         # using today's model, including for pushed selections.
-        probability = _number(target["decisive_model_probability"])
-        win = _number(target["model_probability"])
-        push = _number(target["push_probability"])
+        try:
+            probability = _number(target["decisive_model_probability"])
+            win = _number(target["model_probability"])
+            push = _number(target["push_probability"])
+        except (KeyError, TypeError, ValueError):
+            raise LedgerError("INVALID_PROSPECTIVE_RECORD") from None
         if (not all(0 <= value <= 1 for value in (probability, win, push))
                 or win + push > 1 + 1e-12
                 or 1 - push <= 0
