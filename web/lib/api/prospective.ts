@@ -41,6 +41,7 @@ export function decodePredictions(value: unknown): ProspectivePrediction[] {
       && date(item.latest_history_date)
       && Array.isArray(item.source_data_hashes) && item.source_data_hashes.every((hash: unknown) => record(hash) && nonempty(hash.filename) && typeof hash.sha256 === "string" && /^[a-f0-9]{64}$/.test(hash.sha256))
       && count(item.target_count) && count(item.opportunity_count)
+      && ((item.opportunity_count as number) === 0 || (item.target_count as number) > 0)
       && status(item.settlement_status)
       && (settled ? count(item.actual_home_corners) && count(item.actual_away_corners)
         : item.actual_home_corners === null && item.actual_away_corners === null);
