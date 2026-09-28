@@ -29,7 +29,13 @@ def _time(value: Any) -> datetime:
 
 
 def _number(value: Any) -> float:
-    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise LedgerError("INVALID_PROSPECTIVE_RECORD")
+    try:
+        finite = math.isfinite(value)
+    except OverflowError:
+        raise LedgerError("INVALID_PROSPECTIVE_RECORD") from None
+    if not finite:
         raise LedgerError("INVALID_PROSPECTIVE_RECORD")
     return value
 
