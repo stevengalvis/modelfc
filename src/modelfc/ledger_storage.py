@@ -105,7 +105,7 @@ def ensure_directory(path: Path, label: str) -> None:
 
 def write_new_record(
     path: Path, record: dict[str, Any], *, before_publish: Callable[[], None] | None = None,
-    evidence_state: Path | None = None,
+    evidence_state: Path | None = None, evidence_lock_fd: int | None = None,
 ) -> None:
     """Atomically create a complete JSON record without replacing a file."""
     try:
@@ -123,7 +123,7 @@ def write_new_record(
             output.flush()
             os.fsync(output.fileno())
         if evidence_state is not None:
-            _grant_evidence_read(temporary_path, path, evidence_state)
+            _grant_evidence_read(temporary_path, path, evidence_state, evidence_lock_fd)
         # Run after serialization/fsync, immediately before exclusive publication.
         if before_publish is not None:
             before_publish()
@@ -142,7 +142,8 @@ def write_new_record(
                 pass
 
 
-def _grant_evidence_read(temporary: Path, target: Path, state: Path) -> None:
+def _grant_evidence_read(temporary: Path, target: Path, state: Path,
+                         lock_descriptor: int | None) -> None:
     """Grant the dedicated API UID read access before immutable publication.
 
     The opt-in is supplied only by the root-installed prospective launcher.
@@ -172,26 +173,28 @@ def _grant_evidence_read(temporary: Path, target: Path, state: Path) -> None:
         # The writer created this real lock on entering ledger_lock. The API
         # needs its read ACL before any new evidence is made visible.
         lock_path = state / ".lock"
-        descriptor = os.open(lock_path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
-        try:
-            lock_info = os.fstat(descriptor)
-            if (not stat.S_ISREG(lock_info.st_mode) or lock_info.st_uid != os.getuid()
-                    or lock_info.st_nlink != 1):
-                raise ValueError("invalid public evidence lock")
-            # The child inherits only this validated descriptor. A pathname
-            # replacement cannot redirect setfacl onto another private inode.
-            subprocess.run(("/usr/bin/setfacl", "-m", f"u:{uid}:r--", "--",
-                            f"/proc/self/fd/{descriptor}"),
-                           check=True, timeout=10, env={"PATH": "/usr/bin:/bin"},
-                           pass_fds=(descriptor,), stdout=subprocess.DEVNULL,
-                           stderr=subprocess.DEVNULL)
-            current_lock = lock_path.lstat()
-            if ((current_lock.st_dev, current_lock.st_ino) != (lock_info.st_dev, lock_info.st_ino)
-                    or not stat.S_ISREG(current_lock.st_mode)
-                    or current_lock.st_uid != os.getuid() or current_lock.st_nlink != 1):
-                raise ValueError("public evidence lock changed during ACL setup")
-        finally:
-            os.close(descriptor)
+        if lock_descriptor is None:
+            raise ValueError("public evidence requires the held state lock")
+        lock_info = os.fstat(lock_descriptor)
+        current_lock = lock_path.lstat()
+        if (not stat.S_ISREG(lock_info.st_mode) or lock_info.st_uid != os.getuid()
+                or lock_info.st_nlink != 1
+                or (current_lock.st_dev, current_lock.st_ino) != (lock_info.st_dev, lock_info.st_ino)
+                or not stat.S_ISREG(current_lock.st_mode)
+                or current_lock.st_uid != os.getuid() or current_lock.st_nlink != 1):
+            raise ValueError("invalid public evidence lock")
+        # The child inherits only the descriptor already exclusively locked by
+        # the writer. A pathname replacement cannot redirect its ACL.
+        subprocess.run(("/usr/bin/setfacl", "-m", f"u:{uid}:r--", "--",
+                        f"/proc/self/fd/{lock_descriptor}"),
+                       check=True, timeout=10, env={"PATH": "/usr/bin:/bin"},
+                       pass_fds=(lock_descriptor,), stdout=subprocess.DEVNULL,
+                       stderr=subprocess.DEVNULL)
+        current_lock = lock_path.lstat()
+        if ((current_lock.st_dev, current_lock.st_ino) != (lock_info.st_dev, lock_info.st_ino)
+                or not stat.S_ISREG(current_lock.st_mode)
+                or current_lock.st_uid != os.getuid() or current_lock.st_nlink != 1):
+            raise ValueError("public evidence lock changed during ACL setup")
         info = temporary.lstat()
         if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid():
             raise ValueError("invalid public evidence file")
@@ -203,13 +206,13 @@ def _grant_evidence_read(temporary: Path, target: Path, state: Path) -> None:
 
 
 @contextmanager
-def ledger_lock(ledger: Path) -> Iterator[None]:
+def ledger_lock(ledger: Path) -> Iterator[int]:
     """Serialize operations whose correctness depends on ledger contents."""
     lock_path = ledger / ".lock"
     try:
         with lock_path.open("a", encoding="utf-8") as lock_file:
             fcntl.flock(lock_file, fcntl.LOCK_EX)
-            yield
+            yield lock_file.fileno()
     except OSError as error:
         raise LedgerStorageUnavailable(
             f"could not lock ledger {ledger}: {error}"

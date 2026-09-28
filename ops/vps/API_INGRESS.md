@@ -61,7 +61,8 @@ that record before publication and does not refund provider reservations.
 For the first evidence publication, the writer creates and holds the real
 `state/.lock`, validates it as a regular file owned by its runtime UID, and
 rejects additional hard links. It grants the API identity read access through
-a validated open descriptor before linking the immutable evidence into
+a validated descriptor for the writer's **already-held state lock**, verifying
+that the pathname still names that inode, before linking the immutable evidence into
 place. The same validation and ACL grant occur for later publications without
 replacing the lock inode. If the lock or evidence ACL cannot be established,
 publication fails closed; investigate before relying on the public reads.

@@ -272,7 +272,7 @@ def record_outcome(*, state_dir, analysis_id, data_config_path, idempotency_key,
                                     "matching": MATCHING_VERSION, "settlement": SETTLEMENT_VERSION})
     outcome_id = uuid.uuid5(uuid.NAMESPACE_URL, f"modelfc:outcome:{_id(analysis_id)}:{key}").hex
     directory = _directory(state, analysis_id)
-    with ledger_lock(state):
+    with ledger_lock(state) as lock_fd:
         _require(capture_path.read_bytes() == original, "CAPTURE_CHANGED")
         records, tip = _chain(state, analysis_id)
         existing = next((r for r in records if r["outcome_id"] == outcome_id), None)
@@ -300,7 +300,8 @@ def record_outcome(*, state_dir, analysis_id, data_config_path, idempotency_key,
                   "supersedes_outcome_id": supersedes_outcome_id, "correction_reason": correction_reason}
         record["record_hash"] = _canonical_hash(record)
         ensure_directory(directory, "analysis outcome directory")
-        write_new_record(directory / f"{outcome_id}.json", record, evidence_state=state)
+        write_new_record(directory / f"{outcome_id}.json", record,
+                         evidence_state=state, evidence_lock_fd=lock_fd)
     return record, True
 
 
