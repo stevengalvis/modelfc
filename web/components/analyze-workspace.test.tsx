@@ -134,6 +134,28 @@ Birmingham team corners O4 -110`);
     expect(screen.getByText(/TEAM_VENUE_HISTORY_AGE: Latest Birmingham home/)).toBeInTheDocument();
   });
 
+  it("retains a successful request when an excluded market is edited or removed", async () => {
+    const analyze = vi.spyOn(api, "analyze");
+    render(<AnalyzeWorkspace />);
+    await pasteAndParse(`${sportsbookText}\nTotal O9.5 +105`);
+    await analyzeDemo();
+    const successfulKey = analyze.mock.calls[0][0].idempotency_key;
+
+    fireEvent.change(screen.getByLabelText("Market 2 line"), { target: { value: "10.5" } });
+    expect(screen.getByText("Analysis complete")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /analyze all/i }));
+    await act(async () => {});
+    expect(analyze).toHaveBeenCalledTimes(1);
+    expect(analyze.mock.calls[0][0].idempotency_key).toBe(successfulKey);
+
+    fireEvent.click(screen.getByRole("button", { name: "Remove market 2" }));
+    expect(screen.getByText("Analysis complete")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /analyze all/i }));
+    await act(async () => {});
+    expect(analyze).toHaveBeenCalledTimes(1);
+    expect(analyze.mock.calls[0][0].idempotency_key).toBe(successfulKey);
+  });
+
   it("blocks an all-unsupported batch", async () => {
     render(<AnalyzeWorkspace />);
     await pasteAndParse(sportsbookText.replace("Birmingham team corners O4 -110", "Total O9.5 +105"));
@@ -191,11 +213,11 @@ Birmingham team corners O4 -110`);
     await waitFor(() => expect(screen.getAllByText("Analysis complete")).toHaveLength(2));
 
     fireEvent.change(screen.getByLabelText("Market 1 line"), { target: { value: "4.5" } });
-    expect(screen.queryByText("Analysis complete")).not.toBeInTheDocument();
+    expect(screen.getAllByText("Analysis complete")).toHaveLength(1);
     fireEvent.click(screen.getByRole("button", { name: /analyze all/i }));
-    await waitFor(() => expect(analyze).toHaveBeenCalledTimes(5));
+    await waitFor(() => expect(analyze).toHaveBeenCalledTimes(4));
     expect(analyze.mock.calls[3][0].idempotency_key).not.toBe(successfulKey);
-    expect(analyze.mock.calls[4][0].idempotency_key).not.toBe(failedKey);
+    expect(analyze.mock.calls.filter(([request]) => request.idempotency_key === failedKey)).toHaveLength(2);
   });
 
   it("shows the sole fulfillable mock model as a disabled visible selection", async () => {

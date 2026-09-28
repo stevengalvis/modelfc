@@ -7,7 +7,14 @@ const request: AnalysisRequest = {
   idempotency_key: "contract-test",
   fixture: wholeLineFixture.fixture,
   model: wholeLineFixture.forecast.model,
-  markets: [],
+  markets: wholeLineFixture.markets.map((market) => ({
+    client_market_id: market.client_market_id,
+    market_type: market.market_type as AnalysisRequest["markets"][number]["market_type"],
+    team_side: market.team_side as AnalysisRequest["markets"][number]["team_side"],
+    side: market.side as AnalysisRequest["markets"][number]["side"],
+    line: market.line,
+    american_odds: market.american_odds,
+  })),
 };
 
 afterEach(() => vi.unstubAllGlobals());
@@ -18,14 +25,48 @@ function responseWith(change: (value: Record<string, any>) => void): Response {
   return new Response(JSON.stringify(value), { status: 200 });
 }
 
-async function analyzeWith(change: (value: Record<string, any>) => void) {
+async function analyzeWith(
+  change: (value: Record<string, any>) => void,
+  submitted: AnalysisRequest = request,
+) {
   vi.stubGlobal("fetch", vi.fn().mockResolvedValue(responseWith(change)));
-  return createApiClient("live", "https://api.example.test/api/v1").analyze(request);
+  return createApiClient("live", "https://api.example.test/api/v1").analyze(submitted);
 }
 
 describe("analysis response boundary", () => {
   it("accepts the complete backend-owned analysis fixture", async () => {
     await expect(analyzeWith(() => {})).resolves.toEqual(wholeLineFixture);
+  });
+
+  it.each([
+    ["empty response", (value: Record<string, any>) => { value.markets = []; }],
+    ["extra market", (value: Record<string, any>) => {
+      value.markets.push({ ...value.markets[0], client_market_id: "unexpected-extra" });
+    }],
+    ["mismatched client_market_id", (value: Record<string, any>) => { value.markets[0].client_market_id = "wrong-id"; }],
+    ["mismatched market_type", (value: Record<string, any>) => { value.markets[0].market_type = "MATCH_TOTAL"; }],
+    ["mismatched team_side", (value: Record<string, any>) => { value.markets[0].team_side = "AWAY"; }],
+    ["mismatched side", (value: Record<string, any>) => { value.markets[0].side = "UNDER"; }],
+    ["mismatched line", (value: Record<string, any>) => { value.markets[0].line = 4.5; }],
+    ["mismatched american_odds", (value: Record<string, any>) => { value.markets[0].american_odds = -115; }],
+  ])("rejects a successful response with %s", async (_name, change) => {
+    await expect(analyzeWith(change))
+      .rejects.toMatchObject({ code: "ANALYSIS_CONTRACT_MISMATCH" });
+  });
+
+  it("rejects partial and reordered market responses", async () => {
+    const second = {
+      ...request.markets[0],
+      client_market_id: "home-u4",
+      side: "UNDER" as const,
+    };
+    const twoMarketRequest = { ...request, markets: [...request.markets, second] };
+    await expect(analyzeWith(() => {}, twoMarketRequest))
+      .rejects.toMatchObject({ code: "ANALYSIS_CONTRACT_MISMATCH" });
+    await expect(analyzeWith((value) => {
+      value.markets.push({ ...value.markets[0], client_market_id: second.client_market_id, side: second.side });
+      value.markets.reverse();
+    }, twoMarketRequest)).rejects.toMatchObject({ code: "ANALYSIS_CONTRACT_MISMATCH" });
   });
 
   it.each([

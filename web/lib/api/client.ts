@@ -23,7 +23,7 @@ async function requestJson<T>(baseUrl: string, path: string, init?: RequestInit)
   return body as T;
 }
 
-function decodeAnalysisResponse(value: unknown): AnalysisResponse {
+function decodeAnalysisResponse(value: unknown, request: AnalysisRequest): AnalysisResponse {
   const record = (item: unknown): item is Record<string, unknown> => Boolean(item && typeof item === "object" && !Array.isArray(item));
   const stringOrNull = (item: unknown): item is string | null => item === null || typeof item === "string";
   const finiteNumber = (item: unknown): item is number => typeof item === "number" && Number.isFinite(item);
@@ -78,6 +78,13 @@ function decodeAnalysisResponse(value: unknown): AnalysisResponse {
     && stringOrNull(item.team)
     && marketResult(item)
     && warnings(item.warnings);
+  const requestMarketMatches = (item: Record<string, unknown>, expected: AnalysisRequest["markets"][number]) =>
+    item.client_market_id === expected.client_market_id
+    && item.market_type === expected.market_type
+    && item.team_side === expected.team_side
+    && item.side === expected.side
+    && item.line === expected.line
+    && item.american_odds === expected.american_odds;
   const valid = record(value)
     && typeof value.analysis_id === "string"
     && typeof value.forecast_id === "string"
@@ -103,6 +110,8 @@ function decodeAnalysisResponse(value: unknown): AnalysisResponse {
     && value.forecast.source_data_hashes.every(sourceHash)
     && Array.isArray(value.markets)
     && value.markets.every(market)
+    && value.markets.length === request.markets.length
+    && value.markets.every((item, index) => record(item) && requestMarketMatches(item, request.markets[index]))
     && warnings(value.warnings);
   if (!valid) {
     throw new ModelFCApiError(
@@ -132,7 +141,8 @@ export function createApiClient(mode: string | undefined, baseUrl?: string) {
     async analyze(payload: AnalysisRequest, signal?: AbortSignal): Promise<AnalysisResponse> {
       checkConfiguration();
       return mode === "mock" ? mockAnalyze(payload, signal)
-        : requestJson<unknown>(baseUrl!, "/analyses", { method: "POST", body: JSON.stringify(payload), signal }).then(decodeAnalysisResponse);
+        : requestJson<unknown>(baseUrl!, "/analyses", { method: "POST", body: JSON.stringify(payload), signal })
+          .then((value) => decodeAnalysisResponse(value, payload));
     },
   };
 }

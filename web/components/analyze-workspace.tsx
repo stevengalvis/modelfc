@@ -112,17 +112,32 @@ export function AnalyzeWorkspace() {
     for (const [id, state] of retryRef.current) {
       if (state.status === "submitting") retryRef.current.set(id, { ...state, status: "failed" });
     }
-    for (const id of retryRef.current.keys()) {
-      if (id.startsWith(`${blockId}:chunk-`)) retryRef.current.delete(id);
-    }
-    setAnalyses((current) => current.filter((entry) => entry.blockId !== blockId));
-    setError(null);
-    setBusy(false);
     const blocks = parsed.blocks.map((block) => {
       if (block.block_id !== blockId) return block;
       const updated = update(block);
       return { ...updated, warnings: deriveBlockWarnings(updated) };
     });
+    const updatedIndex = blocks.findIndex((block) => block.block_id === blockId);
+    const updatedValidation = validateAnalysisBlocks(blocks, capabilities)[updatedIndex];
+    const nextFingerprints = new Map<string, string>();
+    if (updatedValidation?.fixture && model) {
+      chunkMarketsForAnalysis(updatedValidation.validMarkets).forEach((markets, chunkIndex) => {
+        nextFingerprints.set(
+          chunkStateId(blockId, chunkIndex),
+          requestFingerprint(updatedValidation.fixture!, model, markets),
+        );
+      });
+    }
+    const retainedRequests = new Set<string>();
+    for (const [id, state] of retryRef.current) {
+      if (!id.startsWith(`${blockId}:chunk-`)) continue;
+      if (nextFingerprints.get(id) === state.fingerprint) retainedRequests.add(id);
+      else retryRef.current.delete(id);
+    }
+    setAnalyses((current) => current.filter((entry) =>
+      entry.blockId !== blockId || retainedRequests.has(entry.requestId)));
+    setError(null);
+    setBusy(false);
     setParsed({
       ...parsed,
       blocks,
