@@ -37,7 +37,7 @@ export function PredictionsDashboard() {
         if (opportunities.some((item) => {
           const parent = byId.get(item.prediction_id);
           counts.set(item.prediction_id, (counts.get(item.prediction_id) ?? 0) + 1);
-          return !parent || parent.provider_fixture_id !== item.provider_fixture_id
+          return !parent || parent.provider !== item.provider || parent.provider_fixture_id !== item.provider_fixture_id
             || parent.competition !== item.competition || parent.kickoff_utc !== item.kickoff_utc
             || parent.home_team !== item.home_team || parent.away_team !== item.away_team
             || parent.settlement_status !== item.settlement_status

@@ -57,6 +57,14 @@ describe("prospective dashboards", () => {
     render(<PredictionsDashboard />);
     await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("Retry to read a consistent snapshot"));
   });
+  it("rejects a fixture from another provider namespace", async () => {
+    const opportunities = structuredClone(mockOpportunities);
+    opportunities[0].provider = "AnotherProvider";
+    vi.spyOn(api, "opportunities").mockResolvedValue(opportunities);
+    vi.spyOn(api, "predictions").mockResolvedValue(mockPredictions);
+    render(<PredictionsDashboard />);
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("inconsistent predictions and opportunities"));
+  });
   it("renders backend performance values", async () => {
     vi.spyOn(api, "performance").mockResolvedValue(mockPerformance);
     render(<PerformanceDashboard />);
