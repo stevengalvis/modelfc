@@ -56,6 +56,9 @@ describe("prospective response boundary", () => {
       v.opportunity_performance.wins = 0; v.opportunity_performance.pushes = 2;
       v.opportunity_performance.win_rate_excluding_pushes = 0;
     }), "performance"],
+    ["win with impossible negative profit", changed(mockPerformance, (v) => {
+      v.opportunity_performance.realized_profit_units = -1;
+    }), "performance"],
     ["invalid totals", changed(mockPerformance, (v) => { v.opportunity_performance.settled_opportunities = 7; }), "performance"],
   ] as const)("rejects %s", async (_name, value, method) => {
     await expect(live(value)[method]()).rejects.toMatchObject({ code: "PROSPECTIVE_CONTRACT_MISMATCH" });
