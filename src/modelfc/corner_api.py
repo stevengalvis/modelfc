@@ -300,6 +300,14 @@ def _domain_error(error: Exception) -> JSONResponse:
     return _error("INVALID_REQUEST", message, 422)
 
 
+def _public_read_error(error: LedgerError) -> JSONResponse:
+    """Public prospective views must not return storage paths or ledger internals."""
+    if isinstance(error, LedgerStorageUnavailable):
+        return _error("STATE_STORAGE_UNAVAILABLE", "Prospective evidence is temporarily unavailable.",
+                      503, retryable=True)
+    return _error("LEDGER_INTEGRITY_FAILURE", "Prospective evidence failed validation.", 409)
+
+
 def create_app(
     *, data_config_path: str | Path | None = None,
     state_dir: str | Path | None = None,
@@ -376,7 +384,7 @@ def create_app(
         try:
             return read_opportunities(state)
         except LedgerError as error:
-            return _domain_error(error)
+            return _public_read_error(error)
 
     @app.get(
         "/api/v1/opportunities/{opportunity_id}",
@@ -393,7 +401,7 @@ def create_app(
         try:
             return read_predictions(state)
         except LedgerError as error:
-            return _domain_error(error)
+            return _public_read_error(error)
 
     @app.get(
         "/api/v1/prospective/performance",
@@ -403,7 +411,7 @@ def create_app(
         try:
             return read_performance(state)
         except LedgerError as error:
-            return _domain_error(error)
+            return _public_read_error(error)
 
     return app
 

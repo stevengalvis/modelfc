@@ -1,0 +1,39 @@
+[Unit]
+Description=Read-only Model FC prospective API
+After=network.target
+
+[Service]
+Type=simple
+User=modelfc-runtime
+Group=modelfc-runtime
+WorkingDirectory=/srv/modelfc/current
+ExecStart=/usr/bin/python3 -I -B /usr/local/libexec/modelfc-api-launch.py
+UMask=0077
+StandardInput=null
+UnsetEnvironment=GITHUB_TOKEN GH_TOKEN SSH_AUTH_SOCK PYTHONPATH PYTHONHOME LD_PRELOAD LD_LIBRARY_PATH LD_AUDIT ODDSPAPI_API_KEY MODELFC_DATA_CONFIG MODELFC_STATE_DIR MODELFC_CORS_ORIGINS
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ReadOnlyPaths=/srv/modelfc /etc/modelfc /var/lib/modelfc/state
+InaccessiblePaths=-/etc/modelfc/credentials -/run/credentials
+InaccessiblePaths=-/var/lib/modelfc/history/data/corner-refresh/backups
+InaccessiblePaths=-/var/lib/modelfc-deploy -/run/modelfc-acquisition
+InaccessiblePaths=-/etc/modelfc-validator -/var/lib/modelfc-validator
+InaccessiblePaths=-/opt/modelfc-deploy -/opt/modelfc-validator
+InaccessiblePaths=-/root/modelfc-state -/root
+CapabilityBoundingSet=
+RestrictSUIDSGID=yes
+RestrictAddressFamilies=AF_INET AF_UNIX
+IPAddressDeny=any
+IPAddressAllow=localhost
+TasksMax=32
+MemoryMax=256M
+CPUQuota=100%
+RuntimeMaxSec=30min
+Restart=always
+RestartSec=10s
+
+[Install]
+WantedBy=multi-user.target

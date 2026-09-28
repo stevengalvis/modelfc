@@ -19,6 +19,34 @@ const request: AnalysisRequest = {
 
 afterEach(() => vi.unstubAllGlobals());
 
+describe("browser request headers", () => {
+  it("keeps live prospective GETs simple while preserving JSON POST", async () => {
+    const fetcher = vi.fn().mockResolvedValueOnce(new Response("[]", { status: 200 }))
+      .mockResolvedValueOnce(responseWith(() => {}));
+    vi.stubGlobal("fetch", fetcher);
+    const client = createApiClient("live", "https://api.example.test/api/v1", { allowLiveAnalysis: true });
+    await client.predictions();
+    await client.analyze(request);
+    expect(fetcher.mock.calls[0][0]).toBe("https://api.example.test/api/v1/predictions");
+    expect(fetcher.mock.calls[0][1].headers).toEqual({});
+    expect(fetcher.mock.calls[1][1]).toMatchObject({ method: "POST", headers: { "Content-Type": "application/json" } });
+  });
+
+  it("never substitutes mock evidence when a live read fails", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("API unavailable")));
+    await expect(createApiClient("live", "https://api.example.test/api/v1").predictions())
+      .rejects.toThrow("API unavailable");
+  });
+
+  it("rejects a live analysis before fetch unless a test client opts in explicitly", async () => {
+    const fetcher = vi.fn();
+    vi.stubGlobal("fetch", fetcher);
+    await expect(createApiClient("live", "https://api.example.test/api/v1").analyze(request))
+      .rejects.toMatchObject({ code: "ANALYSIS_UNAVAILABLE" });
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+});
+
 function responseWith(change: (value: Record<string, any>) => void): Response {
   const value = structuredClone(wholeLineFixture) as Record<string, any>;
   change(value);
@@ -30,7 +58,7 @@ async function analyzeWith(
   submitted: AnalysisRequest = request,
 ) {
   vi.stubGlobal("fetch", vi.fn().mockResolvedValue(responseWith(change)));
-  return createApiClient("live", "https://api.example.test/api/v1").analyze(submitted);
+  return createApiClient("live", "https://api.example.test/api/v1", { allowLiveAnalysis: true }).analyze(submitted);
 }
 
 describe("analysis response boundary", () => {

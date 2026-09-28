@@ -1,0 +1,15 @@
+# Install as root-owned /etc/caddy/Caddyfile after setting MODELFC_API_HOST in
+# Caddy's trusted systemd environment. A hostname is required for public TLS.
+{$MODELFC_API_HOST} {
+	@public_read {
+		path /api/v1/predictions /api/v1/opportunities /api/v1/prospective/performance
+		method GET
+	}
+	handle @public_read {
+		header Cache-Control "no-store"
+		reverse_proxy 127.0.0.1:8000
+	}
+	handle {
+		respond 404
+	}
+}

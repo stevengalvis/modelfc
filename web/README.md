@@ -49,6 +49,12 @@ Malformed successful responses fail at the API boundary with
 Mock mode includes fixed upcoming and settled examples with WIN, LOSS, and PUSH
 results. The header labels this as **Mock data**. Live mode never uses those
 examples and depends on separately enabled prospective collection for records.
+The public live deployment shows Predictions and Performance, with Analyze
+unavailable; `/` redirects to `/predictions` in live mode. Mock mode keeps
+Analyze and its `/` redirect. Public ingress permits only three prospective
+GET routes and rejects analysis POSTs. The browser's live API client also
+rejects analysis before issuing a request; synthetic integration tests must
+opt in explicitly when writing their temporary test state.
 The synthetic live integration verifies the real HTTP endpoints with empty state.
 
 ## Verify
@@ -89,9 +95,11 @@ python3 -m compileall -q src tests
 
 The existing Vercel Model FC project must keep root directory `web` and framework
 Next.js. Pull requests use its normal Git-connected preview deployment.
-For a demo set `NEXT_PUBLIC_MODELFC_API_MODE=mock`; for live verification set it
-to `live`, supply the reachable FastAPI `/api/v1` URL, and allow the preview
-origin in backend CORS. Do not promote production during frontend verification.
+For a demo set `NEXT_PUBLIC_MODELFC_API_MODE=mock`; for live read-only verification
+set it to `live`, supply the reachable HTTPS `/api/v1` URL, and allow only the
+verified frontend origin in backend CORS. The URL is public browser configuration;
+never put a secret in `NEXT_PUBLIC_*`. Do not promote production during frontend
+verification. See [API_INGRESS.md](../ops/vps/API_INGRESS.md).
 
 The build needs the repository's `tests/fixtures/api_v1/` files as well as `web/`.
 Next.js uses the repository as its Turbopack root for these shared static imports.
