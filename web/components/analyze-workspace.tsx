@@ -152,7 +152,7 @@ export function AnalyzeWorkspace() {
   }
 
   function changeModel(nextModel: string) {
-    if (nextModel === model || !capabilities?.models.includes(nextModel)) return;
+    if (busy || nextModel === model || !capabilities?.models.includes(nextModel)) return;
     invalidateAnalysis();
     setModel(nextModel);
   }
@@ -329,7 +329,7 @@ export function AnalyzeWorkspace() {
           })}
           <div className="analyze-bar simple-analyze-bar">
             <span className="market-count">{marketCountLabel}</span>
-            <label><span>Model</span><select aria-label="Analysis model" value={model} disabled={(capabilities?.models.length ?? 0) <= 1} onChange={(event) => changeModel(event.target.value)}>
+            <label><span>Model</span><select aria-label="Analysis model" value={model} disabled={busy || (capabilities?.models.length ?? 0) <= 1} onChange={(event) => changeModel(event.target.value)}>
               {capabilities?.models.length ? capabilities.models.map((item) => <option value={item} key={item}>{item}</option>) : <option value="">No supported model</option>}
             </select></label>
             <span className="mode-note">{apiMode === "mock" ? "Fixed backend demo fixture" : apiMode === "live" ? "Live API response" : "API mode not configured"}</span>
