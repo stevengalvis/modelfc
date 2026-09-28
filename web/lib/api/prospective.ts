@@ -80,14 +80,15 @@ export function decodePerformance(value: unknown): ProspectivePerformance {
     || !["total_opportunity_events", "settled_opportunities", "wins", "losses", "pushes", "unresolved_open_opportunities"].every((key) => count(offers[key]))
     || (offers.win_rate_excluding_pushes !== null && !probability(offers.win_rate_excluding_pushes))
     || !finite(offers.realized_profit_units)
-    || ((offers.wins as number) + (offers.losses as number) === 0 && offers.realized_profit_units !== 0)
+    || (offers.wins === 0 && offers.realized_profit_units !== -(offers.losses as number))
     || model.settled_prediction_targets as number > (model.supported_prediction_targets as number)
     || model.supported_prediction_targets as number > (model.total_unique_prediction_targets as number)
     || (model.settled_prediction_targets as number) + (model.unsettled_supported_prediction_targets as number) !== model.supported_prediction_targets
     || (offers.wins as number) + (offers.losses as number) + (offers.pushes as number) !== offers.settled_opportunities
     || (offers.settled_opportunities as number) + (offers.unresolved_open_opportunities as number) !== offers.total_opportunity_events
     || (offers.wins as number) + (offers.losses as number) === 0 && offers.win_rate_excluding_pushes !== null
-    || (offers.wins as number) + (offers.losses as number) > 0 && Math.abs((offers.win_rate_excluding_pushes as number) - (offers.wins as number) / ((offers.wins as number) + (offers.losses as number))) > 1e-8
+    || ((offers.wins as number) + (offers.losses as number) > 0 && (offers.win_rate_excluding_pushes === null
+      || Math.abs((offers.win_rate_excluding_pushes as number) - (offers.wins as number) / ((offers.wins as number) + (offers.losses as number))) > 1e-8))
   ) mismatch("performance");
   return value as unknown as ProspectivePerformance;
 }

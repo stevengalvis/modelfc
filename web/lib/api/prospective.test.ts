@@ -22,6 +22,14 @@ describe("prospective response boundary", () => {
     expect(items[0]).toMatchObject({ bookmaker: "DraftKings", line: 4.5, american_odds: -110, model_decisive_probability: 0.62, no_vig_market_probability: 0.52, no_vig_probability_edge: 0.10 });
     expect(items.slice(1).map((item) => [item.result, item.realized_profit_units])).toEqual([["WIN", 0.83333], ["LOSS", -1], ["PUSH", 0]]);
   });
+  it("accepts a loss-only aggregate with a zero win rate", async () => {
+    const value = changed(mockPerformance, (v) => {
+      v.opportunity_performance.wins = 0; v.opportunity_performance.losses = 1;
+      v.opportunity_performance.pushes = 2; v.opportunity_performance.win_rate_excluding_pushes = 0;
+      v.opportunity_performance.realized_profit_units = -1;
+    });
+    expect(await live(value).performance()).toEqual(value);
+  });
   it("accepts performance aggregates and empty lists", async () => {
     expect(await live(mockPerformance).performance()).toEqual(mockPerformance);
     expect(await live([]).predictions()).toEqual([]);
@@ -38,6 +46,15 @@ describe("prospective response boundary", () => {
     ["profit without decisive settlement", changed(mockPerformance, (v) => {
       v.opportunity_performance.wins = 0; v.opportunity_performance.losses = 0;
       v.opportunity_performance.pushes = 3; v.opportunity_performance.win_rate_excluding_pushes = null as unknown as number;
+    }), "performance"],
+    ["missing zero win rate with losses", changed(mockPerformance, (v) => {
+      v.opportunity_performance.wins = 0; v.opportunity_performance.pushes = 2;
+      v.opportunity_performance.win_rate_excluding_pushes = null as unknown as number;
+      v.opportunity_performance.realized_profit_units = -1;
+    }), "performance"],
+    ["incorrect loss-only profit", changed(mockPerformance, (v) => {
+      v.opportunity_performance.wins = 0; v.opportunity_performance.pushes = 2;
+      v.opportunity_performance.win_rate_excluding_pushes = 0;
     }), "performance"],
     ["invalid totals", changed(mockPerformance, (v) => { v.opportunity_performance.settled_opportunities = 7; }), "performance"],
   ] as const)("rejects %s", async (_name, value, method) => {
