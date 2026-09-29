@@ -57,6 +57,19 @@ describe("prospective response boundary", () => {
     detail.market_movement.status = "TOWARD_ZENO";
     await expect(live(detail).opportunityDetail("c".repeat(32))).rejects.toMatchObject({ code: "PROSPECTIVE_CONTRACT_MISMATCH" });
   });
+  it("checks direction, magnitude, and the last retained comparison point", async () => {
+    const detail = structuredClone(mockOpportunityDetails[0]);
+    detail.opportunity_id = "d".repeat(32);
+    detail.market_movement.market_change_percentage_points = 900;
+    await expect(live(detail).opportunityDetail("d".repeat(32))).rejects.toMatchObject({ code: "PROSPECTIVE_CONTRACT_MISMATCH" });
+    detail.market_movement.market_change_percentage_points = 5;
+    detail.market_movement.status = "AWAY_FROM_ZENO";
+    await expect(live(detail).opportunityDetail("d".repeat(32))).rejects.toMatchObject({ code: "PROSPECTIVE_CONTRACT_MISMATCH" });
+    detail.market_movement.status = "UNAVAILABLE";
+    detail.market_movement.market_change_percentage_points = null;
+    detail.market_movement.latest_comparable_observation_id = null;
+    await expect(live(detail).opportunityDetail("d".repeat(32))).rejects.toMatchObject({ code: "PROSPECTIVE_CONTRACT_MISMATCH" });
+  });
   it("preserves upcoming and settled predictions", async () => {
     const items = await live(mockPredictions).predictions();
     expect(items.map((item) => item.settlement_status)).toEqual(["UPCOMING", "SETTLED"]);

@@ -155,6 +155,21 @@ def _movement_summary(snapshots: list[dict[str, Any]], decisive: float) -> dict[
     }
 
 
+def _retained_snapshots(snapshots: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if len(snapshots) <= 12:
+        return snapshots
+    # Keep the latest usable comparison even when many newer selected-side
+    # prices lack a pair. The browser can then validate the summary against
+    # the displayed evidence. Never invent or change a snapshot.
+    latest_paired = next((index for index in range(len(snapshots) - 1, 0, -1)
+                          if snapshots[index]["no_vig_market_probability"] is not None), None)
+    indices = {0, *range(len(snapshots) - 11, len(snapshots))}
+    if latest_paired is not None and latest_paired not in indices:
+        indices.remove(len(snapshots) - 11)
+        indices.add(latest_paired)
+    return [snapshots[index] for index in sorted(indices)]
+
+
 def _opportunity_detail(
     opportunity: dict[str, Any], prediction: dict[str, Any],
     target: dict[str, Any], observation: dict[str, Any],
@@ -250,8 +265,7 @@ def _opportunity_detail(
                 })
         if not snapshots or not snapshots[0]["qualifying_observation"]:
             raise ValueError
-        # Always retain qualification and at most 11 latest comparable snapshots.
-        retained = snapshots[:1] + snapshots[-11:] if len(snapshots) > 12 else snapshots
+        retained = _retained_snapshots(snapshots)
         if not math.isclose(retained[0]["no_vig_market_probability"], no_vig[direction], rel_tol=0, abs_tol=1e-12):
             raise ValueError
         market = [{

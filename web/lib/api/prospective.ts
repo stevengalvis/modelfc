@@ -124,6 +124,13 @@ export function decodeOpportunityDetail(value: unknown, requestedId: string): Op
   const pair = value.market_at_qualification;
   const snapshots = value.recorded_market;
   const movement = value.market_movement;
+  const lastPaired = snapshots.slice(1).filter((item: unknown): item is { observation_id: string; no_vig_market_probability: number } =>
+    record(item) && typeof item.no_vig_market_probability === "number").at(-1);
+  // Cross-field validation only. The displayed movement always comes from the API.
+  const distanceAtQualification = Math.abs((value.model_decisive_probability as number) - (value.no_vig_market_probability as number));
+  const distanceAtLatest = lastPaired ? Math.abs((value.model_decisive_probability as number) - lastPaired.no_vig_market_probability) : null;
+  const expectedDirection = distanceAtLatest === null ? null : distanceAtLatest < distanceAtQualification ? "TOWARD_ZENO"
+    : distanceAtLatest > distanceAtQualification ? "AWAY_FROM_ZENO" : "UNCHANGED";
   if (!nonnegative(forecast.expected_team_corners)
     || !nonnegative(forecast.expected_home_corners) || !nonnegative(forecast.expected_away_corners)
     || !nonnegative(forecast.expected_match_corners)
@@ -178,12 +185,14 @@ export function decodeOpportunityDetail(value: unknown, requestedId: string): Op
     || snapshots.slice(1).some((item: { qualifying_observation: boolean }) => item.qualifying_observation)
     || !["TOWARD_ZENO", "AWAY_FROM_ZENO", "UNCHANGED", "NO_LATER_OBSERVATION", "UNAVAILABLE"].includes(movement.status as string)
     || (movement.status === "NO_LATER_OBSERVATION" && value.recorded_market_count !== 1)
-    || (movement.status === "UNAVAILABLE" && (value.recorded_market_count as number) <= 1)
+    || (movement.status === "UNAVAILABLE" && ((value.recorded_market_count as number) <= 1 || lastPaired !== undefined))
     || (["NO_LATER_OBSERVATION", "UNAVAILABLE"].includes(movement.status as string)
       ? movement.market_change_percentage_points !== null || movement.latest_comparable_observation_id !== null
-      : !finite(movement.market_change_percentage_points) || !id(movement.latest_comparable_observation_id)
-        || !snapshots.slice(1).some((item: { observation_id: string; no_vig_market_probability: number | null }) =>
-          item.observation_id === movement.latest_comparable_observation_id && item.no_vig_market_probability !== null))
+      : !finite(movement.market_change_percentage_points) || !lastPaired
+        || movement.latest_comparable_observation_id !== lastPaired.observation_id
+        || movement.status !== expectedDirection
+        || Math.abs((movement.market_change_percentage_points as number) -
+          (lastPaired.no_vig_market_probability - (value.no_vig_market_probability as number)) * 100) > 1e-8)
     || (value.settlement_status === "SETTLED"
       ? !count(value.actual_home_corners) || !count(value.actual_away_corners) || !timestamp(value.outcome_recorded_at_utc)
         || value.actual_team_corners !== value[value.team_side === "HOME" ? "actual_home_corners" : "actual_away_corners"]

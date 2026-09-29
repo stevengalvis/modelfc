@@ -802,6 +802,12 @@ class ProspectiveApiTests(unittest.TestCase):
         self.assertEqual(reader._movement_summary([baseline, {
             "observation_id": "unpaired", "no_vig_market_probability": None,
         }], 0.61)["status"], "UNAVAILABLE")
+        snapshots = [baseline, {"observation_id": "last-paired", "no_vig_market_probability": 0.57}]
+        snapshots += [{"observation_id": str(index), "no_vig_market_probability": None} for index in range(11)]
+        retained = reader._retained_snapshots(snapshots)
+        self.assertEqual(len(retained), 12)
+        self.assertEqual([item["observation_id"] for item in retained[:2]], ["first", "last-paired"])
+        self.assertEqual(reader._movement_summary(retained, 0.61)["latest_comparable_observation_id"], "last-paired")
 
     def test_unpaired_later_quote_is_retained_but_not_plotted(self):
         initial = self.detail(lambda item: item["line"] == 3.5 and item["bookmaker"] == "draftkings")

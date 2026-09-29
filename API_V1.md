@@ -26,8 +26,9 @@ the prospective runner/state read locks:
   observation/bookmaker/team/TEAM_TOTAL line, each with frozen American and
   decimal prices, raw implied and no-vig probabilities, and `qualified` flag.
 - `recorded_market`: one to twelve chronologically ordered pre-kickoff
-  snapshots of the same selection, retaining the qualifying snapshot and
-  up to eleven latest later snapshots. `recorded_market_count` is the full
+  snapshots of the same selection, retaining the qualifying snapshot, the
+  latest paired comparison if present, and the latest remaining quotes up to
+  the cap. `recorded_market_count` is the full
   comparable count. Each snapshot has `price_consistent`, the backend's
   comparison of frozen American and decimal prices within its provider
   rounding tolerance. An inconsistent later quote remains visible and is
@@ -48,7 +49,7 @@ the prospective runner/state read locks:
   is signed `(later_market - qualifying_market) * 100`, or null without a
   comparison. `latest_comparable_observation_id` identifies the comparison
   snapshot or is null. The timeline can omit middle snapshots when over twelve
-  exist; the comparison still uses the latest frozen comparable quote.
+  exist, but always retains the latest frozen comparable quote for validation.
 - `source_observation_id`, `actual_home_corners`, `actual_away_corners`, and
   `outcome_recorded_at_utc`. Actuals and outcome time are null until validated
   settlement; corrected outcome chains use their authoritative tip.
