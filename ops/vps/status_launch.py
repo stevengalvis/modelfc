@@ -49,7 +49,9 @@ def launch(argv: list[str]) -> None:
                 or stream.read(41) != match[1].encode("ascii")):
             raise ValueError("invalid release marker")
     for path in (release / "src/modelfc/production_status.py",
-                 release / "src/modelfc/production_status_host.py", release / ".venv/pyvenv.cfg"):
+                 release / "src/modelfc/production_status_host.py",
+                 release / "src/modelfc/prospective_run_receipts.py",
+                 release / ".venv/pyvenv.cfg"):
         protected(path, deploy_uid)
     python = release / ".venv/bin/python"
     if python.lstat().st_uid != deploy_uid or not python.is_file() or not os.access(python, os.X_OK):

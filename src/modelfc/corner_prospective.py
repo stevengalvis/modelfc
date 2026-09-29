@@ -25,7 +25,10 @@ from modelfc.corner_opportunities import (
     store_market_observation,
     store_observation_from_capture, store_prediction_from_capture,
 )
-from modelfc.ledger_storage import LedgerError, ledger_lock
+from modelfc.ledger_storage import (DEPLOYMENT_RELEASES, LedgerError,
+                                    _deployed_commit_sha, git_commit_sha, ledger_lock)
+from modelfc.prospective_run_receipts import (REASONS, ReceiptError,
+                                             publish as publish_run_receipt)
 from modelfc.corner_market_data import MarketDataError, MarketDataSource
 from modelfc.corner_prospective_budget import (
     BudgetError, enroll as enroll_calendar_budget,
@@ -496,6 +499,7 @@ def _provider_work(path, control, state, config, summary, captured, market_data_
 
 def run_once(*, state_dir, data_config_path, market_data_type: type[MarketDataSource] = OddsPapiMarketData,
              require_calendar_budget=False):
+    started = _now()
     summary = {"status": "OK", **dict.fromkeys(("fixtures_discovered", "captures_created",
         "captures_existing", "captures_skipped_no_team_totals", "captures_with_history_warnings",
         "captures_awaiting_kickoff", "outcomes_created", "outcomes_pending", "outcomes_settled",
@@ -504,23 +508,48 @@ def run_once(*, state_dir, data_config_path, market_data_type: type[MarketDataSo
     control = None
     try:
         with _lock(state_dir) as path:
-            control = _load(path, market_data_type)
-            if require_calendar_budget and control["version"] != 2:
-                raise RunnerError("CONTROL_INVALID")
-            if control["version"] == 2:
-                rollover_if_needed(path, control, now=_now(), save=_save)
-            captured = _inventory(Path(state_dir), data_config_path, summary, market_data_type)
-            _provider_work(path, control, Path(state_dir), data_config_path, summary, captured, market_data_type)
+            # In production, independently verify the protected marker from the
+            # physical release. The launcher has already checked it before exec.
+            repository = Path(__file__).resolve().parents[2]
+            release_sha = _deployed_commit_sha(repository)
+            if repository.parent == DEPLOYMENT_RELEASES and release_sha is None:
+                raise RunnerError("RELEASE_INVALID")
+            if release_sha is None:
+                release_sha = git_commit_sha()  # local/offline invocation only
+            try:
+                control = _load(path, market_data_type)
+                if require_calendar_budget and control["version"] != 2:
+                    raise RunnerError("CONTROL_INVALID")
+                if control["version"] == 2:
+                    rollover_if_needed(path, control, now=_now(), save=_save)
+                captured = _inventory(Path(state_dir), data_config_path, summary, market_data_type)
+                _provider_work(path, control, Path(state_dir), data_config_path, summary, captured, market_data_type)
+            except RunnerError as error:
+                code = str(error)
+                if code not in REASONS:
+                    code = "STORAGE_OR_INTEGRITY_FAILURE"
+                summary["status"] = "FAIL" if code in ("CONTROL_MISSING", "CONTROL_INVALID",
+                                                     "STORAGE_OR_INTEGRITY_FAILURE") else "PARTIAL"
+                _reason(summary, code)
+            except (OSError, LedgerError, ValueError, KeyError, TypeError, AttributeError):
+                summary["status"] = "FAIL"
+                _reason(summary, "STORAGE_OR_INTEGRITY_FAILURE")
+            if control is not None:
+                summary["prospective_budget_remaining"] = control["period"]["allowance"] - control["period"]["reserved"]
+            # The completion boundary and immutable publication stay under the
+            # same runner lock. A crash before this point publishes no receipt.
+            try:
+                publish_run_receipt(state_dir, started=started, completed=_now(),
+                                    summary=summary, release_sha=release_sha)
+            except (OSError, LedgerError, ReceiptError, ValueError):
+                summary["status"] = "FAIL"
+                _reason(summary, "RECEIPT_PUBLICATION_FAILED")
     except RunnerError as error:
-        code = str(error)  # Only fixed internal codes cross this boundary.
-        summary["status"] = "BUSY" if code == "BUSY" else "FAIL" if code in (
-            "CONTROL_MISSING", "CONTROL_INVALID") else "PARTIAL"
-        _reason(summary, code)
+        summary["status"] = "BUSY" if str(error) == "BUSY" else "FAIL"
+        _reason(summary, str(error) if str(error) in ("BUSY", "RELEASE_INVALID") else "STORAGE_OR_INTEGRITY_FAILURE")
     except (OSError, LedgerError, ValueError, KeyError, TypeError, AttributeError):
         summary["status"] = "FAIL"
         _reason(summary, "STORAGE_OR_INTEGRITY_FAILURE")
-    if control is not None:
-        summary["prospective_budget_remaining"] = control["period"]["allowance"] - control["period"]["reserved"]
     return summary
 
 

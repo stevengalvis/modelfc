@@ -14,6 +14,7 @@ from unittest.mock import patch
 from modelfc import production_status as status
 from modelfc import production_status_host as host
 from modelfc.ledger_storage import LedgerError
+from modelfc.prospective_run_receipts import publish as publish_receipt
 
 
 NOW = datetime(2026, 9, 28, 22, 5, tzinfo=timezone.utc)
@@ -75,6 +76,52 @@ class ProductionStatusTests(unittest.TestCase):
         return status.report_status(release=self.release, config_path=self.config,
                                     state_dir=self.state, now=now,
                                     service_signals=SERVICES if services is None else services)
+
+    def receipt(self, *, at=NOW, state="OK", fixtures=0):
+        summary = {"status": state, "reasons": ["REQUEST_BUDGET"] if state == "PARTIAL" else
+                   ["STORAGE_OR_INTEGRITY_FAILURE"] if state == "FAIL" else [],
+                   "prospective_budget_remaining": 177}
+        from modelfc.prospective_run_receipts import COUNTERS
+        summary.update({key: 0 for key in COUNTERS})
+        summary["fixtures_discovered"] = fixtures
+        summary["provider_requests"] = 2
+        return publish_receipt(self.state, started=at, completed=at,
+                               summary=summary, release_sha=SHA)
+
+    def test_latest_completed_receipt_and_status_variants(self):
+        for value in ("OK", "PARTIAL", "FAIL"):
+            with self.subTest(value=value):
+                at = NOW.replace(minute=5 + ("OK", "PARTIAL", "FAIL").index(value))
+                self.receipt(at=at, state=value, fixtures=3)
+                report = self.report(now=NOW.replace(minute=20))
+                part = report["components"]["prospective"]
+                self.assertEqual(part["runner_completion"], "VERIFIED")
+                self.assertEqual(part["last_completed_run_at_utc"], at.isoformat())
+                self.assertEqual(part["last_run_status"], value)
+                self.assertEqual(part["state"], "ERROR" if value == "FAIL" else
+                                 "WARNING" if value == "PARTIAL" else "OK")
+                self.assertEqual(part["last_run_reasons"],
+                                 ["REQUEST_BUDGET"] if value == "PARTIAL" else
+                                 ["STORAGE_OR_INTEGRITY_FAILURE"] if value == "FAIL" else [])
+                self.assertEqual(part["last_run_release_sha"], SHA)
+                self.assertEqual(part["last_run_summary"]["fixtures_discovered"], 3)
+                self.assertEqual(part["last_run_summary"]["provider_requests"], 2)
+                self.assertIn("last run status", status.format_status(report))
+                self.assertNotIn(str(self.root), json.dumps(report))
+
+    def test_corrupt_newest_receipt_fails_closed_and_ignores_temp(self):
+        self.receipt()
+        directory = self.state / "prospective/run-receipts" / NOW.date().isoformat()
+        (directory / ".record-crashed.tmp").write_text("partial", encoding="utf-8")
+        self.assertEqual(self.report()["components"]["prospective"]["runner_completion"], "VERIFIED")
+        newest = next(directory.glob("*.json"))
+        for contents in ('{', json.dumps({**json.loads(newest.read_text()), "release_sha": "invalid"})):
+            with self.subTest(contents=contents):
+                newest.write_text(contents, encoding="utf-8")
+                prospective = self.report()["components"]["prospective"]
+                self.assertEqual((prospective["state"], prospective["runner_completion"]), ("ERROR", "CORRUPT"))
+                self.assertIsNone(prospective["last_completed_run_at_utc"])
+                self.assertEqual(status.exit_code(self.report()), 1)
 
     def test_healthy_empty_state_zero_fixtures_and_no_lazy_state_lock(self):
         before = {str(path.relative_to(self.root)): path.read_bytes()

@@ -67,7 +67,9 @@ def launch():
             raise ValueError("invalid prospective provenance")
     for path in (release / ".venv/pyvenv.cfg",
                  release / "src/modelfc/corner_prospective.py",
-                 release / "src/modelfc/corner_prospective_budget.py"):
+                 release / "src/modelfc/corner_prospective_budget.py",
+                 release / "src/modelfc/prospective_run_receipts.py",
+                 release / "src/modelfc/ledger_storage.py"):
         protected(path, deploy_owner)
     python = release / ".venv/bin/python"
     if python.lstat().st_uid != deploy_owner or not python.is_file() or not os.access(python, os.X_OK):

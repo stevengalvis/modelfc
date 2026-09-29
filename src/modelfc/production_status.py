@@ -18,6 +18,7 @@ from modelfc.corner_prospective import RunnerError, _load as load_control
 from modelfc.corner_prospective_budget import BudgetError, validate_events
 from modelfc.corner_prospective_read import read_performance
 from modelfc.ledger_storage import LedgerError, existing_read_lock
+from modelfc.prospective_run_receipts import ReceiptError, latest as latest_run_receipt
 
 
 class StatusConfigurationError(ValueError):
@@ -96,7 +97,27 @@ def _prospective(control_path: Path, now: datetime) -> tuple[dict[str, Any], dic
                    "discovery_status": discovery_state,
                    "fixtures_discovered": None if discovery is None else len(discovery["fixtures"]),
                    "attempt_states": attempt_states,
-                   "runner_completion": "UNVERIFIED", "last_completed_run_at_utc": None}
+                   "runner_completion": "UNVERIFIED", "last_completed_run_at_utc": None,
+                   "last_run_status": None, "last_run_reasons": None,
+                   "last_run_release_sha": None,
+                   "last_run_summary": None}
+    try:
+        receipt = latest_run_receipt(control_path.parent.parent, now=now)
+        if receipt is not None:
+            summary = receipt["summary"]
+            prospective.update(state="ERROR" if summary["status"] == "FAIL" else
+                               "WARNING" if summary["status"] == "PARTIAL" or current_incomplete else "OK",
+                runner_completion="VERIFIED",
+                last_completed_run_at_utc=receipt["completed_at_utc"],
+                last_run_status=summary["status"],
+                last_run_reasons=summary["reasons"],
+                last_run_release_sha=receipt["release_sha"],
+                last_run_summary={key: summary[key] for key in (
+                    "fixtures_discovered", "captures_created", "market_observations_created",
+                    "opportunities_created", "outcomes_created", "outcomes_settled",
+                    "review_required", "provider_requests", "prospective_budget_remaining")})
+    except (OSError, ReceiptError):
+        prospective.update(state="ERROR", runner_completion="CORRUPT")
     remaining = period["allowance"] - period["reserved"]
     budget = {"state": "ERROR" if now.date() < start else
               "WARNING" if now.date() >= end or remaining == 0 else "OK",
@@ -181,7 +202,10 @@ def report_status(*, release: Path, config_path: Path, state_dir: Path,
     except (OSError, ValueError, LedgerError, BudgetError, RunnerError):
         components.setdefault("prospective", {"state": "ERROR", "discovery_date": None,
                    "discovery_status": None, "fixtures_discovered": None, "attempt_states": None,
-                   "runner_completion": "UNVERIFIED", "last_completed_run_at_utc": None})
+                   "runner_completion": "UNVERIFIED", "last_completed_run_at_utc": None,
+                   "last_run_status": None, "last_run_reasons": None,
+                   "last_run_release_sha": None,
+                   "last_run_summary": None})
         components.setdefault("budget", {"state": "ERROR", "period_start": None,
             "period_end_exclusive": None, "allowance": None, "reserved": None, "remaining": None})
         components["evidence"] = {"state": "UNVERIFIED", "predictions": None,

@@ -14,6 +14,7 @@ from urllib.parse import urlsplit, parse_qs
 import uuid
 
 from modelfc import corner_prospective as runner
+from modelfc.prospective_run_receipts import latest as latest_receipt
 from modelfc import corner_analysis_outcomes as outcomes
 from modelfc import corner_opportunities as opportunities
 from modelfc.corner_market_data import (
@@ -82,6 +83,52 @@ class PilotTests(unittest.TestCase):
 
     def run_pilot(self):
         return runner.run_once(state_dir=self.state, data_config_path=self.config)
+
+    def test_zero_work_completion_and_distinct_immutable_receipts(self):
+        self.fixtures = []
+        first = self.run_pilot()
+        self.assertEqual((first["status"], first["fixtures_discovered"], first["provider_requests"]),
+                         ("OK", 0, 1))
+        saved = latest_receipt(self.state, now=self.now + timedelta(seconds=1))
+        self.assertEqual(saved["summary"], first)
+        self.assertEqual(saved["started_at_utc"], self.now.isoformat())
+        self.assertEqual(saved["completed_at_utc"], self.now.isoformat())
+        self.assertRegex(saved["release_sha"], r"^[0-9a-f]{40}$")
+        first_bytes = list((self.state / "prospective/run-receipts").rglob("*.json"))[0].read_bytes()
+        second = self.run_pilot()
+        self.assertEqual((second["status"], second["provider_requests"]), ("OK", 0))
+        files = sorted((self.state / "prospective/run-receipts").rglob("*.json"))
+        self.assertEqual(len(files), 2)
+        self.assertEqual(first_bytes, files[0].read_bytes() if saved["run_id"] in files[0].name else files[1].read_bytes())
+        self.assertNotEqual(json.loads(files[0].read_text())["run_id"], json.loads(files[1].read_text())["run_id"])
+
+    def test_partial_and_completed_fail_receipts_and_publication_failure(self):
+        self.error = URLError("offline")
+        partial = self.run_pilot()
+        self.assertEqual(partial["status"], "PARTIAL")
+        self.assertEqual(latest_receipt(self.state, now=self.now)["summary"], partial)
+        self.now += timedelta(seconds=1)
+        self.write_control(lambda control: control.update(version=99))
+        failed = self.run_pilot()
+        self.assertEqual(failed["status"], "FAIL")
+        self.assertEqual(latest_receipt(self.state, now=self.now)["summary"], failed)
+        old_count = len(list((self.state / "prospective/run-receipts").rglob("*.json")))
+        with patch.object(runner, "publish_run_receipt", side_effect=OSError("private path")):
+            result = self.run_pilot()
+        self.assertEqual(result["status"], "FAIL")
+        self.assertIn("RECEIPT_PUBLICATION_FAILED", result["reasons"])
+        self.assertNotIn("private path", json.dumps(result))
+        self.assertEqual(len(list((self.state / "prospective/run-receipts").rglob("*.json"))), old_count)
+
+    def test_interruption_and_runner_lock_do_not_publish(self):
+        with patch.object(runner, "_inventory", side_effect=KeyboardInterrupt):
+            with self.assertRaises(KeyboardInterrupt):
+                self.run_pilot()
+        self.assertFalse((self.state / "prospective/run-receipts").exists())
+        with runner._lock(self.state):
+            result = self.run_pilot()
+        self.assertEqual(result["status"], "BUSY")
+        self.assertFalse((self.state / "prospective/run-receipts").exists())
 
     def capture_paths(self):
         return list((self.state / "analyses").glob("*.json"))

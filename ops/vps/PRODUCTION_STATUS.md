@@ -15,18 +15,25 @@ It performs no refresh, collection, settlement, provider request, or ledger writ
 | Release | Physical release name and protected `.git/modelfc-deployed-sha` marker | `OK` only if the marker matches the selected release; otherwise `ERROR`. No Git commands run. |
 | History | Configured E1 CSV under the existing refresh read lock | Latest validated result; `WARNING` if its age exceeds configured `max_age_days`, `ERROR` if unavailable or invalid. |
 | Refresh | Existing `history/data/corner-refresh/status.json` | Last attempt timestamp and E1 result. `failed` or invalid/missing report is `ERROR`. An `updated` or `unchanged` result is `OK`; history freshness is reported separately. |
-| Prospective | Existing version-2 `state/prospective/control.json` under `runner.lock` | Discovery date/status, fixture count, attempt state counts. Current-day `RESERVED`/`FAILED` discovery is `WARNING`. Zero fixtures and zero predictions are valid. |
+| Prospective | Version-2 `state/prospective/control.json` and newest private immutable run receipt under `runner.lock` | Discovery date/status, fixture count, attempt state counts, last verified completed invocation and selected final counters. Current-day `RESERVED`/`FAILED` discovery is `WARNING`. Zero fixtures and zero predictions are valid. |
 | Budget | Control period and immutable budget events | Remaining allowance is `allowance - reserved`; exhaustion or an expired period is `WARNING`, malformed/missing accounting is `ERROR`. |
 | Evidence | Existing prospective performance reader | Prediction and opportunity counts. Empty prospective state requires no `state/.lock`; the reader does not create it. Invalid/unreadable evidence is `ERROR`; if prospective control or the runner lock fails first, evidence is `UNVERIFIED`. |
 | Services | Fixed `systemctl show` probes of refresh and prospective timers and read-only API unit | `OK` when enabled and active; disabled/inactive is `ERROR`; failed or inconclusive probe is `UNVERIFIED`. No service operation is performed. |
 
-The prospective runner does not persist an authoritative completed-run timestamp
-or completed-run outcome. `runner_completion` is always `UNVERIFIED` and
-`last_completed_run_at_utc` is null. A timer's active state, discovery marked
-`DONE`, or a low request count does **not** prove that the latest run succeeded.
-Use the existing journal and immutable records for deeper investigation; a
-separate reviewed feature would be needed to persist an authoritative completion
-signal. A `WARNING` represents a condition requiring operator interpretation;
+Before the first receipt, `runner_completion=UNVERIFIED` and the last-run fields
+are null. With a valid receipt, `runner_completion=VERIFIED`,
+`last_completed_run_at_utc`, `last_run_status`, `last_run_reasons`, `last_run_release_sha`, and
+`last_run_summary` describe **that invocation**, including `PARTIAL` or `FAIL`.
+The prospective component is `WARNING` for the last `PARTIAL` summary and
+`ERROR` for the last `FAIL` summary, even though completion itself is verified.
+They do not prove the most recent scheduled invocation ran or succeeded. In
+particular, timer activity, discovery `DONE`, and request counts are not
+completion signals. Compare the receipt time with the timer journal when
+investigating missed or interrupted starts. A malformed newest receipt makes
+prospective state `ERROR` and completion `CORRUPT`; status does not fall back to
+an older, convenient receipt. No raw exception or record is printed.
+
+A `WARNING` represents a condition requiring operator interpretation;
 `UNVERIFIED` means the signal cannot be established. Neither is silently labeled
 healthy. The command exits `0` when no component is `ERROR`, `1` if any is
 `ERROR`, and `2` if invocation or essential configuration prevents evaluation.
@@ -71,8 +78,8 @@ From an authorized operator session, verify both formats with
 latest result, refresh attempt, period and reserved/remaining numbers against
 the existing authoritative evidence. Confirm that an empty prospective inventory
 reports zero and leaves `state/.lock` absent when it was absent. Verify that no
-raw file paths, secrets, or provider data appear. An `UNVERIFIED` runner completion
-is expected until the runtime provides explicit completed-run evidence.
+raw file paths, secrets, or provider data appear. `UNVERIFIED` is expected until
+the first receipt-producing invocation completes.
 Read-only checks can still update access times on files on some filesystems;
 do not treat atime as evidence of a ledger write.
 
@@ -88,3 +95,6 @@ provider budget for a status-command rollback. An older launcher must only be
 used with a release whose status schema it understands. Leave application
 collection running independently and investigate any reported `ERROR` using its
 original evidence and service logs.
+
+An older `modelfc-status` ignores private receipts and resumes reporting
+`UNVERIFIED`; it does not invalidate them. Do not delete or rewrite receipts.
