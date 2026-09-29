@@ -72,7 +72,8 @@ export function OpportunityDetailView({ id }: { id: string }) {
     <section className="panel detail-panel"><div className="section-title"><span>05</span><div><h2>Recorded market</h2><p>Recorded pre-kickoff snapshots, not live or closing odds</p></div></div>
       <ol className="detail-timeline">{data.recorded_market.map((item) => <li key={item.observation_id}>
         <span>{time(item.retrieved_at_utc)}</span><strong>{item.bookmaker} · {item.direction} {item.line} · {odds(item.american_odds)} ({amount(item.decimal_odds)})</strong>
-        {item.qualifying_observation && <small>Qualifying observation</small>}</li>)}</ol>
+        {item.qualifying_observation && <small>Qualifying observation</small>}
+        {!item.price_consistent && <small className="detail-price-warning">Provider price discrepancy · review required</small>}</li>)}</ol>
       {data.recorded_market_count > data.recorded_market.length && <p className="ledger-meta">Showing {data.recorded_market.length} of {data.recorded_market_count} comparable snapshots.</p>}
     </section>
     <section className="panel detail-panel"><div className="section-title"><span>06</span><div><h2>Result</h2><p>{data.result ? `Validated ${data.result}` : "Awaiting validated settlement"}</p></div></div>

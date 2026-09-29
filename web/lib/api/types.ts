@@ -215,6 +215,7 @@ export interface OpportunityDetail extends ProspectiveOpportunity {
     line: number;
     american_odds: number;
     decimal_odds: number;
+    price_consistent: boolean;
     qualifying_observation: boolean;
   }>;
   recorded_market_count: number;

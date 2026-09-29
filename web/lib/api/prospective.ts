@@ -163,10 +163,12 @@ export function decodeOpportunityDetail(value: unknown, requestedId: string): Op
     || !snapshots.every((item: unknown) => record(item) && id(item.observation_id) && timestamp(item.retrieved_at_utc)
       && Date.parse(item.retrieved_at_utc as string) < Date.parse(value.kickoff_utc as string)
       && item.bookmaker === value.bookmaker && item.direction === value.direction && item.line === value.line
-      && Number.isSafeInteger(item.american_odds) && finite(item.decimal_odds) && (item.decimal_odds as number) > 1
-      && Math.abs((item.decimal_odds as number) - (1 + profit(item.american_odds as number))) <= DECIMAL_AMERICAN_ODDS_TOLERANCE + 1e-10
+      && Number.isSafeInteger(item.american_odds) && Math.abs(item.american_odds as number) >= 100
+      && finite(item.decimal_odds) && (item.decimal_odds as number) > 1
+      && typeof item.price_consistent === "boolean"
       && typeof item.qualifying_observation === "boolean")
     || snapshots[0].observation_id !== value.observation_id || snapshots[0].qualifying_observation !== true
+    || snapshots[0].price_consistent !== true
     || snapshots[0].american_odds !== value.american_odds || snapshots[0].decimal_odds !== value.decimal_odds
     || snapshots.some((item: { retrieved_at_utc: string }, index: number) => index > 0 && Date.parse(item.retrieved_at_utc) < Date.parse(snapshots[index - 1].retrieved_at_utc))
     || snapshots.slice(1).some((item: { qualifying_observation: boolean }) => item.qualifying_observation)

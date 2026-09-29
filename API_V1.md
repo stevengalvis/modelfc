@@ -28,7 +28,10 @@ the prospective runner/state read locks:
 - `recorded_market`: one to twelve chronologically ordered pre-kickoff
   snapshots of the same selection, retaining the qualifying snapshot and
   up to eleven latest later snapshots. `recorded_market_count` is the full
-  comparable count. These are not live or closing prices.
+  comparable count. Each snapshot has `price_consistent`, the backend's
+  comparison of frozen American and decimal prices within its provider
+  rounding tolerance. An inconsistent later quote remains visible and is
+  marked for review. These are not live or closing prices.
 - `source_observation_id`, `actual_home_corners`, `actual_away_corners`, and
   `outcome_recorded_at_utc`. Actuals and outcome time are null until validated
   settlement; corrected outcome chains use their authoritative tip.

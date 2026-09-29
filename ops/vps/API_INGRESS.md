@@ -1,9 +1,9 @@
 # Read-only prospective API ingress
 
 This is a staged installation plan, not authorization to install or activate
-anything. The only public routes are exact `GET /api/v1/predictions`,
-`GET /api/v1/opportunities`, and `GET /api/v1/prospective/performance`.
-The reviewed template also permits `GET /api/v1/opportunities/<32 lowercase hexadecimal characters>`.
+anything. The reviewed public routes are exact `GET /api/v1/predictions`,
+`GET /api/v1/opportunities`, `GET /api/v1/prospective/performance`, and
+`GET /api/v1/opportunities/<32 lowercase hexadecimal characters>`.
 All other methods and paths, including analysis writes, capabilities, malformed
 detail IDs, trailing slashes and FastAPI's documentation, return 404 at Caddy. CORS is a browser
 policy, not the access-control boundary.
@@ -160,7 +160,7 @@ editing evidence or starting an incompatible old runner. Caddy-only rollback
 does not change record compatibility.
 
 Stock Caddy does not ship an HTTP request rate-limiting module. Do not add a
-third-party plugin solely for this deployment. Caddy rejects all but three GET
+third-party plugin solely for this deployment. Caddy rejects all but four GET
 routes; Uvicorn limits concurrency and systemd limits CPU, tasks and memory.
 Monitor request volume, 503s, memory and response latency. If public load
 demonstrates a need for per-client limits, review a separate stock-compatible
@@ -170,7 +170,8 @@ per-IP rate limiting in this first installation.
 ## 4. DNS and external verification
 
 Separately authorize a DNS A record for the selected name. From outside the
-VPS, verify a trusted certificate and each of the three JSON GETs. Verify
+VPS, verify a trusted certificate and each of the three list/performance JSON GETs
+plus a valid-format opportunity detail GET (a nonexistent ID returns sanitized 404). Verify
 `POST /api/v1/analyses`, capabilities, malformed opportunity details, docs, OpenAPI,
 unknown paths, trailing slashes, and non-GET methods fail at Caddy. Test exact
 origin CORS from the production frontend; `OPTIONS` should not be required for

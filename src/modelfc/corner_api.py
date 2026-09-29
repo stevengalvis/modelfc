@@ -247,6 +247,7 @@ class RecordedPriceResponse(StrictModel):
     line: float
     american_odds: int
     decimal_odds: float
+    price_consistent: bool
     qualifying_observation: bool
 
 

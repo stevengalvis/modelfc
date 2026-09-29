@@ -142,11 +142,12 @@ export const mockOpportunityDetails: OpportunityDetail[] = mockOpportunities.map
       observation_id: offer.observation_id, retrieved_at_utc: offer.qualified_at_utc,
       bookmaker: offer.bookmaker, direction: offer.direction, line: offer.line,
       american_odds: offer.american_odds, decimal_odds: offer.decimal_odds,
-      qualifying_observation: true,
+      price_consistent: true, qualifying_observation: true,
     }, ...index === 0 ? [{
       observation_id: "demo-later-observation", retrieved_at_utc: "2099-10-01T12:00:00Z",
       bookmaker: offer.bookmaker, direction: offer.direction, line: offer.line,
       american_odds: -105, decimal_odds: 1.95238, qualifying_observation: false,
+      price_consistent: true,
     }] : []],
     recorded_market_count: index === 0 ? 2 : 1,
     source_observation_id: prediction.source_observation_id,

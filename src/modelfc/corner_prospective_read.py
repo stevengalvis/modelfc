@@ -197,13 +197,17 @@ def _opportunity_detail(
                 raise ValueError
             if matches:
                 selection = matches[0]
-                american_odds_terms(selection["american_odds"])
+                profit, _ = american_odds_terms(selection["american_odds"])
+                decimal_odds = _number(selection["decimal_odds"])
+                if decimal_odds <= 1:
+                    raise ValueError
                 snapshots.append({
                     "observation_id": item["observation_id"],
                     "retrieved_at_utc": item["retrieved_at_utc"],
                     "bookmaker": selection["bookmaker"], "direction": direction,
                     "line": selection["line"], "american_odds": selection["american_odds"],
-                    "decimal_odds": _number(selection["decimal_odds"]),
+                    "decimal_odds": decimal_odds,
+                    "price_consistent": math.isclose(decimal_odds, 1 + profit, rel_tol=0, abs_tol=0.005),
                     "qualifying_observation": item["observation_id"] == observation["observation_id"],
                 })
         if not snapshots or not snapshots[0]["qualifying_observation"]:

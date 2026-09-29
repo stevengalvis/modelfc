@@ -24,6 +24,15 @@ describe("Opportunity Detail", () => {
     expect(await screen.findByText(/Historical counts were not frozen/)).toBeInTheDocument();
     expect(screen.getByText("Validated LOSS")).toBeInTheDocument();
   });
+  it("labels a later inconsistent quote without concealing the opportunity", async () => {
+    const detail = structuredClone(mockOpportunityDetails[0]);
+    detail.recorded_market[1].decimal_odds = 5;
+    detail.recorded_market[1].price_consistent = false;
+    vi.spyOn(api, "opportunityDetail").mockResolvedValue(detail);
+    render(<OpportunityDetailView id="demo-offer-upcoming" />);
+    expect(await screen.findByText(/Provider price discrepancy/)).toBeInTheDocument();
+    expect(screen.getByText("Why it qualified")).toBeInTheDocument();
+  });
   it("distinguishes a missing ID from an unavailable API and never shows mock fallback", async () => {
     const method = vi.spyOn(api, "opportunityDetail").mockRejectedValue(new ModelFCApiError("Opportunity was not found.", "OPPORTUNITY_NOT_FOUND", false, 404));
     const view = render(<OpportunityDetailView id="missing" />);

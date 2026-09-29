@@ -33,6 +33,15 @@ describe("prospective response boundary", () => {
     await expect(createApiClient("live", "https://api.example.test/api/v1").opportunityDetail("a".repeat(32))).rejects.toThrow("offline");
     expect(id).toBe("demo-offer-upcoming");
   });
+  it("retains a marked later provider price discrepancy without rejecting the qualifying evidence", async () => {
+    const detail = structuredClone(mockOpportunityDetails[0]);
+    detail.opportunity_id = "b".repeat(32);
+    detail.recorded_market[1].decimal_odds = 5;
+    detail.recorded_market[1].price_consistent = false;
+    expect((await live(detail).opportunityDetail("b".repeat(32))).recorded_market[1]).toMatchObject({
+      decimal_odds: 5, price_consistent: false,
+    });
+  });
   it("preserves upcoming and settled predictions", async () => {
     const items = await live(mockPredictions).predictions();
     expect(items.map((item) => item.settlement_status)).toEqual(["UPCOMING", "SETTLED"]);

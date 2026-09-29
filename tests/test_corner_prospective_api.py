@@ -763,6 +763,21 @@ class ProspectiveApiTests(unittest.TestCase):
         self.assertEqual([item["qualifying_observation"] for item in later["recorded_market"]], [True, False])
         self.assertTrue(all(item["retrieved_at_utc"] < later["kickoff_utc"] for item in later["recorded_market"]))
 
+    def test_detail_preserves_later_provider_price_discrepancy(self):
+        initial = self.detail(lambda item: item["line"] == 3.5 and item["bookmaker"] == "draftkings")
+        raw = self.later_observation()
+        changed = tuple(replace(item, decimal_odds=5.0) if
+                        item.bookmaker == "draftkings" and item.request.market_type == "TEAM_TOTAL"
+                        and item.request.team_side == "AWAY" and item.request.side == "UNDER"
+                        and item.request.line == 3.5 else item for item in raw.selections)
+        raw = replace(raw, selections=changed)
+        observation, _ = opportunities.store_market_observation(self.state, raw)
+        assessment = opportunities.assess_observation(self.state, self.prediction, observation)
+        self.assertIn("PRICE_INCONSISTENCY_REVIEW", assessment["review_required_reasons"])
+        response = self.client.get(f"/api/v1/opportunities/{initial['opportunity_id']}")
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual([item["price_consistent"] for item in response.json()["recorded_market"]], [True, False])
+
     def test_detail_unresolved_then_settled_win(self):
         before = self.detail(lambda item: item["line"] == 3.5 and item["direction"] == "UNDER")
         self.assertIsNone(before["actual_home_corners"])
