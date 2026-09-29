@@ -38,6 +38,12 @@ describe("browser request headers", () => {
       .rejects.toThrow("API unavailable");
   });
 
+  it("uses the Zeno FC name for a failed API response without a structured error", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("unavailable", { status: 503 })));
+    await expect(createApiClient("live", "https://api.example.test/api/v1").predictions())
+      .rejects.toThrow("Zeno FC API request failed.");
+  });
+
   it("rejects a live analysis before fetch unless a test client opts in explicitly", async () => {
     const fetcher = vi.fn();
     vi.stubGlobal("fetch", fetcher);

@@ -12,9 +12,9 @@ export function AppShell({ active, children }: { active: string; children: React
   return (
     <div className="app-shell">
       <header className="site-header">
-        <Link className="brand" href="/" aria-label="Model FC home">
-          <span className="brand-mark">M</span>
-          <span>MODEL FC</span>
+        <Link className="brand" href="/" aria-label="Zeno FC home">
+          <span className="brand-mark">Z</span>
+          <span>ZENO FC</span>
           <small>CONTROL ROOM</small>
         </Link>
       <nav aria-label="Primary navigation">

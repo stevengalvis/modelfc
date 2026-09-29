@@ -19,7 +19,7 @@ async function requestJson<T>(baseUrl: string, path: string, init?: RequestInit)
     if (isApiErrorBody(body)) {
       throw new ModelFCApiError(body.error.message, body.error.code, body.error.retryable, response.status);
     }
-    throw new ModelFCApiError("Model FC API request failed.", "NETWORK_ERROR", response.status >= 500, response.status);
+    throw new ModelFCApiError("Zeno FC API request failed.", "NETWORK_ERROR", response.status >= 500, response.status);
   }
   return body as T;
 }
