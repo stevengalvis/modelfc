@@ -13,6 +13,7 @@ from unittest.mock import patch
 
 from modelfc import production_status as status
 from modelfc import production_status_host as host
+from modelfc.ledger_storage import LedgerError
 
 
 NOW = datetime(2026, 9, 28, 22, 5, tzinfo=timezone.utc)
@@ -106,6 +107,15 @@ class ProductionStatusTests(unittest.TestCase):
                                   "opportunities": 4, "settled_opportunities": 2,
                                   "unresolved_opportunities": 2})
 
+    def test_corrupt_evidence_preserves_validated_control_and_budget(self):
+        with patch.object(status, "read_performance", side_effect=LedgerError("sensitive evidence path")):
+            components = self.report()["components"]
+        self.assertEqual(components["prospective"]["state"], "OK")
+        self.assertEqual(components["budget"]["remaining"], 177)
+        self.assertEqual(components["evidence"]["state"], "ERROR")
+        self.assertIsNone(components["evidence"]["predictions"])
+        self.assertNotIn("sensitive evidence path", json.dumps(components))
+
     def test_stale_history_and_failed_refresh_are_independent(self):
         later = datetime(2026, 10, 10, tzinfo=timezone.utc)
         parts = self.report(now=later)["components"]
@@ -127,7 +137,11 @@ class ProductionStatusTests(unittest.TestCase):
         self.refresh.unlink()
         self.assertEqual(self.report()["components"]["refresh"]["state"], "ERROR")
         (self.history / "E1_2627.csv").unlink()
-        self.assertEqual(self.report()["components"]["history"]["state"], "ERROR")
+        self.save(self.refresh, {**self.refresh_report, "season": "2627"})
+        parts = self.report()["components"]
+        self.assertEqual(parts["history"]["state"], "ERROR")
+        self.assertEqual(parts["refresh"]["state"], "OK")
+        self.assertEqual(parts["refresh"]["e1_result"], "UNCHANGED")
 
     def test_budget_exhausted_or_outside_period_is_warning(self):
         self.control["period"]["reserved"] = 180
@@ -243,16 +257,32 @@ class SystemdProbeTests(unittest.TestCase):
 
 
 class TrustedLauncherTests(unittest.TestCase):
-    def test_rejects_unapproved_arguments_before_any_release_or_host_access(self):
+    @staticmethod
+    def launcher():
         source = Path(__file__).resolve().parents[1] / "ops/vps/status_launch.py"
         spec = importlib.util.spec_from_file_location("status_launcher_test", source)
         launcher = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(launcher)
+        return launcher
+
+    def test_rejects_unapproved_arguments_before_any_release_or_host_access(self):
+        launcher = self.launcher()
         with patch.object(launcher.os, "geteuid", return_value=0), patch.object(
             launcher.pwd, "getpwnam", side_effect=AssertionError("host access")
         ), patch.object(launcher.os, "execve", side_effect=AssertionError("execution")):
             with self.assertRaises(ValueError):
                 launcher.launch(["--release", "/tmp/attacker"])
+
+    def test_rejects_root_or_deployment_runtime_identity_before_selecting_release(self):
+        launcher = self.launcher()
+        for account in (SimpleNamespace(pw_uid=0, pw_gid=12),
+                        SimpleNamespace(pw_uid=31, pw_gid=0),
+                        SimpleNamespace(pw_uid=21, pw_gid=12)):
+            with self.subTest(account=account), patch.object(launcher.os, "geteuid", return_value=0), patch.object(
+                launcher.pwd, "getpwnam", side_effect=[SimpleNamespace(pw_uid=21), account]
+            ), patch.object(launcher.os, "readlink", side_effect=AssertionError("release access")):
+                with self.assertRaises(ValueError):
+                    launcher.launch([])
 
 
 if __name__ == "__main__":

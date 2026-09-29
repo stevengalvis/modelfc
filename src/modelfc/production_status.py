@@ -141,31 +141,43 @@ def report_status(*, release: Path, config_path: Path, state_dir: Path,
     refresh_path = config.directory / "data" / "corner-refresh" / "status.json"
     try:
         with existing_read_lock(refresh_path.parent / "refresh.lock"):
-            history = configured_history(config, "E1")
-            latest = max(item.match_date for item in history)
-            if latest > now.date():
-                raise ValueError("future result")
-            age = (now.date() - latest).days
-            components["history"] = {"state": "WARNING" if age > config.max_age_days else "OK",
-                                     "e1_latest_result": latest.isoformat(), "age_days": age,
-                                     "max_age_days": config.max_age_days}
-            components["refresh"] = _refresh(refresh_path, now, config.max_age_days)
+            try:
+                history = configured_history(config, "E1")
+                latest = max(item.match_date for item in history)
+                if latest > now.date():
+                    raise ValueError("future result")
+                age = (now.date() - latest).days
+                components["history"] = {"state": "WARNING" if age > config.max_age_days else "OK",
+                                         "e1_latest_result": latest.isoformat(), "age_days": age,
+                                         "max_age_days": config.max_age_days}
+            except (OSError, ValueError, LedgerError):
+                pass
+            try:
+                components["refresh"] = _refresh(refresh_path, now, config.max_age_days)
+            except (OSError, ValueError, LedgerError):
+                pass
     except (OSError, ValueError, LedgerError):
-        components.setdefault("history", {"state": "ERROR", "e1_latest_result": None,
-                                          "age_days": None, "max_age_days": config.max_age_days})
-        components.setdefault("refresh", {"state": "ERROR", "last_attempt_at_utc": None,
-                                          "e1_result": None})
+        pass
+    components.setdefault("history", {"state": "ERROR", "e1_latest_result": None,
+                                      "age_days": None, "max_age_days": config.max_age_days})
+    components.setdefault("refresh", {"state": "ERROR", "last_attempt_at_utc": None,
+                                      "e1_result": None})
     try:
         with existing_read_lock(state_dir / "prospective" / "runner.lock"):
             prospective, budget = _prospective(state_dir / "prospective" / "control.json", now)
-            metrics = read_performance(state_dir)
-        model, offers = metrics["model_performance"], metrics["opportunity_performance"]
-        components["prospective"], components["budget"] = prospective, budget
-        components["evidence"] = {"state": "OK", "predictions": model["total_prediction_runs"],
-                                  "settled_predictions": model["settled_prediction_runs"],
-                                  "opportunities": offers["total_opportunity_events"],
-                                  "settled_opportunities": offers["settled_opportunities"],
-                                  "unresolved_opportunities": offers["unresolved_open_opportunities"]}
+            components["prospective"], components["budget"] = prospective, budget
+            try:
+                metrics = read_performance(state_dir)
+                model, offers = metrics["model_performance"], metrics["opportunity_performance"]
+                components["evidence"] = {"state": "OK", "predictions": model["total_prediction_runs"],
+                                          "settled_predictions": model["settled_prediction_runs"],
+                                          "opportunities": offers["total_opportunity_events"],
+                                          "settled_opportunities": offers["settled_opportunities"],
+                                          "unresolved_opportunities": offers["unresolved_open_opportunities"]}
+            except (OSError, ValueError, KeyError, TypeError, LedgerError):
+                components["evidence"] = {"state": "ERROR", "predictions": None,
+                    "settled_predictions": None, "opportunities": None,
+                    "settled_opportunities": None, "unresolved_opportunities": None}
     except (OSError, ValueError, LedgerError, BudgetError, RunnerError):
         components.setdefault("prospective", {"state": "ERROR", "discovery_date": None,
                    "discovery_status": None, "fixtures_discovered": None, "attempt_states": None,

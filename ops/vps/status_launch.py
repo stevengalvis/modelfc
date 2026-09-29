@@ -29,6 +29,8 @@ def launch(argv: list[str]) -> None:
         raise ValueError("invalid status invocation")
     deploy_uid = pwd.getpwnam("modelfc-deploy").pw_uid
     account = pwd.getpwnam("modelfc-runtime")
+    if (deploy_uid == 0 or account.pw_uid in (0, deploy_uid) or account.pw_gid == 0):
+        raise ValueError("invalid status identities")
     target = os.readlink(CURRENT)
     release = Path(target)
     match = re.fullmatch(r"([0-9a-f]{40})-[0-9a-f]{12}", release.name)

@@ -17,7 +17,7 @@ It performs no refresh, collection, settlement, provider request, or ledger writ
 | Refresh | Existing `history/data/corner-refresh/status.json` | Last attempt timestamp and E1 result. `failed` or invalid/missing report is `ERROR`. An `updated` or `unchanged` result is `OK`; history freshness is reported separately. |
 | Prospective | Existing version-2 `state/prospective/control.json` under `runner.lock` | Discovery date/status, fixture count, attempt state counts. Current-day `RESERVED`/`FAILED` discovery is `WARNING`. Zero fixtures and zero predictions are valid. |
 | Budget | Control period and immutable budget events | Remaining allowance is `allowance - reserved`; exhaustion or an expired period is `WARNING`, malformed/missing accounting is `ERROR`. |
-| Evidence | Existing prospective performance reader | Prediction and opportunity counts. Empty prospective state requires no `state/.lock`; the reader does not create it. Invalid/unreadable evidence is `UNVERIFIED` when prospective control fails, otherwise fails closed. |
+| Evidence | Existing prospective performance reader | Prediction and opportunity counts. Empty prospective state requires no `state/.lock`; the reader does not create it. Invalid/unreadable evidence is `ERROR`; if prospective control or the runner lock fails first, evidence is `UNVERIFIED`. |
 | Services | Fixed `systemctl show` probes of refresh and prospective timers and read-only API unit | `OK` when enabled and active; disabled/inactive is `ERROR`; failed or inconclusive probe is `UNVERIFIED`. No service operation is performed. |
 
 The prospective runner does not persist an authoritative completed-run timestamp
