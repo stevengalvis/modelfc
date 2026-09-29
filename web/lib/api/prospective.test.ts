@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createApiClient } from "./client";
-import { mockOpportunities, mockPerformance, mockPredictions } from "./mock";
+import { mockOpportunities, mockOpportunityDetails, mockPerformance, mockPredictions } from "./mock";
 
 afterEach(() => vi.unstubAllGlobals());
 const live = (value: unknown) => {
@@ -12,6 +12,27 @@ const changed = <T>(original: T, mutate: (copy: T) => void) => {
 };
 
 describe("prospective response boundary", () => {
+  it("validates frozen detail, historical context, paired prices, observations, and whole-line push", async () => {
+    const api = createApiClient("mock");
+    const upcoming = await api.opportunityDetail("demo-offer-upcoming");
+    expect(upcoming.forecast.historical_context?.home_venue_observations).toBe(12);
+    expect(upcoming.market_at_qualification.map((item) => item.direction)).toEqual(["OVER", "UNDER"]);
+    expect(upcoming.recorded_market).toHaveLength(2);
+    expect((await api.opportunityDetail("demo-offer-push")).forecast.push_probability).toBe(0.15);
+    expect((await api.opportunityDetail("demo-offer-loss")).forecast.historical_context).toBeNull();
+    expect((await api.opportunityDetail("demo-offer-win")).result).toBe("WIN");
+  });
+  it("rejects malformed detail and never substitutes mock data for live failures", async () => {
+    const id = mockOpportunityDetails[0].opportunity_id;
+    const invalid = structuredClone(mockOpportunityDetails[0]);
+    invalid.opportunity_id = "a".repeat(32);
+    invalid.market_at_qualification[1].no_vig_probability = 0.9;
+    await expect(live(invalid).opportunityDetail("a".repeat(32))).rejects.toMatchObject({ code: "PROSPECTIVE_CONTRACT_MISMATCH" });
+    await expect(createApiClient("mock").opportunityDetail("demo-offer-missing")).rejects.toMatchObject({ code: "OPPORTUNITY_NOT_FOUND" });
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
+    await expect(createApiClient("live", "https://api.example.test/api/v1").opportunityDetail("a".repeat(32))).rejects.toThrow("offline");
+    expect(id).toBe("demo-offer-upcoming");
+  });
   it("preserves upcoming and settled predictions", async () => {
     const items = await live(mockPredictions).predictions();
     expect(items.map((item) => item.settlement_status)).toEqual(["UPCOMING", "SETTLED"]);

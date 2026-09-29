@@ -1,8 +1,8 @@
 import { isApiErrorBody, ModelFCApiError } from "./errors";
-import { mockAnalyze, mockCapabilities, mockPredictions, mockOpportunities, mockPerformance } from "./mock";
-import { decodePredictions, decodeOpportunities, decodePerformance } from "./prospective";
+import { mockAnalyze, mockCapabilities, mockPredictions, mockOpportunities, mockOpportunityDetails, mockPerformance } from "./mock";
+import { decodePredictions, decodeOpportunities, decodeOpportunityDetail, decodePerformance } from "./prospective";
 import { decodeCapabilities } from "./capabilities";
-import type { AnalysisRequest, AnalysisResponse, CapabilitiesResponse, ProspectivePrediction, ProspectiveOpportunity, ProspectivePerformance } from "./types";
+import type { AnalysisRequest, AnalysisResponse, CapabilitiesResponse, ProspectivePrediction, ProspectiveOpportunity, OpportunityDetail, ProspectivePerformance } from "./types";
 
 const API_BASE = process.env.NEXT_PUBLIC_MODELFC_API_URL;
 // A deployment must opt into mock mode explicitly. Missing configuration is
@@ -172,6 +172,19 @@ export function createApiClient(
       signal?.throwIfAborted();
       return decodeOpportunities(mode === "mock" ? structuredClone(mockOpportunities)
         : await requestJson<unknown>(baseUrl!, "/opportunities", { signal }));
+    },
+    async opportunityDetail(id: string, signal?: AbortSignal): Promise<OpportunityDetail> {
+      checkConfiguration();
+      signal?.throwIfAborted();
+      if (!/^[0-9a-f]{32}$/.test(id) && !(mode === "mock" && /^demo-offer-[a-z]+$/.test(id))) {
+        throw new ModelFCApiError("Opportunity was not found.", "OPPORTUNITY_NOT_FOUND", false, 404);
+      }
+      if (mode === "mock") {
+        const match = mockOpportunityDetails.find((item) => item.opportunity_id === id);
+        if (!match) throw new ModelFCApiError("Opportunity was not found.", "OPPORTUNITY_NOT_FOUND", false, 404);
+        return decodeOpportunityDetail(structuredClone(match), id);
+      }
+      return decodeOpportunityDetail(await requestJson<unknown>(baseUrl!, `/opportunities/${id}`, { signal }), id);
     },
     async performance(signal?: AbortSignal): Promise<ProspectivePerformance> {
       checkConfiguration();

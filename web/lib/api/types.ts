@@ -164,6 +164,66 @@ export interface ProspectiveOpportunity {
   realized_profit_units: number | null;
 }
 
+export interface HistoricalContext {
+  earlier_team_observations: number;
+  home_team_observations: number;
+  home_venue_observations: number;
+  away_team_observations: number;
+  away_venue_observations: number;
+  min_history: number;
+  min_venue_history: number;
+}
+
+export interface OpportunityDetail extends ProspectiveOpportunity {
+  forecast: {
+    expected_team_corners: number;
+    expected_home_corners: number;
+    expected_away_corners: number;
+    expected_match_corners: number;
+    model_probability: number;
+    push_probability: number;
+    decisive_model_probability: number;
+    model_name: string;
+    model_version: string;
+    created_at_utc: string;
+    materialized_at_utc: string;
+    latest_history_date: string;
+    historical_context: HistoricalContext | null;
+  };
+  qualification: {
+    minimum_no_vig_edge: number;
+    minimum_american_odds: number;
+    edge_pass: boolean;
+    price_pass: boolean;
+    policy_version: string;
+    market_type: "TEAM_TOTAL";
+    bookmaker: string;
+  };
+  market_at_qualification: Array<{
+    direction: "OVER" | "UNDER";
+    american_odds: number;
+    decimal_odds: number;
+    implied_probability: number;
+    no_vig_probability: number;
+    qualified: boolean;
+  }>;
+  recorded_market: Array<{
+    observation_id: string;
+    retrieved_at_utc: string;
+    bookmaker: string;
+    direction: "OVER" | "UNDER";
+    line: number;
+    american_odds: number;
+    decimal_odds: number;
+    qualifying_observation: boolean;
+  }>;
+  recorded_market_count: number;
+  source_observation_id: string;
+  actual_home_corners: number | null;
+  actual_away_corners: number | null;
+  outcome_recorded_at_utc: string | null;
+}
+
 export interface ProspectivePerformance {
   model_performance: {
     total_prediction_runs: number;

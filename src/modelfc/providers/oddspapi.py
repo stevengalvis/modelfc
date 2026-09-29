@@ -393,6 +393,9 @@ def capture_quotes(quotes, *, data_config_path, state_dir, capture_key,
             response["forecast"]["configuration"].update(
                 min_history=min_history, min_venue_history=min_venue_history,
             )
+            response["forecast"]["historical_context"].update(
+                min_history=min_history, min_venue_history=min_venue_history,
+            )
             return response
 
     return store_analysis_capture(

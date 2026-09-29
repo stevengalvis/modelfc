@@ -9,6 +9,14 @@
 		header Cache-Control "no-store"
 		reverse_proxy 127.0.0.1:8000
 	}
+	@opportunity_detail {
+		path_regexp ^/api/v1/opportunities/[0-9a-f]{32}$
+		method GET
+	}
+	handle @opportunity_detail {
+		header Cache-Control "no-store"
+		reverse_proxy 127.0.0.1:8000
+	}
 	handle {
 		respond 404
 	}

@@ -1,5 +1,5 @@
 import { ModelFCApiError } from "./errors";
-import type { ProspectiveOpportunity, ProspectivePerformance, ProspectivePrediction } from "./types";
+import type { OpportunityDetail, ProspectiveOpportunity, ProspectivePerformance, ProspectivePrediction } from "./types";
 
 type RecordValue = Record<string, unknown>;
 const record = (value: unknown): value is RecordValue => value !== null && typeof value === "object" && !Array.isArray(value);
@@ -104,6 +104,77 @@ export function decodeOpportunities(value: unknown): ProspectiveOpportunity[] {
         : item.result === null && item.actual_team_corners === null && item.realized_profit_units === null);
   }) || !uniqueIds(value, "opportunity_id")) mismatch("opportunities");
   return value as ProspectiveOpportunity[];
+}
+
+export function decodeOpportunityDetail(value: unknown, requestedId: string): OpportunityDetail {
+  if (!record(value) || value.opportunity_id !== requestedId
+    || decodeOpportunities([value]).length !== 1
+    || !record(value.forecast) || !record(value.qualification)
+    || !Array.isArray(value.market_at_qualification) || !Array.isArray(value.recorded_market)) mismatch("opportunity detail");
+  const forecast = value.forecast;
+  const qualification = value.qualification;
+  const historical = forecast.historical_context;
+  const validHistorical = historical === null || (record(historical)
+    && ["earlier_team_observations", "home_team_observations", "home_venue_observations", "away_team_observations", "away_venue_observations", "min_history", "min_venue_history"].every((key) => count(historical[key]) && (historical[key] as number) > 0)
+    && (historical.earlier_team_observations as number) >= (historical.min_history as number)
+    && ["home", "away"].every((side) => (historical[`${side}_venue_observations`] as number) <= (historical[`${side}_team_observations`] as number)
+      && (historical[`${side}_team_observations`] as number) <= (historical.earlier_team_observations as number)
+      && (historical[`${side}_venue_observations`] as number) >= (historical.min_venue_history as number)));
+  const pair = value.market_at_qualification;
+  const snapshots = value.recorded_market;
+  if (!nonnegative(forecast.expected_team_corners)
+    || !nonnegative(forecast.expected_home_corners) || !nonnegative(forecast.expected_away_corners)
+    || !nonnegative(forecast.expected_match_corners)
+    || Math.abs((forecast.expected_home_corners as number) + (forecast.expected_away_corners as number) - (forecast.expected_match_corners as number)) > 1e-8
+    || forecast.expected_team_corners !== forecast[value.team_side === "HOME" ? "expected_home_corners" : "expected_away_corners"]
+    || !probability(forecast.model_probability) || !probability(forecast.push_probability)
+    || !probability(forecast.decisive_model_probability)
+    || Math.abs((forecast.model_probability as number) - (1 - (forecast.push_probability as number)) * (forecast.decisive_model_probability as number)) > 1e-8
+    || forecast.decisive_model_probability !== value.model_decisive_probability
+    || !nonempty(forecast.model_name) || !nonempty(forecast.model_version)
+    || !timestamp(forecast.created_at_utc) || !timestamp(forecast.materialized_at_utc)
+    || Date.parse(forecast.created_at_utc as string) >= Date.parse(value.kickoff_utc as string)
+    || Date.parse(forecast.materialized_at_utc as string) >= Date.parse(value.kickoff_utc as string)
+    || !date(forecast.latest_history_date) || !validHistorical
+    || !finite(qualification.minimum_no_vig_edge) || !Number.isSafeInteger(qualification.minimum_american_odds)
+    || (qualification.minimum_no_vig_edge as number) > (value.no_vig_probability_edge as number)
+    || (qualification.minimum_american_odds as number) > (value.american_odds as number)
+    || qualification.edge_pass !== true || qualification.price_pass !== true
+    || qualification.bookmaker !== value.bookmaker || qualification.market_type !== value.market_type
+    || qualification.policy_version !== value.policy_version || !id(value.source_observation_id)
+    || pair.length !== 2 || new Set(pair.map((item: unknown) => record(item) && item.direction)).size !== 2
+    || !pair.every((item: unknown) => record(item) && (item.direction === "OVER" || item.direction === "UNDER")
+      && Number.isSafeInteger(item.american_odds) && finite(item.decimal_odds) && (item.decimal_odds as number) > 1
+      && Math.abs((item.decimal_odds as number) - (1 + profit(item.american_odds as number))) <= DECIMAL_AMERICAN_ODDS_TOLERANCE + 1e-10
+      && probability(item.implied_probability) && probability(item.no_vig_probability) && typeof item.qualified === "boolean"
+      && Math.abs((item.implied_probability as number) - 1 / (item.decimal_odds as number)) < 1e-8)
+    || pair.filter((item: { qualified: boolean }) => item.qualified).length !== 1
+    || !pair.some((item: { qualified: boolean; direction: string; american_odds: number; decimal_odds: number; no_vig_probability: number }) => item.qualified
+      && item.direction === value.direction && item.american_odds === value.american_odds
+      && item.decimal_odds === value.decimal_odds && Math.abs(item.no_vig_probability - (value.no_vig_market_probability as number)) < 1e-8)
+    || Math.abs(pair.reduce((sum: number, item: { no_vig_probability: number }) => sum + item.no_vig_probability, 0) - 1) > 1e-8
+    || pair.some((item: { implied_probability: number; no_vig_probability: number }) =>
+      Math.abs(item.no_vig_probability - item.implied_probability /
+        pair.reduce((sum: number, part: { implied_probability: number }) => sum + part.implied_probability, 0)) > 1e-8)
+    || !count(value.recorded_market_count) || (value.recorded_market_count as number) < snapshots.length
+    || ((value.recorded_market_count as number) <= 12 && (value.recorded_market_count as number) !== snapshots.length)
+    || ((value.recorded_market_count as number) > 12 && snapshots.length !== 12)
+    || snapshots.length < 1 || snapshots.length > 12
+    || !snapshots.every((item: unknown) => record(item) && id(item.observation_id) && timestamp(item.retrieved_at_utc)
+      && Date.parse(item.retrieved_at_utc as string) < Date.parse(value.kickoff_utc as string)
+      && item.bookmaker === value.bookmaker && item.direction === value.direction && item.line === value.line
+      && Number.isSafeInteger(item.american_odds) && finite(item.decimal_odds) && (item.decimal_odds as number) > 1
+      && Math.abs((item.decimal_odds as number) - (1 + profit(item.american_odds as number))) <= DECIMAL_AMERICAN_ODDS_TOLERANCE + 1e-10
+      && typeof item.qualifying_observation === "boolean")
+    || snapshots[0].observation_id !== value.observation_id || snapshots[0].qualifying_observation !== true
+    || snapshots[0].american_odds !== value.american_odds || snapshots[0].decimal_odds !== value.decimal_odds
+    || snapshots.some((item: { retrieved_at_utc: string }, index: number) => index > 0 && Date.parse(item.retrieved_at_utc) < Date.parse(snapshots[index - 1].retrieved_at_utc))
+    || snapshots.slice(1).some((item: { qualifying_observation: boolean }) => item.qualifying_observation)
+    || (value.settlement_status === "SETTLED"
+      ? !count(value.actual_home_corners) || !count(value.actual_away_corners) || !timestamp(value.outcome_recorded_at_utc)
+        || value.actual_team_corners !== value[value.team_side === "HOME" ? "actual_home_corners" : "actual_away_corners"]
+      : value.actual_home_corners !== null || value.actual_away_corners !== null || value.outcome_recorded_at_utc !== null)) mismatch("opportunity detail");
+  return value as unknown as OpportunityDetail;
 }
 
 export function decodePerformance(value: unknown): ProspectivePerformance {

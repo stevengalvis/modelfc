@@ -18,6 +18,7 @@ describe("prospective dashboards", () => {
     expect(screen.getByText("WIN")).toBeInTheDocument();
     expect(screen.getByText("LOSS")).toBeInTheDocument();
     expect(screen.getByText("PUSH")).toBeInTheDocument();
+    expect(screen.getAllByRole("link", { name: "View opportunity evidence" })).toHaveLength(mockOpportunities.length);
     expect(screen.getAllByText("62.0%")).toHaveLength(4);
   });
   it("shows an empty state", async () => {

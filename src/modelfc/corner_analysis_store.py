@@ -100,6 +100,15 @@ def analysis_response(
             ),
             "latest_history_date": prediction.latest_history_date.isoformat(),
             "source_data_hashes": source_records(sources),
+            "historical_context": {
+                "earlier_team_observations": prediction.historical_observation_count,
+                "home_team_observations": prediction.home.historical_match_count,
+                "home_venue_observations": prediction.home.venue_match_count,
+                "away_team_observations": prediction.away.historical_match_count,
+                "away_venue_observations": prediction.away.venue_match_count,
+                "min_history": None,
+                "min_venue_history": None,
+            },
         },
         "markets": [_market_record(item) for item in analysis.markets],
         "warnings": [
@@ -197,6 +206,8 @@ def analyze_and_store(
             )
             response["forecast"]["configuration"]["min_history"] = min_history
             response["forecast"]["configuration"]["min_venue_history"] = min_venue_history
+            response["forecast"]["historical_context"]["min_history"] = min_history
+            response["forecast"]["historical_context"]["min_venue_history"] = min_venue_history
         return response
 
     return store_analysis_capture(

@@ -2,12 +2,14 @@
 
 from datetime import datetime, timezone
 import math
+import re
 from pathlib import Path
 from typing import Any
 
 from modelfc.corner_analysis_outcomes import load_outcome_chain_readonly
 from modelfc.corner_markets import american_odds_terms
 from modelfc.corner_opportunities import (
+    historical_context,
     opportunity_records,
     prediction_observations,
     prediction_records,
@@ -130,7 +132,124 @@ def _profit(outcome: str | None, american_odds: int) -> float | None:
 
 
 def _empty_inventory() -> dict[str, Any]:
-    return {"predictions": [], "opportunities": [], "targets": {}}
+    return {"predictions": [], "opportunities": [], "targets": {}, "detail": None}
+
+
+def _opportunity_detail(
+    opportunity: dict[str, Any], prediction: dict[str, Any],
+    target: dict[str, Any], observation: dict[str, Any],
+    observations: list[dict[str, Any]], outcome: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Project one qualified event from the already validated locked inventory."""
+    offer = opportunity["offer"]
+    same_market = lambda item: all(item[key] == offer[key] for key in (
+        "bookmaker", "market_type", "team_side", "team", "line",
+    ))
+    pair = [item for item in observation["selections"] if same_market(item)]
+    if (len(pair) != 2 or {item["direction"] for item in pair} != {"OVER", "UNDER"}
+            or sum(item["selection_id"] == opportunity["selection_id"] for item in pair) != 1):
+        raise LedgerError("INVALID_PROSPECTIVE_RECORD")
+    try:
+        implied = {item["direction"]: 1 / _number(item["decimal_odds"]) for item in pair}
+        total = math.fsum(implied.values())
+        if not math.isfinite(total) or total <= 0:
+            raise ValueError
+        paired = opportunity["paired_implied_probabilities"]
+        if (set(paired) != set(implied) or any(
+                not math.isclose(_number(paired[key]), implied[key], rel_tol=0, abs_tol=1e-12)
+                for key in implied)):
+            raise ValueError
+        no_vig = {key: value / total for key, value in implied.items()}
+        direction = offer["direction"]
+        model_win = _number(target["model_probability"])
+        push = _number(target["push_probability"])
+        decisive = _number(target["decisive_model_probability"])
+        policy = opportunity["policy"]
+        min_odds = policy["minimum_american_odds"]
+        min_edge = _number(policy["minimum_no_vig_edge"])
+        edge = _number(opportunity["no_vig_probability_edge"])
+        if (type(min_odds) is not int or min_edge < 0 or min_edge > 1
+                or policy["no_vig_price_source"] != "decimal_odds"
+                or any(not 0 <= value <= 1 for value in (model_win, push, decisive))
+                or not math.isclose((1 - push) * decisive, model_win, rel_tol=0, abs_tol=1e-10)
+                or not math.isclose(_number(opportunity["model_decisive_probability"]), decisive, rel_tol=0, abs_tol=1e-12)
+                or not math.isclose(_number(opportunity["no_vig_market_probability"]), no_vig[direction], rel_tol=0, abs_tol=1e-12)
+                or not math.isclose(edge, decisive - no_vig[direction], rel_tol=0, abs_tol=1e-12)
+                or offer["american_odds"] < min_odds or edge + 1e-12 < min_edge):
+            raise ValueError
+        expected_team = _expected_count(prediction["distribution"][offer["team_side"].lower() + "_expected_corners"])
+        if not math.isclose(_expected_count(target["expected_corners"]), expected_team, rel_tol=0, abs_tol=1e-12):
+            raise ValueError
+        for item in pair:
+            profit, _ = american_odds_terms(item["american_odds"])
+            if not math.isclose(_number(item["decimal_odds"]), 1 + profit, rel_tol=0, abs_tol=0.005):
+                raise ValueError
+        snapshots = []
+        for item in observations:
+            if _time(item["retrieved_at_utc"]) >= _time(prediction["fixture"]["kickoff_at"]):
+                raise ValueError
+            if _time(item["retrieved_at_utc"]) < _time(observation["retrieved_at_utc"]):
+                continue
+            matches = [selection for selection in item["selections"]
+                       if same_market(selection) and selection["direction"] == direction]
+            if len(matches) > 1 or (item["observation_id"] == observation["observation_id"]
+                                    and len(matches) != 1):
+                raise ValueError
+            if matches:
+                selection = matches[0]
+                american_odds_terms(selection["american_odds"])
+                snapshots.append({
+                    "observation_id": item["observation_id"],
+                    "retrieved_at_utc": item["retrieved_at_utc"],
+                    "bookmaker": selection["bookmaker"], "direction": direction,
+                    "line": selection["line"], "american_odds": selection["american_odds"],
+                    "decimal_odds": _number(selection["decimal_odds"]),
+                    "qualifying_observation": item["observation_id"] == observation["observation_id"],
+                })
+        if not snapshots or not snapshots[0]["qualifying_observation"]:
+            raise ValueError
+        # Always retain qualification and at most 11 latest comparable snapshots.
+        retained = snapshots[:1] + snapshots[-11:] if len(snapshots) > 12 else snapshots
+        market = [{
+            "direction": item["direction"], "american_odds": item["american_odds"],
+            "decimal_odds": _number(item["decimal_odds"]),
+            "implied_probability": implied[item["direction"]],
+            "no_vig_probability": no_vig[item["direction"]],
+            "qualified": item["selection_id"] == opportunity["selection_id"],
+        } for item in sorted(pair, key=lambda item: item["direction"])]
+        result, actual = _target_settlement(target, outcome)
+        if outcome is not None:
+            _time(outcome["recorded_at_utc"])
+        return {
+            "forecast": {
+                "expected_team_corners": _expected_count(target["expected_corners"]),
+                "expected_home_corners": _expected_count(prediction["distribution"]["home_expected_corners"]),
+                "expected_away_corners": _expected_count(prediction["distribution"]["away_expected_corners"]),
+                "expected_match_corners": math.fsum((prediction["distribution"]["home_expected_corners"], prediction["distribution"]["away_expected_corners"])),
+                "model_probability": model_win, "push_probability": push,
+                "decisive_model_probability": decisive,
+                "model_name": prediction["model"]["name"], "model_version": prediction["model"]["version"],
+                "created_at_utc": prediction["created_at_utc"],
+                "materialized_at_utc": target["materialized_at_utc"],
+                "latest_history_date": prediction["history"]["latest_history_date"],
+                "historical_context": historical_context(prediction),
+            },
+            "qualification": {
+                "minimum_no_vig_edge": min_edge, "minimum_american_odds": min_odds,
+                "edge_pass": True, "price_pass": True,
+                "policy_version": opportunity["policy_version"],
+                "market_type": offer["market_type"], "bookmaker": offer["bookmaker"],
+            },
+            "market_at_qualification": market,
+            "recorded_market": retained,
+            "recorded_market_count": len(snapshots),
+            "source_observation_id": prediction["source_observation"]["observation_id"],
+            "actual_home_corners": None if outcome is None else outcome["result"]["home_corners"],
+            "actual_away_corners": None if outcome is None else outcome["result"]["away_corners"],
+            "outcome_recorded_at_utc": None if outcome is None else outcome["recorded_at_utc"],
+        }
+    except (KeyError, TypeError, ValueError, OverflowError, ZeroDivisionError):
+        raise LedgerError("INVALID_PROSPECTIVE_RECORD") from None
 
 
 def _contains_prospective_records(state: Path) -> bool:
@@ -144,7 +263,7 @@ def _contains_prospective_records(state: Path) -> bool:
 
 
 def _locked_inventory(
-    state: Path, *, now: datetime,
+    state: Path, *, now: datetime, detail_id: str | None = None,
 ) -> dict[str, Any]:
     _state_directory(state, "predictions")
     targets_dir = _state_directory(state, "prediction-targets")
@@ -166,6 +285,8 @@ def _locked_inventory(
     prediction_views = []
     opportunity_views = []
     target_views: dict[str, tuple[dict[str, Any], str | None]] = {}
+    detail = None
+    seen_opportunities: set[str] = set()
     for prediction in predictions:
         try:
             prediction_id = prediction["prediction_id"]
@@ -196,6 +317,8 @@ def _locked_inventory(
                                  or target["team_side"] not in ("HOME", "AWAY")))):
                     raise ValueError
                 target_outcome, _ = _target_settlement(target, outcome)
+                if target["target_id"] in target_views:
+                    raise ValueError
                 target_views[target["target_id"]] = (target, target_outcome)
 
             prediction_views.append({
@@ -227,6 +350,9 @@ def _locked_inventory(
             })
 
             for opportunity in opportunities:
+                if opportunity["opportunity_id"] in seen_opportunities:
+                    raise ValueError
+                seen_opportunities.add(opportunity["opportunity_id"])
                 target = targets_by_id.get(opportunity["target_id"])
                 observation = observation_by_id.get(opportunity["observation_id"])
                 if target is None or observation is None:
@@ -241,7 +367,8 @@ def _locked_inventory(
                     "line", "american_odds", "decimal_odds", "provider_market_id",
                     "provider_outcome_id",
                 )
-                if (opportunity["qualified_at_utc"] != observation["retrieved_at_utc"]
+                if (opportunity["prediction_id"] != prediction_id
+                        or opportunity["qualified_at_utc"] != observation["retrieved_at_utc"]
                         or opportunity["offer"] != {key: selection[key] for key in offer_fields}
                         or target["prediction_id"] != prediction_id
                         or target["status"] != "SUPPORTED"
@@ -282,6 +409,10 @@ def _locked_inventory(
                     "actual_team_corners": actual,
                     "realized_profit_units": _profit(result, american),
                 })
+                if opportunity["opportunity_id"] == detail_id:
+                    detail = {**opportunity_views[-1], **_opportunity_detail(
+                        opportunity, prediction, target, observation, observations, outcome,
+                    )}
         except (KeyError, TypeError, ValueError, OverflowError):
             raise LedgerError("INVALID_PROSPECTIVE_RECORD") from None
 
@@ -297,10 +428,12 @@ def _locked_inventory(
         "predictions": prediction_views,
         "opportunities": opportunity_views,
         "targets": target_views,
+        "detail": detail,
     }
 
 
-def _inventory(state_dir: str | Path, *, now: datetime | None = None) -> dict[str, Any]:
+def _inventory(state_dir: str | Path, *, now: datetime | None = None,
+               detail_id: str | None = None) -> dict[str, Any]:
     state = Path(state_dir)
     if not state.exists():
         return _empty_inventory()
@@ -316,7 +449,7 @@ def _inventory(state_dir: str | Path, *, now: datetime | None = None) -> dict[st
     # individual immutable publications use the state lock beneath it.
     with existing_read_lock(runner_lock):
         with ledger_read_lock(state):
-            return _locked_inventory(state, now=now)
+            return _locked_inventory(state, now=now, detail_id=detail_id)
 
 
 def read_predictions(state_dir: str | Path) -> list[dict[str, Any]]:
@@ -328,11 +461,12 @@ def read_opportunities(state_dir: str | Path) -> list[dict[str, Any]]:
 
 
 def read_opportunity(state_dir: str | Path, opportunity_id: str) -> dict[str, Any]:
-    matches = [item for item in read_opportunities(state_dir)
-               if item["opportunity_id"] == opportunity_id]
-    if len(matches) != 1:
+    if not isinstance(opportunity_id, str) or not re.fullmatch(r"[0-9a-f]{32}", opportunity_id):
         raise LedgerError("UNKNOWN_OPPORTUNITY")
-    return matches[0]
+    detail = _inventory(state_dir, detail_id=opportunity_id)["detail"]
+    if detail is None:
+        raise LedgerError("UNKNOWN_OPPORTUNITY")
+    return detail
 
 
 def read_performance(state_dir: str | Path) -> dict[str, Any]:
