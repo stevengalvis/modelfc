@@ -17,7 +17,7 @@ describe("Opportunity Detail", () => {
     expect(screen.getByText("Market at qualification")).toBeInTheDocument();
     expect(screen.getByText(/Recorded pre-kickoff snapshots/)).toBeInTheDocument();
     expect(screen.getByRole("img", { name: /Recorded market no-vig probability/ })).toBeInTheDocument();
-    expect(screen.getByText("Market moved 5.0pp toward Zeno after qualification.")).toBeInTheDocument();
+    expect(screen.getByText("Market moved 5.0 percentage points toward Zeno after qualification.")).toBeInTheDocument();
     expect(screen.getByText(/Zeno 62.0%/)).toBeInTheDocument();
     expect(screen.getByText(/-120 .*Market no-vig 57.0%/)).toBeInTheDocument();
     expect(view.container.querySelectorAll(".movement-point")).toHaveLength(2);
@@ -40,7 +40,7 @@ describe("Opportunity Detail", () => {
       latest_comparable_observation_id: detail.recorded_market[1].observation_id };
     vi.spyOn(api, "opportunityDetail").mockResolvedValue(detail);
     render(<OpportunityDetailView id="demo-offer-upcoming" />);
-    expect(await screen.findByText("Market moved 4.0pp away from Zeno after qualification.")).toBeInTheDocument();
+    expect(await screen.findByText("Market moved 4.0 percentage points away from Zeno after qualification.")).toBeInTheDocument();
   });
   it("labels a later inconsistent quote without concealing the opportunity", async () => {
     const detail = structuredClone(mockOpportunityDetails[0]);

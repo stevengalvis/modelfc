@@ -3,6 +3,12 @@ import type { OpportunityDetail } from "@/lib/api/types";
 const percent = (value: number) => `${(value * 100).toFixed(1)}%`;
 const odds = (value: number) => value > 0 ? `+${value}` : String(value);
 const time = (value: string) => new Date(value).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short", timeZone: "UTC" }) + " UTC";
+const axisTime = (value: string, sameDay: boolean) => {
+  const options: Intl.DateTimeFormatOptions = sameDay
+    ? { hour: "2-digit", minute: "2-digit", hourCycle: "h23", timeZone: "UTC" }
+    : { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hourCycle: "h23", timeZone: "UTC" };
+  return `${new Intl.DateTimeFormat("en-US", options).format(new Date(value))} UTC`;
+};
 
 export function MarketMovement({ detail }: { detail: OpportunityDetail }) {
   const snapshots = detail.recorded_market;
@@ -13,21 +19,24 @@ export function MarketMovement({ detail }: { detail: OpportunityDetail }) {
   const high = Math.min(1, Math.max(...values) + 0.04);
   const start = Date.parse(snapshots[0].retrieved_at_utc);
   const end = Date.parse(snapshots[snapshots.length - 1].retrieved_at_utc);
-  const x = (date: string) => end === start ? 40 : 40 + 520 * (Date.parse(date) - start) / (end - start);
-  const y = (value: number) => 180 - 140 * (value - low) / (high - low);
+  // The full elapsed UTC interval controls spacing; equal timestamps occupy
+  // the center without inventing a time span.
+  const x = (date: string) => end === start ? 300 : 40 + 520 * (Date.parse(date) - start) / (end - start);
+  const y = (value: number) => 190 - 120 * (value - low) / (high - low);
+  const sameDay = new Date(start).toISOString().slice(0, 10) === new Date(end).toISOString().slice(0, 10);
   const status = detail.market_movement.status;
   const change = detail.market_movement.market_change_percentage_points;
   const summary = status === "NO_LATER_OBSERVATION" ? "No later pre-kickoff observation was recorded."
     : status === "UNAVAILABLE" ? "Later prices were recorded, but no later paired market was available for comparison."
     : status === "UNCHANGED" ? "The latest recorded market remained the same distance from Zeno."
-    : `Market moved ${Math.abs(change!).toFixed(1)}pp ${status === "TOWARD_ZENO" ? "toward" : "away from"} Zeno after qualification.`;
+    : `Market moved ${Math.abs(change!).toFixed(1)} percentage points ${status === "TOWARD_ZENO" ? "toward" : "away from"} Zeno after qualification.`;
 
   return <div className="movement-content">
     <p className="movement-summary">{summary}</p>
     <div className="movement-chart">
-      <svg viewBox="0 0 600 220" role="img" aria-label="Recorded market no-vig probability by observation time, with Zeno's frozen decisive probability as a reference">
+      <svg viewBox="0 0 600 260" role="img" aria-label="Recorded market no-vig probability by observation time, with Zeno's frozen decisive probability as a reference">
         <line x1="40" x2="560" y1={y(zeno)} y2={y(zeno)} className="movement-zeno" />
-        <text x="40" y="20" className="movement-label">Zeno {percent(zeno)}</text>
+        <text x="40" y={y(zeno) - 12} className="movement-reference-label">Zeno {percent(zeno)}</text>
         {snapshots.slice(1).map((item, index) => {
           const previous = snapshots[index];
           return !(index === 0 && detail.recorded_market_count > snapshots.length)
@@ -35,12 +44,27 @@ export function MarketMovement({ detail }: { detail: OpportunityDetail }) {
             ? <line key={`${item.observation_id}-line`} x1={x(previous.retrieved_at_utc)} y1={y(previous.no_vig_market_probability)}
                 x2={x(item.retrieved_at_utc)} y2={y(item.no_vig_market_probability)} className="movement-market" /> : null;
         })}
-        {comparable.map((item) => <circle key={item.observation_id} cx={x(item.retrieved_at_utc)}
-          cy={y(item.no_vig_market_probability!)} r="5" className="movement-point">
-          <title>{time(item.retrieved_at_utc)} · Market {percent(item.no_vig_market_probability!)} · {odds(item.american_odds)}</title>
-        </circle>)}
-        <text x="40" y="210" className="movement-label">{time(snapshots[0].retrieved_at_utc)}</text>
-        {end !== start && <text x="560" y="210" textAnchor="end" className="movement-label">{time(snapshots[snapshots.length - 1].retrieved_at_utc)}</text>}
+        {comparable.map((item, index) => {
+          const cx = x(item.retrieved_at_utc);
+          const cy = y(item.no_vig_market_probability!);
+          const label = comparable.length <= 4 || index === 0 || index === comparable.length - 1;
+          const identify = comparable.length <= 3 || index === 0 || index === comparable.length - 1;
+          const nearReference = Math.abs(cy - y(zeno)) < 26;
+          const anchor = cx < 120 ? "start" : cx > 480 ? "end" : "middle";
+          return <g key={item.observation_id}>
+            <circle cx={cx} cy={cy} r="5" className="movement-point">
+              <title>{time(item.retrieved_at_utc)} · Market {percent(item.no_vig_market_probability!)} · {odds(item.american_odds)}</title>
+            </circle>
+            {label && <text x={cx} y={cy + (nearReference ? 20 : -12)} textAnchor={anchor} className="movement-market-label">
+              Market {percent(item.no_vig_market_probability!)}
+            </text>}
+            {identify && <text x={cx} y={cy + (nearReference ? 34 : 19)} textAnchor={anchor} className="movement-point-kind">
+              {item.qualifying_observation ? "Qualified" : "Recorded"}
+            </text>}
+          </g>;
+        })}
+        <text x={end === start ? 300 : 40} y="246" textAnchor={end === start ? "middle" : "start"} className="movement-label">{axisTime(snapshots[0].retrieved_at_utc, sameDay)}</text>
+        {end !== start && <text x="560" y="246" textAnchor="end" className="movement-label">{axisTime(snapshots[snapshots.length - 1].retrieved_at_utc, sameDay)}</text>}
       </svg>
     </div>
     <ol className="detail-timeline movement-snapshots">{snapshots.map((item) => <li key={item.observation_id}>
