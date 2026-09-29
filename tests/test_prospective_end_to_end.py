@@ -300,12 +300,14 @@ class ProspectiveProductionRehearsal(unittest.TestCase):
         # Discover pre-kickoff but before the six-hour capture window opens.
         self.now = FIRST_RUN.replace(hour=3)
         initial = self.run_once()
-        self.assertEqual((initial["fixtures_discovered"], initial["captures_created"],
-                          initial["provider_requests"]), (1, 0, 1))
+        self.assertEqual((initial["status"], initial["reasons"], initial["fixtures_discovered"],
+                          initial["captures_created"], initial["provider_requests"]),
+                         ("OK", [], 1, 0, 1))
         self.now = FINISHED
         after = self.run_once()
-        self.assertEqual((after["captures_created"], after["market_observations_created"],
-                          after["provider_requests"]), (0, 0, 0))
+        self.assertEqual((after["status"], after["reasons"], after["fixtures_discovered"],
+                          after["captures_created"], after["market_observations_created"],
+                          after["provider_requests"]), ("OK", [], 1, 0, 0, 0))
         self.assertEqual(self.snapshot(PUBLIC_RECORDS), {})
         self.assertEqual(self.paths("analysis-outcomes"), [])
 
