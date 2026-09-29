@@ -25,6 +25,7 @@ from modelfc.ledger_storage import (
 
 
 SCHEMA_VERSION = 1
+PREDICTION_CONTEXT_SCHEMA_VERSION = 2
 PREDICTION_RULE_VERSION = "frozen-team-count-distribution-v1"
 QUALIFICATION_POLICY_VERSION = "team-total-no-vig-v1"
 MINIMUM_AMERICAN_ODDS = -200
@@ -50,6 +51,37 @@ def _timestamp(value: str) -> datetime:
     if parsed.tzinfo is None:
         raise LedgerError("INVALID_PROSPECTIVE_RECORD")
     return parsed.astimezone(timezone.utc)
+
+
+def historical_context(prediction: dict[str, Any]) -> dict[str, int] | None:
+    """Validate v2 counts; never infer absent v1 counts from later history."""
+    version = prediction.get("schema_version")
+    context = prediction.get("historical_context")
+    if version == SCHEMA_VERSION and context is None and "historical_context" not in prediction:
+        return None
+    if version != PREDICTION_CONTEXT_SCHEMA_VERSION or not isinstance(context, dict):
+        raise LedgerError("INVALID_PROSPECTIVE_RECORD")
+    keys = (
+        "earlier_team_observations", "home_team_observations", "home_venue_observations",
+        "away_team_observations", "away_venue_observations", "min_history",
+        "min_venue_history",
+    )
+    if set(context) != set(keys) or any(type(context[key]) is not int or context[key] < 1 for key in keys):
+        raise LedgerError("INVALID_PROSPECTIVE_RECORD")
+    total = context["earlier_team_observations"]
+    if (total < context["min_history"]
+            or any(context[f"{side}_team_observations"] > total
+                   or context[f"{side}_venue_observations"] > context[f"{side}_team_observations"]
+                   or context[f"{side}_venue_observations"] < context["min_venue_history"]
+                   for side in ("home", "away"))):
+        raise LedgerError("INVALID_PROSPECTIVE_RECORD")
+    try:
+        configuration = prediction["model"]["configuration"]
+        if any(context[key] != configuration[key] for key in ("min_history", "min_venue_history")):
+            raise LedgerError("INVALID_PROSPECTIVE_RECORD")
+    except (KeyError, TypeError):
+        raise LedgerError("INVALID_PROSPECTIVE_RECORD") from None
+    return context
 
 
 def _record_path(state: Path, kind: str, identity: str, parent: str | None = None) -> Path:
@@ -83,7 +115,9 @@ def _load(path: Path, expected_kind: str, expected_id: str) -> dict[str, Any]:
     record = read_json_record(path, "prospective", "UNKNOWN_PROSPECTIVE_RECORD")
     try:
         payload = {key: value for key, value in record.items() if key != "record_hash"}
-        if (record["schema_version"] != SCHEMA_VERSION
+        if (record["schema_version"] not in (
+                (SCHEMA_VERSION, PREDICTION_CONTEXT_SCHEMA_VERSION)
+                if expected_kind == "prediction" else (SCHEMA_VERSION,))
                 or record["record_type"] != expected_kind
                 or record[expected_kind + "_id"] != uuid.UUID(hex=expected_id).hex
                 or record["record_hash"] != _canonical_hash(payload)):
@@ -148,7 +182,8 @@ def store_prediction_from_capture(state_dir: str | Path, analysis_id: str) -> tu
             or source_observation["fixture"]["kickoff_utc"] != fixture["kickoff_at"]):
         raise LedgerError("INVALID_PROSPECTIVE_CAPTURE")
     record = {
-        "schema_version": SCHEMA_VERSION,
+        "schema_version": (PREDICTION_CONTEXT_SCHEMA_VERSION
+                           if forecast.get("historical_context") is not None else SCHEMA_VERSION),
         "record_type": "prediction",
         "prediction_id": prediction_id,
         "analysis_id": uuid.UUID(hex=analysis_id).hex,
@@ -173,6 +208,8 @@ def store_prediction_from_capture(state_dir: str | Path, analysis_id: str) -> tu
             "latest_history_date": forecast["latest_history_date"],
             "source_data_hashes": forecast["source_data_hashes"],
         },
+        **({"historical_context": forecast["historical_context"]}
+           if forecast.get("historical_context") is not None else {}),
         "distribution": distribution,
         "capture_reference": {
             "request_hash": capture["request_hash"],
@@ -184,12 +221,15 @@ def store_prediction_from_capture(state_dir: str | Path, analysis_id: str) -> tu
             "retrieved_at_utc": source_observation["retrieved_at_utc"],
         },
     }
+    historical_context(record)
     return _publish(state, path, record)
 
 
 def load_prediction(state_dir: str | Path, prediction_id: str) -> dict[str, Any]:
-    return _load(_record_path(Path(state_dir), "predictions", prediction_id),
-                 "prediction", prediction_id)
+    prediction = _load(_record_path(Path(state_dir), "predictions", prediction_id),
+                       "prediction", prediction_id)
+    historical_context(prediction)
+    return prediction
 
 
 def prediction_records(state_dir: str | Path) -> list[dict[str, Any]]:
@@ -443,6 +483,8 @@ def prediction_observations(
     for observation in records:
         if observation["observation_id"] == source["observation_id"]:
             continue
+        if observation["fixture"] != source["fixture"]:
+            raise LedgerError("INVALID_SOURCE_OBSERVATION")
         observed_at = _timestamp(observation["retrieved_at_utc"])
         if observed_at >= kickoff:
             raise LedgerError("INVALID_SOURCE_OBSERVATION")

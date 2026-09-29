@@ -2,7 +2,7 @@ import { ModelFCApiError } from "./errors";
 import capabilityFixture from "../../../tests/fixtures/api_v1/capabilities.json";
 import staleAnalysisFixture from "../../../tests/fixtures/api_v1/analysis.json";
 import wholeLineFixture from "../../../tests/fixtures/api_v1/analysis_whole_line.json";
-import type { AnalysisRequest, AnalysisResponse, CapabilitiesResponse, MarketInput } from "./types";
+import type { AnalysisRequest, AnalysisResponse, CapabilitiesResponse, MarketInput, OpportunityDetail } from "./types";
 
 const responses = [wholeLineFixture, staleAnalysisFixture] as AnalysisResponse[];
 // Import the backend-owned generated responses directly from this checkout.
@@ -98,6 +98,64 @@ export const mockOpportunities = [
     result, actual_team_corners: 6, realized_profit_units: [0.83333, -1, 0][index],
   })),
 ];
+
+// Fixed demonstration evidence, never substituted for a failed live detail read.
+const demoImplied = [0.5238097732427491, 0.5454555371918859, 0.47619047619047616, 0.5238097732427491];
+const demoOppositeDecimal = [2.0681808333333334, 1.9861075, 2.275, 2.0681808333333334];
+const demoOppositeAmerican = [107, -101, 128, 107];
+const demoOppositeImplied = [0.4835167137625377, 0.5034974189463561, 0.43956043956043955, 0.4835167137625377];
+
+export const mockOpportunityDetails: OpportunityDetail[] = mockOpportunities.map((offer, index) => {
+  const prediction = mockPredictions[index === 0 ? 0 : 1];
+  return {
+    ...offer,
+    forecast: {
+      expected_team_corners: prediction.expected_home_corners,
+      expected_home_corners: prediction.expected_home_corners,
+      expected_away_corners: prediction.expected_away_corners,
+      expected_match_corners: prediction.expected_match_corners,
+      model_probability: index === 3 ? 0.527 : 0.62,
+      push_probability: index === 3 ? 0.15 : 0,
+      decisive_model_probability: 0.62,
+      model_name: prediction.model_name, model_version: prediction.model_version,
+      created_at_utc: prediction.created_at_utc,
+      materialized_at_utc: offer.qualified_at_utc,
+      latest_history_date: prediction.latest_history_date,
+      historical_context: index === 2 ? null : {
+        earlier_team_observations: 260, home_team_observations: 25,
+        home_venue_observations: 12, away_team_observations: 22,
+        away_venue_observations: 10, min_history: 100, min_venue_history: 5,
+      },
+    },
+    qualification: {
+      minimum_no_vig_edge: 0.05, minimum_american_odds: -200,
+      edge_pass: true, price_pass: true, policy_version: offer.policy_version,
+      market_type: "TEAM_TOTAL", bookmaker: offer.bookmaker,
+    },
+    market_at_qualification: [
+      { direction: "OVER", american_odds: offer.american_odds, decimal_odds: offer.decimal_odds,
+        implied_probability: demoImplied[index], no_vig_probability: 0.52, qualified: true },
+      { direction: "UNDER", american_odds: demoOppositeAmerican[index], decimal_odds: demoOppositeDecimal[index],
+        implied_probability: demoOppositeImplied[index], no_vig_probability: 0.48, qualified: false },
+    ],
+    recorded_market: [{
+      observation_id: offer.observation_id, retrieved_at_utc: offer.qualified_at_utc,
+      bookmaker: offer.bookmaker, direction: offer.direction, line: offer.line,
+      american_odds: offer.american_odds, decimal_odds: offer.decimal_odds,
+      price_consistent: true, qualifying_observation: true,
+    }, ...index === 0 ? [{
+      observation_id: "demo-later-observation", retrieved_at_utc: "2099-10-01T12:00:00Z",
+      bookmaker: offer.bookmaker, direction: offer.direction, line: offer.line,
+      american_odds: -105, decimal_odds: 1.95238, qualifying_observation: false,
+      price_consistent: true,
+    }] : []],
+    recorded_market_count: index === 0 ? 2 : 1,
+    source_observation_id: prediction.source_observation_id,
+    actual_home_corners: prediction.actual_home_corners,
+    actual_away_corners: prediction.actual_away_corners,
+    outcome_recorded_at_utc: offer.result ? "2026-09-21T10:00:00Z" : null,
+  };
+});
 
 export const mockPerformance = {
   model_performance: {

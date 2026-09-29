@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { api } from "@/lib/api/client";
 import { ModelFCApiError } from "@/lib/api/errors";
 import type { ProspectiveOpportunity, ProspectivePerformance, ProspectivePrediction, ProspectiveStatus } from "@/lib/api/types";
+import Link from "next/link";
 
 const time = (value: string) => new Intl.DateTimeFormat("en-US", { dateStyle: "medium", timeStyle: "short", timeZone: "UTC" }).format(new Date(value)) + " UTC";
 const percent = (value: number) => `${(value * 100).toFixed(1)}%`;
@@ -70,6 +71,7 @@ export function PredictionsDashboard() {
           <p className="ledger-offer">{item.team} {item.direction} {item.line} <strong>{price(item.american_odds)}</strong> <span>· {item.bookmaker}</span></p>
           <dl className="ledger-values"><div><dt>Model decisive</dt><dd>{percent(item.model_decisive_probability)}</dd></div><div><dt>No-vig market</dt><dd>{percent(item.no_vig_market_probability)}</dd></div><div><dt>No-vig edge</dt><dd className={item.no_vig_probability_edge >= 0 ? "positive" : "negative"}>{price(Number((item.no_vig_probability_edge * 100).toFixed(1)))} pp</dd></div>{item.result && <><div><dt>Result</dt><dd>{item.result}</dd></div><div><dt>Actual team corners</dt><dd>{item.actual_team_corners}</dd></div><div><dt>Profit units</dt><dd>{item.realized_profit_units?.toFixed(2)}</dd></div></>}</dl>
           <p className="ledger-meta">Qualified {time(item.qualified_at_utc)}</p>
+          <Link className="text-button" href={`/opportunities/${item.opportunity_id}`}>View opportunity evidence</Link>
         </article>)}</div>}
       </section>
     </>}

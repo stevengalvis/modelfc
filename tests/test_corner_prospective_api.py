@@ -1,6 +1,7 @@
 """Offline API tests for read-only prospective evidence views."""
 
 from concurrent.futures import ThreadPoolExecutor
+from copy import deepcopy
 from dataclasses import replace
 from datetime import timedelta
 import json
@@ -226,7 +227,12 @@ class ProspectiveApiTests(unittest.TestCase):
             f"/api/v1/opportunities/{same_target[0]['opportunity_id']}"
         )
         self.assertEqual(detail.status_code, 200)
-        self.assertEqual(detail.json(), same_target[0])
+        self.assertEqual({key: detail.json()[key] for key in same_target[0]}, same_target[0])
+        self.assertEqual(detail.json()["forecast"]["historical_context"]["home_venue_observations"], 110)
+        self.assertEqual({item["direction"] for item in detail.json()["market_at_qualification"]}, {"OVER", "UNDER"})
+        serialized = detail.text
+        for private in ("control.json", "budget-events", "private_control_token", "request_hash", "response_hash", "source_season", str(self.state)):
+            self.assertNotIn(private, serialized)
 
     def test_unresolved_status_and_no_control_state_exposure(self):
         control = self.state / "prospective" / "control.json"
@@ -709,6 +715,178 @@ class ProspectiveApiTests(unittest.TestCase):
         response = self.client.get("/api/v1/opportunities/" + "0" * 32)
         self.assertEqual(response.status_code, 404)
         self.assertEqual(response.json()["error"]["code"], "OPPORTUNITY_NOT_FOUND")
+
+    def detail(self, predicate=lambda item: True):
+        offer = next(item for item in self.client.get("/api/v1/opportunities").json() if predicate(item))
+        response = self.client.get(f"/api/v1/opportunities/{offer['opportunity_id']}")
+        self.assertEqual(response.status_code, 200, response.text)
+        return response.json()
+
+    def test_frozen_production_history_counts_and_provenance(self):
+        capture = self.setup.saved()["response"]["forecast"]
+        context = capture["historical_context"]
+        self.assertEqual(context, {
+            "earlier_team_observations": 220, "home_team_observations": 110,
+            "home_venue_observations": 110, "away_team_observations": 110,
+            "away_venue_observations": 110, "min_history": 100,
+            "min_venue_history": 5,
+        })
+        stored = opportunities.load_prediction(self.state, self.prediction["prediction_id"])
+        self.assertEqual(stored["schema_version"], 2)
+        self.assertEqual(stored["historical_context"], context)
+        self.assertEqual(stored["history"]["source_data_hashes"], capture["source_data_hashes"])
+        self.assertEqual(self.detail()["forecast"]["historical_context"], context)
+        self.setup.history.write_text("newer history must not be consulted", encoding="utf-8")
+        self.assertEqual(self.detail()["forecast"]["historical_context"], context)
+
+    def test_legacy_prediction_has_null_context_without_backfill(self):
+        record = opportunities.load_prediction(self.state, self.prediction["prediction_id"])
+        path = self.state / "predictions" / f"{record['prediction_id']}.json"
+        record.pop("historical_context")
+        record["schema_version"] = 1
+        record["record_hash"] = opportunities._canonical_hash({k: v for k, v in record.items() if k != "record_hash"})
+        path.write_text(json.dumps(record), encoding="utf-8")
+        with patch("modelfc.corner_analysis_outcomes._evidence", side_effect=AssertionError("history consulted")):
+            self.assertIsNone(self.detail()["forecast"]["historical_context"])
+
+    def test_detail_qualifying_pair_policy_and_later_pre_kickoff_snapshot(self):
+        initial = self.detail(lambda item: item["line"] == 3.5 and item["bookmaker"] == "draftkings")
+        self.assertEqual(initial["recorded_market_count"], 1)
+        self.assertTrue(initial["qualification"]["edge_pass"])
+        self.assertTrue(initial["qualification"]["price_pass"])
+        self.assertEqual(initial["qualification"]["minimum_no_vig_edge"], 0.05)
+        self.assertAlmostEqual(sum(item["no_vig_probability"] for item in initial["market_at_qualification"]), 1)
+        self.assertEqual(sum(item["qualified"] for item in initial["market_at_qualification"]), 1)
+        self.store_later_observation()
+        later = self.client.get(f"/api/v1/opportunities/{initial['opportunity_id']}").json()
+        self.assertEqual(later["recorded_market_count"], 2)
+        self.assertEqual([item["qualifying_observation"] for item in later["recorded_market"]], [True, False])
+        self.assertTrue(all(item["retrieved_at_utc"] < later["kickoff_utc"] for item in later["recorded_market"]))
+
+    def test_detail_preserves_later_provider_price_discrepancy(self):
+        initial = self.detail(lambda item: item["line"] == 3.5 and item["bookmaker"] == "draftkings")
+        raw = self.later_observation()
+        changed = tuple(replace(item, decimal_odds=5.0) if
+                        item.bookmaker == "draftkings" and item.request.market_type == "TEAM_TOTAL"
+                        and item.request.team_side == "AWAY" and item.request.side == "UNDER"
+                        and item.request.line == 3.5 else item for item in raw.selections)
+        raw = replace(raw, selections=changed)
+        observation, _ = opportunities.store_market_observation(self.state, raw)
+        assessment = opportunities.assess_observation(self.state, self.prediction, observation)
+        self.assertIn("PRICE_INCONSISTENCY_REVIEW", assessment["review_required_reasons"])
+        response = self.client.get(f"/api/v1/opportunities/{initial['opportunity_id']}")
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual([item["price_consistent"] for item in response.json()["recorded_market"]], [True, False])
+
+    def test_detail_unresolved_then_settled_win(self):
+        before = self.detail(lambda item: item["line"] == 3.5 and item["direction"] == "UNDER")
+        self.assertIsNone(before["actual_home_corners"])
+        self.assertIsNone(before["outcome_recorded_at_utc"])
+        self.write_result(home=6, away=3)
+        after = self.client.get(f"/api/v1/opportunities/{before['opportunity_id']}").json()
+        self.assertEqual((after["actual_home_corners"], after["actual_away_corners"], after["result"]), (6, 3, "WIN"))
+        self.assertIsNotNone(after["outcome_recorded_at_utc"])
+
+    def test_detail_settled_loss(self):
+        before = self.detail(lambda item: item["line"] == 3.5 and item["direction"] == "UNDER")
+        self.write_result(home=6, away=6)
+        after = self.client.get(f"/api/v1/opportunities/{before['opportunity_id']}").json()
+        self.assertEqual((after["result"], after["realized_profit_units"]), ("LOSS", -1))
+
+    def test_detail_whole_line_push(self):
+        self.store_later_observation(line=4.0)
+        before = self.detail(lambda item: item["line"] == 4.0 and item["direction"] == "UNDER")
+        self.assertGreater(before["forecast"]["push_probability"], 0)
+        self.write_result(home=6, away=4)
+        after = self.client.get(f"/api/v1/opportunities/{before['opportunity_id']}").json()
+        self.assertEqual((after["result"], after["realized_profit_units"]), ("PUSH", 0))
+
+    def test_detail_error_sanitization(self):
+        self.assertEqual(self.client.get("/api/v1/opportunities/invalid").json()["error"]["code"], "OPPORTUNITY_NOT_FOUND")
+        for failure, code, status in ((LedgerStorageUnavailable("/private/state/lock"), "STATE_STORAGE_UNAVAILABLE", 503),
+                                      (LedgerError("/private/ledger/internal"), "LEDGER_INTEGRITY_FAILURE", 409)):
+            with patch("modelfc.corner_api.read_opportunity", side_effect=failure):
+                response = self.client.get("/api/v1/opportunities/" + "0" * 32)
+                self.assertEqual((response.status_code, response.json()["error"]["code"]), (status, code))
+                self.assertNotIn("/private", response.text)
+
+    def test_detail_rejects_unsupported_or_corrupt_context(self):
+        record = opportunities.load_prediction(self.state, self.prediction["prediction_id"])
+        record["historical_context"]["away_venue_observations"] = 0
+        record["record_hash"] = opportunities._canonical_hash({k: v for k, v in record.items() if k != "record_hash"})
+        path = self.state / "predictions" / f"{record['prediction_id']}.json"
+        path.write_text(json.dumps(record), encoding="utf-8")
+        response = self.client.get("/api/v1/opportunities/" + "0" * 32)
+        self.assertEqual(response.status_code, 409)
+
+    def test_detail_rejects_future_prediction_schema(self):
+        record = opportunities.load_prediction(self.state, self.prediction["prediction_id"])
+        record["schema_version"] = 3
+        record["record_hash"] = opportunities._canonical_hash({k: v for k, v in record.items() if k != "record_hash"})
+        path = self.state / "predictions" / f"{record['prediction_id']}.json"
+        path.write_text(json.dumps(record), encoding="utf-8")
+        response = self.client.get("/api/v1/opportunities/" + "0" * 32)
+        self.assertEqual(response.status_code, 409)
+
+    def test_detail_fails_closed_on_cross_record_mismatches(self):
+        offer = opportunities.opportunity_records(self.state, self.prediction["prediction_id"])[0]
+        targets = opportunities.prediction_target_records(self.state, self.prediction["prediction_id"])
+        observations = opportunities.prediction_observations(self.state, self.prediction)
+        endpoint = f"/api/v1/opportunities/{offer['opportunity_id']}"
+        scenarios = [
+            ("wrong prediction", "opportunity_records", [dict(offer, prediction_id="0" * 32)]),
+            ("wrong target", "opportunity_records", [dict(offer, target_id="0" * 32)]),
+            ("wrong observation", "opportunity_records", [dict(offer, observation_id="0" * 32)]),
+            ("missing selection", "opportunity_records", [dict(offer, selection_id="0" * 32)]),
+            ("foreign target", "prediction_target_records", [dict(target, prediction_id="0" * 32) for target in targets]),
+            ("invalid probability", "prediction_target_records", [dict(target, model_probability=2) if target["target_id"] == offer["target_id"] else target for target in targets]),
+        ]
+        for name, function, records in scenarios:
+            with self.subTest(name=name), patch.object(reader, function, return_value=records):
+                response = self.client.get(endpoint)
+                self.assertEqual(response.status_code, 409, response.text)
+                self.assertNotIn(str(self.state), response.text)
+        malformed = deepcopy(observations)
+        pair = [item for item in malformed[0]["selections"] if
+                item["bookmaker"] == offer["offer"]["bookmaker"]
+                and item["team_side"] == offer["offer"]["team_side"]
+                and item["line"] == offer["offer"]["line"]]
+        other = next(item for item in pair if item["selection_id"] != offer["selection_id"])
+        other["team_side"] = "HOME"
+        with patch.object(reader, "prediction_observations", return_value=malformed):
+            self.assertEqual(self.client.get(endpoint).status_code, 409)
+        malformed = deepcopy(observations)
+        other = next(item for item in malformed[0]["selections"] if item["selection_id"] == other["selection_id"])
+        other["decimal_odds"] = 0
+        with patch.object(reader, "prediction_observations", return_value=malformed):
+            self.assertEqual(self.client.get(endpoint).status_code, 409)
+
+    def test_detail_rejects_post_kickoff_later_observation(self):
+        self.store_later_observation()
+        offer = self.detail(lambda item: item["line"] == 3.5 and item["bookmaker"] == "draftkings")
+        observations = opportunities.prediction_observations(self.state, self.prediction)
+        malformed = deepcopy(observations)
+        malformed[-1]["retrieved_at_utc"] = self.prediction["fixture"]["kickoff_at"]
+        with patch.object(reader, "prediction_observations", return_value=malformed):
+            self.assertEqual(self.client.get(f"/api/v1/opportunities/{offer['opportunity_id']}").status_code, 409)
+
+    def test_detail_corrected_outcome_uses_validated_chain_tip(self):
+        offer = self.detail(lambda item: item["line"] == 3.5 and item["direction"] == "UNDER")
+        initial = self.write_result(home=6, away=3)
+        self.assertEqual(self.client.get(f"/api/v1/opportunities/{offer['opportunity_id']}").json()["result"], "WIN")
+        self.setup.history.write_text(
+            "Div,Date,HomeTeam,AwayTeam,FTHG,FTAG,FTR,HC,AC\n"
+            "E1,20/09/2026,Wolves,West Brom,2,1,H,6,6\n", encoding="utf-8",
+        )
+        correction, _ = outcomes.record_outcome(
+            state_dir=self.state, analysis_id=self.analysis_id,
+            data_config_path=self.setup.config, idempotency_key="corrected-result",
+            supersedes_outcome_id=initial["outcome_id"], correction_reason="Corrected source corners",
+        )
+        response = self.client.get(f"/api/v1/opportunities/{offer['opportunity_id']}")
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["result"], "LOSS")
+        self.assertEqual(response.json()["outcome_recorded_at_utc"], correction["recorded_at_utc"])
 
 
 if __name__ == "__main__":

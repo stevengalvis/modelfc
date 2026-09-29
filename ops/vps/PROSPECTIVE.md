@@ -236,6 +236,13 @@ records, or resume the timer with a pre-#76 runner against extended control.
 Resume the timer only after the chosen release and authoritative state have been
 verified together under the approved rollback plan.
 
+Prospective prediction records with frozen historical context use prediction
+schema v2. The new reader accepts legacy prediction schema v1 with unavailable
+context; a pre-context runner that accepts only prediction schema v1 cannot
+read newly published v2 predictions. Check the immutable prediction inventory
+before any code rollback. If v2 predictions exist, keep or restore a release
+that reads both versions; never strip context or rewrite immutable evidence.
+
 Known release-lifetime limitation: failed-promotion cleanup can delete a candidate
 briefly visible through `current`. A launcher which already pinned that release can
 lose files. This change does not alter deployment release lifetime. Record explicit

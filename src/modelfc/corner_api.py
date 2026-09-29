@@ -90,6 +90,8 @@ class ForecastResponse(StrictModel):
     match_expected_corners: float
     latest_history_date: date
     source_data_hashes: list[SourceHashResponse]
+    # Frozen in captures for prospective use; preserve the existing analysis API.
+    historical_context: "HistoricalContextResponse | None" = Field(default=None, exclude=True)
 
 
 class MarketResponse(StrictModel):
@@ -190,6 +192,75 @@ class OpportunityResponse(StrictModel):
     result: str | None
     actual_team_corners: int | None
     realized_profit_units: float | None
+
+
+class HistoricalContextResponse(StrictModel):
+    earlier_team_observations: int
+    home_team_observations: int
+    home_venue_observations: int
+    away_team_observations: int
+    away_venue_observations: int
+    min_history: int
+    min_venue_history: int
+
+
+class OpportunityForecastResponse(StrictModel):
+    expected_team_corners: float
+    expected_home_corners: float
+    expected_away_corners: float
+    expected_match_corners: float
+    model_probability: float
+    push_probability: float
+    decisive_model_probability: float
+    model_name: str
+    model_version: str
+    created_at_utc: str
+    materialized_at_utc: str
+    latest_history_date: date
+    historical_context: HistoricalContextResponse | None
+
+
+class OpportunityQualificationResponse(StrictModel):
+    minimum_no_vig_edge: float
+    minimum_american_odds: int
+    edge_pass: bool
+    price_pass: bool
+    policy_version: str
+    market_type: str
+    bookmaker: str
+
+
+class PairedPriceResponse(StrictModel):
+    direction: str
+    american_odds: int
+    decimal_odds: float
+    implied_probability: float
+    no_vig_probability: float
+    qualified: bool
+
+
+class RecordedPriceResponse(StrictModel):
+    observation_id: str
+    retrieved_at_utc: str
+    bookmaker: str
+    direction: str
+    line: float
+    american_odds: int
+    decimal_odds: float
+    price_consistent: bool
+    qualifying_observation: bool
+
+
+class OpportunityDetailResponse(OpportunityResponse):
+    forecast: OpportunityForecastResponse
+    qualification: OpportunityQualificationResponse
+    market_at_qualification: list[PairedPriceResponse]
+    recorded_market: list[RecordedPriceResponse]
+    recorded_market_count: int
+    source_observation_id: str
+    actual_home_corners: int | None
+    actual_away_corners: int | None
+    outcome_recorded_at_utc: str | None
 
 
 class PredictionResponse(StrictModel):
@@ -419,13 +490,15 @@ def create_app(
 
     @app.get(
         "/api/v1/opportunities/{opportunity_id}",
-        response_model=OpportunityResponse,
+        response_model=OpportunityDetailResponse,
     )
     def get_opportunity(opportunity_id: str) -> dict[str, Any]:
         try:
             return read_opportunity(state, opportunity_id)
         except LedgerError as error:
-            return _domain_error(error)
+            if str(error) == "UNKNOWN_OPPORTUNITY":
+                return _error("OPPORTUNITY_NOT_FOUND", "Opportunity was not found.", 404)
+            return _public_read_error(error)
 
     @app.get("/api/v1/predictions", response_model=list[PredictionResponse])
     def get_predictions() -> list[dict[str, Any]]:

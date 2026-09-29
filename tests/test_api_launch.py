@@ -132,6 +132,15 @@ class ApiLaunchTests(unittest.TestCase):
         for blocked in ("/api/v1/capabilities", "/api/v1/opportunities/id", "/docs",
                         "/redoc", "/openapi.json", "/api/v1/analyses", "/anything"):
             self.assertNotIn(blocked, allowed)
+        detail = re.search(r"^\s*path_regexp (.+)$", caddy, re.MULTILINE)
+        self.assertIsNotNone(detail)
+        matcher = re.compile(detail.group(1))
+        self.assertTrue(matcher.fullmatch("/api/v1/opportunities/" + "a" * 32))
+        for denied in ("/api/v1/opportunities/id", "/api/v1/opportunities/" + "A" * 32,
+                       "/api/v1/opportunities/" + "a" * 32 + "/", "/api/v1/analyses/" + "a" * 32):
+            self.assertIsNone(matcher.fullmatch(denied))
+        self.assertRegex(caddy, r"@opportunity_detail\s*\{\s*path_regexp [^\n]+\s*method GET")
+        self.assertRegex(caddy, r"handle @opportunity_detail\s*\{\s*header Cache-Control \"no-store\"\s*reverse_proxy 127.0.0.1:8000")
 
 
 if __name__ == "__main__":

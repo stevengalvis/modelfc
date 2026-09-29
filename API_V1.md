@@ -1,5 +1,47 @@
 # Model FC Backend API V1 Contract
 
+## Prospective Opportunity Detail addition
+
+`GET /api/v1/opportunities/{opportunity_id}` accepts a lowercase 32-hex
+immutable opportunity ID. It returns every field of the stable opportunity
+list row plus the following strictly validated projection, assembled under
+the prospective runner/state read locks:
+
+- `forecast`: `expected_team_corners`, `expected_home_corners`,
+  `expected_away_corners`, their `expected_match_corners` sum,
+  `model_probability` (win mass), `push_probability`,
+  `decisive_model_probability`, model name/version, prediction creation time,
+  target materialization time, history cutoff, and `historical_context`.
+- `historical_context`: null for legacy prediction schema v1; for schema v2,
+  `earlier_team_observations` (all earlier league team observations entering
+  forecasting), `home_team_observations` and `away_team_observations`
+  (earlier observations for each team), `home_venue_observations` and
+  `away_venue_observations` (earlier observations at their forecast venues),
+  plus the actual `min_history` and `min_venue_history` eligibility gates.
+  These counts and thresholds are frozen with the analysis before kickoff;
+  the API never reconstructs absent counts from current history.
+- `qualification`: frozen edge and American-odds minimums, authoritative
+  `edge_pass` and `price_pass`, policy version, market type and bookmaker.
+- `market_at_qualification`: exactly one OVER and one UNDER from the same
+  observation/bookmaker/team/TEAM_TOTAL line, each with frozen American and
+  decimal prices, raw implied and no-vig probabilities, and `qualified` flag.
+- `recorded_market`: one to twelve chronologically ordered pre-kickoff
+  snapshots of the same selection, retaining the qualifying snapshot and
+  up to eleven latest later snapshots. `recorded_market_count` is the full
+  comparable count. Each snapshot has `price_consistent`, the backend's
+  comparison of frozen American and decimal prices within its provider
+  rounding tolerance. An inconsistent later quote remains visible and is
+  marked for review. These are not live or closing prices.
+- `source_observation_id`, `actual_home_corners`, `actual_away_corners`, and
+  `outcome_recorded_at_utc`. Actuals and outcome time are null until validated
+  settlement; corrected outcome chains use their authoritative tip.
+
+No raw captures, history rows, control/budget state, paths or provider requests
+are part of this read. A missing/malformed ID yields sanitized
+`OPPORTUNITY_NOT_FOUND` (404); unavailable storage yields sanitized 503;
+invalid evidence yields sanitized `LEDGER_INTEGRITY_FAILURE` (409). The public
+Caddy ingress accepts only GET with the exact lowercase ID shape.
+
 Status: **frontend-safe contract**. Additive fields may be introduced during V1,
 but documented field names, enum values, endpoint paths, and semantics must not
 change without updating this document first.
