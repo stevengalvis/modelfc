@@ -1,6 +1,6 @@
-# Model FC web application
+# Zeno FC web application
 
-This directory contains the internal Model FC product interface. It is a
+This directory contains the Zeno FC product interface. It is a
 Next.js, React, and TypeScript application with a typed API boundary matching
 the V1 backend contract.
 

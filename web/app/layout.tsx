@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Model FC",
-  description: "Internal corner-market analysis",
+  title: "Zeno FC",
+  description: "Zeno FC corner predictions and performance",
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
