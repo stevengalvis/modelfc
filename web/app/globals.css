@@ -14,6 +14,7 @@
   --cyan-wash: rgba(85, 197, 232, .05);
   --focus-ring: rgba(85, 197, 232, .28);
   --violet: #966eda;
+  --line-violet: color-mix(in srgb, var(--line) 82%, var(--violet));
   --orange: #ff8b4a;
   --red: #ff6b68;
   --font-sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -291,6 +292,7 @@ label { font-size: 11px; }
 /* Read-only prospective evidence */
 .ledger-workspace { max-width: 1160px; }
 .ledger-panel { margin-top: 24px; }
+.ledger-panel .section-title > span { color: var(--violet); }
 .ledger-list { border-top: 1px solid var(--line); }
 .ledger-card { padding: 22px 24px; border-top: 1px solid var(--line); }
 .ledger-card:first-child { border-top: 0; }
@@ -312,7 +314,7 @@ label { font-size: 11px; }
 .ledger-status.expired_unsettled { color: var(--orange); background: rgba(255,139,74,.1); }
 .ledger-message { padding: 24px; color: var(--muted); margin: 0; }
 .performance-grid { padding: 0 24px 24px; margin: 0; grid-template-columns: repeat(auto-fit, minmax(175px, 1fr)); }
-.performance-grid div { padding: 18px; border: 1px solid var(--line); border-radius: 9px; }
+.performance-grid div { padding: 18px; border: 1px solid var(--line-violet); border-radius: 9px; }
 .performance-grid dd { font-size: 23px; }
 .performance-calibration { padding: 0 24px 24px; overflow-x: auto; }
 .performance-calibration h3 { font-size: 16px; }
