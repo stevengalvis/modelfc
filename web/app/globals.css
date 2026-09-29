@@ -338,7 +338,18 @@ label { font-size: 11px; }
 .detail-timeline li span, .detail-timeline li small { color: var(--muted); font-size: 12px; }
 .detail-timeline li .detail-price-warning { color: var(--orange); }
 .detail-timeline li strong { font: 600 13px/1.5 var(--font-mono); overflow-wrap: anywhere; }
+.movement-content { padding: 0 24px; }
+.movement-summary { margin: 0 0 14px; color: var(--ink); font-weight: 600; }
+.movement-chart { border: 1px solid var(--line-violet); border-radius: 9px; background: var(--panel); overflow: hidden; }
+.movement-chart svg { display: block; width: 100%; height: auto; }
+.movement-zeno { stroke: var(--cyan); stroke-width: 2; stroke-dasharray: 6 5; }
+.movement-market { stroke: var(--violet); stroke-width: 2.5; }
+.movement-point { fill: var(--violet); stroke: var(--panel); stroke-width: 1.5; }
+.movement-label { fill: var(--muted); font: 11px var(--font-mono); }
+.movement-snapshots { padding: 16px 0 0; }
+.movement-content > .ledger-meta { margin-top: 12px; }
 @media (max-width: 560px) {
+  .movement-content { padding-inline: 15px; }
   .detail-market { grid-template-columns: 1fr; padding: 0 15px; }
   .detail-values, .detail-timeline { padding-inline: 15px; }
   .detail-hero { margin-inline: 15px; }

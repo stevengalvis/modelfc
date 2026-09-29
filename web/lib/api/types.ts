@@ -215,10 +215,16 @@ export interface OpportunityDetail extends ProspectiveOpportunity {
     line: number;
     american_odds: number;
     decimal_odds: number;
+    no_vig_market_probability: number | null;
     price_consistent: boolean;
     qualifying_observation: boolean;
   }>;
   recorded_market_count: number;
+  market_movement: {
+    status: "TOWARD_ZENO" | "AWAY_FROM_ZENO" | "UNCHANGED" | "NO_LATER_OBSERVATION" | "UNAVAILABLE";
+    market_change_percentage_points: number | null;
+    latest_comparable_observation_id: string | null;
+  };
   source_observation_id: string;
   actual_home_corners: number | null;
   actual_away_corners: number | null;

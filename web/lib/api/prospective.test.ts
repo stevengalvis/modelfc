@@ -18,6 +18,8 @@ describe("prospective response boundary", () => {
     expect(upcoming.forecast.historical_context?.home_venue_observations).toBe(12);
     expect(upcoming.market_at_qualification.map((item) => item.direction)).toEqual(["OVER", "UNDER"]);
     expect(upcoming.recorded_market).toHaveLength(2);
+    expect(upcoming.market_movement.status).toBe("TOWARD_ZENO");
+    expect(upcoming.recorded_market.map((item) => item.no_vig_market_probability)).toEqual([0.52, 0.57]);
     expect((await api.opportunityDetail("demo-offer-push")).forecast.push_probability).toBe(0.15);
     expect((await api.opportunityDetail("demo-offer-loss")).forecast.historical_context).toBeNull();
     expect((await api.opportunityDetail("demo-offer-win")).result).toBe("WIN");
@@ -41,6 +43,19 @@ describe("prospective response boundary", () => {
     expect((await live(detail).opportunityDetail("b".repeat(32))).recorded_market[1]).toMatchObject({
       decimal_odds: 5, price_consistent: false,
     });
+  });
+  it("fails closed for malformed movement while allowing a later unpaired quote", async () => {
+    const detail = structuredClone(mockOpportunityDetails[0]);
+    detail.opportunity_id = "c".repeat(32);
+    detail.recorded_market[1].no_vig_market_probability = null;
+    detail.market_movement = { status: "UNAVAILABLE", market_change_percentage_points: null,
+      latest_comparable_observation_id: null };
+    expect((await live(detail).opportunityDetail("c".repeat(32))).market_movement.status).toBe("UNAVAILABLE");
+    detail.recorded_market[0].no_vig_market_probability = 0.9;
+    await expect(live(detail).opportunityDetail("c".repeat(32))).rejects.toMatchObject({ code: "PROSPECTIVE_CONTRACT_MISMATCH" });
+    detail.recorded_market[0].no_vig_market_probability = 0.52;
+    detail.market_movement.status = "TOWARD_ZENO";
+    await expect(live(detail).opportunityDetail("c".repeat(32))).rejects.toMatchObject({ code: "PROSPECTIVE_CONTRACT_MISMATCH" });
   });
   it("preserves upcoming and settled predictions", async () => {
     const items = await live(mockPredictions).predictions();

@@ -32,6 +32,23 @@ the prospective runner/state read locks:
   comparison of frozen American and decimal prices within its provider
   rounding tolerance. An inconsistent later quote remains visible and is
   marked for review. These are not live or closing prices.
+- Each recorded snapshot also includes nullable `no_vig_market_probability`.
+  For a complete matching OVER/UNDER pair in that immutable observation, the
+  selected side is `(1 / selected_decimal) / ((1 / over_decimal) +
+  (1 / under_decimal))`, the same method used at qualification. A missing or
+  unusable opposite quote yields null without discarding the selected price.
+  A later American/decimal discrepancy remains flagged while a valid decimal
+  pair can still supply the probability.
+- `market_movement` compares the last comparable later snapshot with the
+  qualifying no-vig probability and the frozen decisive model probability.
+  `status` is `TOWARD_ZENO`, `AWAY_FROM_ZENO`, or `UNCHANGED` according to the
+  exact decrease/increase/equality of absolute distance from the model; if
+  none was recorded it is `NO_LATER_OBSERVATION`, or `UNAVAILABLE` when later
+  selected quotes lack a complete usable pair. `market_change_percentage_points`
+  is signed `(later_market - qualifying_market) * 100`, or null without a
+  comparison. `latest_comparable_observation_id` identifies the comparison
+  snapshot or is null. The timeline can omit middle snapshots when over twelve
+  exist; the comparison still uses the latest frozen comparable quote.
 - `source_observation_id`, `actual_home_corners`, `actual_away_corners`, and
   `outcome_recorded_at_utc`. Actuals and outcome time are null until validated
   settlement; corrected outcome chains use their authoritative tip.

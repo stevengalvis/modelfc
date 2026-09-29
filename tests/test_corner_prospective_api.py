@@ -762,6 +762,62 @@ class ProspectiveApiTests(unittest.TestCase):
         self.assertEqual(later["recorded_market_count"], 2)
         self.assertEqual([item["qualifying_observation"] for item in later["recorded_market"]], [True, False])
         self.assertTrue(all(item["retrieved_at_utc"] < later["kickoff_utc"] for item in later["recorded_market"]))
+        self.assertEqual(initial["market_movement"], {
+            "status": "NO_LATER_OBSERVATION", "market_change_percentage_points": None,
+            "latest_comparable_observation_id": None,
+        })
+        baseline = initial["no_vig_market_probability"]
+        self.assertAlmostEqual(initial["recorded_market"][0]["no_vig_market_probability"], baseline)
+        later_point = later["recorded_market"][1]
+        stored = opportunities.prediction_observations(self.state, self.prediction)
+        source = next(item for item in stored if item["observation_id"] == later_point["observation_id"])
+        pair = [item for item in source["selections"] if item["bookmaker"] == "draftkings"
+                and item["team_side"] == "AWAY" and item["line"] == 3.5]
+        implied = {item["direction"]: 1 / item["decimal_odds"] for item in pair}
+        self.assertEqual(len(pair), 2)
+        self.assertAlmostEqual(later_point["no_vig_market_probability"], implied[later_point["direction"]] / math.fsum(implied.values()))
+        self.assertEqual(later["market_movement"]["latest_comparable_observation_id"], later_point["observation_id"])
+
+    def test_movement_direction_compares_distance_on_both_sides_of_zeno(self):
+        baseline = {"observation_id": "first", "no_vig_market_probability": 0.52}
+        for zeno, next_market, expected in (
+            (0.61, 0.57, "TOWARD_ZENO"), (0.61, 0.48, "AWAY_FROM_ZENO"),
+            (0.40, 0.45, "TOWARD_ZENO"), (0.40, 0.55, "AWAY_FROM_ZENO"),
+            (0.61, 0.52, "UNCHANGED"),
+        ):
+            with self.subTest(zeno=zeno, next_market=next_market):
+                summary = reader._movement_summary([baseline, {
+                    "observation_id": "later", "no_vig_market_probability": next_market,
+                }], zeno)
+                self.assertEqual(summary["status"], expected)
+                self.assertAlmostEqual(summary["market_change_percentage_points"], (next_market - 0.52) * 100)
+        multiple = reader._movement_summary([
+            baseline, {"observation_id": "middle", "no_vig_market_probability": 0.48},
+            {"observation_id": "unpaired", "no_vig_market_probability": None},
+            {"observation_id": "last", "no_vig_market_probability": 0.57},
+        ], 0.61)
+        self.assertEqual(multiple["status"], "TOWARD_ZENO")
+        self.assertEqual(multiple["latest_comparable_observation_id"], "last")
+        self.assertEqual(reader._movement_summary([baseline], 0.61)["status"], "NO_LATER_OBSERVATION")
+        self.assertEqual(reader._movement_summary([baseline, {
+            "observation_id": "unpaired", "no_vig_market_probability": None,
+        }], 0.61)["status"], "UNAVAILABLE")
+
+    def test_unpaired_later_quote_is_retained_but_not_plotted(self):
+        initial = self.detail(lambda item: item["line"] == 3.5 and item["bookmaker"] == "draftkings")
+        raw = self.later_observation()
+        chosen = [item for item in raw.selections if item.bookmaker == "draftkings"
+                  and item.request.market_type == "TEAM_TOTAL" and item.request.team_side == "AWAY"
+                  and item.request.line == 3.5]
+        selected = next(item for item in chosen if item.request.side == initial["direction"])
+        raw = replace(raw, selections=(selected,))
+        observation, _ = opportunities.store_market_observation(self.state, raw)
+        later = self.client.get(f"/api/v1/opportunities/{initial['opportunity_id']}")
+        self.assertEqual(later.status_code, 200, later.text)
+        payload = later.json()
+        self.assertEqual(payload["recorded_market"][-1]["observation_id"], observation["observation_id"])
+        self.assertIsNone(payload["recorded_market"][-1]["no_vig_market_probability"])
+        self.assertEqual(payload["market_movement"]["status"], "UNAVAILABLE")
 
     def test_detail_preserves_later_provider_price_discrepancy(self):
         initial = self.detail(lambda item: item["line"] == 3.5 and item["bookmaker"] == "draftkings")
@@ -777,6 +833,11 @@ class ProspectiveApiTests(unittest.TestCase):
         response = self.client.get(f"/api/v1/opportunities/{initial['opportunity_id']}")
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual([item["price_consistent"] for item in response.json()["recorded_market"]], [True, False])
+        pair = [item for item in observation["selections"] if item["bookmaker"] == "draftkings"
+                and item["team_side"] == "AWAY" and item["line"] == 3.5]
+        implied = {item["direction"]: 1 / item["decimal_odds"] for item in pair}
+        latest = response.json()["recorded_market"][-1]
+        self.assertAlmostEqual(latest["no_vig_market_probability"], implied[latest["direction"]] / math.fsum(implied.values()))
 
     def test_detail_unresolved_then_settled_win(self):
         before = self.detail(lambda item: item["line"] == 3.5 and item["direction"] == "UNDER")

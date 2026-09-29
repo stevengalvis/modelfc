@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { api } from "@/lib/api/client";
 import { describeApiError, ModelFCApiError } from "@/lib/api/errors";
 import type { OpportunityDetail } from "@/lib/api/types";
+import { MarketMovement } from "@/components/market-movement";
 
 const amount = (value: number) => value.toFixed(2);
 const percent = (value: number) => `${(value * 100).toFixed(1)}%`;
@@ -69,12 +70,8 @@ export function OpportunityDetailView({ id }: { id: string }) {
           ["Raw implied", percent(item.implied_probability)], ["No-vig", percent(item.no_vig_probability)]]} />
       </div>)}</div>
     </section>
-    <section className="panel detail-panel"><div className="section-title"><span>05</span><div><h2>Recorded market</h2><p>Recorded pre-kickoff snapshots, not live or closing odds</p></div></div>
-      <ol className="detail-timeline">{data.recorded_market.map((item) => <li key={item.observation_id}>
-        <span>{time(item.retrieved_at_utc)}</span><strong>{item.bookmaker} · {item.direction} {item.line} · {odds(item.american_odds)} ({amount(item.decimal_odds)})</strong>
-        {item.qualifying_observation && <small>Qualifying observation</small>}
-        {!item.price_consistent && <small className="detail-price-warning">Provider price discrepancy · review required</small>}</li>)}</ol>
-      {data.recorded_market_count > data.recorded_market.length && <p className="ledger-meta">Showing {data.recorded_market.length} of {data.recorded_market_count} comparable snapshots.</p>}
+    <section className="panel detail-panel"><div className="section-title"><span>05</span><div><h2>Market movement</h2><p>{data.bookmaker} · {data.team} {data.direction} {data.line}</p></div></div>
+      <MarketMovement detail={data} />
     </section>
     <section className="panel detail-panel"><div className="section-title"><span>06</span><div><h2>Result</h2><p>{data.result ? `Validated ${data.result}` : "Awaiting validated settlement"}</p></div></div>
       {data.result ? <Values items={[["Home corners", data.actual_home_corners!], ["Away corners", data.actual_away_corners!],

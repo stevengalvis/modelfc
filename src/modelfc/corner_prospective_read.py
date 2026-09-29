@@ -135,6 +135,26 @@ def _empty_inventory() -> dict[str, Any]:
     return {"predictions": [], "opportunities": [], "targets": {}, "detail": None}
 
 
+def _movement_summary(snapshots: list[dict[str, Any]], decisive: float) -> dict[str, Any]:
+    baseline = snapshots[0]["no_vig_market_probability"]
+    later = [item for item in snapshots[1:] if item["no_vig_market_probability"] is not None]
+    if not later:
+        return {
+            "status": "UNAVAILABLE" if len(snapshots) > 1 else "NO_LATER_OBSERVATION",
+            "market_change_percentage_points": None,
+            "latest_comparable_observation_id": None,
+        }
+    latest = later[-1]
+    initial_distance = abs(decisive - baseline)
+    latest_distance = abs(decisive - latest["no_vig_market_probability"])
+    return {
+        "status": ("TOWARD_ZENO" if latest_distance < initial_distance else
+                   "AWAY_FROM_ZENO" if latest_distance > initial_distance else "UNCHANGED"),
+        "market_change_percentage_points": (latest["no_vig_market_probability"] - baseline) * 100,
+        "latest_comparable_observation_id": latest["observation_id"],
+    }
+
+
 def _opportunity_detail(
     opportunity: dict[str, Any], prediction: dict[str, Any],
     target: dict[str, Any], observation: dict[str, Any],
@@ -201,19 +221,39 @@ def _opportunity_detail(
                 decimal_odds = _number(selection["decimal_odds"])
                 if decimal_odds <= 1:
                     raise ValueError
+                # A later selected quote can outlive its opposite side.  Keep
+                # the recorded price, but only compare a complete frozen pair.
+                later_pair = [candidate for candidate in item["selections"] if same_market(candidate)]
+                comparable = None
+                price_consistent = math.isclose(decimal_odds, 1 + profit, rel_tol=0, abs_tol=0.005)
+                if len(later_pair) == 2 and {candidate["direction"] for candidate in later_pair} == {"OVER", "UNDER"}:
+                    try:
+                        prices = {candidate["direction"]: _number(candidate["decimal_odds"]) for candidate in later_pair}
+                        if all(price > 1 for price in prices.values()):
+                            later_implied = {side: 1 / price for side, price in prices.items()}
+                            comparable = later_implied[direction] / math.fsum(later_implied.values())
+                            price_consistent = all(math.isclose(
+                                prices[candidate["direction"]], 1 + american_odds_terms(candidate["american_odds"])[0],
+                                rel_tol=0, abs_tol=0.005,
+                            ) for candidate in later_pair)
+                    except (KeyError, TypeError, ValueError, ZeroDivisionError):
+                        pass
                 snapshots.append({
                     "observation_id": item["observation_id"],
                     "retrieved_at_utc": item["retrieved_at_utc"],
                     "bookmaker": selection["bookmaker"], "direction": direction,
                     "line": selection["line"], "american_odds": selection["american_odds"],
                     "decimal_odds": decimal_odds,
-                    "price_consistent": math.isclose(decimal_odds, 1 + profit, rel_tol=0, abs_tol=0.005),
+                    "no_vig_market_probability": comparable,
+                    "price_consistent": price_consistent,
                     "qualifying_observation": item["observation_id"] == observation["observation_id"],
                 })
         if not snapshots or not snapshots[0]["qualifying_observation"]:
             raise ValueError
         # Always retain qualification and at most 11 latest comparable snapshots.
         retained = snapshots[:1] + snapshots[-11:] if len(snapshots) > 12 else snapshots
+        if not math.isclose(retained[0]["no_vig_market_probability"], no_vig[direction], rel_tol=0, abs_tol=1e-12):
+            raise ValueError
         market = [{
             "direction": item["direction"], "american_odds": item["american_odds"],
             "decimal_odds": _number(item["decimal_odds"]),
@@ -247,6 +287,7 @@ def _opportunity_detail(
             "market_at_qualification": market,
             "recorded_market": retained,
             "recorded_market_count": len(snapshots),
+            "market_movement": _movement_summary(snapshots, decisive),
             "source_observation_id": prediction["source_observation"]["observation_id"],
             "actual_home_corners": None if outcome is None else outcome["result"]["home_corners"],
             "actual_away_corners": None if outcome is None else outcome["result"]["away_corners"],
