@@ -301,6 +301,7 @@ label { font-size: 11px; }
 .ledger-card-head h3 { margin: 8px 0 0; font-size: 20px; letter-spacing: -.02em; }
 .ledger-card-head h3 span { color: var(--muted); font-weight: 400; }
 .ledger-meta { margin: 11px 0 0; overflow-wrap: anywhere; }
+.ledger-panel > .ledger-meta { margin-inline: 24px; }
 .ledger-offer { margin: 18px 0 0; font-size: 16px; font-weight: 650; }
 .ledger-offer strong { color: var(--cyan); margin-left: 8px; font-family: var(--font-mono); }
 .ledger-offer span { color: var(--muted); font-weight: 400; font-size: 13px; }
@@ -323,6 +324,7 @@ label { font-size: 11px; }
 .performance-calibration th { color: var(--subtle); font-size: 12px; }
 @media (max-width: 560px) {
   .ledger-card { padding: 18px 15px; }
+  .ledger-panel > .ledger-meta { margin-inline: 15px; }
   .ledger-card-head { flex-direction: column; gap: 10px; }
   .ledger-values { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .performance-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); padding: 0 15px 15px; gap: 8px; }
