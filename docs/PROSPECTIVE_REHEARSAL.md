@@ -30,7 +30,8 @@ no-vig edge policy. Other selections do not qualify.
 
 The first run creates one analysis, one market observation, one prediction, six
 targets, and one opportunity. It reserves three of the disposable 180 requests.
-A same-time replay makes no provider requests and creates no new records.
+The test hashes these records and the immutable budget-enrollment event. A
+successful same-time replay makes no provider requests and creates no new records.
 At 18:00 UTC, a validated completed CSV row records Wolves 6, West Brom 3.
 The real runner's inventory settles one immutable outcome; replay recognizes
 the existing outcome. All pre-kickoff record hashes stay identical. The
@@ -48,8 +49,8 @@ Four decisive WIN/LOSS targets give Brier 0.24274036387782455 and log loss
 buckets each contain two targets, each with an observed win rate of 0.5 and
 mean predictions 0.4887152478720179 and 0.511284752127982 respectively.
 The remaining three buckets are empty. One settled prediction contributes to
-the model name/version breakdown. The test asserts the actual release-derived
-version without pinning a Git commit in the fixture.
+the model name/version breakdown. The test asserts a 40-character commit SHA
+for the release-derived version without pinning a Git commit in the fixture.
 
 The in-process **actual FastAPI application** reads that same disposable state.
 Predictions, opportunities, and prospective performance GETs return the

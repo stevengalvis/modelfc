@@ -34,6 +34,7 @@ FINISHED = datetime(2026, 9, 20, 18, tzinfo=timezone.utc)
 MARKET_IDS = {"101432", "101484", "10799"}
 PUBLIC_RECORDS = ("analyses", "predictions", "prediction-targets",
                   "market-observations", "opportunities")
+IMMUTABLE_RECORDS = (*PUBLIC_RECORDS, "prospective/budget-events")
 
 
 class ProspectiveProductionRehearsal(unittest.TestCase):
@@ -128,7 +129,7 @@ class ProspectiveProductionRehearsal(unittest.TestCase):
     def paths(self, name):
         return sorted((self.state / name).rglob("*.json"))
 
-    def snapshot(self, families=PUBLIC_RECORDS):
+    def snapshot(self, families=IMMUTABLE_RECORDS):
         return {str(path.relative_to(self.state)): hashlib.sha256(path.read_bytes()).hexdigest()
                 for name in families for path in self.paths(name)}
 
@@ -179,7 +180,7 @@ class ProspectiveProductionRehearsal(unittest.TestCase):
         self.assertGreaterEqual(opportunity["no_vig_probability_edge"], 0.05)
         self.assertEqual(prediction["history"]["source_data_hashes"][0]["sha256"],
                          hashlib.sha256(self.history.read_bytes()).hexdigest())
-        self.assertTrue(prediction["model"]["version"])
+        self.assertRegex(prediction["model"]["version"], r"^[0-9a-f]{40}$")
         self.assertLess(datetime.fromisoformat(prediction["created_at_utc"]), KICKOFF)
         self.assertLess(datetime.fromisoformat(observation["retrieved_at_utc"]), KICKOFF)
         self.assertLess(datetime.fromisoformat(opportunity["qualified_at_utc"]), KICKOFF)
@@ -187,8 +188,10 @@ class ProspectiveProductionRehearsal(unittest.TestCase):
         immutable = self.snapshot()
 
         replay = self.run_once()
-        self.assertEqual((replay["captures_created"], replay["opportunities_created"],
-                          replay["market_observations_created"], replay["provider_requests"]), (0, 0, 0, 0))
+        self.assertEqual((replay["status"], replay["reasons"], replay["captures_existing"],
+                          replay["captures_created"], replay["opportunities_created"],
+                          replay["market_observations_created"], replay["provider_requests"]),
+                         ("OK", [], 1, 0, 0, 0, 0))
         self.assertEqual(self.snapshot(), immutable)
         self.assertEqual(self.control()["period"]["reserved"], 3)
 
@@ -205,11 +208,12 @@ class ProspectiveProductionRehearsal(unittest.TestCase):
         self.assertEqual(outcome["result"], {"home_corners": 6, "away_corners": 3})
         self.assertEqual({s["outcome"] for s in outcome["settlements"]}, {"WIN", "LOSS"})
         self.assertEqual(len(outcome["settlements"]), 4)
-        after_settlement = self.snapshot((*PUBLIC_RECORDS, "analysis-outcomes"))
+        after_settlement = self.snapshot((*IMMUTABLE_RECORDS, "analysis-outcomes"))
         repeat = self.run_once()
-        self.assertEqual((repeat["outcomes_created"], repeat["outcomes_settled"],
-                          repeat["provider_requests"]), (0, 1, 0))
-        self.assertEqual(self.snapshot((*PUBLIC_RECORDS, "analysis-outcomes")), after_settlement)
+        self.assertEqual((repeat["status"], repeat["reasons"], repeat["captures_existing"],
+                          repeat["outcomes_created"], repeat["outcomes_settled"],
+                          repeat["provider_requests"]), ("OK", [], 1, 0, 1, 0))
+        self.assertEqual(self.snapshot((*IMMUTABLE_RECORDS, "analysis-outcomes")), after_settlement)
 
         performance = reader.read_performance(self.state)
         model, offers = performance["model_performance"], performance["opportunity_performance"]
@@ -254,7 +258,7 @@ class ProspectiveProductionRehearsal(unittest.TestCase):
                           offers["win_rate_excluding_pushes"], offers["realized_profit_units"],
                           offers["roi_on_settled_opportunities"], offers["unresolved_open_opportunities"]),
                          (1, 1, 1, 0, 0, 1.0, 1.05, 1.05, 0))
-        before_api = self.snapshot((*PUBLIC_RECORDS, "analysis-outcomes"))
+        before_api = self.snapshot((*IMMUTABLE_RECORDS, "analysis-outcomes"))
         prediction_response = self.client.get("/api/v1/predictions")
         opportunity_response = self.client.get("/api/v1/opportunities")
         performance_response = self.client.get("/api/v1/prospective/performance")
@@ -270,7 +274,7 @@ class ProspectiveProductionRehearsal(unittest.TestCase):
                           api_opportunity["actual_team_corners"], api_opportunity["realized_profit_units"]),
                          (opportunity["opportunity_id"], "WIN", 3, 1.05))
         self.assertEqual(performance_response.json(), reader.read_performance(self.state))
-        self.assertEqual(self.snapshot((*PUBLIC_RECORDS, "analysis-outcomes")), before_api)
+        self.assertEqual(self.snapshot((*IMMUTABLE_RECORDS, "analysis-outcomes")), before_api)
 
     def test_malformed_provider_discovery_fails_closed(self):
         del self.fixture["participant1Id"]
@@ -278,7 +282,7 @@ class ProspectiveProductionRehearsal(unittest.TestCase):
         self.assertEqual(invalid["status"], "PARTIAL")
         self.assertIn("DISCOVERY_INVALID", invalid["reasons"])
         self.assertEqual(self.calls, ["fixtures"])
-        self.assertEqual(self.snapshot(), {})
+        self.assertEqual(self.snapshot(PUBLIC_RECORDS), {})
         self.assertEqual(self.control()["period"]["reserved"], 1)
         self.assertEqual(self.control()["discovery"]["status"], "FAILED")
 
@@ -289,7 +293,7 @@ class ProspectiveProductionRehearsal(unittest.TestCase):
         self.assertIn("FIXTURE_REVIEW", invalid["reasons"])
         self.assertEqual(self.calls, ["fixtures", "markets", "odds"])
         self.assertEqual(self.control()["period"]["reserved"], 3)
-        self.assertEqual(self.snapshot(), {})
+        self.assertEqual(self.snapshot(PUBLIC_RECORDS), {})
         self.assertEqual(self.paths("analysis-outcomes"), [])
 
     def test_cached_fixture_never_creates_postkickoff_capture(self):
@@ -302,7 +306,7 @@ class ProspectiveProductionRehearsal(unittest.TestCase):
         after = self.run_once()
         self.assertEqual((after["captures_created"], after["market_observations_created"],
                           after["provider_requests"]), (0, 0, 0))
-        self.assertEqual(self.snapshot(), {})
+        self.assertEqual(self.snapshot(PUBLIC_RECORDS), {})
         self.assertEqual(self.paths("analysis-outcomes"), [])
 
     def test_malformed_completed_result_never_settles_existing_prediction(self):
