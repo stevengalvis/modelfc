@@ -31,7 +31,10 @@ particular, timer activity, discovery `DONE`, and request counts are not
 completion signals. Compare the receipt time with the timer journal when
 investigating missed or interrupted starts. A malformed newest receipt makes
 prospective state `ERROR` and completion `CORRUPT`; status does not fall back to
-an older, convenient receipt. No raw exception or record is printed.
+an older, convenient receipt. An empty/temp-only newer day does not hide the
+previous published receipt. Receipt completion remains visible even if control
+or budget validation fails; their own status stays `ERROR`. No raw exception or
+record is printed.
 
 A `WARNING` represents a condition requiring operator interpretation;
 `UNVERIFIED` means the signal cannot be established. Neither is silently labeled

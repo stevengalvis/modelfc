@@ -123,6 +123,15 @@ class ProductionStatusTests(unittest.TestCase):
                 self.assertIsNone(prospective["last_completed_run_at_utc"])
                 self.assertEqual(status.exit_code(self.report()), 1)
 
+    def test_completed_fail_receipt_survives_invalid_control(self):
+        self.receipt(state="FAIL")
+        self.control_path.write_text("{", encoding="utf-8")
+        prospective = self.report()["components"]["prospective"]
+        self.assertEqual(prospective["state"], "ERROR")
+        self.assertEqual(prospective["runner_completion"], "VERIFIED")
+        self.assertEqual(prospective["last_run_status"], "FAIL")
+        self.assertEqual(prospective["last_completed_run_at_utc"], NOW.isoformat())
+
     def test_healthy_empty_state_zero_fixtures_and_no_lazy_state_lock(self):
         before = {str(path.relative_to(self.root)): path.read_bytes()
                   for path in self.root.rglob("*") if path.is_file()}

@@ -84,6 +84,17 @@ class ReceiptTests(unittest.TestCase):
         self.assertEqual(day.stat().st_mode & 0o077, 0)
         self.assertEqual(next(day.glob("*.json")).stat().st_mode & 0o077, 0)
 
+    def test_incomplete_new_day_does_not_hide_last_published_receipt(self):
+        earlier = NOW - timedelta(days=1)
+        prior = self.publish(start=earlier, end=earlier)
+        new_day = self.state / "prospective/run-receipts" / NOW.date().isoformat()
+        new_day.mkdir(mode=0o700)
+        (new_day / ".record-interrupted.tmp").write_text("unfinished", encoding="utf-8")
+        self.assertEqual(receipts.latest(self.state, now=NOW), prior)
+        (new_day / ("20260928T120500000000Z-" + "b" * 32 + ".json")).write_text("{", encoding="utf-8")
+        with self.assertRaises(receipts.ReceiptError):
+            receipts.latest(self.state, now=NOW)
+
 
 if __name__ == "__main__":
     unittest.main()

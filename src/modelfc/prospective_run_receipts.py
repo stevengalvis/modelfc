@@ -136,28 +136,33 @@ def latest(state, *, now):
                 raise ReceiptError("invalid receipt directory")
             days.append(entry.name)
     if not days:
-        raise ReceiptError("empty receipt directory")
-    newest = root / max(days)
-    files = []
-    with os.scandir(newest) as entries:
-        seen = 0
-        for entry in entries:
-            seen += 1
-            if seen > MAX_FILES_PER_DAY:
-                raise ReceiptError("receipt directory limit exceeded")
-            if entry.name.startswith(".record-") and entry.name.endswith(".tmp"):
-                continue  # A crashed atomic writer never published this inode.
-            if not NAME.fullmatch(entry.name) or not entry.is_file(follow_symlinks=False):
-                raise ReceiptError("invalid receipt file")
-            files.append(entry.name)
-    if not files:
-        raise ReceiptError("no published receipt in latest directory")
+        return None
+    # A crashed writer may have created today's directory or a temporary file
+    # without publishing a receipt. Only published JSON determines the latest day.
+    for day in sorted(days, reverse=True):
+        directory = root / day
+        files = []
+        with os.scandir(directory) as entries:
+            seen = 0
+            for entry in entries:
+                seen += 1
+                if seen > MAX_FILES_PER_DAY:
+                    raise ReceiptError("receipt directory limit exceeded")
+                if entry.name.startswith(".record-") and entry.name.endswith(".tmp"):
+                    continue
+                if not NAME.fullmatch(entry.name) or not entry.is_file(follow_symlinks=False):
+                    raise ReceiptError("invalid receipt file")
+                files.append(entry.name)
+        if files:
+            break
+    else:
+        return None
     if len({NAME.fullmatch(name).group(2) for name in files}) != len(files):
         raise ReceiptError("duplicate receipt identity")
     ordered = sorted(files)
     if len(ordered) > 1 and ordered[-1][:22] == ordered[-2][:22]:
         raise ReceiptError("ambiguous completion order")
-    path = newest / ordered[-1]
+    path = directory / ordered[-1]
     fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     with os.fdopen(fd, "rb") as stream:
         info = os.fstat(stream.fileno())

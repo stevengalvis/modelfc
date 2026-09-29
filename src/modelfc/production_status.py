@@ -101,29 +101,35 @@ def _prospective(control_path: Path, now: datetime) -> tuple[dict[str, Any], dic
                    "last_run_status": None, "last_run_reasons": None,
                    "last_run_release_sha": None,
                    "last_run_summary": None}
-    try:
-        receipt = latest_run_receipt(control_path.parent.parent, now=now)
-        if receipt is not None:
-            summary = receipt["summary"]
-            prospective.update(state="ERROR" if summary["status"] == "FAIL" else
-                               "WARNING" if summary["status"] == "PARTIAL" or current_incomplete else "OK",
-                runner_completion="VERIFIED",
-                last_completed_run_at_utc=receipt["completed_at_utc"],
-                last_run_status=summary["status"],
-                last_run_reasons=summary["reasons"],
-                last_run_release_sha=receipt["release_sha"],
-                last_run_summary={key: summary[key] for key in (
-                    "fixtures_discovered", "captures_created", "market_observations_created",
-                    "opportunities_created", "outcomes_created", "outcomes_settled",
-                    "review_required", "provider_requests", "prospective_budget_remaining")})
-    except (OSError, ReceiptError):
-        prospective.update(state="ERROR", runner_completion="CORRUPT")
     remaining = period["allowance"] - period["reserved"]
     budget = {"state": "ERROR" if now.date() < start else
               "WARNING" if now.date() >= end or remaining == 0 else "OK",
               "period_start": period["start"], "period_end_exclusive": period["end"],
               "allowance": period["allowance"], "reserved": period["reserved"], "remaining": remaining}
     return prospective, budget
+
+
+def _completion(prospective: dict[str, Any], state_dir: Path, now: datetime) -> None:
+    """Read completion independently from control, under the held runner lock."""
+    try:
+        receipt = latest_run_receipt(state_dir, now=now)
+        if receipt is None:
+            return
+        summary = receipt["summary"]
+        previous = prospective["state"]
+        prospective.update(state="ERROR" if previous == "ERROR" or summary["status"] == "FAIL" else
+                           "WARNING" if previous == "WARNING" or summary["status"] == "PARTIAL" else "OK",
+            runner_completion="VERIFIED",
+            last_completed_run_at_utc=receipt["completed_at_utc"],
+            last_run_status=summary["status"],
+            last_run_reasons=summary["reasons"],
+            last_run_release_sha=receipt["release_sha"],
+            last_run_summary={key: summary[key] for key in (
+                "fixtures_discovered", "captures_created", "market_observations_created",
+                "opportunities_created", "outcomes_created", "outcomes_settled",
+                "review_required", "provider_requests", "prospective_budget_remaining")})
+    except (OSError, ReceiptError):
+        prospective.update(state="ERROR", runner_completion="CORRUPT")
 
 
 def _services(signals: dict[str, dict[str, bool | None]]) -> dict[str, Any]:
@@ -185,20 +191,33 @@ def report_status(*, release: Path, config_path: Path, state_dir: Path,
                                       "e1_result": None})
     try:
         with existing_read_lock(state_dir / "prospective" / "runner.lock"):
-            prospective, budget = _prospective(state_dir / "prospective" / "control.json", now)
-            components["prospective"], components["budget"] = prospective, budget
             try:
-                metrics = read_performance(state_dir)
-                model, offers = metrics["model_performance"], metrics["opportunity_performance"]
-                components["evidence"] = {"state": "OK", "predictions": model["total_prediction_runs"],
-                                          "settled_predictions": model["settled_prediction_runs"],
-                                          "opportunities": offers["total_opportunity_events"],
-                                          "settled_opportunities": offers["settled_opportunities"],
-                                          "unresolved_opportunities": offers["unresolved_open_opportunities"]}
-            except (OSError, ValueError, KeyError, TypeError, LedgerError):
-                components["evidence"] = {"state": "ERROR", "predictions": None,
-                    "settled_predictions": None, "opportunities": None,
-                    "settled_opportunities": None, "unresolved_opportunities": None}
+                prospective, budget = _prospective(state_dir / "prospective" / "control.json", now)
+                components["prospective"], components["budget"] = prospective, budget
+                control_valid = True
+            except (OSError, ValueError, LedgerError, BudgetError, RunnerError):
+                control_valid = False
+                components["prospective"] = {"state": "ERROR", "discovery_date": None,
+                    "discovery_status": None, "fixtures_discovered": None, "attempt_states": None,
+                    "runner_completion": "UNVERIFIED", "last_completed_run_at_utc": None,
+                    "last_run_status": None, "last_run_reasons": None,
+                    "last_run_release_sha": None, "last_run_summary": None}
+                components["budget"] = {"state": "ERROR", "period_start": None,
+                    "period_end_exclusive": None, "allowance": None, "reserved": None, "remaining": None}
+            _completion(components["prospective"], state_dir, now)
+            if control_valid:
+                try:
+                    metrics = read_performance(state_dir)
+                    model, offers = metrics["model_performance"], metrics["opportunity_performance"]
+                    components["evidence"] = {"state": "OK", "predictions": model["total_prediction_runs"],
+                                              "settled_predictions": model["settled_prediction_runs"],
+                                              "opportunities": offers["total_opportunity_events"],
+                                              "settled_opportunities": offers["settled_opportunities"],
+                                              "unresolved_opportunities": offers["unresolved_open_opportunities"]}
+                except (OSError, ValueError, KeyError, TypeError, LedgerError):
+                    components["evidence"] = {"state": "ERROR", "predictions": None,
+                        "settled_predictions": None, "opportunities": None,
+                        "settled_opportunities": None, "unresolved_opportunities": None}
     except (OSError, ValueError, LedgerError, BudgetError, RunnerError):
         components.setdefault("prospective", {"state": "ERROR", "discovery_date": None,
                    "discovery_status": None, "fixtures_discovered": None, "attempt_states": None,
@@ -208,9 +227,9 @@ def report_status(*, release: Path, config_path: Path, state_dir: Path,
                    "last_run_summary": None})
         components.setdefault("budget", {"state": "ERROR", "period_start": None,
             "period_end_exclusive": None, "allowance": None, "reserved": None, "remaining": None})
-        components["evidence"] = {"state": "UNVERIFIED", "predictions": None,
-            "settled_predictions": None, "opportunities": None,
-            "settled_opportunities": None, "unresolved_opportunities": None}
+    components.setdefault("evidence", {"state": "UNVERIFIED", "predictions": None,
+        "settled_predictions": None, "opportunities": None,
+        "settled_opportunities": None, "unresolved_opportunities": None})
     components["services"] = _services(service_signals)
     return {"schema_version": 1, "checked_at_utc": now.isoformat(), "components": components}
 

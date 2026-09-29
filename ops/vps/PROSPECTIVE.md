@@ -224,8 +224,8 @@ If receipt publication fails after provider/evidence work, the command exits
 nonzero with fixed `RECEIPT_PUBLICATION_FAILED`; it never retries provider work
 or refunds reservations. Diagnose under the existing journal, control, and
 immutable evidence before the next scheduled invocation. `modelfc-status`
-reads only the newest receipt, bounds directory enumeration to 100 years and
-1000 receipts in the latest day, ignores abandoned `.record-*.tmp` files, and
+reads only the newest published receipt, bounds directory enumeration to 100
+years and 1000 entries per inspected day, skips empty or temp-only days, and
 reports corrupted newest evidence as `ERROR` rather than using an older record.
 The reader parses just one receipt; roughly 24 tiny files per day accumulate
 without automatic deletion. Receipts remain private to `modelfc-runtime`, with
