@@ -110,7 +110,8 @@ export function decodeOpportunityDetail(value: unknown, requestedId: string): Op
   if (!record(value) || value.opportunity_id !== requestedId
     || decodeOpportunities([value]).length !== 1
     || !record(value.forecast) || !record(value.qualification)
-    || !Array.isArray(value.market_at_qualification) || !Array.isArray(value.recorded_market)) mismatch("opportunity detail");
+    || !Array.isArray(value.market_at_qualification) || !Array.isArray(value.recorded_market)
+    || !record(value.market_movement)) mismatch("opportunity detail");
   const forecast = value.forecast;
   const qualification = value.qualification;
   const historical = forecast.historical_context;
@@ -122,6 +123,14 @@ export function decodeOpportunityDetail(value: unknown, requestedId: string): Op
       && (historical[`${side}_venue_observations`] as number) >= (historical.min_venue_history as number)));
   const pair = value.market_at_qualification;
   const snapshots = value.recorded_market;
+  const movement = value.market_movement;
+  const lastPaired = snapshots.slice(1).filter((item: unknown): item is { observation_id: string; no_vig_market_probability: number } =>
+    record(item) && typeof item.no_vig_market_probability === "number").at(-1);
+  // Cross-field validation only. The displayed movement always comes from the API.
+  const distanceAtQualification = Math.abs((value.model_decisive_probability as number) - (value.no_vig_market_probability as number));
+  const distanceAtLatest = lastPaired ? Math.abs((value.model_decisive_probability as number) - lastPaired.no_vig_market_probability) : null;
+  const expectedDirection = distanceAtLatest === null ? null : distanceAtLatest < distanceAtQualification ? "TOWARD_ZENO"
+    : distanceAtLatest > distanceAtQualification ? "AWAY_FROM_ZENO" : "UNCHANGED";
   if (!nonnegative(forecast.expected_team_corners)
     || !nonnegative(forecast.expected_home_corners) || !nonnegative(forecast.expected_away_corners)
     || !nonnegative(forecast.expected_match_corners)
@@ -165,13 +174,25 @@ export function decodeOpportunityDetail(value: unknown, requestedId: string): Op
       && item.bookmaker === value.bookmaker && item.direction === value.direction && item.line === value.line
       && Number.isSafeInteger(item.american_odds) && Math.abs(item.american_odds as number) >= 100
       && finite(item.decimal_odds) && (item.decimal_odds as number) > 1
+      && (item.no_vig_market_probability === null || probability(item.no_vig_market_probability))
       && typeof item.price_consistent === "boolean"
       && typeof item.qualifying_observation === "boolean")
     || snapshots[0].observation_id !== value.observation_id || snapshots[0].qualifying_observation !== true
     || snapshots[0].price_consistent !== true
+    || snapshots[0].no_vig_market_probability !== value.no_vig_market_probability
     || snapshots[0].american_odds !== value.american_odds || snapshots[0].decimal_odds !== value.decimal_odds
     || snapshots.some((item: { retrieved_at_utc: string }, index: number) => index > 0 && Date.parse(item.retrieved_at_utc) < Date.parse(snapshots[index - 1].retrieved_at_utc))
     || snapshots.slice(1).some((item: { qualifying_observation: boolean }) => item.qualifying_observation)
+    || !["TOWARD_ZENO", "AWAY_FROM_ZENO", "UNCHANGED", "NO_LATER_OBSERVATION", "UNAVAILABLE"].includes(movement.status as string)
+    || (movement.status === "NO_LATER_OBSERVATION" && value.recorded_market_count !== 1)
+    || (movement.status === "UNAVAILABLE" && ((value.recorded_market_count as number) <= 1 || lastPaired !== undefined))
+    || (["NO_LATER_OBSERVATION", "UNAVAILABLE"].includes(movement.status as string)
+      ? movement.market_change_percentage_points !== null || movement.latest_comparable_observation_id !== null
+      : !finite(movement.market_change_percentage_points) || !lastPaired
+        || movement.latest_comparable_observation_id !== lastPaired.observation_id
+        || movement.status !== expectedDirection
+        || Math.abs((movement.market_change_percentage_points as number) -
+          (lastPaired.no_vig_market_probability - (value.no_vig_market_probability as number)) * 100) > 1e-8)
     || (value.settlement_status === "SETTLED"
       ? !count(value.actual_home_corners) || !count(value.actual_away_corners) || !timestamp(value.outcome_recorded_at_utc)
         || value.actual_team_corners !== value[value.team_side === "HOME" ? "actual_home_corners" : "actual_away_corners"]

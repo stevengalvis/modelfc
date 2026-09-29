@@ -3,7 +3,7 @@
 from datetime import date
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
@@ -247,8 +247,15 @@ class RecordedPriceResponse(StrictModel):
     line: float
     american_odds: int
     decimal_odds: float
+    no_vig_market_probability: float | None
     price_consistent: bool
     qualifying_observation: bool
+
+
+class MarketMovementResponse(StrictModel):
+    status: Literal["TOWARD_ZENO", "AWAY_FROM_ZENO", "UNCHANGED", "NO_LATER_OBSERVATION", "UNAVAILABLE"]
+    market_change_percentage_points: float | None
+    latest_comparable_observation_id: str | None
 
 
 class OpportunityDetailResponse(OpportunityResponse):
@@ -257,6 +264,7 @@ class OpportunityDetailResponse(OpportunityResponse):
     market_at_qualification: list[PairedPriceResponse]
     recorded_market: list[RecordedPriceResponse]
     recorded_market_count: int
+    market_movement: MarketMovementResponse
     source_observation_id: str
     actual_home_corners: int | None
     actual_away_corners: int | None
