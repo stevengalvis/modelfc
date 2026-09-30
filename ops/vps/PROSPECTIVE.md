@@ -244,6 +244,34 @@ budget, and prediction schemas. An older status command returns to `UNVERIFIED`.
 Check launcher/module compatibility before host activation or rollback; install
 neither launcher in this code PR.
 
+### Private shadow market decisions
+
+The E1 DeepFC 180-day shadow remains private research. When a new quote
+observation is published before kickoff, the runner freezes the selected
+release SHA and the versioned champion qualification policy in
+`state/shadow-observation-policies/<observation-id>.json` before champion
+assessment. After normal champion opportunity publication and shadow capture,
+it writes one append-only `state/shadow-decisions/<prediction-id>/<decision-id>.json`
+per observation. Both schema-1 record families carry canonical record hashes;
+they reference the immutable observation, production prediction and shadow
+prediction. They receive no `modelfc-api` ACL and have no public route.
+
+The private `modelfc.corner_shadow_decisions` comparison consumes the source
+shadow target cohort only. A later quote may assess matching original lines,
+but later-only lines are excluded. It reports each qualifying snapshot as a
+**hypothetical event**, distinguishes unique target/bookmaker pairs, and uses
+one-unit American-price profit for settled WIN/LOSS/PUSH. Repeated snapshots
+are not separate placed bets. No closing-line or CLV claim is made.
+
+If the private stamp or assessment fails, champion opportunities still publish.
+The receipt carries the fixed `SHADOW_ASSESSMENT_MISSING` reason. Replay may
+complete a missing assessment only if the original immutable policy stamp,
+observation, prediction and shadow record all validate; it never substitutes
+the policy of a newer release. An observation without a stamp remains explicitly
+missing in the private comparison, including after rollback. Older runners
+ignore these private record families; do not rewrite or backfill them during
+rollback. No provider request or budget reservation is used for replay.
+
 Before any provider work, rollback may remove only the unactivated new unit,
 launcher and copied destination after confirming no process uses them; the preserved
 legacy state remains authoritative. After provider work, do not switch back by

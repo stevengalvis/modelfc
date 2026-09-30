@@ -416,7 +416,9 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--state-dir", type=Path, required=True)
     args = parser.parse_args()
-    print(json.dumps(compare_settled(args.state_dir), indent=2))
+    from modelfc.corner_shadow_decisions import compare_decisions
+    print(json.dumps({**compare_settled(args.state_dir),
+                      "opportunity_decisions": compare_decisions(args.state_dir)}, indent=2))
 
 
 if __name__ == "__main__":
