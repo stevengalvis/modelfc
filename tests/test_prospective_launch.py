@@ -59,6 +59,8 @@ class ProspectiveLaunchTests(unittest.TestCase):
         (release / ".git/modelfc-deployed-sha").chmod(0o444)
         (release / "src/modelfc/corner_prospective.py").touch()
         (release / "src/modelfc/corner_prospective_budget.py").touch()
+        (release / "src/modelfc/prospective_run_receipts.py").touch()
+        (release / "src/modelfc/ledger_storage.py").touch()
         (release / ".venv/pyvenv.cfg").write_text("version = 3.12\n")
         (release / ".venv/bin/python").symlink_to(sys.executable)
         return release

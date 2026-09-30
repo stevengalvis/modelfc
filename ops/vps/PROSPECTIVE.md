@@ -199,6 +199,51 @@ means a missed trigger is not replayed at boot.
 
 ## 7. Rollback and compatibility
 
+### Private completed-run receipts
+
+After separately authorized installation of the reviewed prospective launcher,
+each `run-once` invocation that acquires `runner.lock` and reaches its normal
+summary boundary writes a new version-1 JSON receipt at
+`/var/lib/modelfc/state/prospective/run-receipts/YYYY-MM-DD/<UTC-completion>-<run-id>.json`.
+It contains a random 32-hex run ID, UTC start/completion timestamps, integer
+`duration_ms` (elapsed microseconds rounded down to milliseconds),
+`completion=COMPLETED`, the 40-hex deployed release SHA, and the exact
+fixed-code runner summary: status, reasons, counters, and remaining budget.
+`record_hash` is SHA-256 over the other fields serialized as sorted-key compact
+UTF-8 JSON; the reader verifies the hash, timestamp interval, duration, schema,
+and fixed summary fields. The hash detects accidental or unauthorised record
+alteration but does not grant authenticity against the trusted runtime writer.
+The launcher verifies the physical
+deploy-owned release and protected SHA marker before exec. The runner
+independently reads that protected marker; it never accepts a caller-supplied
+SHA in production. The launcher also protects the receipt and storage modules.
+
+Publication occurs under the existing exclusive `runner.lock` after the final
+summary, by writing and syncing a temporary inode, exclusively hard-linking it
+to a fresh immutable pathname, and syncing the directory. No `last_run.json`
+is replaced. A completed `FAIL` summary still gets a receipt; an invocation
+blocked on the lock or killed before completion does not. A healthy zero-work
+run gets a receipt. A receipt attests only to its own invocation, not to the
+latest scheduled timer trigger or the absence of review conditions.
+
+If receipt publication fails after provider/evidence work, the command exits
+nonzero with fixed `RECEIPT_PUBLICATION_FAILED`; it never retries provider work
+or refunds reservations. Diagnose under the existing journal, control, and
+immutable evidence before the next scheduled invocation. `modelfc-status`
+reads only the newest published receipt, bounds directory enumeration to 100
+years and 1000 entries per inspected day, skips empty or temp-only days, and
+reports corrupted newest evidence as `ERROR` rather than using an older record.
+The reader parses just one receipt; roughly 24 tiny files per day accumulate
+without automatic deletion. Receipts remain private to `modelfc-runtime`, with
+no API ACL, route, or frontend exposure. Before the first receipt, status
+truthfully reports `UNVERIFIED` and a null completion time.
+
+For rollback, leave receipts untouched. An older runner can ignore these
+additional private files if it remains compatible with all existing control,
+budget, and prediction schemas. An older status command returns to `UNVERIFIED`.
+Check launcher/module compatibility before host activation or rollback; install
+neither launcher in this code PR.
+
 Before any provider work, rollback may remove only the unactivated new unit,
 launcher and copied destination after confirming no process uses them; the preserved
 legacy state remains authoritative. After provider work, do not switch back by

@@ -144,6 +144,8 @@ class ProspectiveProductionRehearsal(unittest.TestCase):
                           pre["captures_created"], pre["market_observations_created"],
                           pre["opportunities_created"]), ("OK", 1, 3, 1, 1, 1))
         self.assertEqual(self.calls, ["fixtures", "markets", "odds"])
+        from modelfc.prospective_run_receipts import latest as latest_receipt
+        self.assertEqual(latest_receipt(self.state, now=self.now)["summary"], pre)
         control = self.control()
         self.assertEqual((control["version"], control["period"]["allowance"],
                           control["period"]["reserved"], pre["prospective_budget_remaining"]),
