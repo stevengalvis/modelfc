@@ -1225,7 +1225,7 @@ class IsolatedBoundaryTest(unittest.TestCase):
         workflow = (SOURCE.parents[2] / ".github/workflows/tests.yml").read_text()
         for value in ("runs-on: ubuntu-24.04", 'python-version: "3.12"',
                       "--require-hashes --only-binary=:all: --no-cache-dir -r requirements-deploy.lock",
-                      "--check-installed", "-m pip check", "needs: test", "timeout-minutes: 75",
+                      "--check-installed", "-m pip check", "needs: [test, frontend]", "timeout-minutes: 75",
                       "-o ConnectTimeout=15", "-o ServerAliveInterval=15", "-o ServerAliveCountMax=4",
                       '"STORAGE_LIMIT_FAILED"'):
             self.assertIn(value, workflow)
