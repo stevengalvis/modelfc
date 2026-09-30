@@ -1,7 +1,7 @@
 """Synthetic offline checks for the production status read model and CLI."""
 
 from contextlib import redirect_stdout
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import importlib.util
 from io import StringIO
 import json
@@ -85,7 +85,7 @@ class ProductionStatusTests(unittest.TestCase):
         summary.update({key: 0 for key in COUNTERS})
         summary["fixtures_discovered"] = fixtures
         summary["provider_requests"] = 2
-        return publish_receipt(self.state, started=at, completed=at,
+        return publish_receipt(self.state, started=at - timedelta(milliseconds=2800), completed=at,
                                summary=summary, release_sha=SHA)
 
     def test_latest_completed_receipt_and_status_variants(self):
@@ -97,6 +97,7 @@ class ProductionStatusTests(unittest.TestCase):
                 part = report["components"]["prospective"]
                 self.assertEqual(part["runner_completion"], "VERIFIED")
                 self.assertEqual(part["last_completed_run_at_utc"], at.isoformat())
+                self.assertEqual(part["last_run_duration_ms"], 2800)
                 self.assertEqual(part["last_run_status"], value)
                 self.assertEqual(part["state"], "ERROR" if value == "FAIL" else
                                  "WARNING" if value == "PARTIAL" else "OK")
@@ -131,6 +132,15 @@ class ProductionStatusTests(unittest.TestCase):
         self.assertEqual(prospective["runner_completion"], "VERIFIED")
         self.assertEqual(prospective["last_run_status"], "FAIL")
         self.assertEqual(prospective["last_completed_run_at_utc"], NOW.isoformat())
+
+    def test_receipt_release_is_frozen_across_current_release_marker_failure(self):
+        self.receipt()
+        marker = self.release / ".git/modelfc-deployed-sha"
+        marker.chmod(0o644)
+        marker.write_text("invalid", encoding="ascii")
+        report = self.report()
+        self.assertEqual(report["components"]["release"]["state"], "ERROR")
+        self.assertEqual(report["components"]["prospective"]["last_run_release_sha"], SHA)
 
     def test_healthy_empty_state_zero_fixtures_and_no_lazy_state_lock(self):
         before = {str(path.relative_to(self.root)): path.read_bytes()

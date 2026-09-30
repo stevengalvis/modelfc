@@ -1,6 +1,8 @@
 """Private, immutable completion receipts for the prospective operator runner."""
 
 from datetime import datetime, timezone
+import hashlib
+import hmac
 import json
 import os
 from pathlib import Path
@@ -24,7 +26,8 @@ REASONS = frozenset(("PERIOD_EXPIRED", "REQUEST_BUDGET", "SETTLEMENT_REVIEW",
                      "CONTROL_MISSING", "CONTROL_INVALID", "RELEASE_INVALID",
                      "STORAGE_OR_INTEGRITY_FAILURE"))
 RECEIPT_FIELDS = frozenset(("schema_version", "run_id", "started_at_utc",
-                            "completed_at_utc", "release_sha", "summary"))
+                            "completed_at_utc", "duration_ms", "completion",
+                            "release_sha", "summary", "record_hash"))
 NAME = re.compile(r"(\d{8}T\d{6}\d{6}Z)-([0-9a-f]{32})\.json\Z")
 DAY = re.compile(r"\d{4}-\d{2}-\d{2}\Z")
 MAX_DAYS = 36600
@@ -34,6 +37,17 @@ MAX_BYTES = 8192
 
 class ReceiptError(ValueError):
     """The authoritative private completion history cannot be verified."""
+
+
+def _hash(record):
+    canonical = json.dumps({key: value for key, value in record.items() if key != "record_hash"},
+                           sort_keys=True, separators=(",", ":"), allow_nan=False)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _duration_ms(start, end):
+    elapsed = end - start
+    return elapsed.days * 86_400_000 + elapsed.seconds * 1000 + elapsed.microseconds // 1000
 
 
 def _timestamp(value):
@@ -59,6 +73,9 @@ def validate(record, *, path=None, now=None):
     start, end = _timestamp(record["started_at_utc"]), _timestamp(record["completed_at_utc"])
     if start > end or (now is not None and end > now):
         raise ReceiptError("invalid receipt interval")
+    if (record["completion"] != "COMPLETED" or type(record["duration_ms"]) is not int
+            or record["duration_ms"] != _duration_ms(start, end)):
+        raise ReceiptError("invalid receipt completion")
     summary = record["summary"]
     if (not isinstance(summary, dict) or set(summary) != {"status", "reasons",
             "prospective_budget_remaining", *COUNTERS}
@@ -75,6 +92,15 @@ def validate(record, *, path=None, now=None):
                 (type(summary["prospective_budget_remaining"]) is not int or
                  summary["prospective_budget_remaining"] < 0))):
         raise ReceiptError("invalid receipt counters")
+    if (not isinstance(record["record_hash"], str)
+            or not re.fullmatch(r"[0-9a-f]{64}", record["record_hash"])):
+        raise ReceiptError("invalid receipt hash")
+    try:
+        expected = _hash(record)
+    except (ValueError, TypeError):
+        raise ReceiptError("invalid receipt hash") from None
+    if not hmac.compare_digest(record["record_hash"], expected):
+        raise ReceiptError("receipt hash mismatch")
     if path is not None:
         filename = end.strftime("%Y%m%dT%H%M%S%fZ") + "-" + record["run_id"] + ".json"
         if path.name != filename or path.parent.name != end.date().isoformat():
@@ -85,10 +111,14 @@ def validate(record, *, path=None, now=None):
 def publish(state, *, started, completed, summary, release_sha):
     """Publish only after run_once completes, while its runner lock is held."""
     run_id = uuid.uuid4().hex
-    record = validate({"schema_version": 1, "run_id": run_id,
-                       "started_at_utc": started.isoformat(),
-                       "completed_at_utc": completed.isoformat(),
-                       "release_sha": release_sha, "summary": summary})
+    record = {"schema_version": 1, "run_id": run_id,
+              "started_at_utc": started.isoformat(),
+              "completed_at_utc": completed.isoformat(),
+              "duration_ms": _duration_ms(started, completed),
+              "completion": "COMPLETED", "release_sha": release_sha,
+              "summary": summary}
+    record["record_hash"] = _hash(record)
+    validate(record)
     root = Path(state) / "prospective" / "run-receipts"
     day = root / completed.date().isoformat()
     new_root, new_day = not root.exists(), not day.exists()

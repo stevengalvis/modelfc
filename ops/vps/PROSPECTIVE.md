@@ -205,9 +205,15 @@ After separately authorized installation of the reviewed prospective launcher,
 each `run-once` invocation that acquires `runner.lock` and reaches its normal
 summary boundary writes a new version-1 JSON receipt at
 `/var/lib/modelfc/state/prospective/run-receipts/YYYY-MM-DD/<UTC-completion>-<run-id>.json`.
-It contains a random 32-hex run ID, UTC start/completion timestamps, the
-40-hex deployed release SHA, and the exact fixed-code runner summary: status,
-reasons, counters, and remaining budget. The launcher verifies the physical
+It contains a random 32-hex run ID, UTC start/completion timestamps, integer
+`duration_ms` (elapsed microseconds rounded down to milliseconds),
+`completion=COMPLETED`, the 40-hex deployed release SHA, and the exact
+fixed-code runner summary: status, reasons, counters, and remaining budget.
+`record_hash` is SHA-256 over the other fields serialized as sorted-key compact
+UTF-8 JSON; the reader verifies the hash, timestamp interval, duration, schema,
+and fixed summary fields. The hash detects accidental or unauthorised record
+alteration but does not grant authenticity against the trusted runtime writer.
+The launcher verifies the physical
 deploy-owned release and protected SHA marker before exec. The runner
 independently reads that protected marker; it never accepts a caller-supplied
 SHA in production. The launcher also protects the receipt and storage modules.

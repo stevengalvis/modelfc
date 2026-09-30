@@ -91,6 +91,8 @@ class PilotTests(unittest.TestCase):
                          ("OK", 0, 1))
         saved = latest_receipt(self.state, now=self.now + timedelta(seconds=1))
         self.assertEqual(saved["summary"], first)
+        self.assertEqual(saved["completion"], "COMPLETED")
+        self.assertEqual(saved["duration_ms"], 0)
         self.assertEqual(saved["started_at_utc"], self.now.isoformat())
         self.assertEqual(saved["completed_at_utc"], self.now.isoformat())
         self.assertRegex(saved["release_sha"], r"^[0-9a-f]{40}$")

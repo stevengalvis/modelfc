@@ -41,12 +41,24 @@ class ReceiptTests(unittest.TestCase):
             self.publish()
         self.assertEqual(len(observed), 1)
         self.assertTrue(observed[0].exists())
-        self.assertEqual(receipts.latest(self.state, now=NOW)["summary"], self.summary)
+        saved = receipts.latest(self.state, now=NOW)
+        self.assertEqual(saved["summary"], self.summary)
+        self.assertEqual(saved["completion"], "COMPLETED")
+        self.assertEqual(saved["duration_ms"], 0)
+        self.assertEqual(saved["record_hash"], receipts._hash(saved))
+
+    def test_duration_is_derived_from_frozen_utc_timestamps(self):
+        started = NOW - timedelta(seconds=2, milliseconds=812, microseconds=900)
+        saved = self.publish(start=started)
+        self.assertEqual(saved["duration_ms"], 2812)
+        self.assertEqual(receipts.latest(self.state, now=NOW), saved)
 
     def test_intervals_schema_and_identity_fail_closed(self):
         record = self.publish()
         path = next(self.state.rglob("*.json"))
         for change in ({"schema_version": 2}, {"release_sha": "not-a-sha"},
+                       {"completion": "STARTED"}, {"duration_ms": True},
+                       {"duration_ms": 1},
                        {"started_at_utc": (NOW + timedelta(hours=1)).isoformat()},
                        {"run_id": "b" * 32},
                        {"summary": {**self.summary, "provider_requests": -1}},
@@ -55,6 +67,15 @@ class ReceiptTests(unittest.TestCase):
                 path.write_text(json.dumps({**record, **change}), encoding="utf-8")
                 with self.assertRaises(receipts.ReceiptError):
                     receipts.latest(self.state, now=NOW)
+
+    def test_hash_detects_well_formed_counter_tampering(self):
+        self.publish()
+        path = next(self.state.rglob("*.json"))
+        record = json.loads(path.read_text(encoding="utf-8"))
+        record["summary"]["provider_requests"] = 1
+        path.write_text(json.dumps(record), encoding="utf-8")
+        with self.assertRaisesRegex(receipts.ReceiptError, "hash mismatch"):
+            receipts.latest(self.state, now=NOW)
 
     def test_duplicate_identity_and_future_timestamp(self):
         self.publish()

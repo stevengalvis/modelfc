@@ -22,7 +22,8 @@ It performs no refresh, collection, settlement, provider request, or ledger writ
 
 Before the first receipt, `runner_completion=UNVERIFIED` and the last-run fields
 are null. With a valid receipt, `runner_completion=VERIFIED`,
-`last_completed_run_at_utc`, `last_run_status`, `last_run_reasons`, `last_run_release_sha`, and
+`last_completed_run_at_utc`, `last_run_duration_ms`, `last_run_status`,
+`last_run_reasons`, `last_run_release_sha`, and
 `last_run_summary` describe **that invocation**, including `PARTIAL` or `FAIL`.
 The prospective component is `WARNING` for the last `PARTIAL` summary and
 `ERROR` for the last `FAIL` summary, even though completion itself is verified.
