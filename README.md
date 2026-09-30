@@ -397,6 +397,63 @@ The venue-and-opponent approach is also still a simple baseline: it does not
 include recency weighting, lineup or tactical context, or current-season
 external data.
 
+### Prospective 180-day shadow comparison
+
+The prospective runner records a private E1-only challenger alongside the
+unchanged production champion. The candidate is the fixed 180-day venue/opponent
+Negative Binomial from DeepFC PR #7, source commit
+`cff381c04b0b6b341b4845fded743c7aa2df6f4b`: 180-day exponential half-life,
+5-match smoothing, at least 100 earlier team observations and 5 relevant venue
+observations per team. NB2 dispersion uses DeepFC's exact pooled moment
+arithmetic, including its Poisson fallback. Other leagues are unchanged.
+
+Schema v2 immutable records in `shadow-predictions/<analysis-id>.json` freeze:
+champion prediction ID/hash, capture request/response hashes, source observation
+reference, fixture, original prediction time, actual shadow publication time,
+model/specification and both source/release SHAs, history CSV hashes and cutoff,
+home/away means, NB2 dispersion/size, and supported source-observation TEAM_TOTAL
+target IDs/hashes, team/side/direction/line and win/push/decisive probabilities.
+The record is canonically hash-protected and atomically created without overwrite.
+This unmerged schema replaces the earlier PR design; no production records need
+migration. Shadow files are private mode 0600 and never receive API read ACLs.
+
+Every inventory pass validates existing shadows or attempts recovery of a missing
+shadow, including after interruption following champion analysis/prediction
+publication. Recovery requires exact champion/capture/observation/target links,
+unchanged historical CSV bytes under the history lock, the same executing Zeno
+release as the champion prediction, and publication strictly before kickoff.
+The publication guard rechecks kickoff immediately before the atomic link.
+Recovery never backfills from refreshed history or another release, and never
+creates evidence after kickoff. If proof fails, the shadow remains missing;
+`SHADOW_CAPTURE_FAILED` marks the private run summary/receipt PARTIAL. Champion
+qualification, settlement, provider calls and budget reservations continue
+unchanged. Existing valid shadows are read without consulting current history.
+No interruption is converted into a completed invocation receipt.
+
+The paired probability cohort is fixed to supported TEAM_TOTAL targets from the
+champion's **source observation**, deduplicated across bookmakers by target ID.
+Later-only lines are excluded and explicitly counted; an existing source target
+remains paired even if later prices change. WIN/LOSS decisive Brier uses frozen
+probabilities only. PUSH targets are excluded from both decisive scores and
+counted. Whole-line records retain win, push and decisive probability separately.
+Evaluation never regenerates probabilities or reruns either model.
+
+```bash
+PYTHONPATH=src python -m modelfc.corner_shadow --state-dir "$MODELFC_STATE_DIR"
+```
+
+The private read-only report takes the existing runner/state read locks and
+returns production/shadow/missing prediction counts, paired settled fixtures
+and team forecasts, decisive target/push/later-only counts, paired champion and
+challenger team MAE and decisive Brier. Undefined metrics are null. Validated
+outcome-chain tips, including explicit corrections, supply actual results.
+Corrupt records or mismatched links fail closed rather than selecting a convenient
+subset. Missing pairs remain visible. Tiny samples establish no significance,
+profitability or promotion claim. No shadow opportunities or ROI are calculated.
+The public API, Opportunity Detail, Performance and frontend never read shadows.
+Rollback to main without this feature safely ignores this private directory;
+do not rewrite or delete shadow evidence during rollback.
+
 ### Corner evaluation performance
 
 Rolling venue/opponent estimates maintain integer totals for each venue and

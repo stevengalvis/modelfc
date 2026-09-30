@@ -15,6 +15,7 @@ import uuid
 
 from modelfc import corner_prospective as runner
 from modelfc.prospective_run_receipts import latest as latest_receipt
+from modelfc.corner_shadow import MODEL_NAME, compare_settled, read_shadow
 from modelfc import corner_analysis_outcomes as outcomes
 from modelfc import corner_opportunities as opportunities
 from modelfc.corner_market_data import (
@@ -33,6 +34,7 @@ class PilotTests(unittest.TestCase):
         self.now = recorded.NOW.replace(hour=9)
         self.setup.clock.side_effect = lambda: self.now
         patch.object(runner, "_now", side_effect=lambda: self.now).start()
+        patch("modelfc.corner_shadow._now", side_effect=lambda: self.now).start()
         patch.dict(os.environ, {"ODDSPAPI_API_KEY": "offline-secret"}).start()
         self.sleeps, self.calls = [], []
         patch.object(runner.time, "sleep", side_effect=self.sleep).start()
@@ -256,6 +258,21 @@ class PilotTests(unittest.TestCase):
         self.assertEqual(len(self.capture_paths()), 1)
         capture = json.loads(self.capture_paths()[0].read_text())
         self.assertEqual(capture["request"]["idempotency_key"], "prospective:v1:oddspapi:E1:" + self.fixtures[0]["fixtureId"])
+        shadow = read_shadow(self.state, capture["response"]["analysis_id"])
+        self.assertEqual(shadow["model"]["name"], MODEL_NAME)
+        self.assertEqual(shadow["history"]["source_data_hashes"],
+                         capture["response"]["forecast"]["source_data_hashes"])
+        self.assertGreater(shadow["distribution"]["home_expected_corners"], 0)
+        self.assertEqual(len(list((self.state / "shadow-predictions").glob("*.json"))), 1)
+
+    def test_shadow_failure_does_not_change_production_opportunities(self):
+        with patch.object(runner, "store_shadow_from_capture",
+                          side_effect=opportunities.LedgerError("SHADOW_HISTORY_CHANGED")):
+            result = self.run_pilot()
+        self.assertEqual(result["captures_created"], 1)
+        self.assertGreater(result["opportunities_created"], 0)
+        self.assertIn("SHADOW_CAPTURE_FAILED", result["reasons"])
+        self.assertFalse((self.state / "shadow-predictions").exists())
 
     def test_watchlisted_capture_gets_one_latest_observation_without_rerun(self):
         first = self.run_pilot()
@@ -721,11 +738,17 @@ class PilotTests(unittest.TestCase):
 
     def test_first_settlement_then_skip_csv_and_no_correction(self):
         self.run_pilot()
+        self.assertEqual(compare_settled(self.state)["settled_fixtures"], 0)
         path = self.capture_paths()[0]
         original = path.read_bytes()
         self.after_kickoff()
         result = self.run_pilot()
         self.assertEqual(result["outcomes_created"], 1)
+        comparison = compare_settled(self.state)
+        self.assertEqual(comparison["settled_fixtures"], 1)
+        self.assertEqual(comparison["team_forecasts"], 2)
+        self.assertGreater(comparison["market_line_targets"], 0)
+        self.assertIsNotNone(comparison["shadow"]["mean_brier"])
         self.assertEqual(path.read_bytes(), original)
         outcome_paths = list((self.state/"analysis-outcomes").rglob("*.json"))
         self.assertEqual(len(outcome_paths), 1)
