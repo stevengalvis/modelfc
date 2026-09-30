@@ -20,6 +20,7 @@ import uuid
 
 from modelfc.corner_analysis_store import load_analysis_capture
 from modelfc.corner_analysis_outcomes import OutcomeError, load_outcome_chain, record_outcome
+from modelfc.corner_shadow import store_shadow_from_new_capture
 from modelfc.corner_opportunities import (
     assess_observation, fixture_observations, prediction_observations,
     store_market_observation,
@@ -478,6 +479,12 @@ def _provider_work(path, control, state, config, summary, captured, market_data_
                 warning_codes.update(w["code"] for m in response["markets"] for w in m["warnings"])
                 summary["captures_with_history_warnings"] += int(bool(warning_codes & {
                     "STALE_DATA", "TEAM_HISTORY_AGE", "TEAM_VENUE_HISTORY_AGE"}))
+                if created:
+                    try:
+                        store_shadow_from_new_capture(state, config, analysis_id)
+                    except (LedgerError, ValueError):
+                        # A research candidate must never alter production qualification.
+                        _reason(summary, "SHADOW_CAPTURE_FAILED")
         except RunnerError:
             raise
         except MarketDataError as error:

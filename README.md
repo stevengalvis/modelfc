@@ -397,6 +397,27 @@ The venue-and-opponent approach is also still a simple baseline: it does not
 include recency weighting, lineup or tactical context, or current-season
 external data.
 
+### Prospective 180-day shadow comparison
+
+The prospective runner also records a private 180-day-weighted Championship
+team-corner shadow forecast for each **new** analysis capture. It reuses the
+same captured fixture and historical CSV hashes, adds no provider requests,
+and does not qualify opportunities or alter the current model. Existing
+captures are not backfilled. If the CSVs change between the original capture
+and shadow computation, the shadow is skipped and the run reports
+`SHADOW_CAPTURE_FAILED` while production capture continues.
+
+After outcomes settle, the runtime operator can compare paired count error and
+Brier score on the same observed team-total lines:
+
+```bash
+PYTHONPATH=src python -m modelfc.corner_shadow --state-dir "$MODELFC_STATE_DIR"
+```
+
+This private comparison does not report ROI or establish a betting edge.
+Shadow evidence lives in `shadow-predictions/`; the public API and production
+opportunity policy do not read it. The formula is frozen from DeepFC PR #7.
+
 ### Corner evaluation performance
 
 Rolling venue/opponent estimates maintain integer totals for each venue and
