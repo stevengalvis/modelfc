@@ -12,7 +12,7 @@ import re
 from modelfc.corner_analysis_store import _canonical_hash
 from modelfc.corner_markets import american_odds_terms
 from modelfc.corner_opportunities import (
-    _id, _paired_selections, _timestamp, current_qualification_policy,
+    _id, _paired_selections, _source_observation, _timestamp, current_qualification_policy,
     load_prediction, prediction_observations, prediction_target_records,
     qualification_decision, target_id,
 )
@@ -128,13 +128,17 @@ def _assessment(state, prediction, observation, shadow, stamp):
     targets = {t["target_id"]: t for t in prediction_target_records(state, prediction["prediction_id"])}
     frozen = {t["production_target_id"]: t for t in shadow["targets"]}
     source = prediction["source_observation"]["observation_id"] == observation["observation_id"]
+    source_targets = {target_id(prediction["prediction_id"], "TEAM_TOTAL", s["team_side"],
+                                s["direction"], s["line"])
+                      for s in _source_observation(state, prediction)["selections"]
+                      if s["market_type"] == "TEAM_TOTAL" and s["team_side"] in ("HOME", "AWAY")}
     later_only = set()
     decisions = []
     for selection in observation["selections"]:
         if selection["market_type"] == "TEAM_TOTAL" and selection["team_side"] in ("HOME", "AWAY"):
             identity = target_id(prediction["prediction_id"], "TEAM_TOTAL", selection["team_side"],
                                  selection["direction"], selection["line"])
-            if not source and identity not in frozen:
+            if not source and identity not in source_targets:
                 later_only.add(identity)
     for key, sides in _paired_selections(observation):
         if key[1] != "TEAM_TOTAL" or key[2] not in ("HOME", "AWAY"):

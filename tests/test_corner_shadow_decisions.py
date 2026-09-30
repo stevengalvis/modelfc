@@ -248,16 +248,22 @@ class DecisionEvidenceTests(unittest.TestCase):
         with self.assertRaisesRegex(LedgerError, 'INVALID_SHADOW_DECISION'):
             decisions._assessment(self.state, production, observation, shadow, stamp)
 
-    def test_unsupported_source_target_is_not_reported_as_later_only(self):
+    def test_unsupported_source_target_recurring_later_is_not_later_only(self):
         from modelfc.corner_shadow import read_shadow
         self.run_pilot()
+        self.now = self.now.replace(hour=10)
+        self.run_pilot()
         production = opportunities.prediction_records(self.state)[0]
-        observation = opportunities.prediction_observations(self.state, production)[0]
+        source, later = opportunities.prediction_observations(self.state, production)
         shadow = deepcopy(read_shadow(self.state, production['analysis_id']))
-        shadow['targets'].pop()  # synthetic unsupported source-cohort fixture
-        stamp = decisions._policy(self.state, observation)
-        assessment = decisions._assessment(self.state, production, observation, shadow, stamp)
-        self.assertEqual(assessment['later_only_targets_excluded'], 0)
+        removed = shadow['targets'].pop()  # synthetic unsupported source-cohort fixture
+        self.assertTrue(any(s['team_side'] == removed['team_side'] and
+                            s['direction'] == removed['direction'] and s['line'] == removed['line']
+                            for s in later['selections']))
+        for observation in (source, later):
+            stamp = decisions._policy(self.state, observation)
+            assessment = decisions._assessment(self.state, production, observation, shadow, stamp)
+            self.assertEqual(assessment['later_only_targets_excluded'], 0)
 
     def test_policy_and_input_tampering_fail_closed_without_public_mutation(self):
         self.run_pilot()
