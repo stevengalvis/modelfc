@@ -1,7 +1,10 @@
 # Fresh release deployment after merge
 
 This deployment path is separate from the trusted PR validator. A push to
-`main`, after GitHub CI succeeds, requests exactly that push's SHA. The reviewed
+`main`, after both GitHub Actions jobs `test` (backend) and `frontend` succeed
+for that same push, requests exactly that push's SHA. Failure, cancellation or
+skipping of either required job prevents deployment. Pull requests run both
+validation jobs but never run the production `deploy` job. The reviewed
 controller installed at `/opt/modelfc-deploy/deploy_main.py` creates a new,
 independent Git repository in bounded acquisition staging, exports it to
 `/srv/modelfc/releases/<sha>-<nonce>/`, installs

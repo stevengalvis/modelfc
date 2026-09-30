@@ -204,9 +204,18 @@ class DeployWorkflowTest(unittest.TestCase):
         self.assertEqual(hashlib.sha256(validator.encode()).hexdigest(),
                          "fadcf98154e70863f4a847ed0f798d9bbfa9392c9de4924bee5cc2310de46393")
 
+    def test_deploy_requires_backend_and_frontend_on_main_push_only(self):
+        deploy_header = self.workflow.split("\n  deploy:\n", 1)[1].split("    steps:\n", 1)[0]
+        gates = [line.strip() for line in deploy_header.splitlines()
+                 if line.startswith(("    needs:", "    if:"))]
+        self.assertEqual(gates, [
+            "if: github.event_name == 'push' && github.ref == 'refs/heads/main'",
+            "needs: [test, frontend]",
+        ])
+
     def test_production_settings_and_diagnostic_removal(self):
         for setting in ("${{ secrets.MODELFC_DEPLOY_SSH_KEY_BASE64 }}", "${{ github.sha }}",
-                        "environment: production", "timeout-minutes: 75", "needs: test",
+                        "environment: production", "timeout-minutes: 75", "needs: [test, frontend]",
                         "group: modelfc-vps-deployment", "cancel-in-progress: false"):
             self.assertIn(setting, self.workflow)
         self.assertNotIn("${{ secrets.MODELFC_DEPLOY_SSH_KEY }}", self.workflow)
