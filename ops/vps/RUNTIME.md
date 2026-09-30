@@ -168,18 +168,14 @@ Older refresh code can drop validator ACLs on atomic replacement. Do not resume
 the timer with incompatible code; restore coordinated compatible controller,
 units and launcher deliberately, with data reconciliation, not blanket rollback.
 
-Before enabling the new service/timer, make an explicit recorded cutover decision
-accepting the following release-lifetime limitation for this deployment. Without
-that decision, keep the timer stopped and the legacy runtime available.
-
-Known limitation: deployment normally retains successful previous releases, but
-failed-promotion cleanup can delete a candidate that was briefly visible through
-`current` before promotion verification failed. A refresh which pinned that
-candidate may then lose files during execution. This PR does not change release
-lifetime/cleanup. Until separately addressed, avoid overlapping refresh with a
-deployment/promotion attempt during host acceptance and operations; investigate
-and reconcile any affected run before another attempt. Do not prune a release
-while any runtime process is using it.
+With the reviewed release-lifetime controller separately installed, a failed
+post-publication promotion restores the previous `current` target and keeps the
+candidate physical release. A refresh that pinned the candidate while it was
+selected can continue using that path. A candidate rejected before any
+publication attempt can still be removed. The failed candidate is not an active
+or successful deployment; do not manually prune it while a runtime process may
+use it. Confirm the installed controller version during host acceptance: a
+code-only merge does not remove the older controller's release-lifetime risk.
 
 
 ### Legacy-runtime rollback versus older code

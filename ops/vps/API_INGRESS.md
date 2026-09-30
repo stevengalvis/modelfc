@@ -118,10 +118,12 @@ of a successful promotion, without granting the deployment controller new sudo
 commands or changing the prospective timer. The short restart interrupts in-flight
 reads. If the new release is incompatible, it fails closed and retries after
 10 seconds; inspect its startup SHA and health after every promotion. Keep old
-successful releases while an API process may reference them. Existing failed
-promotion cleanup can remove a briefly selected candidate: coordinate promotions
-with API restarts until that deployment limitation is fixed, and stop the API if
-the selected release is deleted. A rollback that changes `current` requires a
+successful releases while an API process may reference them. With the reviewed
+release-lifetime controller separately installed, failed post-promotion
+verification restores `current` but retains a candidate that an API process may
+have pinned. Until that host controller update is verified, the older cleanup
+limitation remains: coordinate promotions with API restarts and investigate any
+selected release deletion. A rollback that changes `current` requires a
 separate reviewed deployment decision; restarting the API alone does not roll
 back state schemas or undo immutable evidence.
 
