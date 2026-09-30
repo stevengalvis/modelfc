@@ -134,7 +134,7 @@ def _assessment(state, prediction, observation, shadow, stamp):
         if selection["market_type"] == "TEAM_TOTAL" and selection["team_side"] in ("HOME", "AWAY"):
             identity = target_id(prediction["prediction_id"], "TEAM_TOTAL", selection["team_side"],
                                  selection["direction"], selection["line"])
-            if identity not in frozen:
+            if not source and identity not in frozen:
                 later_only.add(identity)
     for key, sides in _paired_selections(observation):
         if key[1] != "TEAM_TOTAL" or key[2] not in ("HOME", "AWAY"):

@@ -248,6 +248,17 @@ class DecisionEvidenceTests(unittest.TestCase):
         with self.assertRaisesRegex(LedgerError, 'INVALID_SHADOW_DECISION'):
             decisions._assessment(self.state, production, observation, shadow, stamp)
 
+    def test_unsupported_source_target_is_not_reported_as_later_only(self):
+        from modelfc.corner_shadow import read_shadow
+        self.run_pilot()
+        production = opportunities.prediction_records(self.state)[0]
+        observation = opportunities.prediction_observations(self.state, production)[0]
+        shadow = deepcopy(read_shadow(self.state, production['analysis_id']))
+        shadow['targets'].pop()  # synthetic unsupported source-cohort fixture
+        stamp = decisions._policy(self.state, observation)
+        assessment = decisions._assessment(self.state, production, observation, shadow, stamp)
+        self.assertEqual(assessment['later_only_targets_excluded'], 0)
+
     def test_policy_and_input_tampering_fail_closed_without_public_mutation(self):
         self.run_pilot()
         baseline = decisions.compare_decisions(self.state)
@@ -294,6 +305,24 @@ class DecisionEvidenceTests(unittest.TestCase):
         self.run_pilot()
         self.assertEqual(self.public_bytes(), public)
         self.assertEqual([client.get(url).json() for url in urls], baseline)
+
+    def test_one_shadow_capture_failure_does_not_suppress_other_fixture(self):
+        self.fixtures += [dict(self.fixtures[0], fixtureId='second')]
+        original = runner.store_shadow_from_capture
+        calls = 0
+        def fail_first(*args, **kwargs):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise OSError('first private failure')
+            return original(*args, **kwargs)
+        with patch.object(runner, 'store_shadow_from_capture', side_effect=fail_first):
+            report = self.run_pilot()
+        self.assertEqual(report['captures_created'], 2)
+        self.assertGreater(report['opportunities_created'], 0)
+        self.assertEqual(report['reasons'], ['SHADOW_CAPTURE_FAILED'])
+        self.assertEqual(len(self.evidence()), 1)
+        self.assertEqual(len(list((self.state / 'shadow-predictions').glob('*.json'))), 1)
 
 
 if __name__ == '__main__':

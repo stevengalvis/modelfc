@@ -225,15 +225,15 @@ def _assessment_review(summary, assessment):
 def _capture_shadow(state, config, analysis_id, summary):
     try:
         store_shadow_from_capture(state, config, analysis_id, clock=_now)
+        return True
     except Exception:
         # Private research failure cannot prevent champion qualification or
         # settlement. Fixed receipt reason makes a missing pair visible.
         _reason(summary, "SHADOW_CAPTURE_FAILED")
+        return False
 
 
 def _shadow_assess(state, prediction, observation, summary):
-    if "SHADOW_CAPTURE_FAILED" in summary["reasons"]:
-        return
     try:
         store_assessment(state, prediction, observation)
     except Exception:
@@ -293,9 +293,9 @@ def _inventory(state, config, summary, market_data_type):
         summary["opportunities_created"] += sum(
             item["opportunities_created"] for item in assessments
         )
-        _capture_shadow(state, config, path.stem, summary)
-        for observation in observations:
-            _shadow_assess(state, prediction, observation, summary)
+        if _capture_shadow(state, config, path.stem, summary):
+            for observation in observations:
+                _shadow_assess(state, prediction, observation, summary)
         _, tip = load_outcome_chain(state, path.stem)
         if tip is not None:
             reference = tip["capture"]
@@ -456,8 +456,8 @@ def _provider_work(path, control, state, config, summary, captured, market_data_
                                                   prediction["prediction_id"])}
             summary["market_observations_created"] += int(observation_created)
             summary["opportunities_created"] += assessment["opportunities_created"]
-            _capture_shadow(state, config, concurrent_capture, summary)
-            _shadow_assess(state, prediction, observation, summary)
+            if _capture_shadow(state, config, concurrent_capture, summary):
+                _shadow_assess(state, prediction, observation, summary)
         existing_capture = captured.get(fid)
         if initial_slot and existing_capture is not None:
             continue
@@ -514,8 +514,8 @@ def _provider_work(path, control, state, config, summary, captured, market_data_
                 warning_codes.update(w["code"] for m in response["markets"] for w in m["warnings"])
                 summary["captures_with_history_warnings"] += int(bool(warning_codes & {
                     "STALE_DATA", "TEAM_HISTORY_AGE", "TEAM_VENUE_HISTORY_AGE"}))
-                _capture_shadow(state, config, analysis_id, summary)
-                _shadow_assess(state, prediction, observation, summary)
+                if _capture_shadow(state, config, analysis_id, summary):
+                    _shadow_assess(state, prediction, observation, summary)
         except RunnerError:
             raise
         except MarketDataError as error:
