@@ -1167,7 +1167,8 @@ def tests(release, sha, *, request=REQUEST, output=TEST_OUTPUT, service=SERVICE)
         output.unlink(missing_ok=True)
 
 
-def promote(release, sha, *, current=CURRENT, releases=RELEASES):
+def promote(release, sha, *, current=CURRENT, releases=RELEASES,
+            on_publish_attempt=None):
     release_metadata(release, sha)
     if release_path(release.name, releases=releases) != release or head(release) != sha:
         raise Failure("FINAL_SHA_MISMATCH")
@@ -1175,6 +1176,12 @@ def promote(release, sha, *, current=CURRENT, releases=RELEASES):
     temporary = current.with_name(".current-" + secrets.token_hex(6))
     try:
         os.symlink(str(release), temporary)
+        # After this point, an attempted replace may have made the candidate
+        # selectable even if verification or restoration subsequently fails.
+        # Tell the caller before the atomic publication, so failure cleanup
+        # cannot delete files a launcher may already have pinned.
+        if on_publish_attempt is not None:
+            on_publish_attempt()
         os.replace(temporary, current)
         active, active_sha = current_release(current=current, releases=releases)
         if active != release or active_sha != sha:
@@ -1206,6 +1213,12 @@ def deploy(sha, *, root=ROOT, releases=RELEASES, current=CURRENT, control=CONTRO
     if not isinstance(sha, str) or SHA.fullmatch(sha) is None:
         return value
     candidate = None
+    candidate_publication_attempted = False
+
+    def mark_candidate_publication_attempt():
+        nonlocal candidate_publication_attempted
+        candidate_publication_attempted = True
+
     try:
         check_boundary()
         value["state_boundary_enforced"] = True
@@ -1243,7 +1256,8 @@ def deploy(sha, *, root=ROOT, releases=RELEASES, current=CURRENT, control=CONTRO
                 raise Failure("TESTS_FAILED")
             value["tests_status"] = "PASS"
             verify_source(candidate, sha)
-            promote(candidate, sha, current=current, releases=releases)
+            promote(candidate, sha, current=current, releases=releases,
+                    on_publish_attempt=mark_candidate_publication_attempt)
             value.update(status="PASS", reason="OK", final_sha=sha,
                          promotion_status="PROMOTED")
     except Failure as error:
@@ -1254,9 +1268,11 @@ def deploy(sha, *, root=ROOT, releases=RELEASES, current=CURRENT, control=CONTRO
     except Exception:
         value.update(status="FAIL", reason="INTERNAL_ERROR")
     finally:
-        if candidate is not None and value["status"] != "PASS":
+        if (candidate is not None and value["status"] != "PASS"
+                and not candidate_publication_attempted):
             # This run exclusively created this child under RELEASES; never
-            # remove an active or previously deployed release.
+            # remove an active or possibly published release. A failed
+            # promotion may have been pinned by a launcher before rollback.
             try:
                 active, _ = current_release(current=current, releases=releases)
                 if candidate != active and candidate.parent == releases and candidate.is_dir():
