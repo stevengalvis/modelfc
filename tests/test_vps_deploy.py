@@ -819,6 +819,82 @@ class FreshReleaseTest(unittest.TestCase):
         self.current.symlink_to(self.legacy, target_is_directory=True)
         self.assertEqual(self.run_deploy(self.b)["reason"], "SOURCE_INVALID")
 
+    def test_failed_postpublication_check_preserves_pinned_candidate(self):
+        self.assertEqual(self.run_deploy(self.a)["status"], "PASS")
+        previous = self.created[0]
+        original_current_release = deploy.current_release
+        original_replace = os.replace
+        pinned = []
+        selections = []
+
+        def track_replace(source, destination):
+            # Both selection and rollback replace a symlink atomically. There
+            # must be no missing-current interval between them.
+            if destination == self.current:
+                self.assertTrue(self.current.is_symlink())
+                selections.append(os.readlink(source))
+            return original_replace(source, destination)
+
+        def fail_after_launcher_pin(*args, **kwargs):
+            if self.current.is_symlink() and self.created[-1] != previous:
+                candidate = self.created[-1]
+                if os.readlink(self.current) == str(candidate):
+                    # A trusted launcher resolves the physical release while
+                    # current selects it, then verification fails.
+                    pinned.append(Path(os.readlink(self.current)))
+                    self.assertEqual((pinned[0] / "example.txt").read_text(), "two\n")
+                    raise deploy.Failure("FINAL_SHA_MISMATCH")
+            return original_current_release(*args, **kwargs)
+
+        with patch.object(deploy, "current_release", side_effect=fail_after_launcher_pin), patch.object(
+                deploy.os, "replace", side_effect=track_replace):
+            result = self.run_deploy(self.b)
+        candidate = self.created[1]
+        self.assertEqual(pinned, [candidate])
+        self.assertEqual(selections, [str(candidate), str(previous)])
+        self.assertEqual(os.readlink(self.current), str(previous))
+        self.assertEqual((result["status"], result["reason"], result["final_sha"],
+                          result["promotion_status"], result["previous_sha"]),
+                         ("FAIL", "PROMOTION_FAILED", self.a, "NOT_ATTEMPTED", self.a))
+        self.assertEqual(set(self.releases.iterdir()), {previous, candidate})
+        self.assertEqual((pinned[0] / "example.txt").read_text(), "two\n")
+        self.assertEqual((pinned[0] / ".git/modelfc-deployed-sha").read_text(), self.b)
+        self.assertEqual((self.legacy / "E1_2627.csv").read_text(), "historical evidence unchanged\n")
+        self.assertEqual((self.state / "capture.json").read_text(), "immutable evidence\n")
+
+    def test_failure_before_publication_still_cleans_candidate(self):
+        self.assertEqual(self.run_deploy(self.a)["status"], "PASS")
+        previous = self.created[0]
+        # Promotion's protected marker check fails before current could select
+        # the candidate; only this run's incomplete candidate may be removed.
+        with patch.object(deploy, "promote", side_effect=deploy.Failure("FINAL_SHA_MISMATCH")):
+            result = self.run_deploy(self.b)
+        self.assertEqual((result["status"], result["reason"]), ("FAIL", "FINAL_SHA_MISMATCH"))
+        self.assertEqual(os.readlink(self.current), str(previous))
+        self.assertEqual(list(self.releases.iterdir()), [previous])
+
+    def test_uncertain_atomic_replace_retains_possible_published_candidate(self):
+        self.assertEqual(self.run_deploy(self.a)["status"], "PASS")
+        previous = self.created[0]
+        original_replace = os.replace
+        attempted = False
+
+        def replace_then_report_failure(source, destination):
+            nonlocal attempted
+            original_replace(source, destination)
+            if destination == self.current and not attempted:
+                attempted = True
+                self.assertEqual(os.readlink(self.current), str(self.created[-1]))
+                raise OSError("publication completed before reported failure")
+
+        with patch.object(deploy.os, "replace", side_effect=replace_then_report_failure):
+            result = self.run_deploy(self.b)
+        self.assertTrue(attempted)
+        self.assertEqual((result["status"], result["reason"]), ("FAIL", "PROMOTION_FAILED"))
+        self.assertEqual(os.readlink(self.current), str(previous))
+        self.assertEqual(set(self.releases.iterdir()), set(self.created))
+        self.assertEqual((self.created[1] / "example.txt").read_text(), "two\n")
+
     def test_controller_metadata_is_exclusive_verified_and_promotion_required(self):
         release, _ = deploy.create_release(self.b, releases=self.releases, remote=str(self.remote))
         metadata = release / ".git/modelfc-deployed-sha"

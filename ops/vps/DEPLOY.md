@@ -168,8 +168,14 @@ runtime, while their build and installation execution remains sandboxed.
 Successful tests must produce a positive final unittest count on stderr.
 Promotion creates a temporary absolute symlink and atomically replaces
 `/srv/modelfc/current`. The old successful release remains on disk. A failed
-candidate never becomes current and is removed only if it was created by that
-run; abandoned candidates after a crash may be inspected and pruned manually.
+candidate never reaches publication and is removed only if it was created by
+that run. If publication through `current` is attempted, a failed promotion
+restores the previous release but retains the candidate: a launcher may have
+pinned its physical path while it was selected. An unsuccessful deployment
+report does not make that retained candidate active or approved. Do not delete
+it without separately establishing that no process uses it. Abandoned
+candidates after a crash may be inspected manually; this controller does not
+garbage-collect previously published releases.
 There is no automatic rollback: failures before promotion leave `current`
 pointing to the previous successful release. A repeated request for the
 already current SHA returns `ALREADY_CURRENT` without rebuilding; a superseded
@@ -309,8 +315,14 @@ Capacity/inode exhaustion or fetch failure reports `FETCH_FAILED` (or
 retain `SHA_NOT_ON_MAIN`, `ACTIVE_SHA_NOT_ON_MAIN` or `SOURCE_INVALID`. Mount or
 cleanup boundary failure reports `STATE_BOUNDARY_FAILED`. Raw Git output is never
 returned. Failures prevent dependencies, tests and promotion. Cleanup removes only
-the current attempt's newly created incomplete candidate and unmounts its staging;
-current, retained releases, historical data and evidence remain untouched.
+the current attempt's newly created candidate when publication was never
+attempted, and unmounts its staging. Once the atomic replacement of `current`
+has been attempted, the candidate remains on disk even if post-promotion
+verification fails and `current` is restored. The attempt is treated
+conservatively because a replacement that reports failure may already have
+made the release selectable. Historical data and evidence remain untouched.
+This protection takes effect only after the reviewed controller is separately
+installed on the host; merging source does not replace the installed controller.
 
 Handled SIGINT/SIGTERM/SIGHUP interruptions follow the same cleanup. SIGKILL, host
 crash or a busy/failed unmount can leave staging behind. A subsequent attempt fails

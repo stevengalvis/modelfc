@@ -34,6 +34,7 @@ class PilotTests(unittest.TestCase):
         self.now = recorded.NOW.replace(hour=9)
         self.setup.clock.side_effect = lambda: self.now
         patch.object(runner, "_now", side_effect=lambda: self.now).start()
+        patch("modelfc.corner_shadow._now", side_effect=lambda: self.now).start()
         patch.dict(os.environ, {"ODDSPAPI_API_KEY": "offline-secret"}).start()
         self.sleeps, self.calls = [], []
         patch.object(runner.time, "sleep", side_effect=self.sleep).start()
@@ -265,7 +266,7 @@ class PilotTests(unittest.TestCase):
         self.assertEqual(len(list((self.state / "shadow-predictions").glob("*.json"))), 1)
 
     def test_shadow_failure_does_not_change_production_opportunities(self):
-        with patch.object(runner, "store_shadow_from_new_capture",
+        with patch.object(runner, "store_shadow_from_capture",
                           side_effect=opportunities.LedgerError("SHADOW_HISTORY_CHANGED")):
             result = self.run_pilot()
         self.assertEqual(result["captures_created"], 1)

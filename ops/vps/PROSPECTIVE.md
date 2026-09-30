@@ -288,11 +288,13 @@ read newly published v2 predictions. Check the immutable prediction inventory
 before any code rollback. If v2 predictions exist, keep or restore a release
 that reads both versions; never strip context or rewrite immutable evidence.
 
-Known release-lifetime limitation: failed-promotion cleanup can delete a candidate
-briefly visible through `current`. A launcher which already pinned that release can
-lose files. This change does not alter deployment release lifetime. Record explicit
-acceptance before activation, avoid overlapping prospective execution with promotion
-during acceptance, and do not prune a release used by a runtime process.
+After separate installation of the reviewed release-lifetime controller, failed
+post-publication verification restores the previous `current` target but retains
+the candidate physical release. A prospective launcher which pinned that candidate
+while it was selected can keep using its files. The retained candidate is not a
+successful or active deployment; do not manually prune it while a runtime process
+may use it. A code-only merge leaves the old installed controller's cleanup
+behavior in place until that trusted controller is separately updated.
 
 Scheduling E1 only and the hourly `:05 UTC` timer remain intentional. The runner
 discovers today's UTC fixtures once and may make one more discovery at or after
