@@ -5,12 +5,13 @@ supplied by the caller; neither this module nor its readers create locks.
 """
 
 import argparse
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 import json
 import os
 from pathlib import Path
 import re
 import stat
+import time
 from typing import Any
 
 from modelfc.corner_data import configured_history, load_data_config
@@ -192,7 +193,9 @@ def report_status(*, release: Path, config_path: Path, state_dir: Path,
     components.setdefault("refresh", {"state": "ERROR", "last_attempt_at_utc": None,
                                       "e1_result": None})
     try:
+        lock_started = time.monotonic()
         with existing_read_lock(state_dir / "prospective" / "runner.lock"):
+            receipt_now = now + timedelta(seconds=max(0.0, time.monotonic() - lock_started))
             try:
                 prospective, budget = _prospective(state_dir / "prospective" / "control.json", now)
                 components["prospective"], components["budget"] = prospective, budget
@@ -207,7 +210,7 @@ def report_status(*, release: Path, config_path: Path, state_dir: Path,
                     "last_run_release_sha": None, "last_run_summary": None}
                 components["budget"] = {"state": "ERROR", "period_start": None,
                     "period_end_exclusive": None, "allowance": None, "reserved": None, "remaining": None}
-            _completion(components["prospective"], state_dir, now)
+            _completion(components["prospective"], state_dir, receipt_now)
             if control_valid:
                 try:
                     metrics = read_performance(state_dir)

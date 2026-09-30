@@ -14,7 +14,7 @@ from unittest.mock import patch
 from modelfc import production_status as status
 from modelfc import production_status_host as host
 from modelfc.ledger_storage import LedgerError
-from modelfc.prospective_run_receipts import publish as publish_receipt
+from modelfc.prospective_run_receipts import COUNTERS, publish as publish_receipt
 
 
 NOW = datetime(2026, 9, 28, 22, 5, tzinfo=timezone.utc)
@@ -81,7 +81,6 @@ class ProductionStatusTests(unittest.TestCase):
         summary = {"status": state, "reasons": ["REQUEST_BUDGET"] if state == "PARTIAL" else
                    ["STORAGE_OR_INTEGRITY_FAILURE"] if state == "FAIL" else [],
                    "prospective_budget_remaining": 177}
-        from modelfc.prospective_run_receipts import COUNTERS
         summary.update({key: 0 for key in COUNTERS})
         summary["fixtures_discovered"] = fixtures
         summary["provider_requests"] = 2
@@ -141,6 +140,18 @@ class ProductionStatusTests(unittest.TestCase):
         report = self.report()
         self.assertEqual(report["components"]["release"]["state"], "ERROR")
         self.assertEqual(report["components"]["prospective"]["last_run_release_sha"], SHA)
+
+    def test_receipt_completed_while_waiting_for_runner_lock_is_not_future(self):
+        completed = NOW + timedelta(seconds=2)
+        publish_receipt(self.state, started=NOW, completed=completed,
+                        summary={"status": "OK", "reasons": [],
+                                 "prospective_budget_remaining": 177,
+                                 **{key: 0 for key in COUNTERS}}, release_sha=SHA)
+        clock = iter((100.0, 103.0))
+        with patch.object(status, "time", SimpleNamespace(monotonic=lambda: next(clock))):
+            prospective = self.report(now=NOW)["components"]["prospective"]
+        self.assertEqual(prospective["runner_completion"], "VERIFIED")
+        self.assertEqual(prospective["last_completed_run_at_utc"], completed.isoformat())
 
     def test_healthy_empty_state_zero_fixtures_and_no_lazy_state_lock(self):
         before = {str(path.relative_to(self.root)): path.read_bytes()
