@@ -21,6 +21,7 @@ import uuid
 from modelfc.corner_analysis_store import load_analysis_capture
 from modelfc.corner_analysis_outcomes import OutcomeError, load_outcome_chain, record_outcome
 from modelfc.corner_shadow import store_shadow_from_capture
+from modelfc.corner_shadow_decisions import stamp_observation, store_assessment
 from modelfc.corner_opportunities import (
     assess_observation, fixture_observations, prediction_observations,
     store_market_observation,
@@ -230,6 +231,24 @@ def _capture_shadow(state, config, analysis_id, summary):
         _reason(summary, "SHADOW_CAPTURE_FAILED")
 
 
+def _shadow_assess(state, prediction, observation, summary):
+    if "SHADOW_CAPTURE_FAILED" in summary["reasons"]:
+        return
+    try:
+        store_assessment(state, prediction, observation)
+    except Exception:
+        # Missing historical policy stamps cannot be backfilled from current
+        # configuration. Neither private research nor its recovery blocks champion.
+        _reason(summary, "SHADOW_ASSESSMENT_MISSING")
+
+
+def _shadow_stamp(state, observation, release_sha, summary):
+    try:
+        stamp_observation(state, observation, release_sha, clock=_now)
+    except Exception:
+        _reason(summary, "SHADOW_ASSESSMENT_MISSING")
+
+
 def _inventory(state, config, summary, market_data_type):
     captured = {}
     inventory = []
@@ -275,6 +294,8 @@ def _inventory(state, config, summary, market_data_type):
             item["opportunities_created"] for item in assessments
         )
         _capture_shadow(state, config, path.stem, summary)
+        for observation in observations:
+            _shadow_assess(state, prediction, observation, summary)
         _, tip = load_outcome_chain(state, path.stem)
         if tip is not None:
             reference = tip["capture"]
@@ -305,7 +326,7 @@ def _inventory(state, config, summary, market_data_type):
     return captured
 
 
-def _provider_work(path, control, state, config, summary, captured, market_data_type):
+def _provider_work(path, control, state, config, summary, captured, market_data_type, release_sha):
     client = guard = None
     def get_client():
         nonlocal client, guard
@@ -435,6 +456,8 @@ def _provider_work(path, control, state, config, summary, captured, market_data_
                                                   prediction["prediction_id"])}
             summary["market_observations_created"] += int(observation_created)
             summary["opportunities_created"] += assessment["opportunities_created"]
+            _capture_shadow(state, config, concurrent_capture, summary)
+            _shadow_assess(state, prediction, observation, summary)
         existing_capture = captured.get(fid)
         if initial_slot and existing_capture is not None:
             continue
@@ -454,6 +477,7 @@ def _provider_work(path, control, state, config, summary, captured, market_data_
             quotes = client.get_corner_markets(fixture)
             observation, observation_created = store_market_observation(state, quotes)
             summary["market_observations_created"] += int(observation_created)
+            _shadow_stamp(state, observation, release_sha, summary)
             if not any(s.request.market_type == "TEAM_TOTAL" for s in quotes.selections):
                 attempt["state"] = "NO_TEAM_TOTAL"
                 summary["captures_skipped_no_team_totals"] += 1
@@ -468,6 +492,7 @@ def _provider_work(path, control, state, config, summary, captured, market_data_
                 existing_capture["watchlisted"] |= assessment["watchlisted"]
                 existing_capture["observation_count"] += int(observation_created)
                 summary["opportunities_created"] += assessment["opportunities_created"]
+                _shadow_assess(state, existing_capture["prediction"], observation, summary)
                 attempt["state"] = "DONE"
             else:
                 response, created = client.capture(quotes, data_config_path=config,
@@ -490,6 +515,7 @@ def _provider_work(path, control, state, config, summary, captured, market_data_
                 summary["captures_with_history_warnings"] += int(bool(warning_codes & {
                     "STALE_DATA", "TEAM_HISTORY_AGE", "TEAM_VENUE_HISTORY_AGE"}))
                 _capture_shadow(state, config, analysis_id, summary)
+                _shadow_assess(state, prediction, observation, summary)
         except RunnerError:
             raise
         except MarketDataError as error:
@@ -535,7 +561,7 @@ def run_once(*, state_dir, data_config_path, market_data_type: type[MarketDataSo
                 if control["version"] == 2:
                     rollover_if_needed(path, control, now=_now(), save=_save)
                 captured = _inventory(Path(state_dir), data_config_path, summary, market_data_type)
-                _provider_work(path, control, Path(state_dir), data_config_path, summary, captured, market_data_type)
+                _provider_work(path, control, Path(state_dir), data_config_path, summary, captured, market_data_type, release_sha)
             except RunnerError as error:
                 code = str(error)
                 if code not in REASONS:

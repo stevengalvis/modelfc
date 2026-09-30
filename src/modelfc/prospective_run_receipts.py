@@ -24,6 +24,7 @@ REASONS = frozenset(("PERIOD_EXPIRED", "REQUEST_BUDGET", "SETTLEMENT_REVIEW",
                      "PROVIDER_FAILURE", "PROVIDER_CONFIGURATION", "MARKET_METADATA_INVALID",
                      "PRICE_INCONSISTENCY_REVIEW",
                      "SHADOW_CAPTURE_FAILED",
+                     "SHADOW_ASSESSMENT_MISSING",
                      "CONTROL_MISSING", "CONTROL_INVALID", "RELEASE_INVALID",
                      "STORAGE_OR_INTEGRITY_FAILURE"))
 RECEIPT_FIELDS = frozenset(("schema_version", "run_id", "started_at_utc",

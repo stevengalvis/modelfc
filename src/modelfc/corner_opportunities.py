@@ -620,6 +620,31 @@ def _meets_edge_threshold(edge: float, threshold: float) -> bool:
     )
 
 
+def qualification_decision(selection, implied, total, decisive_probability, policy):
+    """Pure v1 decision shared by production and private shadow assessment."""
+    no_vig = implied[selection["direction"]] / total
+    edge = decisive_probability - no_vig
+    eligible_price = selection["american_odds"] >= policy["minimum_american_odds"]
+    tolerance = policy["edge_comparison_tolerance"]
+    def meets(threshold):
+        return edge > threshold or math.isclose(edge, threshold, rel_tol=0.0, abs_tol=tolerance)
+    return {"no_vig_market_probability": no_vig, "no_vig_probability_edge": edge,
+            "price_eligible": eligible_price,
+            "edge_eligible": meets(policy["minimum_no_vig_edge"]),
+            "qualified": eligible_price and meets(policy["minimum_no_vig_edge"]),
+            "watchlisted": eligible_price and meets(policy["watchlist_no_vig_edge"])}
+
+
+def current_qualification_policy():
+    return {"version": QUALIFICATION_POLICY_VERSION,
+            "minimum_american_odds": MINIMUM_AMERICAN_ODDS,
+            "minimum_no_vig_edge": MINIMUM_NO_VIG_EDGE,
+            "watchlist_no_vig_edge": WATCHLIST_NO_VIG_EDGE,
+            "edge_comparison_tolerance": EDGE_COMPARISON_TOLERANCE,
+            "no_vig_price_source": "decimal_odds",
+            "decimal_american_odds_tolerance": DECIMAL_AMERICAN_ODDS_TOLERANCE}
+
+
 def _prices_are_consistent(selection: dict[str, Any]) -> bool:
     profit, _ = american_odds_terms(selection["american_odds"])
     american_decimal = 1 + profit
@@ -680,14 +705,13 @@ def assess_observation(
             target = targets[selection["selection_id"]]
             if target["status"] != "SUPPORTED":
                 continue
-            no_vig = implied[direction] / total
-            edge = target["decisive_model_probability"] - no_vig
-            eligible_price = selection["american_odds"] >= MINIMUM_AMERICAN_ODDS
-            watchlisted |= eligible_price and _meets_edge_threshold(
-                edge, WATCHLIST_NO_VIG_EDGE,
+            decision = qualification_decision(
+                selection, implied, total, target["decisive_model_probability"],
+                current_qualification_policy(),
             )
-            if not eligible_price or not _meets_edge_threshold(
-                    edge, MINIMUM_NO_VIG_EDGE):
+            no_vig, edge = decision["no_vig_market_probability"], decision["no_vig_probability_edge"]
+            watchlisted |= decision["watchlisted"]
+            if not decision["qualified"]:
                 continue
             payload = {
                 "prediction_id": prediction["prediction_id"],
