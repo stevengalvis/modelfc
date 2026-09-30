@@ -157,6 +157,7 @@ def report_status(*, release: Path, config_path: Path, state_dir: Path,
                   now: datetime | None = None) -> dict[str, Any]:
     """Return one safe, structured snapshot; missing runtime evidence is explicit."""
     now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    report_started = time.monotonic()
     try:
         config = load_data_config(config_path)
         if "E1" not in config.leagues:
@@ -193,9 +194,8 @@ def report_status(*, release: Path, config_path: Path, state_dir: Path,
     components.setdefault("refresh", {"state": "ERROR", "last_attempt_at_utc": None,
                                       "e1_result": None})
     try:
-        lock_started = time.monotonic()
         with existing_read_lock(state_dir / "prospective" / "runner.lock"):
-            receipt_now = now + timedelta(seconds=max(0.0, time.monotonic() - lock_started))
+            receipt_now = now + timedelta(seconds=max(0.0, time.monotonic() - report_started))
             try:
                 prospective, budget = _prospective(state_dir / "prospective" / "control.json", now)
                 components["prospective"], components["budget"] = prospective, budget

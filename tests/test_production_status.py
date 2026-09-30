@@ -141,7 +141,7 @@ class ProductionStatusTests(unittest.TestCase):
         self.assertEqual(report["components"]["release"]["state"], "ERROR")
         self.assertEqual(report["components"]["prospective"]["last_run_release_sha"], SHA)
 
-    def test_receipt_completed_while_waiting_for_runner_lock_is_not_future(self):
+    def test_receipt_completed_during_status_reads_is_not_future(self):
         completed = NOW + timedelta(seconds=2)
         publish_receipt(self.state, started=NOW, completed=completed,
                         summary={"status": "OK", "reasons": [],
