@@ -93,14 +93,14 @@ def _execute(state: Path, name: str, arguments: dict[str, Any]) -> dict[str, Any
     return research.inspect_fixture(state, arguments["snapshot_id"], arguments["prediction_id"])
 
 
-def _result(state: Path, name: str, arguments: dict[str, Any]) -> CallToolResult:
+def _result(state: Path, name: str, arguments: dict[str, Any], request_id: str | int | None) -> CallToolResult:
     try:
         output = _execute(state, name, arguments)
         encoded = json.dumps(output, sort_keys=True, separators=(",", ":"), allow_nan=False)
         # Send one canonical JSON representation. The complete result envelope,
         # including text escaping, must fit the transport bound.
         result = CallToolResult(content=[TextContent(type="text", text=encoded)])
-        envelope = {"jsonrpc": "2.0", "id": 2147483647,
+        envelope = {"jsonrpc": "2.0", "id": request_id,
                     "result": result.model_dump(by_alias=True, exclude_none=True)}
         if len(json.dumps(envelope, separators=(",", ":"), ensure_ascii=False).encode("utf-8")) > MAX_MCP_RESULT_BYTES:
             raise research.ResearchError("RESEARCH_OUTPUT_LIMIT")
@@ -121,8 +121,8 @@ def build_server(state_dir: Path) -> Server:
     async def list_tools(_context, _params):
         return ListToolsResult(tools=list(_TOOLS))
 
-    async def call_tool(_context, params):
-        return await asyncio.to_thread(_result, state, params.name, params.arguments or {})
+    async def call_tool(context, params):
+        return await asyncio.to_thread(_result, state, params.name, params.arguments or {}, context.request_id)
 
     return Server("zeno-private-research", version="0.1.0", instructions=(
         "Private E1 team-corners research. Create one snapshot only when asked for current evidence, "

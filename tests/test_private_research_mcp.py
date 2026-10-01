@@ -168,9 +168,24 @@ class PrivateResearchMcpTests(unittest.IsolatedAsyncioTestCase):
         output = {'sample': '"' * 2000}
         with patch.object(domain, 'research_summary', return_value=output):
             with patch.object(adapter, 'MAX_MCP_RESULT_BYTES', len(json.dumps(output)) + 300):
-                result = adapter._result(Path('/unused'), 'research_summary', {'snapshot_id': 'a'*32})
+                result = adapter._result(Path('/unused'), 'research_summary', {'snapshot_id': 'a'*32}, 1)
         self.assertTrue(result.is_error)
         self.assertEqual(result.content[0].text, 'RESEARCH_OUTPUT_LIMIT')
+
+    async def test_bound_uses_actual_string_request_id(self):
+        output = {'sample': 'x' * 1000}
+        args = {'snapshot_id': 'a'*32}
+        with patch.object(domain, 'research_summary', return_value=output):
+            short = adapter._result(Path('/unused'), 'research_summary', args, 1)
+            self.assertFalse(short.is_error)
+            size = len(json.dumps({'jsonrpc': '2.0', 'id': 1,
+                                  'result': short.model_dump(by_alias=True, exclude_none=True)},
+                                  separators=(',', ':'), ensure_ascii=False).encode())
+            with patch.object(adapter, 'MAX_MCP_RESULT_BYTES', size + 10):
+                self.assertFalse(adapter._result(Path('/unused'), 'research_summary', args, 1).is_error)
+                long = adapter._result(Path('/unused'), 'research_summary', args, 'x'*300)
+            self.assertTrue(long.is_error)
+            self.assertEqual(long.content[0].text, 'RESEARCH_OUTPUT_LIMIT')
 
     async def test_stdio_transport_modern_and_legacy_handshake(self):
         with tempfile.TemporaryDirectory() as directory:
