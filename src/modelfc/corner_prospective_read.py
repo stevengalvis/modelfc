@@ -71,6 +71,11 @@ def _outcome_tip(state: Path, prediction: dict[str, Any]) -> dict[str, Any] | No
     _, tip = load_outcome_chain_readonly(state, prediction["analysis_id"])
     if tip is None:
         return None
+    return _validated_outcome(prediction, tip)
+
+
+def _validated_outcome(prediction: dict[str, Any], tip: dict[str, Any]) -> dict[str, Any]:
+    """Validate a selected immutable tip without consulting newer corrections."""
     try:
         fixture = prediction["fixture"]
         outcome_fixture = tip["fixture"]

@@ -217,6 +217,11 @@ def _chain(state, analysis_id):
     if any(path.is_symlink() or not path.is_file() for path in paths):
         raise OutcomeError("INVALID_OUTCOME")
     records = [load_outcome(state, analysis_id, path.stem) for path in paths]
+    return _validated_chain(records)
+
+
+def _validated_chain(records):
+    """Validate an immutable chain or a frozen research prefix."""
     roots = [r for r in records if r["supersedes_outcome_id"] is None]
     if not records:
         return [], None
