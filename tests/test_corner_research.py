@@ -35,9 +35,11 @@ class ResearchTests(unittest.TestCase):
     def manifest(self, identity):
         return json.loads((self.state / 'research-snapshots' / (identity + '.json')).read_text())
 
-    def test_empty_state_without_lazy_lock_is_valid_private_and_bounded(self):
+    def test_empty_initialized_state_without_lazy_state_lock_is_valid_private_and_bounded(self):
         with tempfile.TemporaryDirectory() as directory:
             state = Path(directory) / 'state'
+            (state / 'prospective').mkdir(parents=True)
+            (state / 'prospective' / 'runner.lock').touch()
             with patch.object(research, 'write_new_record', wraps=research.write_new_record) as publish:
                 identity = research.create_snapshot(state)['snapshot_id']
             self.assertNotIn('evidence_state', publish.call_args.kwargs)
@@ -365,3 +367,47 @@ class ResearchTests(unittest.TestCase):
             with self.assertRaisesRegex(research.ResearchError, 'RESEARCH_LIMIT_EXCEEDED'):
                 research.read_snapshot(self.state, identity)
         self.assertEqual(set((self.state / 'research-snapshots').iterdir()), before)
+
+    def test_outcome_chain_limit_matches_creation_and_replay(self):
+        self.run_pilot()
+        self.after_kickoff()
+        self.run_pilot()
+        identity = self.snapshot()
+        self.assertTrue(self.manifest(identity)['entries'][0]['outcome_chain'])
+        before = set((self.state / 'research-snapshots').iterdir())
+        with patch.object(research, 'MAX_OUTCOMES', 0):
+            with self.assertRaisesRegex(research.ResearchError, 'RESEARCH_LIMIT_EXCEEDED'):
+                self.snapshot()
+            with self.assertRaisesRegex(research.ResearchError, 'RESEARCH_LIMIT_EXCEEDED'):
+                research.read_snapshot(self.state, identity)
+        self.assertEqual(set((self.state / 'research-snapshots').iterdir()), before)
+
+    def test_uninitialized_state_fails_closed_without_bootstrapping_or_publication(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = Path(directory) / 'state'
+            with patch.object(research, 'write_new_record') as publish:
+                with self.assertRaisesRegex(research.ResearchError, 'RESEARCH_EVIDENCE_UNAVAILABLE'):
+                    research.create_snapshot(state)
+            publish.assert_not_called()
+            self.assertFalse(state.exists())
+
+    def test_first_runner_initialization_race_cannot_publish_empty_snapshot(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = Path(directory)
+            runner = state / 'prospective' / 'runner.lock'
+            exists = Path.exists
+            runner_checks = 0
+            def initialize_after_absent_check(path):
+                nonlocal runner_checks
+                if path == runner:
+                    runner_checks += 1
+                if path == runner and runner_checks == 2 and not exists(path):
+                    runner.parent.mkdir()
+                    runner.touch()
+                    return False
+                return exists(path)
+            with patch.object(Path, 'exists', initialize_after_absent_check), patch.object(research, 'write_new_record') as publish:
+                with self.assertRaisesRegex(research.ResearchError, 'RESEARCH_EVIDENCE_UNAVAILABLE'):
+                    research.create_snapshot(state)
+            publish.assert_not_called()
+            self.assertFalse((state / 'research-snapshots').exists())

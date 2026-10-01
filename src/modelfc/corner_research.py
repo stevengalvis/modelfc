@@ -37,6 +37,7 @@ MAX_PREDICTIONS = 1000
 MAX_TARGETS = 256
 MAX_OBSERVATIONS = 12
 MAX_OPPORTUNITIES = 256
+MAX_OUTCOMES = 256
 MAX_FILES = 20000
 MAX_RECORD_BYTES = 2_000_000
 MAX_MANIFEST_BYTES = 8_000_000
@@ -236,6 +237,7 @@ def _collect(state):
             seen_shadows.add(shadow_path)
         from modelfc.corner_analysis_outcomes import load_outcome_chain_readonly
         chain, tip = load_outcome_chain_readonly(state, aid)
+        _bounded(chain, MAX_OUTCOMES)
         if tip is not None:
             _validated_outcome(prediction, tip)
         # Store a prefix in chain order, not filename or directory order.
@@ -318,12 +320,9 @@ def _create(state):
             _locked_inventory(state, now=datetime.now(timezone.utc))
             entries, rows = _collect(state)
         else:
-            # Uninitialized empty state: freeze the empty population, never
-            # enumerate a concurrently initialized first capture piecemeal.
-            _preflight(state)
-            if state_lock.exists() or any((state / family).exists() and any((state / family).rglob("*.json")) for family in FAMILIES):
-                raise ResearchError("RESEARCH_EVIDENCE_UNAVAILABLE")
-            entries, rows = [], []
+            # No existing synchronization boundary can exclude the first
+            # runner initialization. Fail closed without bootstrapping locks.
+            raise ResearchError("RESEARCH_EVIDENCE_UNAVAILABLE")
         created = datetime.now(timezone.utc).isoformat()
         release = git_commit_sha()
         if not re.fullmatch(r"[0-9a-f]{40}", release):
@@ -390,7 +389,7 @@ def _load(state, identity):
                 if target["market_type"] != "TEAM_TOTAL" or target["team_side"] not in ("HOME", "AWAY") or target["team"] != prediction["fixture"][target["team_side"].lower() + "_team"]:
                     raise ResearchError("INVALID_RESEARCH_REFERENCE")
                 _probabilities(target)
-        chain = [_resolve(state, ref, "analysis-outcomes", budget) for ref in _bounded(entry["outcome_chain"], MAX_TARGETS)]
+        chain = [_resolve(state, ref, "analysis-outcomes", budget) for ref in _bounded(entry["outcome_chain"], MAX_OUTCOMES)]
         _, tip = _validated_chain(chain)
         if tip is not None:
             _validated_outcome(prediction, tip)

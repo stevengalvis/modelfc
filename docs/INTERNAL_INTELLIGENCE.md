@@ -39,7 +39,9 @@ API access to private descendants. No host ACL installation is included here.
 Creation acquires shared `prospective/runner.lock`, then shared `state/.lock`,
 whenever those lock files exist, including before the first prediction. A runner
 lock without a lazy state lock is valid before evidence exists. Truly uninitialized
-empty state freezes an empty cohort without creating either lock.
+state with no runner lock fails closed with RESEARCH_EVIDENCE_UNAVAILABLE: it
+cannot exclude concurrent first initialization. No lock is bootstrapped. An
+initialized runner with zero evidence remains a valid empty snapshot population.
 It validates the current public chain and private inputs, identifies and publishes
 the manifest under the same coherent read boundary, then releases both locks.
 Only identification/integrity work occurs under locks; aggregation happens later.
@@ -104,7 +106,8 @@ are descriptive and never authorize promotion or claims of profitability.
 ## Bounds and failure behavior
 
 V1 rejects populations above 1,000 predictions, 256 targets per prediction,
-12 relevant observations and 256 opportunity events per prediction, 20,000 filesystem entries in inspected
+12 relevant observations, 256 opportunity events and 256 outcome-chain records
+per prediction, 20,000 filesystem entries in inspected
 evidence families, 2 MB per referenced record, 128 MB aggregate evidence per operation or 8 MB per
 manifest. Referenced-file counts and bytes are bounded on replay as well. This is an
 explicit bounded V1 cohort, not silent sampling. Larger histories require a
