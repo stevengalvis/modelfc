@@ -104,7 +104,7 @@ are descriptive and never authorize promotion or claims of profitability.
 ## Bounds and failure behavior
 
 V1 rejects populations above 1,000 predictions, 256 targets per prediction,
-12 relevant observations per prediction, 20,000 filesystem entries in inspected
+12 relevant observations and 256 opportunity events per prediction, 20,000 filesystem entries in inspected
 evidence families, 2 MB per referenced record, 128 MB aggregate evidence per operation or 8 MB per
 manifest. Referenced-file counts and bytes are bounded on replay as well. This is an
 explicit bounded V1 cohort, not silent sampling. Larger histories require a
@@ -158,6 +158,7 @@ Before separately authorizing production use, schedule creation away from hourly
 actual evidence population. Do not repeatedly create snapshots automatically.
 The hard input bounds limit work but are not a wall-clock guarantee. Summary,
 segment and fixture queries use no production locks and have no such conflict.
-Retain the v1 qualification calculation when introducing a future policy formula:
-replay must continue dispatching the frozen policy version, never reinterpret old
-snapshots with a replacement formula. This PR does not change that calculation.
+Qualification replay dispatches the preserved v1 evaluator by the frozen policy
+version, independently of the live production entrypoint. Unknown versions fail
+closed. Future formulas must add a versioned evaluator and retain v1; they must
+never redefine old snapshot semantics. The current formula and decisions are unchanged.

@@ -14,7 +14,7 @@ from modelfc.corner_markets import american_odds_terms
 from modelfc.corner_opportunities import (
     _id, _paired_selections, _source_observation, _timestamp, current_qualification_policy,
     load_prediction, prediction_observations, prediction_target_records,
-    qualification_decision, target_id,
+    qualification_decision_for_policy, target_id,
 )
 from modelfc.corner_shadow import MODEL_VERSION, read_shadow
 from modelfc.ledger_storage import (
@@ -182,9 +182,9 @@ def assessment_from_inputs(prediction, observation, shadow, stamp, target_record
                            ("market_type", "team_side", "team", "direction", "line"))
                     or target["materialized_at_utc"] > observation["retrieved_at_utc"]):
                 raise LedgerError("INVALID_SHADOW_DECISION")
-            champion = qualification_decision(selection, implied, total,
+            champion = qualification_decision_for_policy(selection, implied, total,
                                                target["decisive_model_probability"], policy)
-            challenger = qualification_decision(selection, implied, total,
+            challenger = qualification_decision_for_policy(selection, implied, total,
                                                  frozen[identity]["decisive_model_probability"], policy)
             decisions.append({
                 "target_id": identity, "target_hash": target["record_hash"],

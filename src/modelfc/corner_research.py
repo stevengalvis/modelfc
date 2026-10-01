@@ -36,6 +36,7 @@ from modelfc.ledger_storage import (
 MAX_PREDICTIONS = 1000
 MAX_TARGETS = 256
 MAX_OBSERVATIONS = 12
+MAX_OPPORTUNITIES = 256
 MAX_FILES = 20000
 MAX_RECORD_BYTES = 2_000_000
 MAX_MANIFEST_BYTES = 8_000_000
@@ -263,7 +264,7 @@ def _collect(state):
             refs.append({"observation": _ref(obs, "market-observations", oid, parent),
                          "policy": _ref(stamp, "shadow-observation-policies", oid) if stamp else None,
                          "assessment": _ref(assessment, "shadow-decisions", did, pid) if assessment else None})
-        opportunities = opportunity_records(state, pid)
+        opportunities = _bounded(opportunity_records(state, pid), MAX_OPPORTUNITIES)
         rows.append({"prediction": prediction, "shadow": shadow, "outcome": tip,
                      "targets": targets, "observations": observations, "outcome_chain": ordered, "opportunities": opportunities})
         from modelfc.corner_analysis_store import load_analysis_capture
@@ -424,7 +425,7 @@ def _load(state, identity):
                     [i["observation"] for i in observations], shadow_version=SHADOW_CONTRACT_V1["version"])):
                 raise ResearchError("INVALID_RESEARCH_REFERENCE")
         opportunities = []
-        for ref in _bounded(entry["opportunities"], MAX_TARGETS):
+        for ref in _bounded(entry["opportunities"], MAX_OPPORTUNITIES):
             opportunity = _resolve(state, ref, "opportunities", budget)
             opportunities.append(opportunity)
             if opportunity["prediction_id"] != pid or opportunity["target_id"] not in {t["target_id"] for t in targets}:

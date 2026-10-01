@@ -621,7 +621,19 @@ def _meets_edge_threshold(edge: float, threshold: float) -> bool:
 
 
 def qualification_decision(selection, implied, total, decisive_probability, policy):
-    """Pure v1 decision shared by production and private shadow assessment."""
+    """Current production decision; preserve old evaluators for frozen replay."""
+    return qualification_decision_for_policy(selection, implied, total, decisive_probability, policy)
+
+
+def qualification_decision_for_policy(selection, implied, total, decisive_probability, policy):
+    """Dispatch immutable policy semantics, independently of the live entrypoint."""
+    if policy["version"] != "team-total-no-vig-v1":
+        raise LedgerError("UNSUPPORTED_QUALIFICATION_POLICY")
+    return _qualification_decision_v1(selection, implied, total, decisive_probability, policy)
+
+
+def _qualification_decision_v1(selection, implied, total, decisive_probability, policy):
+    """Preserved team-total-no-vig-v1 formula; never redefine for future policies."""
     no_vig = implied[selection["direction"]] / total
     edge = decisive_probability - no_vig
     eligible_price = selection["american_odds"] >= policy["minimum_american_odds"]

@@ -342,3 +342,26 @@ class ResearchTests(unittest.TestCase):
         expected = research.research_summary(self.state, identity)
         with patch.object(shadow, 'MODEL_VERSION', 'future-v2'), patch.object(shadow, 'HALF_LIFE_DAYS', 90), patch.object(decisions, 'MODEL_VERSION', 'future-v2'):
             self.assertEqual(research.research_summary(self.state, identity), expected)
+
+    def test_live_qualification_formula_drift_does_not_change_frozen_snapshot(self):
+        from modelfc import corner_opportunities as opportunities
+        self.run_pilot()
+        identity = self.snapshot()
+        expected = research.research_summary(self.state, identity)
+        with patch.object(opportunities, 'qualification_decision', side_effect=AssertionError('live v2 formula')):
+            self.assertEqual(research.research_summary(self.state, identity), expected)
+            self.assertEqual(research.research_summary(self.state, self.snapshot())['market_decisions'], expected['market_decisions'])
+        with self.assertRaisesRegex(research.LedgerError, 'UNSUPPORTED_QUALIFICATION_POLICY'):
+            opportunities.qualification_decision_for_policy({}, {}, 1, .5, {'version': 'future-v2'})
+
+    def test_opportunity_limit_is_enforced_before_publication_and_on_replay(self):
+        self.run_pilot()
+        identity = self.snapshot()
+        self.assertTrue(self.manifest(identity)['entries'][0]['opportunities'])
+        before = set((self.state / 'research-snapshots').iterdir())
+        with patch.object(research, 'MAX_OPPORTUNITIES', 0):
+            with self.assertRaisesRegex(research.ResearchError, 'RESEARCH_LIMIT_EXCEEDED'):
+                self.snapshot()
+            with self.assertRaisesRegex(research.ResearchError, 'RESEARCH_LIMIT_EXCEEDED'):
+                research.read_snapshot(self.state, identity)
+        self.assertEqual(set((self.state / 'research-snapshots').iterdir()), before)
