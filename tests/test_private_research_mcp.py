@@ -4,6 +4,7 @@ import json
 from importlib.util import find_spec
 import os
 from pathlib import Path
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -186,6 +187,22 @@ class PrivateResearchMcpTests(unittest.IsolatedAsyncioTestCase):
                 long = adapter._result(Path('/unused'), 'research_summary', args, 'x'*300)
             self.assertTrue(long.is_error)
             self.assertEqual(long.content[0].text, 'RESEARCH_OUTPUT_LIMIT')
+
+    async def test_stdio_rejects_oversized_id_before_sdk_dispatch(self):
+        environment = {'PATH': os.environ.get('PATH', ''),
+                       'PYTHONPATH': str(Path(__file__).resolve().parents[1] / 'src'),
+                       'MODELFC_STATE_DIR': '/unused'}
+        request = json.dumps({'jsonrpc': '2.0', 'id': 'x' * (adapter.MAX_REQUEST_ID_BYTES + 1),
+                              'method': 'tools/list', 'params': {}}) + '\n'
+        completed = subprocess.run([sys.executable, '-m', 'modelfc.private_research_mcp'],
+                                   input=request, env=environment, text=True,
+                                   capture_output=True, timeout=10)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(json.loads(completed.stdout),
+                         {'jsonrpc': '2.0', 'id': None,
+                          'error': {'code': -32600, 'message': 'INVALID_REQUEST_ID'}})
+        self.assertLess(len(completed.stdout.encode()), adapter.MAX_MCP_RESULT_BYTES)
+        self.assertNotIn('x' * adapter.MAX_REQUEST_ID_BYTES, completed.stdout)
 
     async def test_stdio_transport_modern_and_legacy_handshake(self):
         with tempfile.TemporaryDirectory() as directory:

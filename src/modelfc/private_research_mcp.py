@@ -11,14 +11,18 @@ from pathlib import Path
 import re
 from typing import Any
 
+import anyio
 from mcp.server.lowlevel import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import CallToolResult, ListToolsResult, TextContent, Tool, ToolAnnotations
+from mcp.shared.message import SessionMessage
+from mcp.types import ErrorData, JSONRPCError, JSONRPCRequest
 
 from modelfc import corner_research as research
 
 ID_PATTERN = r"^[0-9a-f]{32}$"
 MAX_MCP_RESULT_BYTES = research.MAX_RESPONSE_BYTES
+MAX_REQUEST_ID_BYTES = 256
 SAFE_ERRORS = frozenset({
     "INVALID_RESEARCH_ID", "INVALID_RESEARCH_STORAGE", "INVALID_RESEARCH_REFERENCE",
     "INVALID_RESEARCH_EVIDENCE", "INVALID_RESEARCH_SNAPSHOT", "INVALID_RESEARCH_TIMESTAMP",
@@ -135,7 +139,29 @@ async def serve() -> None:
     state = Path(os.environ.get("MODELFC_STATE_DIR", "/var/lib/modelfc/state"))
     server = build_server(state)
     async with stdio_server() as (read_stream, write_stream):
-        await server.run(read_stream, write_stream, server.create_initialization_options())
+        # Stdio SDK echoes arbitrary client IDs even for errors. Reject oversized
+        # IDs before dispatch, so successful *and error* envelopes remain bounded.
+        inbound, limited_stream = anyio.create_memory_object_stream(0)
+
+        async def limit_ids() -> None:
+            async with inbound:
+                async for message in read_stream:
+                    if (isinstance(message, SessionMessage)
+                            and isinstance(message.message, JSONRPCRequest)
+                            and len(json.dumps(message.message.id, ensure_ascii=True).encode("ascii"))
+                            > MAX_REQUEST_ID_BYTES):
+                        await write_stream.send(SessionMessage(JSONRPCError(
+                            jsonrpc="2.0", id=None,
+                            error=ErrorData(code=-32600, message="INVALID_REQUEST_ID"))))
+                        continue
+                    await inbound.send(message)
+
+        async with anyio.create_task_group() as group:
+            group.start_soon(limit_ids)
+            try:
+                await server.run(limited_stream, write_stream, server.create_initialization_options())
+            finally:
+                group.cancel_scope.cancel()
 
 
 def main() -> None:

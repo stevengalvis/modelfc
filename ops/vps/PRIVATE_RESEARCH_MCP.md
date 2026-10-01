@@ -40,6 +40,9 @@ model loss; decision snapshots are not placed bets; hypothetical units/ROI are
 not real betting results. No arbitrary paths, SQL, code, cohorts or provider
 access are tool arguments. V1 bounds normal JSON to 64 KiB; the adapter also
 checks the serialized MCP output and fails with `RESEARCH_OUTPUT_LIMIT`.
+The stdio boundary rejects request IDs longer than 256 UTF-8 bytes with a
+fixed `INVALID_REQUEST_ID` JSON-RPC error and null ID before SDK dispatch;
+this prevents oversized IDs from defeating the bound on error responses too.
 
 Errors are stable fixed codes: `INVALID_RESEARCH_ID`,
 `UNSUPPORTED_RESEARCH_SEGMENT`, `PREDICTION_NOT_IN_SNAPSHOT`,
