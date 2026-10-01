@@ -16,7 +16,7 @@ from mcp.server.lowlevel import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import CallToolResult, ListToolsResult, TextContent, Tool, ToolAnnotations
 from mcp.shared.message import SessionMessage
-from mcp.types import ErrorData, JSONRPCError, JSONRPCRequest
+from mcp.types import JSONRPCRequest
 
 from modelfc import corner_research as research
 
@@ -118,6 +118,14 @@ def _result(state: Path, name: str, arguments: dict[str, Any], request_id: str |
         return CallToolResult(content=[TextContent(type="text", text="RESEARCH_EVIDENCE_UNAVAILABLE")], isError=True)
 
 
+def _id_is_oversized(identity: str | int) -> bool:
+    try:
+        raw = identity.encode("utf-8") if isinstance(identity, str) else str(identity).encode("ascii")
+    except UnicodeError:
+        return True
+    return len(raw) > MAX_REQUEST_ID_BYTES
+
+
 def build_server(state_dir: Path) -> Server:
     """Bind the trusted state directory outside MCP's model-controlled schema."""
     state = Path(state_dir)
@@ -139,8 +147,9 @@ async def serve() -> None:
     state = Path(os.environ.get("MODELFC_STATE_DIR", "/var/lib/modelfc/state"))
     server = build_server(state)
     async with stdio_server() as (read_stream, write_stream):
-        # Stdio SDK echoes arbitrary client IDs even for errors. Reject oversized
-        # IDs before dispatch, so successful *and error* envelopes remain bounded.
+        # The SDK echoes arbitrary client IDs even for errors. Close the transport
+        # on an oversized ID: null would lose correlation and echoing it defeats
+        # the bound. The client sees EOF and can explicitly retry a valid call.
         inbound, limited_stream = anyio.create_memory_object_stream(0)
 
         async def limit_ids() -> None:
@@ -148,12 +157,9 @@ async def serve() -> None:
                 async for message in read_stream:
                     if (isinstance(message, SessionMessage)
                             and isinstance(message.message, JSONRPCRequest)
-                            and len(json.dumps(message.message.id, ensure_ascii=True).encode("ascii"))
-                            > MAX_REQUEST_ID_BYTES):
-                        await write_stream.send(SessionMessage(JSONRPCError(
-                            jsonrpc="2.0", id=None,
-                            error=ErrorData(code=-32600, message="INVALID_REQUEST_ID"))))
-                        continue
+                            and _id_is_oversized(message.message.id)):
+                        await write_stream.aclose()
+                        return
                     await inbound.send(message)
 
         async with anyio.create_task_group() as group:

@@ -198,11 +198,23 @@ class PrivateResearchMcpTests(unittest.IsolatedAsyncioTestCase):
                                    input=request, env=environment, text=True,
                                    capture_output=True, timeout=10)
         self.assertEqual(completed.returncode, 0, completed.stderr)
-        self.assertEqual(json.loads(completed.stdout),
-                         {'jsonrpc': '2.0', 'id': None,
-                          'error': {'code': -32600, 'message': 'INVALID_REQUEST_ID'}})
-        self.assertLess(len(completed.stdout.encode()), adapter.MAX_MCP_RESULT_BYTES)
-        self.assertNotIn('x' * adapter.MAX_REQUEST_ID_BYTES, completed.stdout)
+        self.assertEqual(completed.stdout, '')
+        self.assertNotIn('Traceback', completed.stderr)
+
+    async def test_utf8_request_id_boundary_and_correlation(self):
+        environment = {'PATH': os.environ.get('PATH', ''),
+                       'PYTHONPATH': str(Path(__file__).resolve().parents[1] / 'src')}
+        for identity in ('a' * adapter.MAX_REQUEST_ID_BYTES, 'é' * 100):
+            with self.subTest(identity=identity[:10]):
+                request = json.dumps({'jsonrpc': '2.0', 'id': identity,
+                                      'method': 'tools/list', 'params': {}}) + '\n'
+                completed = subprocess.run([sys.executable, '-m', 'modelfc.private_research_mcp'],
+                                           input=request, env=environment, text=True,
+                                           capture_output=True, timeout=10)
+                self.assertEqual(completed.returncode, 0, completed.stderr)
+                self.assertEqual(json.loads(completed.stdout)['id'], identity)
+        self.assertTrue(adapter._id_is_oversized('é' * 129))
+        self.assertFalse(adapter._id_is_oversized('é' * 128))
 
     async def test_stdio_transport_modern_and_legacy_handshake(self):
         with tempfile.TemporaryDirectory() as directory:
