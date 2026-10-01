@@ -1,0 +1,24 @@
+[Unit]
+Description=Private Zeno Research MCP Tunnel (optional operator service)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=modelfc-runtime
+Group=modelfc-runtime
+WorkingDirectory=/srv/modelfc/current
+ExecStart=/usr/bin/python3 -I -B /opt/modelfc-ops/research_tunnel_launch.py
+LoadCredential=tunnel.key:/etc/modelfc/research/tunnel.key
+Restart=on-failure
+RestartSec=30
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/modelfc/state/research-snapshots /var/lib/modelfc-research
+InaccessiblePaths=/etc/modelfc/credentials
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target
