@@ -117,6 +117,16 @@ def _context_unchecked(state, analysis_id):
     """Prove capture, odds-free prediction, source observation and target links."""
     capture = load_analysis_capture(state, analysis_id)
     production = load_prediction(state, prediction_id_for_analysis(analysis_id))
+    if production["analysis_id"] != analysis_id:
+        raise LedgerError("INVALID_SHADOW_REFERENCE")
+    source = _source_observation(state, production)
+    targets = prediction_target_records(state, production["prediction_id"])
+    return validated_context(capture, production, source, targets)
+
+
+def validated_context(capture, production, source, targets):
+    """Prove the frozen chain from supplied immutable inputs, without inventory."""
+    analysis_id = capture["analysis_id"]
     request, response = capture["request"], capture["response"]
     fixture, forecast = response["fixture"], response["forecast"]
     pm = request["prematch"]
@@ -143,8 +153,6 @@ def _context_unchecked(state, analysis_id):
             or _timestamp(response["created_at"]) >= _timestamp(fixture["kickoff_at"])
             or date.fromisoformat(fixture["date"]) != _timestamp(fixture["kickoff_at"]).date()):
         raise LedgerError("INVALID_SHADOW_REFERENCE")
-    source = _source_observation(state, production)
-    targets = prediction_target_records(state, production["prediction_id"])
     by_id = {target["target_id"]: target for target in targets}
     initial = {}
     for selection in source["selections"]:
@@ -177,7 +185,7 @@ def _context(state, analysis_id):
         raise LedgerError("INVALID_SHADOW_REFERENCE") from None
 
 
-def _validate(record, analysis_id):
+def _validate(record, analysis_id, *, model_contract=None):
     fields = {"schema_version", "record_type", "analysis_id", "production_prediction_id",
               "production_prediction_hash", "capture_reference", "source_observation",
               "prediction_created_at_utc", "created_at_utc", "fixture", "model", "history",
@@ -194,7 +202,7 @@ def _validate(record, analysis_id):
         if (set(model) != {"family", "competition", "name", "version", "deepfc_source_commit",
                           "zeno_release_sha", "half_life_days", "smoothing_matches",
                           "min_history", "min_venue_history", "probability_rule"}
-                or model != _model(model["zeno_release_sha"])
+                or model != ({**model_contract, "zeno_release_sha": model["zeno_release_sha"]} if model_contract is not None else _model(model["zeno_release_sha"]))
                 or re.fullmatch(r"[0-9a-f]{40}", model["zeno_release_sha"]) is None):
             raise ValueError
         fixture = record["fixture"]
@@ -349,18 +357,15 @@ def compare_settled(state_dir):
     """Read-only paired scoring, consuming frozen probabilities, never history."""
     from modelfc.corner_prospective_read import _outcome_tip
     state = Path(state_dir)
-    errors = {"production": [], "shadow": []}
-    brier = {"production": [], "shadow": []}
-    counts = {"production_predictions": 0, "shadow_predictions": 0, "missing_shadow_predictions": 0,
-              "settled_fixtures": 0, "team_forecasts": 0, "market_line_targets": 0,
-              "push_targets_excluded": 0, "later_targets_excluded": 0}
+    from modelfc.corner_shadow_scoring import forecast_report
+    rows = []
     if not state.exists():
-        return _report(counts, errors, brier)
+        return forecast_report(rows)
     if not (state / "predictions").exists():
         directory = state / "shadow-predictions"
         if directory.is_symlink() or directory.exists() and (not directory.is_dir() or any(directory.iterdir())):
             raise LedgerError("INVALID_SHADOW_REFERENCE")
-        return _report(counts, errors, brier)
+        return forecast_report(rows)
     with existing_read_lock(state / "prospective" / "runner.lock"), ledger_read_lock(state):
         predictions = prediction_records(state)
         directory = state / "shadow-predictions"
@@ -372,44 +377,12 @@ def compare_settled(state_dir):
             if path.stem not in by_analysis or path.is_symlink() or not path.is_file():
                 raise LedgerError("INVALID_SHADOW_REFERENCE")
         for production in predictions:
-            counts["production_predictions"] += 1
             path = _path(state, production["analysis_id"])
-            if not path.exists():
-                counts["missing_shadow_predictions"] += 1
-                continue
-            shadow = read_shadow(state, production["analysis_id"])
-            counts["shadow_predictions"] += 1
-            outcome = _outcome_tip(state, production)
-            if outcome is None:
-                continue
-            counts["settled_fixtures"] += 1
-            for side in ("home", "away"):
-                actual = outcome["result"][side + "_corners"]
-                for name, record in (("production", production), ("shadow", shadow)):
-                    errors[name].append(abs(actual - _number(record["distribution"][side + "_expected_corners"])))
-            _, _, initial = _context(state, production["analysis_id"])
-            targets = {target["target_id"]: target for target in initial}
-            counts["later_targets_excluded"] += sum(t["status"] == "SUPPORTED" and t["market_type"] == "TEAM_TOTAL"
-                and t["target_id"] not in targets for t in prediction_target_records(state, production["prediction_id"]))
-            for frozen in shadow["targets"]:
-                target = targets[frozen["production_target_id"]]
-                actual = outcome["result"][target["team_side"].lower() + "_corners"]
-                if actual == target["line"]:
-                    counts["push_targets_excluded"] += 1
-                    continue
-                win = int(actual > target["line"] if target["direction"] == "OVER" else actual < target["line"])
-                brier["production"].append((target["decisive_model_probability"] - win) ** 2)
-                brier["shadow"].append((frozen["decisive_model_probability"] - win) ** 2)
-    counts["team_forecasts"] = len(errors["production"])
-    counts["market_line_targets"] = len(brier["production"])
-    return _report(counts, errors, brier)
-
-
-def _report(counts, errors, brier):
-    return {**counts, **{name: {
-        "team_mae": math.fsum(errors[name]) / len(errors[name]) if errors[name] else None,
-        "mean_brier": math.fsum(brier[name]) / len(brier[name]) if brier[name] else None,
-    } for name in ("production", "shadow")}}
+            shadow = read_shadow(state, production["analysis_id"]) if path.exists() else None
+            outcome = _outcome_tip(state, production) if shadow is not None else None
+            rows.append({"prediction": production, "shadow": shadow, "outcome": outcome,
+                         "targets": prediction_target_records(state, production["prediction_id"])})
+    return forecast_report(rows)
 
 
 def main() -> None:

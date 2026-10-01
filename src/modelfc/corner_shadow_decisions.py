@@ -14,7 +14,7 @@ from modelfc.corner_markets import american_odds_terms
 from modelfc.corner_opportunities import (
     _id, _paired_selections, _source_observation, _timestamp, current_qualification_policy,
     load_prediction, prediction_observations, prediction_target_records,
-    qualification_decision, target_id,
+    qualification_decision_for_policy, target_id,
 )
 from modelfc.corner_shadow import MODEL_VERSION, read_shadow
 from modelfc.ledger_storage import (
@@ -95,6 +95,11 @@ def _policy(state, observation):
         raise LedgerError("INVALID_SHADOW_DECISION")
     record = _read(path,
                    "shadow_observation_policy")
+    return validate_policy_stamp(record, observation)
+
+
+def validate_policy_stamp(record, observation):
+    """Validate a frozen policy without substituting current policy constants."""
     if (set(record) != {"schema_version", "record_type", "observation_id", "observation_hash",
                         "observed_at_utc", "stamped_at_utc", "release_sha", "policy", "record_hash"}
             or record["observation_id"] != observation["observation_id"]
@@ -119,18 +124,26 @@ def _policy(state, observation):
 
 
 def _assessment(state, prediction, observation, shadow, stamp):
+    return assessment_from_inputs(prediction, observation, shadow, stamp,
+                                  prediction_target_records(state, prediction["prediction_id"]),
+                                  _source_observation(state, prediction),
+                                  prediction_observations(state, prediction))
+
+
+def assessment_from_inputs(prediction, observation, shadow, stamp, target_records, source_observation, observations, *, shadow_version=MODEL_VERSION):
+    """Same private decision bytes using a frozen input population."""
     if (shadow["production_prediction_id"] != prediction["prediction_id"]
             or shadow["production_prediction_hash"] != prediction["record_hash"]
-            or shadow["model"]["version"] != MODEL_VERSION
-            or observation not in prediction_observations(state, prediction)):
+            or shadow["model"]["version"] != shadow_version
+            or observation not in observations):
         raise LedgerError("INVALID_SHADOW_DECISION")
     policy = stamp["policy"]
-    targets = {t["target_id"]: t for t in prediction_target_records(state, prediction["prediction_id"])}
+    targets = {t["target_id"]: t for t in target_records}
     frozen = {t["production_target_id"]: t for t in shadow["targets"]}
     source = prediction["source_observation"]["observation_id"] == observation["observation_id"]
     source_targets = {target_id(prediction["prediction_id"], "TEAM_TOTAL", s["team_side"],
                                 s["direction"], s["line"])
-                      for s in _source_observation(state, prediction)["selections"]
+                      for s in source_observation["selections"]
                       if s["market_type"] == "TEAM_TOTAL" and s["team_side"] in ("HOME", "AWAY")}
     later_only = set()
     decisions = []
@@ -169,9 +182,9 @@ def _assessment(state, prediction, observation, shadow, stamp):
                            ("market_type", "team_side", "team", "direction", "line"))
                     or target["materialized_at_utc"] > observation["retrieved_at_utc"]):
                 raise LedgerError("INVALID_SHADOW_DECISION")
-            champion = qualification_decision(selection, implied, total,
+            champion = qualification_decision_for_policy(selection, implied, total,
                                                target["decisive_model_probability"], policy)
-            challenger = qualification_decision(selection, implied, total,
+            challenger = qualification_decision_for_policy(selection, implied, total,
                                                  frozen[identity]["decisive_model_probability"], policy)
             decisions.append({
                 "target_id": identity, "target_hash": target["record_hash"],
@@ -211,23 +224,15 @@ def store_assessment(state_dir, prediction, observation):
 
 def compare_decisions(state_dir):
     """Private snapshot and settled hypothetical-event accounting."""
-    from modelfc.corner_prospective_read import _outcome_tip, _profit, _target_settlement
+    from modelfc.corner_prospective_read import _outcome_tip
     state = Path(state_dir)
-    counts = {"paired_settled_fixtures": 0, "paired_decision_snapshots": 0,
-              "observation_snapshots": 0, "later_only_targets_excluded": 0,
-              "missing_assessments": 0, "pushes": 0,
-              "neither_qualifies": 0, "champion_only": 0, "shadow_only": 0, "both_qualify": 0}
-    scores = {name: {"hypothetical_qualifying_events": 0, "wins": 0, "losses": 0,
-                     "pushes": 0, "settled_hypothetical_qualifying_events": 0,
-                     "standardized_realized_units": 0.0,
-                     "roi_on_settled_hypothetical_events": None,
-                     "unique_target_bookmaker_opportunities": 0}
-              for name in ("champion", "shadow")}
+    from modelfc.corner_shadow_scoring import decision_report
+    rows = []
     if not (state / "predictions").exists():
         directory = state / "shadow-decisions"
         if directory.is_symlink() or directory.exists() and (not directory.is_dir() or any(directory.iterdir())):
             raise LedgerError("INVALID_SHADOW_DECISION")
-        return {**counts, **scores}
+        return decision_report(rows)
     from modelfc.corner_opportunities import prediction_records
     with existing_read_lock(state / "prospective" / "runner.lock"), ledger_read_lock(state):
         seen_paths = set()
@@ -235,11 +240,8 @@ def compare_decisions(state_dir):
             shadow_path = _path(state, "shadow-predictions", prediction["analysis_id"])
             shadow = read_shadow(state, prediction["analysis_id"]) if shadow_path.exists() else None
             outcome = _outcome_tip(state, prediction)
-            if shadow is not None and outcome is not None:
-                counts["paired_settled_fixtures"] += 1
-            unique = {"champion": set(), "shadow": set()}
+            observations = []
             for observation in prediction_observations(state, prediction):
-                counts["observation_snapshots"] += 1
                 identity = _id("shadow-decision", {"prediction_id": prediction["prediction_id"],
                                                      "observation_id": observation["observation_id"]})
                 path = _path(state, "shadow-decisions", identity, prediction["prediction_id"])
@@ -247,7 +249,7 @@ def compare_decisions(state_dir):
                 if path.is_symlink():
                     raise LedgerError("INVALID_SHADOW_DECISION")
                 if not path.exists():
-                    counts["missing_assessments"] += 1
+                    observations.append({"assessment": None})
                     continue
                 if shadow is None:
                     raise LedgerError("INVALID_SHADOW_DECISION")
@@ -255,32 +257,8 @@ def compare_decisions(state_dir):
                 actual = _read(path, "shadow_decision")
                 if actual != _assessment(state, prediction, observation, shadow, stamp):
                     raise LedgerError("INVALID_SHADOW_DECISION")
-                counts["later_only_targets_excluded"] += actual["later_only_targets_excluded"]
-                for decision in actual["decisions"]:
-                    counts["paired_decision_snapshots"] += 1
-                    a, b = decision["champion"]["qualified"], decision["shadow"]["qualified"]
-                    key = ("both_qualify" if a and b else "champion_only" if a else
-                           "shadow_only" if b else "neither_qualifies")
-                    counts[key] += 1
-                    for name, qualified in (("champion", a), ("shadow", b)):
-                        if qualified:
-                            scores[name]["hypothetical_qualifying_events"] += 1
-                            unique[name].add((decision["target_id"], decision["bookmaker"]))
-                    if outcome is None:
-                        continue
-                    result, _ = _target_settlement({"status": "SUPPORTED", "market_type": "TEAM_TOTAL",
-                                                    "team_side": decision["team_side"],
-                                                    "direction": decision["direction"],
-                                                    "line": decision["line"]}, outcome)
-                    counts["pushes"] += int(result == "PUSH")
-                    for name, qualified in (("champion", a), ("shadow", b)):
-                        if qualified:
-                            item = scores[name]
-                            item["settled_hypothetical_qualifying_events"] += 1
-                            item[{"WIN": "wins", "LOSS": "losses", "PUSH": "pushes"}[result]] += 1
-                            item["standardized_realized_units"] += _profit(result, decision["american_odds"])
-            for name in scores:
-                scores[name]["unique_target_bookmaker_opportunities"] += len(unique[name])
+                observations.append({"assessment": actual})
+            rows.append({"shadow": shadow, "outcome": outcome, "observations": observations})
         directory = state / "shadow-decisions"
         if directory.is_symlink() or directory.exists() and not directory.is_dir():
             raise LedgerError("INVALID_SHADOW_DECISION")
@@ -291,7 +269,4 @@ def compare_decisions(state_dir):
                 for path in parent.iterdir():
                     if path.is_symlink() or not path.is_file() or path.suffix != ".json" or path not in seen_paths:
                         raise LedgerError("INVALID_SHADOW_DECISION")
-    for item in scores.values():
-        n = item["settled_hypothetical_qualifying_events"]
-        item["roi_on_settled_hypothetical_events"] = item["standardized_realized_units"] / n if n else None
-    return {**counts, **scores}
+    return decision_report(rows)
