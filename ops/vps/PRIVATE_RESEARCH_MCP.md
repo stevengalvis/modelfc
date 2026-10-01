@@ -52,24 +52,33 @@ operator evidence before retrying. No provider work is retried.
 
 ## Host trust boundary and separately authorized activation
 
-The optional unit runs as the existing trusted `modelfc-runtime` writer,
-**not** `modelfc-api`. A new Unix identity would need ACLs on every existing
-and future private evidence family and lock, plus ownership of the snapshot
-directory required by V1. That is a larger publication change. The unit
-confines the trusted runtime process with `ProtectSystem=strict`: only private
-`research-snapshots` and tunnel profile storage are writable. No OddsPapi
-credential is loaded; its directory is inaccessible. The tunnel key is passed
-only to the tunnel client. `research_mcp_launch.py` replaces the MCP child's
-environment, stripping that key and inherited secrets. The runtime UID remains
-a trusted writer; the filesystem sandbox is defense in depth, not a claim of
-a separate Unix security identity. The MCP module has no shell, path selector,
+The optional tunnel unit runs as a new `modelfc-tunnel` identity, which owns
+only its profile and the systemd tunnel credential. A root-installed, exact
+no-argument sudoers rule allows this identity to run only the validated MCP
+launcher as the existing trusted `modelfc-runtime` writer. The MCP child has
+neither the tunnel UID nor read access to its mode-0400 `LoadCredential` file;
+its sanitized environment also excludes the key. Cross-UID `/proc` access
+must remain restricted. The MCP identity is **not** `modelfc-api`. A new MCP
+writer Unix identity would need ACLs on every private evidence family and
+lock plus ownership of the snapshot directory required by V1; that is a
+larger publication change. The unit confines the process tree with
+`ProtectSystem=strict`: only private `research-snapshots` and tunnel profile
+storage are writable, according to the respective Unix owners. No OddsPapi
+credential is loaded; its directory is inaccessible. The runtime remains a
+trusted writer; the filesystem sandbox is defense in depth. The fixed sudo
+transition is an explicit separately reviewed host privilege boundary, not
+general shell or root access. The MCP module has no shell, path selector,
 provider client or public API route.
 
 Before separately authorizing installation, review the current `tunnel-client`
 binary and its permissions, the ChatGPT workspace and Tunnels Read+Use/Manage
 entitlements. Install root-owned non-writable copies of
 `research_tunnel_launch.py` and `research_mcp_launch.py` under
-`/opt/modelfc-ops`. Create a root-owned optional CPython 3.12 environment at
+`/opt/modelfc-ops`. Create the `modelfc-tunnel` account with no login shell,
+no membership in runtime/API/deploy groups, and no read access to state.
+Install `modelfc-research-mcp.sudoers` mode 0440 after `visudo -c` and verify
+that **only** the fixed command is permitted; removing this rule disables
+the transition. Create a root-owned optional CPython 3.12 environment at
 `/opt/modelfc-research/.venv`; install `requirements-deploy.lock` then
 `requirements-mcp.lock` with `--require-hashes --only-binary=:all:`, and run
 `pip check`. Pin and inspect the separately downloaded tunnel client under
@@ -77,8 +86,9 @@ entitlements. Install root-owned non-writable copies of
 `/etc/modelfc/research/tunnel.key` only with the systemd `LoadCredential`
 mechanism; rotate it separately from OddsPapi and deployment credentials.
 
-The unit assumes runtime-owned mode-0700 directories `/var/lib/modelfc-research`
-(profile) and `/var/lib/modelfc/state/research-snapshots` (empty is valid), plus
+The unit assumes a tunnel-owned mode-0700 `/var/lib/modelfc-research` profile
+directory and a runtime-owned mode-0700
+`/var/lib/modelfc/state/research-snapshots` (empty is valid), plus
 the real `state/prospective/runner.lock`. Creating the empty private snapshot
 directory during authorized installation creates no manifest or fake state
 lock. Verify sandbox read access to immutable evidence while control/budget
@@ -95,17 +105,20 @@ with the selected tunnel ID and MCP command:
 ```sh
 tunnel-client init --sample sample_mcp_stdio_local \
   --profile zeno-private-research --tunnel-id <private-tunnel-id> \
-  --mcp-command '/usr/bin/python3 -I -B /opt/modelfc-ops/research_mcp_launch.py'
+  --mcp-command 'sudo -n -u modelfc-runtime /usr/bin/python3 -I -B /opt/modelfc-ops/research_mcp_launch.py'
 tunnel-client doctor --profile zeno-private-research --explain
 ```
 
-Initialize as the runtime identity with the tunnel key available only for that
+Initialize as the tunnel identity with the tunnel key available only for that
 setup command; never paste it into shell history, a unit or tracked config.
 Confirm CLI/profile layout with installed `tunnel-client help quickstart`.
 Statically verify and separately authorize enabling/starting the unit.
 `research_tunnel_launch.py` reads the systemd credential and runs
-`tunnel-client run --profile zeno-private-research`; its MCP child has no token
-environment. Verify `doctor`, inspect exactly four tools through a personal
+`tunnel-client run --profile zeno-private-research`. Its stdio command is
+`sudo -n -u modelfc-runtime /usr/bin/python3 -I -B
+/opt/modelfc-ops/research_mcp_launch.py`; configure that exact command in the
+profile, not the bare Python wrapper. The MCP child cannot read the tunnel
+credential by UID and has no token environment. Verify `doctor`, inspect exactly four tools through a personal
 ChatGPT Plugins developer-mode draft using Tunnel, and test approved evidence.
 Do not publish the draft or grant others access.
 

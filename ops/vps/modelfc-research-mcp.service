@@ -5,14 +5,15 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=modelfc-runtime
-Group=modelfc-runtime
+User=modelfc-tunnel
+Group=modelfc-tunnel
 WorkingDirectory=/srv/modelfc/current
 ExecStart=/usr/bin/python3 -I -B /opt/modelfc-ops/research_tunnel_launch.py
 LoadCredential=tunnel.key:/etc/modelfc/research/tunnel.key
 Restart=on-failure
 RestartSec=30
-NoNewPrivileges=yes
+# The sole sudoers rule permits a fixed transition to modelfc-runtime for MCP.
+# NoNewPrivileges would prevent that transition.
 PrivateTmp=yes
 ProtectSystem=strict
 ProtectHome=yes

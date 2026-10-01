@@ -1,0 +1,3 @@
+# Install as root-owned mode 0440 only after separately authorized review.
+# The tunnel identity may execute this exact no-argument launcher as runtime.
+modelfc-tunnel ALL=(modelfc-runtime) NOPASSWD: /usr/bin/python3 -I -B /opt/modelfc-ops/research_mcp_launch.py

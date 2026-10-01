@@ -34,25 +34,25 @@ _TOOLS = (
         "Freeze current validated E1 team-corners evidence once when the user requests current evidence; "
         "reuse its snapshot_id for follow-up questions."),
         inputSchema={"type": "object", "properties": {}, "additionalProperties": False},
-        outputSchema={"type": "object"}, annotations=_WRITE),
+        annotations=_WRITE),
     Tool(name="research_summary", description=(
         "Summarize frozen champion vs 180-day shadow quality, coverage and private hypothetical "
         "market decisions for one existing snapshot. Decision snapshots are not placed bets."),
         inputSchema={"type": "object", "properties": {"snapshot_id": {**_ID, "description": "ID of the frozen research snapshot."}},
                      "required": ["snapshot_id"], "additionalProperties": False},
-        outputSchema={"type": "object"}, annotations=_READ),
+        annotations=_READ),
     Tool(name="segment_comparison", description=(
         "Compare champion and shadow across a fixed venue or frozen venue-history grouping in the same snapshot."),
         inputSchema={"type": "object", "properties": {"snapshot_id": _ID,
                      "segment": {"type": "string", "enum": list(research.SEGMENTS)}},
                      "required": ["snapshot_id", "segment"], "additionalProperties": False},
-        outputSchema={"type": "object"}, annotations=_READ),
+        annotations=_READ),
     Tool(name="inspect_fixture", description=(
         "Inspect one prediction in this snapshot: frozen forecasts, historical context, private market "
         "observations and decisions, and settlement if available."),
         inputSchema={"type": "object", "properties": {"snapshot_id": _ID, "prediction_id": _ID},
                      "required": ["snapshot_id", "prediction_id"], "additionalProperties": False},
-        outputSchema={"type": "object"}, annotations=_READ),
+        annotations=_READ),
 )
 _ARGUMENTS = {
     "create_research_snapshot": frozenset(),
@@ -97,10 +97,14 @@ def _result(state: Path, name: str, arguments: dict[str, Any]) -> CallToolResult
     try:
         output = _execute(state, name, arguments)
         encoded = json.dumps(output, sort_keys=True, separators=(",", ":"), allow_nan=False)
-        if len(encoded.encode("utf-8")) > MAX_MCP_RESULT_BYTES:
+        # Send one canonical JSON representation. The complete result envelope,
+        # including text escaping, must fit the transport bound.
+        result = CallToolResult(content=[TextContent(type="text", text=encoded)])
+        envelope = {"jsonrpc": "2.0", "id": 2147483647,
+                    "result": result.model_dump(by_alias=True, exclude_none=True)}
+        if len(json.dumps(envelope, separators=(",", ":"), ensure_ascii=False).encode("utf-8")) > MAX_MCP_RESULT_BYTES:
             raise research.ResearchError("RESEARCH_OUTPUT_LIMIT")
-        # JSON text supports older clients; structuredContent supports typed tool use.
-        return CallToolResult(content=[TextContent(type="text", text=encoded)], structuredContent=output)
+        return result
     except research.ResearchError as error:
         code = str(error)
         return CallToolResult(content=[TextContent(type="text", text=code if code in SAFE_ERRORS else

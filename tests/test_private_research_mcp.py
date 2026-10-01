@@ -37,7 +37,7 @@ class PrivateResearchMcpTests(unittest.IsolatedAsyncioTestCase):
         for tool in listed.tools:
             self.assertTrue(tool.description)
             self.assertEqual(tool.input_schema['additionalProperties'], False)
-            self.assertEqual(tool.output_schema['type'], 'object')
+            self.assertIsNone(tool.output_schema)
             self.assertFalse(tool.annotations.open_world_hint)
             self.assertFalse(tool.annotations.destructive_hint)
             self.assertEqual(tool.annotations.read_only_hint, tool.name != 'create_research_snapshot')
@@ -57,7 +57,7 @@ class PrivateResearchMcpTests(unittest.IsolatedAsyncioTestCase):
             async with Client(adapter.build_server(state)) as client:
                 created = await client.call_tool('create_research_snapshot', {})
                 self.assertFalse(created.is_error)
-                snapshot = created.structured_content
+                snapshot = json.loads(created.content[0].text)
                 self.assertEqual(snapshot['competition'], 'E1')
                 self.assertEqual(snapshot['model_family'], 'team_corners')
                 self.assertEqual(snapshot['coverage']['predictions_included'], 0)
@@ -70,7 +70,7 @@ class PrivateResearchMcpTests(unittest.IsolatedAsyncioTestCase):
                                     ('segment_comparison', {'segment':'venue_history'})):
                     result = await client.call_tool(tool, {'snapshot_id': identity, **extra})
                     self.assertFalse(result.is_error)
-                    self.assertEqual(result.structured_content['snapshot_id'], identity)
+                    self.assertEqual(json.loads(result.content[0].text)['snapshot_id'], identity)
                 self.assertEqual(before, list((state / 'research-snapshots').glob('*.json')))
                 self.assertEqual(len(before), 1)
                 self.assertFalse((state / '.lock').exists())
@@ -80,23 +80,24 @@ class PrivateResearchMcpTests(unittest.IsolatedAsyncioTestCase):
         count = len(self.calls)
         before = {p: p.read_bytes() for p in self.state.rglob('*.json')}
         async with Client(adapter.build_server(self.state)) as client:
-            created = (await client.call_tool('create_research_snapshot', {})).structured_content
+            created = json.loads((await client.call_tool('create_research_snapshot', {})).content[0].text)
             identity = created['snapshot_id']
             self.assertEqual(created['coverage']['paired_champion_shadow_predictions'], 1)
             self.assertEqual(created['coverage']['settled_predictions'], 0)
             summary = await client.call_tool('research_summary', {'snapshot_id': identity})
-            self.assertEqual(summary.structured_content, domain.research_summary(self.state, identity))
+            self.assertIsNone(summary.structured_content)
+            self.assertEqual(json.loads(summary.content[0].text), domain.research_summary(self.state, identity))
             for dimension in domain.SEGMENTS:
                 segment = await client.call_tool('segment_comparison', {'snapshot_id': identity, 'segment': dimension})
-                self.assertEqual(segment.structured_content,
+                self.assertEqual(json.loads(segment.content[0].text),
                                  domain.segment_comparison(self.state, identity, dimension))
             prediction_id = next(iter((self.state / 'predictions').glob('*.json'))).stem
             detail = await client.call_tool('inspect_fixture', {'snapshot_id': identity, 'prediction_id': prediction_id})
-            self.assertEqual(detail.structured_content, domain.inspect_fixture(self.state, identity, prediction_id))
-            self.assertIn('bookmaker', json.dumps(detail.structured_content))
-            self.assertIn('american_odds', json.dumps(detail.structured_content))
-            self.assertIn('no_vig_market_probability', json.dumps(detail.structured_content))
-            self.assertNotIn(str(self.state), json.dumps(detail.structured_content))
+            self.assertEqual(json.loads(detail.content[0].text), domain.inspect_fixture(self.state, identity, prediction_id))
+            self.assertIn('bookmaker', json.dumps(json.loads(detail.content[0].text)))
+            self.assertIn('american_odds', json.dumps(json.loads(detail.content[0].text)))
+            self.assertIn('no_vig_market_probability', json.dumps(json.loads(detail.content[0].text)))
+            self.assertNotIn(str(self.state), json.dumps(json.loads(detail.content[0].text)))
         self.assertEqual(len(self.calls), count)
         self.assertEqual(before, {p: p.read_bytes() for p in before})
         self.assertEqual(len(list((self.state / 'research-snapshots').glob('*.json'))), 1)
@@ -154,7 +155,7 @@ class PrivateResearchMcpTests(unittest.IsolatedAsyncioTestCase):
     async def test_fixture_not_in_snapshot_and_transport_result_bound(self):
         self.run_pilot()
         async with Client(adapter.build_server(self.state)) as client:
-            identity = (await client.call_tool('create_research_snapshot', {})).structured_content['snapshot_id']
+            identity = json.loads((await client.call_tool('create_research_snapshot', {})).content[0].text)['snapshot_id']
             result = await client.call_tool('inspect_fixture', {'snapshot_id': identity, 'prediction_id': 'a'*32})
             self.assertTrue(result.is_error)
             self.assertEqual(result.content[0].text, 'PREDICTION_NOT_IN_SNAPSHOT')
@@ -162,6 +163,14 @@ class PrivateResearchMcpTests(unittest.IsolatedAsyncioTestCase):
                 result = await client.call_tool('research_summary', {'snapshot_id': identity})
             self.assertTrue(result.is_error)
             self.assertEqual(result.content[0].text, 'RESEARCH_OUTPUT_LIMIT')
+
+    async def test_complete_envelope_bound_includes_json_escaping(self):
+        output = {'sample': '"' * 2000}
+        with patch.object(domain, 'research_summary', return_value=output):
+            with patch.object(adapter, 'MAX_MCP_RESULT_BYTES', len(json.dumps(output)) + 300):
+                result = adapter._result(Path('/unused'), 'research_summary', {'snapshot_id': 'a'*32})
+        self.assertTrue(result.is_error)
+        self.assertEqual(result.content[0].text, 'RESEARCH_OUTPUT_LIMIT')
 
     async def test_stdio_transport_modern_and_legacy_handshake(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -177,7 +186,7 @@ class PrivateResearchMcpTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(len((await client.list_tools()).tools), 4)
                     result = await client.call_tool('create_research_snapshot', {})
                     self.assertFalse(result.is_error)
-                    self.assertEqual(result.structured_content['coverage']['predictions_included'], 0)
+                    self.assertEqual(json.loads(result.content[0].text)['coverage']['predictions_included'], 0)
             self.assertEqual(len(list((state / 'research-snapshots').glob('*.json'))), 2)
 
 
@@ -185,12 +194,16 @@ class PrivateResearchHostTemplateTests(unittest.TestCase):
     def test_private_unit_and_no_public_ingress(self):
         root = Path(__file__).resolve().parents[1]
         unit = (root / 'ops/vps/modelfc-research-mcp.service').read_text()
-        self.assertIn('User=modelfc-runtime', unit)
+        self.assertIn('User=modelfc-tunnel', unit)
         self.assertIn('ProtectSystem=strict', unit)
         self.assertIn('ReadWritePaths=/var/lib/modelfc/state/research-snapshots ', unit)
         self.assertIn('InaccessiblePaths=/etc/modelfc/credentials', unit)
         self.assertNotIn('modelfc-api', unit)
         self.assertNotIn('ODDSPAPI', unit)
+        self.assertIn('LoadCredential=tunnel.key:', unit)
+        sudoers = (root / 'ops/vps/modelfc-research-mcp.sudoers').read_text()
+        self.assertEqual(len([line for line in sudoers.splitlines() if line and not line.startswith('#')]), 1)
+        self.assertIn('modelfc-tunnel ALL=(modelfc-runtime) NOPASSWD:', sudoers)
         for path in (root / 'ops/vps').glob('*Caddy*'):
             self.assertNotIn('/mcp', path.read_text())
 
