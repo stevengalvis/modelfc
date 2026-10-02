@@ -1,7 +1,8 @@
 # Private Zeno research intelligence V1
 
-This is a deterministic operator/research interface, not an agent, MCP server,
-public API, frontend, experiment runner or promotion mechanism. It makes no
+This is a deterministic operator/research interface, not an agent,
+public API, frontend, experiment runner or promotion mechanism. The optional
+private stdio MCP adapter calls these functions without changing their semantics. It makes no
 network requests and cannot alter predictions, markets, opportunities, outcomes,
 budgets, collection cadence or models.
 
@@ -9,7 +10,7 @@ budgets, collection cadence or models.
 
 `corner_research.create_snapshot(state_dir)` appends schema-1 private manifests
 under `state/research-snapshots/<32-hex-snapshot-id>.json`. The trusted Python
-caller supplies configured state; future transports must bind that configuration
+caller supplies configured state; transports must bind that configuration
 server-side and expose IDs only. The CLI reads `MODELFC_STATE_DIR` (default
 `/var/lib/modelfc/state`) and has no path option.
 
@@ -133,11 +134,12 @@ A publication failure does not modify production evidence or retry collection.
 Before activation, authorize operator execution separately; this PR does not run
 production commands, install a launcher or change systemd.
 
-## Future transport and public boundary
+## Private transport and public boundary
 
-A future private MCP/agent can adapt these deterministic functions with strict
+The optional private stdio MCP adapter exposes four bounded functions with strict
 ID/enum arguments and configured state, without moving calculations into the LLM.
-No transport library or LLM call is added. Internal output intentionally includes
+It makes no LLM or provider call. See `ops/vps/PRIVATE_RESEARCH_MCP.md` for
+the separately authorized host and ChatGPT developer-mode connection. Internal output intentionally includes
 bookmakers, odds, no-vig probabilities, model edges, champion/shadow qualification,
 hypothetical units/ROI and private challenger provenance.
 

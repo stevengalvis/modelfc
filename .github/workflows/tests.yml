@@ -25,6 +25,11 @@ jobs:
           "$RUNNER_TEMP/modelfc-locked/bin/python" -m pip check
           "$RUNNER_TEMP/modelfc-locked/bin/python" -B tests/test_deployment_dependencies.py --check-installed
 
+      - name: Install optional private MCP test graph
+        run: |
+          "$RUNNER_TEMP/modelfc-locked/bin/python" -m pip install --require-hashes --only-binary=:all: --no-cache-dir -r requirements-mcp.lock
+          "$RUNNER_TEMP/modelfc-locked/bin/python" -m pip check
+
       - name: Run test suite
         run: PYTHONPATH=src "$RUNNER_TEMP/modelfc-locked/bin/python" -m unittest discover -v
 
