@@ -56,10 +56,10 @@ for metric definitions and push handling.
 Mock mode includes fixed upcoming and settled examples with WIN, LOSS, and PUSH
 results. The header labels this as **Mock data**. Live mode never uses those
 examples and depends on separately enabled prospective collection for records.
-The public live deployment shows Predictions and Performance, with Analyze
+The public live deployment shows Predictions, Teams and Performance, with Analyze
 unavailable; `/` redirects to `/predictions` in live mode. Mock mode keeps
-Analyze and its `/` redirect. Public ingress permits only three prospective
-GET routes and rejects analysis POSTs. The browser's live API client also
+Analyze and its `/` redirect. The reviewed public ingress template permits the narrow prospective and Team
+Intelligence GET routes and rejects analysis POSTs. Host activation is separate. The browser's live API client also
 rejects analysis before issuing a request; synthetic integration tests must
 opt in explicitly when writing their temporary test state.
 The synthetic live integration verifies the real HTTP endpoints with empty state.
@@ -118,3 +118,13 @@ Directory to the repository root.
 Quantitative calculations belong to the Python backend. The frontend may
 format API values but must not recalculate probabilities, edge, expected value,
 settlement, or performance.
+
+## Team Intelligence
+
+`/teams` and canonical `/teams/[team]` read the new strict Team Intelligence
+contracts independently of prospective evidence. See
+[Team Intelligence V1](../docs/TEAM_INTELLIGENCE.md) for sample semantics and
+[host rollout](../ops/vps/TEAM_INTELLIGENCE.md) for the unactivated ingress/ACL plan.
+Synthetic Team Intelligence fixtures are shared from `tests/fixtures/team_intelligence/`;
+Python fixture-parity tests verify the deterministic backend output. They are
+lazily imported in explicit mock mode. Live errors never substitute those fixtures.

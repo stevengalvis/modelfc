@@ -68,7 +68,7 @@ class RefreshLaunchTest(unittest.TestCase):
         executable, argv, env = execute.call_args.args
         self.assertEqual(executable, str(self.a / '.venv/bin/python'))
         self.assertEqual(argv, [executable, '-B', '-P', '-s', '-m', 'modelfc.corner_refresh',
-                               '--config', str(self.config), '--validator-read-user', 'modelfc-validator'])
+                               '--config', str(self.config), '--validator-read-user', 'modelfc-validator', '--public-history-read-user', 'modelfc-api'])
         self.assertEqual(env, {'PATH': '/usr/bin:/bin', 'HOME': '/nonexistent', 'LANG': 'C.UTF-8',
                               'PYTHONPATH': str(self.a / 'src'), 'PYTHONNOUSERSITE': '1', 'PYTHONDONTWRITEBYTECODE': '1'})
         self.assertNotEqual(executable, str((self.a / '.venv/bin/python').resolve()))
@@ -115,7 +115,7 @@ launcher.launch()
         self.assertEqual(result.returncode, 0, result.stderr)
         value = json.loads(result.stdout)
         self.assertEqual(value, {'module': 'pinned-src', 'argv': [
-            '--config', str(self.config), '--validator-read-user', 'modelfc-validator']})
+            '--config', str(self.config), '--validator-read-user', 'modelfc-validator', '--public-history-read-user', 'modelfc-api']})
         record = json.loads(result.stderr)
         self.assertEqual(record['release'], str(self.a))
         self.assertEqual(record['sha'], 'a' * 40)

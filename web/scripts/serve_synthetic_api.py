@@ -14,7 +14,11 @@ from tests.generate_api_response_fixtures import HISTORY
 
 with TemporaryDirectory(prefix="modelfc-frontend-integration-") as directory:
     root = Path(directory)
-    (root / "E1_2627.csv").write_text(HISTORY, encoding="utf-8")
+    completed = HISTORY.replace("Div,Date,HomeTeam,AwayTeam,HC,AC", "Div,Date,HomeTeam,AwayTeam,HC,AC,FTHG,FTAG,FTR")
+    completed = "\n".join(line if index == 0 else line + ",0,0,D" for index, line in enumerate(completed.splitlines())) + "\n"
+    (root / "E1_2627.csv").write_text(completed, encoding="utf-8")
+    (root / "data/corner-refresh").mkdir(parents=True)
+    (root / "data/corner-refresh/refresh.lock").touch()
     config = root / "corner_data.json"
     config.write_text(json.dumps({
         "data_directory": ".", "leagues": ["E1"], "max_age_days": 14,

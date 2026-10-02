@@ -57,7 +57,8 @@ def launch():
               'uid': os.getuid(), 'gid': os.getgid(), 'config': str(CONFIG)}
     print(json.dumps(record, sort_keys=True, separators=(',', ':')), file=sys.stderr, flush=True)
     os.execve(str(python), [str(python), '-B', '-P', '-s', '-m', 'modelfc.corner_refresh',
-              '--config', str(CONFIG), '--validator-read-user', 'modelfc-validator'], env)
+              '--config', str(CONFIG), '--validator-read-user', 'modelfc-validator',
+              '--public-history-read-user', 'modelfc-api'], env)
 
 
 def main():

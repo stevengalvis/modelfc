@@ -41,7 +41,7 @@ def configured_history_lock(config: CornerDataConfig) -> Iterator[None]:
         raise ValueError(f"could not lock configured corner history: {error}") from error
 
 
-def load_data_config(path: Path) -> CornerDataConfig:
+def load_data_config(path: Path, *, resolve_directory: bool = True) -> CornerDataConfig:
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError) as error:
@@ -60,7 +60,8 @@ def load_data_config(path: Path) -> CornerDataConfig:
         raise ValueError("leagues must contain unique supported Football-Data codes")
     if isinstance(age, bool) or not isinstance(age, int) or age < 1:
         raise ValueError("max_age_days must be a positive integer")
-    return CornerDataConfig((path.resolve().parent / directory).resolve(), tuple(leagues), age)
+    location = (path.resolve().parent / directory).resolve() if resolve_directory else (path.absolute().parent / directory).absolute()
+    return CornerDataConfig(location, tuple(leagues), age)
 
 
 def configured_history_paths(config: CornerDataConfig, league: str) -> list[Path]:

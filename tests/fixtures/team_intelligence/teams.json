@@ -1,0 +1,1392 @@
+{
+  "metadata": {
+    "schema_version": 1,
+    "calculation_version": "team-corners-v1",
+    "competition": "E1",
+    "season": "2627",
+    "data_cutoff": "2026-08-22",
+    "source_revision": "8b29c1d3cc801e5fb7f3f13fbc6d6365120791e558469a8d86150f106ce9d5fd",
+    "source": "football-data",
+    "roster_state": "COMPLETE"
+  },
+  "teams": [
+    {
+      "team": {
+        "team_id": "birmingham",
+        "display_name": "Birmingham City",
+        "source_name": "Birmingham"
+      },
+      "coverage": {
+        "completed": 8,
+        "covered": 8,
+        "missing": 0,
+        "home": 4,
+        "away": 4,
+        "latest_result_date": "2026-08-22",
+        "latest_corner_date": "2026-08-22"
+      },
+      "primary": {
+        "completed": 8,
+        "n": 8,
+        "start_date": "2026-08-01",
+        "end_date": "2026-08-22",
+        "won_sum": 23,
+        "conceded_sum": 26,
+        "won": 2.875,
+        "conceded": 3.25,
+        "differential": -0.375,
+        "total": 6.125
+      },
+      "ranks": {
+        "won": {
+          "rank": 24,
+          "cohort_size": 24
+        },
+        "conceded": {
+          "rank": 2,
+          "cohort_size": 24
+        },
+        "differential": {
+          "rank": 13,
+          "cohort_size": 24
+        },
+        "total": {
+          "rank": 23,
+          "cohort_size": 24
+        }
+      },
+      "recency": {
+        "trend_state": "INSUFFICIENT_SAMPLE",
+        "won_change": null
+      }
+    },
+    {
+      "team": {
+        "team_id": "blackburn",
+        "display_name": "Blackburn Rovers",
+        "source_name": "Blackburn"
+      },
+      "coverage": {
+        "completed": 8,
+        "covered": 8,
+        "missing": 0,
+        "home": 4,
+        "away": 4,
+        "latest_result_date": "2026-08-22",
+        "latest_corner_date": "2026-08-22"
+      },
+      "primary": {
+        "completed": 8,
+        "n": 8,
+        "start_date": "2026-08-01",
+        "end_date": "2026-08-22",
+        "won_sum": 31,
+        "conceded_sum": 34,
+        "won": 3.875,
+        "conceded": 4.25,
+        "differential": -0.375,
+        "total": 8.125
+      },
+      "ranks": {
+        "won": {
+          "rank": 20,
+          "cohort_size": 24
+        },
+        "conceded": {
+          "rank": 6,
+          "cohort_size": 24
+        },
+        "differential": {
+          "rank": 13,
+          "cohort_size": 24
+        },
+        "total": {
+          "rank": 19,
+          "cohort_size": 24
+        }
+      },
+      "recency": {
+        "trend_state": "INSUFFICIENT_SAMPLE",
+        "won_change": null
+      }
+    },
+    {
+      "team": {
+        "team_id": "bolton",
+        "display_name": "Bolton Wanderers",
+        "source_name": "Bolton"
+      },
+      "coverage": {
+        "completed": 8,
+        "covered": 8,
+        "missing": 0,
+        "home": 4,
+        "away": 4,
+        "latest_result_date": "2026-08-22",
+        "latest_corner_date": "2026-08-22"
+      },
+      "primary": {
+        "completed": 8,
+        "n": 8,
+        "start_date": "2026-08-01",
+        "end_date": "2026-08-22",
+        "won_sum": 39,
+        "conceded_sum": 42,
+        "won": 4.875,
+        "conceded": 5.25,
+        "differential": -0.375,
+        "total": 10.125
+      },
+      "ranks": {
+        "won": {
+          "rank": 15,
+          "cohort_size": 24
+        },
+        "conceded": {
+          "rank": 11,
+          "cohort_size": 24
+        },
+        "differential": {
+          "rank": 13,
+          "cohort_size": 24
+        },
+        "total": {
+          "rank": 13,
+          "cohort_size": 24
+        }
+      },
+      "recency": {
+        "trend_state": "INSUFFICIENT_SAMPLE",
+        "won_change": null
+      }
+    },
+    {
+      "team": {
+        "team_id": "bristol-city",
+        "display_name": "Bristol City",
+        "source_name": "Bristol City"
+      },
+      "coverage": {
+        "completed": 8,
+        "covered": 8,
+        "missing": 0,
+        "home": 4,
+        "away": 4,
+        "latest_result_date": "2026-08-22",
+        "latest_corner_date": "2026-08-22"
+      },
+      "primary": {
+        "completed": 8,
+        "n": 8,
+        "start_date": "2026-08-01",
+        "end_date": "2026-08-22",
+        "won_sum": 47,
+        "conceded_sum": 50,
+        "won": 5.875,
+        "conceded": 6.25,
+        "differential": -0.375,
+        "total": 12.125
+      },
+      "ranks": {
+        "won": {
+          "rank": 7,
+          "cohort_size": 24
+        },
+        "conceded": {
+          "rank": 19,
+          "cohort_size": 24
+        },
+        "differential": {
+          "rank": 13,
+          "cohort_size": 24
+        },
+        "total": {
+          "rank": 5,
+          "cohort_size": 24
+        }
+      },
+      "recency": {
+        "trend_state": "INSUFFICIENT_SAMPLE",
+        "won_change": null
+      }
+    },
+    {
+      "team": {
+        "team_id": "burnley",
+        "display_name": "Burnley",
+        "source_name": "Burnley"
+      },
+      "coverage": {
+        "completed": 8,
+        "covered": 8,
+        "missing": 0,
+        "home": 4,
+        "away": 4,
+        "latest_result_date": "2026-08-22",
+        "latest_corner_date": "2026-08-22"
+      },
+      "primary": {
+        "completed": 8,
+        "n": 8,
+        "start_date": "2026-08-01",
+        "end_date": "2026-08-22",
+        "won_sum": 55,
+        "conceded_sum": 58,
+        "won": 6.875,
+        "conceded": 7.25,
+        "differential": -0.375,
+        "total": 14.125
+      },
+      "ranks": {
+        "won": {
+          "rank": 2,
+          "cohort_size": 24
+        },
+        "conceded": {
+          "rank": 24,
+          "cohort_size": 24
+        },
+        "differential": {
+          "rank": 13,
+          "cohort_size": 24
+        },
+        "total": {
+          "rank": 1,
+          "cohort_size": 24
+        }
+      },
+      "recency": {
+        "trend_state": "INSUFFICIENT_SAMPLE",
+        "won_change": null
+      }
+    },
+    {
+      "team": {
+        "team_id": "cardiff",
+        "display_name": "Cardiff City",
+        "source_name": "Cardiff"
+      },
+      "coverage": {
+        "completed": 8,
+        "covered": 8,
+        "missing": 0,
+        "home": 4,
+        "away": 4,
+        "latest_result_date": "2026-08-22",
+        "latest_corner_date": "2026-08-22"
+      },
+      "primary": {
+        "completed": 8,
+        "n": 8,
+        "start_date": "2026-08-01",
+        "end_date": "2026-08-22",
+        "won_sum": 43,
+        "conceded_sum": 46,
+        "won": 5.375,
+        "conceded": 5.75,
+        "differential": -0.375,
+        "total": 11.125
+      },
+      "ranks": {
+        "won": {
+          "rank": 11,
+          "cohort_size": 24
+        },
+        "conceded": {
+          "rank": 15,
+          "cohort_size": 24
+        },
+        "differential": {
+          "rank": 13,
+          "cohort_size": 24
+        },
+        "total": {
+          "rank": 9,
+          "cohort_size": 24
+        }
+      },
+      "recency": {
+        "trend_state": "INSUFFICIENT_SAMPLE",
+        "won_change": null
+      }
+    },
+    {
+      "team": {
+        "team_id": "charlton",
+        "display_name": "Charlton Athletic",
+        "source_name": "Charlton"
+      },
+      "coverage": {
+        "completed": 8,
+        "covered": 8,
+        "missing": 0,
+        "home": 4,
+        "away": 4,
+        "latest_result_date": "2026-08-22",
+        "latest_corner_date": "2026-08-22"
+      },
+      "primary": {
+        "completed": 8,
+        "n": 8,
+        "start_date": "2026-08-01",
+        "end_date": "2026-08-22",
+        "won_sum": 27,
+        "conceded_sum": 30,
+        "won": 3.375,
+        "conceded": 3.75,
+        "differential": -0.375,
+        "total": 7.125
+      },
+      "ranks": {
+        "won": {
+          "rank": 22,
+          "cohort_size": 24
+        },
+        "conceded": {
+          "rank": 4,
+          "cohort_size": 24
+        },
+        "differential": {
+          "rank": 13,
+          "cohort_size": 24
+        },
+        "total": {
+          "rank": 21,
+          "cohort_size": 24
+        }
+      },
+      "recency": {
+        "trend_state": "INSUFFICIENT_SAMPLE",
+        "won_change": null
+      }
+    },
+    {
+      "team": {
+        "team_id": "derby",
+        "display_name": "Derby County",
+        "source_name": "Derby"
+      },
+      "coverage": {
+        "completed": 8,
+        "covered": 8,
+        "missing": 0,
+        "home": 4,
+        "away": 4,
+        "latest_result_date": "2026-08-22",
+        "latest_corner_date": "2026-08-22"
+      },
+      "primary": {
+        "completed": 8,
+        "n": 8,
+        "start_date": "2026-08-01",
+        "end_date": "2026-08-22",
+        "won_sum": 35,
+        "conceded_sum": 38,
+        "won": 4.375,
+        "conceded": 4.75,
+        "differential": -0.375,
+        "total": 9.125
+      },
+      "ranks": {
+        "won": {
+          "rank": 18,
+          "cohort_size": 24
+        },
+        "conceded": {
+          "rank": 8,
+          "cohort_size": 24
+        },
+        "differential": {
+          "rank": 13,
+          "cohort_size": 24
+        },
+        "total": {
+          "rank": 17,
+          "cohort_size": 24
+        }
+      },
+      "recency": {
+        "trend_state": "INSUFFICIENT_SAMPLE",
+        "won_change": null
+      }
+    },
+    {
+      "team": {
+        "team_id": "lincoln",
+        "display_name": "Lincoln City",
+        "source_name": "Lincoln"
+      },
+      "coverage": {
+        "completed": 8,
+        "covered": 8,
+        "missing": 0,
+        "home": 4,
+        "away": 4,
+        "latest_result_date": "2026-08-22",
+        "latest_corner_date": "2026-08-22"
+      },
+      "primary": {
+        "completed": 8,
+        "n": 8,
+        "start_date": "2026-08-01",
+        "end_date": "2026-08-22",
+        "won_sum": 43,
+        "conceded_sum": 46,
+        "won": 5.375,
+        "conceded": 5.75,
+        "differential": -0.375,
+        "total": 11.125
+      },
+      "ranks": {
+        "won": {
+          "rank": 11,
+          "cohort_size": 24
+        },
+        "conceded": {
+          "rank": 15,
+          "cohort_size": 24
+        },
+        "differential": {
+          "rank": 13,
+          "cohort_size": 24
+        },
+        "total": {
+          "rank": 9,
+          "cohort_size": 24
+        }
+      },
+      "recency": {
+        "trend_state": "INSUFFICIENT_SAMPLE",
+        "won_change": null
+      }
+    },
+    {
+      "team": {
+        "team_id": "middlesbrough",
+        "display_name": "Middlesbrough",
+        "source_name": "Middlesbrough"
+      },
+      "coverage": {
+        "completed": 8,
+        "covered": 8,
+        "missing": 0,
+        "home": 4,
+        "away": 4,
+        "latest_result_date": "2026-08-22",
+        "latest_corner_date": "2026-08-22"
+      },
+      "primary": {
+        "completed": 8,
+        "n": 8,
+        "start_date": "2026-08-01",
+        "end_date": "2026-08-22",
+        "won_sum": 51,
+        "conceded_sum": 54,
+        "won": 6.375,
+        "conceded": 6.75,
+        "differential": -0.375,
+        "total": 13.125
+      },
+      "ranks": {
+        "won": {
+          "rank": 4,
+          "cohort_size": 24
+        },
+        "conceded": {
+          "rank": 22,
+          "cohort_size": 24
+        },
+        "differential": {
+          "rank": 13,
+          "cohort_size": 24
+        },
+        "total": {
+          "rank": 3,
+          "cohort_size": 24
+        }
+      },
+      "recency": {
+        "trend_state": "INSUFFICIENT_SAMPLE",
+        "won_change": null
+      }
+    },
+    {
+      "team": {
+        "team_id": "millwall",
+        "display_name": "Millwall",
+        "source_name": "Millwall"
+      },
+      "coverage": {
+        "completed": 8,
+        "covered": 8,
+        "missing": 0,
+        "home": 4,
+        "away": 4,
+        "latest_result_date": "2026-08-22",
+        "latest_corner_date": "2026-08-22"
+      },
+      "primary": {
+        "completed": 8,
+        "n": 8,
+        "start_date": "2026-08-01",
+        "end_date": "2026-08-22",
+        "won_sum": 39,
+        "conceded_sum": 42,
+        "won": 4.875,
+        "conceded": 5.25,
+        "differential": -0.375,
+        "total": 10.125
+      },
+      "ranks": {
+        "won": {
+          "rank": 15,
+          "cohort_size": 24
+        },
+        "conceded": {
+          "rank": 11,
+          "cohort_size": 24
+        },
+        "differential": {
+          "rank": 13,
+          "cohort_size": 24
+        },
+        "total": {
+          "rank": 13,
+          "cohort_size": 24
+        }
+      },
+      "recency": {
+        "trend_state": "INSUFFICIENT_SAMPLE",
+        "won_change": null
+      }
+    },
+    {
+      "team": {
+        "team_id": "norwich",
+        "display_name": "Norwich City",
+        "source_name": "Norwich"
+      },
+      "coverage": {
+        "completed": 8,
+        "covered": 8,
+        "missing": 0,
+        "home": 4,
+        "away": 4,
+        "latest_result_date": "2026-08-22",
+        "latest_corner_date": "2026-08-22"
+      },
+      "primary": {
+        "completed": 8,
+        "n": 8,
+        "start_date": "2026-08-01",
+        "end_date": "2026-08-22",
+        "won_sum": 47,
+        "conceded_sum": 50,
+        "won": 5.875,
+        "conceded": 6.25,
+        "differential": -0.375,
+        "total": 12.125
+      },
+      "ranks": {
+        "won": {
+          "rank": 7,
+          "cohort_size": 24
+        },
+        "conceded": {
+          "rank": 19,
+          "cohort_size": 24
+        },
+        "differential": {
+          "rank": 13,
+          "cohort_size": 24
+        },
+        "total": {
+          "rank": 5,
+          "cohort_size": 24
+        }
+      },
+      "recency": {
+        "trend_state": "INSUFFICIENT_SAMPLE",
+        "won_change": null
+      }
+    },
+    {
+      "team": {
+        "team_id": "portsmouth",
+        "display_name": "Portsmouth",
+        "source_name": "Portsmouth"
+      },
+      "coverage": {
+        "completed": 8,
+        "covered": 8,
+        "missing": 0,
+        "home": 4,
+        "away": 4,
+        "latest_result_date": "2026-08-22",
+        "latest_corner_date": "2026-08-22"
+      },
+      "primary": {
+        "completed": 8,
+        "n": 8,
+        "start_date": "2026-08-01",
+        "end_date": "2026-08-22",
+        "won_sum": 26,
+        "conceded_sum": 23,
+        "won": 3.25,
+        "conceded": 2.875,
+        "differential": 0.375,
+        "total": 6.125
+      },
+      "ranks": {
+        "won": {
+          "rank": 23,
+          "cohort_size": 24
+        },
+        "conceded": {
+          "rank": 1,
+          "cohort_size": 24
+        },
+        "differential": {
+          "rank": 1,
+          "cohort_size": 24
+        },
+        "total": {
+          "rank": 23,
+          "cohort_size": 24
+        }
+      },
+      "recency": {
+        "trend_state": "INSUFFICIENT_SAMPLE",
+        "won_change": null
+      }
+    },
+    {
+      "team": {
+        "team_id": "preston",
+        "display_name": "Preston North End",
+        "source_name": "Preston"
+      },
+      "coverage": {
+        "completed": 8,
+        "covered": 8,
+        "missing": 0,
+        "home": 4,
+        "away": 4,
+        "latest_result_date": "2026-08-22",
+        "latest_corner_date": "2026-08-22"
+      },
+      "primary": {
+        "completed": 8,
+        "n": 8,
+        "start_date": "2026-08-01",
+        "end_date": "2026-08-22",
+        "won_sum": 34,
+        "conceded_sum": 31,
+        "won": 4.25,
+        "conceded": 3.875,
+        "differential": 0.375,
+        "total": 8.125
+      },
+      "ranks": {
+        "won": {
+          "rank": 19,
+          "cohort_size": 24
+        },
+        "conceded": {
+          "rank": 5,
+          "cohort_size": 24
+        },
+        "differential": {
+          "rank": 1,
+          "cohort_size": 24
+        },
+        "total": {
+          "rank": 19,
+          "cohort_size": 24
+        }
+      },
+      "recency": {
+        "trend_state": "INSUFFICIENT_SAMPLE",
+        "won_change": null
+      }
+    },
+    {
+      "team": {
+        "team_id": "qpr",
+        "display_name": "Queens Park Rangers",
+        "source_name": "QPR"
+      },
+      "coverage": {
+        "completed": 8,
+        "covered": 8,
+        "missing": 0,
+        "home": 4,
+        "away": 4,
+        "latest_result_date": "2026-08-22",
+        "latest_corner_date": "2026-08-22"
+      },
+      "primary": {
+        "completed": 8,
+        "n": 8,
+        "start_date": "2026-08-01",
+        "end_date": "2026-08-22",
+        "won_sum": 42,
+        "conceded_sum": 39,
+        "won": 5.25,
+        "conceded": 4.875,
+        "differential": 0.375,
+        "total": 10.125
+      },
+      "ranks": {
+        "won": {
+          "rank": 13,
+          "cohort_size": 24
+        },
+        "conceded": {
+          "rank": 9,
+          "cohort_size": 24
+        },
+        "differential": {
+          "rank": 1,
+          "cohort_size": 24
+        },
+        "total": {
+          "rank": 13,
+          "cohort_size": 24
+        }
+      },
+      "recency": {
+        "trend_state": "INSUFFICIENT_SAMPLE",
+        "won_change": null
+      }
+    },
+    {
+      "team": {
+        "team_id": "sheffield-united",
+        "display_name": "Sheffield United",
+        "source_name": "Sheffield United"
+      },
+      "coverage": {
+        "completed": 8,
+        "covered": 8,
+        "missing": 0,
+        "home": 4,
+        "away": 4,
+        "latest_result_date": "2026-08-22",
+        "latest_corner_date": "2026-08-22"
+      },
+      "primary": {
+        "completed": 8,
+        "n": 8,
+        "start_date": "2026-08-01",
+        "end_date": "2026-08-22",
+        "won_sum": 50,
+        "conceded_sum": 47,
+        "won": 6.25,
+        "conceded": 5.875,
+        "differential": 0.375,
+        "total": 12.125
+      },
+      "ranks": {
+        "won": {
+          "rank": 5,
+          "cohort_size": 24
+        },
+        "conceded": {
+          "rank": 17,
+          "cohort_size": 24
+        },
+        "differential": {
+          "rank": 1,
+          "cohort_size": 24
+        },
+        "total": {
+          "rank": 5,
+          "cohort_size": 24
+        }
+      },
+      "recency": {
+        "trend_state": "INSUFFICIENT_SAMPLE",
+        "won_change": null
+      }
+    },
+    {
+      "team": {
+        "team_id": "southampton",
+        "display_name": "Southampton",
+        "source_name": "Southampton"
+      },
+      "coverage": {
+        "completed": 8,
+        "covered": 8,
+        "missing": 0,
+        "home": 4,
+        "away": 4,
+        "latest_result_date": "2026-08-22",
+        "latest_corner_date": "2026-08-22"
+      },
+      "primary": {
+        "completed": 8,
+        "n": 8,
+        "start_date": "2026-08-01",
+        "end_date": "2026-08-22",
+        "won_sum": 58,
+        "conceded_sum": 55,
+        "won": 7.25,
+        "conceded": 6.875,
+        "differential": 0.375,
+        "total": 14.125
+      },
+      "ranks": {
+        "won": {
+          "rank": 1,
+          "cohort_size": 24
+        },
+        "conceded": {
+          "rank": 23,
+          "cohort_size": 24
+        },
+        "differential": {
+          "rank": 1,
+          "cohort_size": 24
+        },
+        "total": {
+          "rank": 1,
+          "cohort_size": 24
+        }
+      },
+      "recency": {
+        "trend_state": "INSUFFICIENT_SAMPLE",
+        "won_change": null
+      }
+    },
+    {
+      "team": {
+        "team_id": "stoke",
+        "display_name": "Stoke City",
+        "source_name": "Stoke"
+      },
+      "coverage": {
+        "completed": 8,
+        "covered": 8,
+        "missing": 0,
+        "home": 4,
+        "away": 4,
+        "latest_result_date": "2026-08-22",
+        "latest_corner_date": "2026-08-22"
+      },
+      "primary": {
+        "completed": 8,
+        "n": 8,
+        "start_date": "2026-08-01",
+        "end_date": "2026-08-22",
+        "won_sum": 46,
+        "conceded_sum": 43,
+        "won": 5.75,
+        "conceded": 5.375,
+        "differential": 0.375,
+        "total": 11.125
+      },
+      "ranks": {
+        "won": {
+          "rank": 9,
+          "cohort_size": 24
+        },
+        "conceded": {
+          "rank": 13,
+          "cohort_size": 24
+        },
+        "differential": {
+          "rank": 1,
+          "cohort_size": 24
+        },
+        "total": {
+          "rank": 9,
+          "cohort_size": 24
+        }
+      },
+      "recency": {
+        "trend_state": "INSUFFICIENT_SAMPLE",
+        "won_change": null
+      }
+    },
+    {
+      "team": {
+        "team_id": "swansea",
+        "display_name": "Swansea City",
+        "source_name": "Swansea"
+      },
+      "coverage": {
+        "completed": 8,
+        "covered": 8,
+        "missing": 0,
+        "home": 4,
+        "away": 4,
+        "latest_result_date": "2026-08-22",
+        "latest_corner_date": "2026-08-22"
+      },
+      "primary": {
+        "completed": 8,
+        "n": 8,
+        "start_date": "2026-08-01",
+        "end_date": "2026-08-22",
+        "won_sum": 30,
+        "conceded_sum": 27,
+        "won": 3.75,
+        "conceded": 3.375,
+        "differential": 0.375,
+        "total": 7.125
+      },
+      "ranks": {
+        "won": {
+          "rank": 21,
+          "cohort_size": 24
+        },
+        "conceded": {
+          "rank": 3,
+          "cohort_size": 24
+        },
+        "differential": {
+          "rank": 1,
+          "cohort_size": 24
+        },
+        "total": {
+          "rank": 21,
+          "cohort_size": 24
+        }
+      },
+      "recency": {
+        "trend_state": "INSUFFICIENT_SAMPLE",
+        "won_change": null
+      }
+    },
+    {
+      "team": {
+        "team_id": "watford",
+        "display_name": "Watford",
+        "source_name": "Watford"
+      },
+      "coverage": {
+        "completed": 8,
+        "covered": 8,
+        "missing": 0,
+        "home": 4,
+        "away": 4,
+        "latest_result_date": "2026-08-22",
+        "latest_corner_date": "2026-08-22"
+      },
+      "primary": {
+        "completed": 8,
+        "n": 8,
+        "start_date": "2026-08-01",
+        "end_date": "2026-08-22",
+        "won_sum": 38,
+        "conceded_sum": 35,
+        "won": 4.75,
+        "conceded": 4.375,
+        "differential": 0.375,
+        "total": 9.125
+      },
+      "ranks": {
+        "won": {
+          "rank": 17,
+          "cohort_size": 24
+        },
+        "conceded": {
+          "rank": 7,
+          "cohort_size": 24
+        },
+        "differential": {
+          "rank": 1,
+          "cohort_size": 24
+        },
+        "total": {
+          "rank": 17,
+          "cohort_size": 24
+        }
+      },
+      "recency": {
+        "trend_state": "INSUFFICIENT_SAMPLE",
+        "won_change": null
+      }
+    },
+    {
+      "team": {
+        "team_id": "west-brom",
+        "display_name": "West Bromwich Albion",
+        "source_name": "West Brom"
+      },
+      "coverage": {
+        "completed": 8,
+        "covered": 8,
+        "missing": 0,
+        "home": 4,
+        "away": 4,
+        "latest_result_date": "2026-08-22",
+        "latest_corner_date": "2026-08-22"
+      },
+      "primary": {
+        "completed": 8,
+        "n": 8,
+        "start_date": "2026-08-01",
+        "end_date": "2026-08-22",
+        "won_sum": 46,
+        "conceded_sum": 43,
+        "won": 5.75,
+        "conceded": 5.375,
+        "differential": 0.375,
+        "total": 11.125
+      },
+      "ranks": {
+        "won": {
+          "rank": 9,
+          "cohort_size": 24
+        },
+        "conceded": {
+          "rank": 13,
+          "cohort_size": 24
+        },
+        "differential": {
+          "rank": 1,
+          "cohort_size": 24
+        },
+        "total": {
+          "rank": 9,
+          "cohort_size": 24
+        }
+      },
+      "recency": {
+        "trend_state": "INSUFFICIENT_SAMPLE",
+        "won_change": null
+      }
+    },
+    {
+      "team": {
+        "team_id": "west-ham",
+        "display_name": "West Ham United",
+        "source_name": "West Ham"
+      },
+      "coverage": {
+        "completed": 8,
+        "covered": 8,
+        "missing": 0,
+        "home": 4,
+        "away": 4,
+        "latest_result_date": "2026-08-22",
+        "latest_corner_date": "2026-08-22"
+      },
+      "primary": {
+        "completed": 8,
+        "n": 8,
+        "start_date": "2026-08-01",
+        "end_date": "2026-08-22",
+        "won_sum": 54,
+        "conceded_sum": 51,
+        "won": 6.75,
+        "conceded": 6.375,
+        "differential": 0.375,
+        "total": 13.125
+      },
+      "ranks": {
+        "won": {
+          "rank": 3,
+          "cohort_size": 24
+        },
+        "conceded": {
+          "rank": 21,
+          "cohort_size": 24
+        },
+        "differential": {
+          "rank": 1,
+          "cohort_size": 24
+        },
+        "total": {
+          "rank": 3,
+          "cohort_size": 24
+        }
+      },
+      "recency": {
+        "trend_state": "INSUFFICIENT_SAMPLE",
+        "won_change": null
+      }
+    },
+    {
+      "team": {
+        "team_id": "wolves",
+        "display_name": "Wolverhampton Wanderers",
+        "source_name": "Wolves"
+      },
+      "coverage": {
+        "completed": 8,
+        "covered": 8,
+        "missing": 0,
+        "home": 4,
+        "away": 4,
+        "latest_result_date": "2026-08-22",
+        "latest_corner_date": "2026-08-22"
+      },
+      "primary": {
+        "completed": 8,
+        "n": 8,
+        "start_date": "2026-08-01",
+        "end_date": "2026-08-22",
+        "won_sum": 42,
+        "conceded_sum": 39,
+        "won": 5.25,
+        "conceded": 4.875,
+        "differential": 0.375,
+        "total": 10.125
+      },
+      "ranks": {
+        "won": {
+          "rank": 13,
+          "cohort_size": 24
+        },
+        "conceded": {
+          "rank": 9,
+          "cohort_size": 24
+        },
+        "differential": {
+          "rank": 1,
+          "cohort_size": 24
+        },
+        "total": {
+          "rank": 13,
+          "cohort_size": 24
+        }
+      },
+      "recency": {
+        "trend_state": "INSUFFICIENT_SAMPLE",
+        "won_change": null
+      }
+    },
+    {
+      "team": {
+        "team_id": "wrexham",
+        "display_name": "Wrexham",
+        "source_name": "Wrexham"
+      },
+      "coverage": {
+        "completed": 8,
+        "covered": 8,
+        "missing": 0,
+        "home": 4,
+        "away": 4,
+        "latest_result_date": "2026-08-22",
+        "latest_corner_date": "2026-08-22"
+      },
+      "primary": {
+        "completed": 8,
+        "n": 8,
+        "start_date": "2026-08-01",
+        "end_date": "2026-08-22",
+        "won_sum": 50,
+        "conceded_sum": 47,
+        "won": 6.25,
+        "conceded": 5.875,
+        "differential": 0.375,
+        "total": 12.125
+      },
+      "ranks": {
+        "won": {
+          "rank": 5,
+          "cohort_size": 24
+        },
+        "conceded": {
+          "rank": 17,
+          "cohort_size": 24
+        },
+        "differential": {
+          "rank": 1,
+          "cohort_size": 24
+        },
+        "total": {
+          "rank": 5,
+          "cohort_size": 24
+        }
+      },
+      "recency": {
+        "trend_state": "INSUFFICIENT_SAMPLE",
+        "won_change": null
+      }
+    }
+  ],
+  "insights": [
+    {
+      "rule_version": "corner-patterns-v1",
+      "family": "THRESHOLD_STREAK",
+      "team": {
+        "team_id": "bristol-city",
+        "display_name": "Bristol City",
+        "source_name": "Bristol City"
+      },
+      "scope": "ALL",
+      "metric": "total",
+      "recent": {
+        "completed": 8,
+        "n": 8,
+        "start_date": "2026-08-01",
+        "end_date": "2026-08-22",
+        "won_sum": 47,
+        "conceded_sum": 50,
+        "won": 5.875,
+        "conceded": 6.25,
+        "differential": -0.375,
+        "total": 12.125
+      },
+      "baseline": null,
+      "difference": null,
+      "threshold": 11,
+      "streak": 8,
+      "threshold_runs": [
+        8,
+        8,
+        8
+      ]
+    },
+    {
+      "rule_version": "corner-patterns-v1",
+      "family": "HIGH_MATCH_CORNER_ENVIRONMENT",
+      "team": {
+        "team_id": "burnley",
+        "display_name": "Burnley",
+        "source_name": "Burnley"
+      },
+      "scope": "ALL",
+      "metric": "total",
+      "recent": {
+        "completed": 8,
+        "n": 8,
+        "start_date": "2026-08-01",
+        "end_date": "2026-08-22",
+        "won_sum": 55,
+        "conceded_sum": 58,
+        "won": 6.875,
+        "conceded": 7.25,
+        "differential": -0.375,
+        "total": 14.125
+      },
+      "baseline": null,
+      "difference": null,
+      "threshold": null,
+      "streak": null,
+      "threshold_runs": []
+    },
+    {
+      "rule_version": "corner-patterns-v1",
+      "family": "LOW_MATCH_CORNER_ENVIRONMENT",
+      "team": {
+        "team_id": "birmingham",
+        "display_name": "Birmingham City",
+        "source_name": "Birmingham"
+      },
+      "scope": "ALL",
+      "metric": "total",
+      "recent": {
+        "completed": 8,
+        "n": 8,
+        "start_date": "2026-08-01",
+        "end_date": "2026-08-22",
+        "won_sum": 23,
+        "conceded_sum": 26,
+        "won": 2.875,
+        "conceded": 3.25,
+        "differential": -0.375,
+        "total": 6.125
+      },
+      "baseline": null,
+      "difference": null,
+      "threshold": null,
+      "streak": null,
+      "threshold_runs": []
+    },
+    {
+      "rule_version": "corner-patterns-v1",
+      "family": "THRESHOLD_STREAK",
+      "team": {
+        "team_id": "middlesbrough",
+        "display_name": "Middlesbrough",
+        "source_name": "Middlesbrough"
+      },
+      "scope": "ALL",
+      "metric": "total",
+      "recent": {
+        "completed": 8,
+        "n": 8,
+        "start_date": "2026-08-01",
+        "end_date": "2026-08-22",
+        "won_sum": 51,
+        "conceded_sum": 54,
+        "won": 6.375,
+        "conceded": 6.75,
+        "differential": -0.375,
+        "total": 13.125
+      },
+      "baseline": null,
+      "difference": null,
+      "threshold": 11,
+      "streak": 8,
+      "threshold_runs": [
+        8,
+        8,
+        8
+      ]
+    },
+    {
+      "rule_version": "corner-patterns-v1",
+      "family": "HIGH_MATCH_CORNER_ENVIRONMENT",
+      "team": {
+        "team_id": "southampton",
+        "display_name": "Southampton",
+        "source_name": "Southampton"
+      },
+      "scope": "ALL",
+      "metric": "total",
+      "recent": {
+        "completed": 8,
+        "n": 8,
+        "start_date": "2026-08-01",
+        "end_date": "2026-08-22",
+        "won_sum": 58,
+        "conceded_sum": 55,
+        "won": 7.25,
+        "conceded": 6.875,
+        "differential": 0.375,
+        "total": 14.125
+      },
+      "baseline": null,
+      "difference": null,
+      "threshold": null,
+      "streak": null,
+      "threshold_runs": []
+    },
+    {
+      "rule_version": "corner-patterns-v1",
+      "family": "LOW_MATCH_CORNER_ENVIRONMENT",
+      "team": {
+        "team_id": "portsmouth",
+        "display_name": "Portsmouth",
+        "source_name": "Portsmouth"
+      },
+      "scope": "ALL",
+      "metric": "total",
+      "recent": {
+        "completed": 8,
+        "n": 8,
+        "start_date": "2026-08-01",
+        "end_date": "2026-08-22",
+        "won_sum": 26,
+        "conceded_sum": 23,
+        "won": 3.25,
+        "conceded": 2.875,
+        "differential": 0.375,
+        "total": 6.125
+      },
+      "baseline": null,
+      "difference": null,
+      "threshold": null,
+      "streak": null,
+      "threshold_runs": []
+    }
+  ]
+}
