@@ -44,6 +44,8 @@ The stdio boundary closes the connection before SDK dispatch for request IDs
 longer than 256 UTF-8 bytes. It cannot safely echo that ID within the bound,
 and a null ID would leave a valid client's call uncorrelated. The client sees
 EOF and must retry with a bounded ID. This also bounds domain-error envelopes.
+Raw inbound stdio lines are capped at 64 KiB before SDK JSON parsing. Oversized
+lines close the connection without passing a partial request to a domain tool.
 
 Errors are stable fixed codes: `INVALID_RESEARCH_ID`,
 `UNSUPPORTED_RESEARCH_SEGMENT`, `PREDICTION_NOT_IN_SNAPSHOT`,
@@ -100,7 +102,9 @@ Verify sandbox read access to immutable evidence while control/budget remain
 read-only. On each service start systemd resolves `/srv/modelfc/current` and
 binds its selected physical release read-only at that fixed mountpoint inside
 the service namespace. The privileged MCP launcher requires this mount and
-validates its protected deployed SHA/owners before importing its release source.
+checks `/proc/self/mountinfo` for a read-only bind (same-filesystem bind mounts
+are not reliably detected by `ismount()`), then validates the protected deployed
+SHA/owners before importing its release source.
 It never trusts the tunnel client's working directory or re-resolves `current`.
 An older release without the adapter fails closed; stop the optional tunnel
 before rolling back to it. The optional venv and root-installed launchers need

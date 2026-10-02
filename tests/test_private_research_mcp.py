@@ -9,6 +9,7 @@ import sys
 import tempfile
 import unittest
 from unittest.mock import patch
+from unittest.mock import mock_open
 import importlib.util
 
 from modelfc import corner_research as domain
@@ -201,6 +202,18 @@ class PrivateResearchMcpTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(completed.stdout, '')
         self.assertNotIn('Traceback', completed.stderr)
 
+    async def test_raw_stdin_line_limit_before_sdk_parse(self):
+        environment = {'PATH': os.environ.get('PATH', ''),
+                       'PYTHONPATH': str(Path(__file__).resolve().parents[1] / 'src')}
+        request = json.dumps({'jsonrpc': '2.0', 'id': 1, 'method': 'tools/list',
+                              'params': {'padding': 'x' * adapter.MAX_INBOUND_MESSAGE_BYTES}}) + '\n'
+        completed = subprocess.run([sys.executable, '-m', 'modelfc.private_research_mcp'],
+                                   input=request, env=environment, text=True,
+                                   capture_output=True, timeout=10)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(completed.stdout, '')
+        self.assertNotIn('Traceback', completed.stderr)
+
     async def test_utf8_request_id_boundary_and_correlation(self):
         environment = {'PATH': os.environ.get('PATH', ''),
                        'PYTHONPATH': str(Path(__file__).resolve().parents[1] / 'src')}
@@ -235,6 +248,20 @@ class PrivateResearchMcpTests(unittest.IsolatedAsyncioTestCase):
 
 
 class PrivateResearchHostTemplateTests(unittest.TestCase):
+    def test_bind_mount_detection_handles_same_device_and_requires_readonly(self):
+        path = Path(__file__).resolve().parents[1] / 'ops/vps/research_mcp_launch.py'
+        spec = importlib.util.spec_from_file_location('research_mcp_launch_mount', path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        # The bind source and parent share st_dev. mountinfo still names the mount.
+        line = '31 20 8:1 /modelfc/releases/abc /srv/modelfc-research-release ro,relatime - ext4 /dev/vda1 rw\n'
+        with patch('builtins.open', mock_open(read_data=line)):
+            self.assertTrue(module._pinned_readonly_mount())
+        with patch('builtins.open', mock_open(read_data=line.replace(' ro,', ' rw,'))):
+            self.assertFalse(module._pinned_readonly_mount())
+        with patch('builtins.open', mock_open(read_data=line.replace('/srv/modelfc-research-release', '/other'))):
+            self.assertFalse(module._pinned_readonly_mount())
+
     def test_private_unit_and_no_public_ingress(self):
         root = Path(__file__).resolve().parents[1]
         unit = (root / 'ops/vps/modelfc-research-mcp.service').read_text()
@@ -259,7 +286,7 @@ class PrivateResearchHostTemplateTests(unittest.TestCase):
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         self.assertNotIn('Path.cwd()', path.read_text())
-        with patch.object(module.os.path, 'ismount', return_value=True), \
+        with patch.object(module, '_pinned_readonly_mount', return_value=True), \
                 patch.object(module.pwd, 'getpwnam') as account, \
                 patch.object(module.os, 'geteuid', return_value=1000), \
                 patch.object(module, '_protected'), \

@@ -22,9 +22,20 @@ def _protected(path: Path, owner: int, directory: bool = False) -> None:
         raise ValueError('invalid research launcher input')
 
 
+def _pinned_readonly_mount() -> bool:
+    # Bind mounts on the same filesystem are invisible to os.path.ismount().
+    # mountinfo is kernel-authored inside this systemd service's mount namespace.
+    with open('/proc/self/mountinfo', encoding='ascii') as source:
+        for line in source:
+            fields = line.split()
+            if len(fields) >= 6 and fields[4] == str(RELEASE) and 'ro' in fields[5].split(','):
+                return True
+    return False
+
+
 def launch() -> None:
     release = RELEASE
-    if not os.path.ismount(release):
+    if not _pinned_readonly_mount():
         raise ValueError('invalid research release')
     deploy = pwd.getpwnam('modelfc-deploy').pw_uid
     runtime = pwd.getpwnam('modelfc-runtime').pw_uid

@@ -5,10 +5,12 @@ change the research cohort. Domain validation and metrics remain in corner_resea
 """
 
 import asyncio
+from contextlib import asynccontextmanager
 import json
 import os
 from pathlib import Path
 import re
+import sys
 from typing import Any
 
 import anyio
@@ -23,6 +25,7 @@ from modelfc import corner_research as research
 ID_PATTERN = r"^[0-9a-f]{32}$"
 MAX_MCP_RESULT_BYTES = research.MAX_RESPONSE_BYTES
 MAX_REQUEST_ID_BYTES = 256
+MAX_INBOUND_MESSAGE_BYTES = 65536
 SAFE_ERRORS = frozenset({
     "INVALID_RESEARCH_ID", "INVALID_RESEARCH_STORAGE", "INVALID_RESEARCH_REFERENCE",
     "INVALID_RESEARCH_EVIDENCE", "INVALID_RESEARCH_SNAPSHOT", "INVALID_RESEARCH_TIMESTAMP",
@@ -146,7 +149,7 @@ def build_server(state_dir: Path) -> Server:
 async def serve() -> None:
     state = Path(os.environ.get("MODELFC_STATE_DIR", "/var/lib/modelfc/state"))
     server = build_server(state)
-    async with stdio_server() as (read_stream, write_stream):
+    async with _bounded_stdin() as stdin, stdio_server(stdin=stdin) as (read_stream, write_stream):
         # The SDK echoes arbitrary client IDs even for errors. Close the transport
         # on an oversized ID: null would lose correlation and echoing it defeats
         # the bound. The client sees EOF and can explicitly retry a valid call.
@@ -168,6 +171,30 @@ async def serve() -> None:
                 await server.run(limited_stream, write_stream, server.create_initialization_options())
             finally:
                 group.cancel_scope.cancel()
+
+
+@asynccontextmanager
+async def _bounded_stdin():
+    """Bound raw lines before SDK JSON parsing, while hiding stdin from children."""
+    original = os.dup(sys.stdin.fileno())
+    null = os.open(os.devnull, os.O_RDONLY)
+    try:
+        os.dup2(null, sys.stdin.fileno())
+    finally:
+        os.close(null)
+    try:
+        with os.fdopen(original, 'rb', closefd=False) as source:
+            async def lines():
+                while True:
+                    raw = await anyio.to_thread.run_sync(source.readline, MAX_INBOUND_MESSAGE_BYTES + 1)
+                    if not raw or len(raw) > MAX_INBOUND_MESSAGE_BYTES:
+                        return  # EOF: no partial/unbounded message reaches SDK.
+                    yield raw.decode('utf-8', errors='replace')
+
+            yield lines()
+    finally:
+        os.dup2(original, sys.stdin.fileno())
+        os.close(original)
 
 
 def main() -> None:
