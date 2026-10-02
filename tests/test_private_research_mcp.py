@@ -13,6 +13,7 @@ from unittest.mock import mock_open
 import importlib.util
 
 from modelfc import corner_research as domain
+from modelfc import ledger_storage
 from tests import test_corner_prospective as pilot
 
 if find_spec('mcp'):
@@ -248,6 +249,34 @@ class PrivateResearchMcpTests(unittest.IsolatedAsyncioTestCase):
 
 
 class PrivateResearchHostTemplateTests(unittest.TestCase):
+    def test_physical_release_matches_bound_inode_and_marker_sha(self):
+        path = Path(__file__).resolve().parents[1] / 'ops/vps/research_mcp_launch.py'
+        spec = importlib.util.spec_from_file_location('research_mcp_launch_physical', path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        sha = 'a'*40
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            releases = base / 'releases'
+            candidate = releases / (sha + '-' + 'b'*12)
+            candidate.mkdir(parents=True)
+            other = base / 'other'
+            other.mkdir()
+            with patch.object(module, 'RELEASES', releases):
+                self.assertEqual(module._physical_release(candidate, sha, os.geteuid()), candidate)
+                with self.assertRaises(ValueError):
+                    module._physical_release(other, sha, os.geteuid())
+                with self.assertRaises(ValueError):
+                    module._physical_release(candidate, 'c'*40, os.geteuid())
+
+                source_file = candidate / 'src/modelfc/ledger_storage.py'
+                source_file.parent.mkdir(parents=True)
+                source_file.touch()
+                with patch.object(ledger_storage, '__file__', str(source_file)), \
+                        patch.object(ledger_storage, '_deployed_commit_sha', return_value=sha) as pinned:
+                    self.assertEqual(ledger_storage.git_commit_sha(), sha)
+                    pinned.assert_called_once_with(candidate)
+
     def test_bind_mount_detection_handles_same_device_and_requires_readonly(self):
         path = Path(__file__).resolve().parents[1] / 'ops/vps/research_mcp_launch.py'
         spec = importlib.util.spec_from_file_location('research_mcp_launch_mount', path)
@@ -286,7 +315,9 @@ class PrivateResearchHostTemplateTests(unittest.TestCase):
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         self.assertNotIn('Path.cwd()', path.read_text())
+        physical = Path('/srv/modelfc/releases/' + 'a'*40 + '-bbbbbbbbbbbb')
         with patch.object(module, '_pinned_readonly_mount', return_value=True), \
+                patch.object(module, '_physical_release', return_value=physical), \
                 patch.object(module.pwd, 'getpwnam') as account, \
                 patch.object(module.os, 'geteuid', return_value=1000), \
                 patch.object(module, '_protected'), \
@@ -309,6 +340,6 @@ class PrivateResearchHostTemplateTests(unittest.TestCase):
                 module.launch()
             environment = execute.call_args.args[2]
             self.assertEqual(environment['MODELFC_STATE_DIR'], '/var/lib/modelfc/state')
-            self.assertEqual(environment['PYTHONPATH'], '/srv/modelfc-research-release/src')
+            self.assertEqual(environment['PYTHONPATH'], str(physical / 'src'))
             self.assertNotIn('CONTROL_PLANE_API_KEY', environment)
             self.assertNotIn('ODDSPAPI_API_KEY', environment)

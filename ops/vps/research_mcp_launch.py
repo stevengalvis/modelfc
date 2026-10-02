@@ -11,6 +11,7 @@ import sys
 # systemd resolves current once at service startup and pins the physical release
 # through a read-only bind mount. The tunnel caller's cwd cannot choose a release.
 RELEASE = Path('/srv/modelfc-research-release')
+RELEASES = Path('/srv/modelfc/releases')
 STATE = Path('/var/lib/modelfc/state')
 PYTHON = Path('/opt/modelfc-research/.venv/bin/python')
 
@@ -33,6 +34,24 @@ def _pinned_readonly_mount() -> bool:
     return False
 
 
+def _physical_release(selected: Path, sha: str, owner: int) -> Path:
+    """Find the protected permanent path for exactly the bound directory inode."""
+    _protected(RELEASES.parent, owner, directory=True)
+    _protected(RELEASES, owner, directory=True)
+    pinned = selected.stat()
+    matches = []
+    for candidate in RELEASES.glob(sha + '-*'):
+        if not re.fullmatch(re.escape(sha) + r'-[0-9a-f]{12}', candidate.name):
+            continue
+        _protected(candidate, owner, directory=True)
+        info = candidate.stat()
+        if (info.st_dev, info.st_ino) == (pinned.st_dev, pinned.st_ino):
+            matches.append(candidate)
+    if len(matches) != 1:
+        raise ValueError('invalid pinned release identity')
+    return matches[0]
+
+
 def launch() -> None:
     release = RELEASE
     if not _pinned_readonly_mount():
@@ -47,10 +66,15 @@ def launch() -> None:
     fd = os.open(marker, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     with os.fdopen(fd, 'rb') as source:
         info = os.fstat(source.fileno())
+        raw_sha = source.read(41)
         if (not stat.S_ISREG(info.st_mode) or info.st_uid != deploy
                 or stat.S_IMODE(info.st_mode) != 0o444 or info.st_size != 40
-                or not re.fullmatch(rb'[0-9a-f]{40}', source.read(41))):
+                or not re.fullmatch(rb'[0-9a-f]{40}', raw_sha)):
             raise ValueError('invalid research provenance')
+    physical = _physical_release(release, raw_sha.decode('ascii'), deploy)
+    for path in (physical / '.git', physical / 'src', physical / 'src/modelfc'):
+        _protected(path, deploy, directory=True)
+    _protected(physical / '.git/modelfc-deployed-sha', deploy)
     for path in (release / 'src/modelfc/private_research_mcp.py',
                  release / 'src/modelfc/corner_research.py',
                  release / 'src/modelfc/ledger_storage.py'):
@@ -62,7 +86,7 @@ def launch() -> None:
     _protected(STATE, runtime, directory=True)
     _protected(STATE / 'research-snapshots', runtime, directory=True)
     env = {'PATH': '/usr/bin:/bin', 'HOME': '/nonexistent', 'LANG': 'C.UTF-8',
-           'PYTHONPATH': str(release / 'src'), 'PYTHONNOUSERSITE': '1',
+           'PYTHONPATH': str(physical / 'src'), 'PYTHONNOUSERSITE': '1',
            'PYTHONDONTWRITEBYTECODE': '1', 'MODELFC_STATE_DIR': str(STATE)}
     os.execve(str(PYTHON), [str(PYTHON), '-B', '-P', '-s', '-m',
                             'modelfc.private_research_mcp'], env)

@@ -103,8 +103,10 @@ read-only. On each service start systemd resolves `/srv/modelfc/current` and
 binds its selected physical release read-only at that fixed mountpoint inside
 the service namespace. The privileged MCP launcher requires this mount and
 checks `/proc/self/mountinfo` for a read-only bind (same-filesystem bind mounts
-are not reliably detected by `ismount()`), then validates the protected deployed
-SHA/owners before importing its release source.
+are not reliably detected by `ismount()`), then matches the bound directory
+inode and validated marker SHA to exactly one protected physical release. It
+imports from that physical path, preserving V1's existing `git_commit_sha()`
+protected-marker behavior without Git fallback or caller-supplied provenance.
 It never trusts the tunnel client's working directory or re-resolves `current`.
 An older release without the adapter fails closed; stop the optional tunnel
 before rolling back to it. The optional venv and root-installed launchers need
