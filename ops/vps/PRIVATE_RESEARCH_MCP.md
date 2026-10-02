@@ -42,10 +42,12 @@ access are tool arguments. V1 bounds normal JSON to 64 KiB; the adapter also
 checks the serialized MCP output and fails with `RESEARCH_OUTPUT_LIMIT`.
 The stdio boundary closes the connection before SDK dispatch for request IDs
 longer than 256 UTF-8 bytes. It cannot safely echo that ID within the bound,
-and a null ID would leave a valid client's call uncorrelated. The client sees
-EOF and must retry with a bounded ID. This also bounds domain-error envelopes.
+and a null ID would leave a valid client's call uncorrelated. The dedicated
+worker exits with fixed `RESEARCH_MCP_INPUT_LIMIT` on stderr so the client sees
+EOF even if it holds stdin open; it must retry with a bounded ID. This also
+bounds domain-error envelopes.
 Raw inbound stdio lines are capped at 64 KiB before SDK JSON parsing. Oversized
-lines close the connection without passing a partial request to a domain tool.
+lines terminate the worker without passing a partial request to a domain tool.
 
 Errors are stable fixed codes: `INVALID_RESEARCH_ID`,
 `UNSUPPORTED_RESEARCH_SEGMENT`, `PREDICTION_NOT_IN_SNAPSHOT`,

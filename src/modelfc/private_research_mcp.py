@@ -129,6 +129,13 @@ def _id_is_oversized(identity: str | int) -> bool:
     return len(raw) > MAX_REQUEST_ID_BYTES
 
 
+def _terminate_input_limit() -> None:
+    # Dedicated stdio worker: closing SDK streams alone can leave its raw
+    # reader blocked while the peer holds stdin open. Exit guarantees EOF.
+    print('RESEARCH_MCP_INPUT_LIMIT', file=sys.stderr, flush=True)
+    os._exit(2)
+
+
 def build_server(state_dir: Path) -> Server:
     """Bind the trusted state directory outside MCP's model-controlled schema."""
     state = Path(state_dir)
@@ -161,8 +168,7 @@ async def serve() -> None:
                     if (isinstance(message, SessionMessage)
                             and isinstance(message.message, JSONRPCRequest)
                             and _id_is_oversized(message.message.id)):
-                        await write_stream.aclose()
-                        return
+                        _terminate_input_limit()
                     await inbound.send(message)
 
         async with anyio.create_task_group() as group:
@@ -187,8 +193,10 @@ async def _bounded_stdin():
             async def lines():
                 while True:
                     raw = await anyio.to_thread.run_sync(source.readline, MAX_INBOUND_MESSAGE_BYTES + 1)
-                    if not raw or len(raw) > MAX_INBOUND_MESSAGE_BYTES:
-                        return  # EOF: no partial/unbounded message reaches SDK.
+                    if not raw:
+                        return
+                    if len(raw) > MAX_INBOUND_MESSAGE_BYTES:
+                        _terminate_input_limit()  # No partial message reaches SDK.
                     yield raw.decode('utf-8', errors='replace')
 
             yield lines()

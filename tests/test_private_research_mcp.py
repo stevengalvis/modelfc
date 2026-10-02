@@ -196,24 +196,33 @@ class PrivateResearchMcpTests(unittest.IsolatedAsyncioTestCase):
                        'MODELFC_STATE_DIR': '/unused'}
         request = json.dumps({'jsonrpc': '2.0', 'id': 'x' * (adapter.MAX_REQUEST_ID_BYTES + 1),
                               'method': 'tools/list', 'params': {}}) + '\n'
-        completed = subprocess.run([sys.executable, '-m', 'modelfc.private_research_mcp'],
-                                   input=request, env=environment, text=True,
-                                   capture_output=True, timeout=10)
-        self.assertEqual(completed.returncode, 0, completed.stderr)
-        self.assertEqual(completed.stdout, '')
-        self.assertNotIn('Traceback', completed.stderr)
+        self.assert_input_limit_terminates_with_open_pipe(request, environment)
 
     async def test_raw_stdin_line_limit_before_sdk_parse(self):
         environment = {'PATH': os.environ.get('PATH', ''),
                        'PYTHONPATH': str(Path(__file__).resolve().parents[1] / 'src')}
         request = json.dumps({'jsonrpc': '2.0', 'id': 1, 'method': 'tools/list',
                               'params': {'padding': 'x' * adapter.MAX_INBOUND_MESSAGE_BYTES}}) + '\n'
-        completed = subprocess.run([sys.executable, '-m', 'modelfc.private_research_mcp'],
-                                   input=request, env=environment, text=True,
-                                   capture_output=True, timeout=10)
-        self.assertEqual(completed.returncode, 0, completed.stderr)
-        self.assertEqual(completed.stdout, '')
-        self.assertNotIn('Traceback', completed.stderr)
+        self.assert_input_limit_terminates_with_open_pipe(request, environment)
+
+    def assert_input_limit_terminates_with_open_pipe(self, request, environment):
+        child = subprocess.Popen([sys.executable, '-m', 'modelfc.private_research_mcp'],
+                                 env=environment, text=True, stdin=subprocess.PIPE,
+                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        try:
+            child.stdin.write(request)
+            child.stdin.flush()
+            # Deliberately keep stdin open; the worker must terminate anyway.
+            self.assertEqual(child.wait(timeout=5), 2)
+            self.assertEqual(child.stdout.read(), '')
+            self.assertEqual(child.stderr.read().strip(), 'RESEARCH_MCP_INPUT_LIMIT')
+        finally:
+            child.stdin.close()
+            child.stdout.close()
+            child.stderr.close()
+            if child.poll() is None:
+                child.kill()
+                child.wait()
 
     async def test_utf8_request_id_boundary_and_correlation(self):
         environment = {'PATH': os.environ.get('PATH', ''),
