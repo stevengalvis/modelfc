@@ -1,5 +1,6 @@
 """In-process and stdio MCP contract over synthetic, offline research evidence."""
 
+import asyncio
 import json
 from importlib.util import find_spec
 import os
@@ -7,6 +8,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 from unittest.mock import patch
 from unittest.mock import mock_open
@@ -154,6 +156,32 @@ class PrivateResearchMcpTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(result.content[0].text, 'RESEARCH_EVIDENCE_UNAVAILABLE')
                 self.assertEqual(original.read_bytes(), payload)
                 self.assertEqual(len(list((state / 'research-snapshots').glob('*.json'))), 2)
+
+    async def test_concurrent_calls_fail_busy_without_queuing_domain_work(self):
+        entered, release = threading.Event(), threading.Event()
+        calls = []
+
+        def blocking(state, name, arguments, request_id):
+            calls.append(name)
+            if len(calls) == 1:
+                entered.set()
+                self.assertTrue(release.wait(5))
+            return adapter.CallToolResult(content=[adapter.TextContent(type='text', text='{}')])
+
+        with patch.object(adapter, '_result', side_effect=blocking):
+            async with Client(adapter.build_server(self.state)) as client:
+                first = asyncio.create_task(client.call_tool('research_summary', {'snapshot_id': 'a'*32}))
+                try:
+                    self.assertTrue(await asyncio.to_thread(entered.wait, 5))
+                    busy = await client.call_tool('research_summary', {'snapshot_id': 'a'*32})
+                    self.assertTrue(busy.is_error)
+                    self.assertEqual(busy.content[0].text, 'RESEARCH_BUSY')
+                    self.assertEqual(calls, ['research_summary'])
+                finally:
+                    release.set()
+                self.assertFalse((await first).is_error)
+                self.assertFalse((await client.call_tool('research_summary', {'snapshot_id': 'a'*32})).is_error)
+        self.assertEqual(calls, ['research_summary', 'research_summary'])
 
     async def test_fixture_not_in_snapshot_and_transport_result_bound(self):
         self.run_pilot()

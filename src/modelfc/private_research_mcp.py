@@ -32,6 +32,7 @@ SAFE_ERRORS = frozenset({
     "INVALID_RESEARCH_RELEASE", "UNSUPPORTED_RESEARCH_COHORT", "UNSUPPORTED_RESEARCH_SEGMENT",
     "RESEARCH_EVIDENCE_UNAVAILABLE", "RESEARCH_LIMIT_EXCEEDED", "RESEARCH_OUTPUT_LIMIT",
     "PREDICTION_NOT_IN_SNAPSHOT", "INVALID_RESEARCH_ARGUMENTS", "UNSUPPORTED_RESEARCH_TOOL",
+    "RESEARCH_BUSY",
 })
 _ID = {"type": "string", "pattern": ID_PATTERN, "minLength": 32, "maxLength": 32}
 _READ = ToolAnnotations(readOnlyHint=True, destructiveHint=False, openWorldHint=False)
@@ -139,12 +140,18 @@ def _terminate_input_limit() -> None:
 def build_server(state_dir: Path) -> Server:
     """Bind the trusted state directory outside MCP's model-controlled schema."""
     state = Path(state_dir)
+    operation = asyncio.Lock()
 
     async def list_tools(_context, _params):
         return ListToolsResult(tools=list(_TOOLS))
 
     async def call_tool(context, params):
-        return await asyncio.to_thread(_result, state, params.name, params.arguments or {}, context.request_id)
+        # No executor backlog or overlapping private snapshot reads/writes.
+        # This check/acquire runs without a suspension between them in this loop.
+        if operation.locked():
+            return CallToolResult(content=[TextContent(type="text", text="RESEARCH_BUSY")], isError=True)
+        async with operation:
+            return await asyncio.to_thread(_result, state, params.name, params.arguments or {}, context.request_id)
 
     return Server("zeno-private-research", version="0.1.0", instructions=(
         "Private E1 team-corners research. Create one snapshot only when asked for current evidence, "

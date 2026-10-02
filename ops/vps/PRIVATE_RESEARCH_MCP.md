@@ -57,6 +57,9 @@ storage/evidence codes. Other failures map to `RESEARCH_EVIDENCE_UNAVAILABLE`.
 No traceback, raw exception or filesystem path is returned. A failed create may
 have published the manifest before a later summary read failed; inspect private
 operator evidence before retrying. No provider work is retried.
+Only one domain operation runs per MCP worker at a time. Concurrent tool calls
+return fixed `RESEARCH_BUSY` instead of queuing research scans or publications;
+retry after the first operation completes while reusing the same snapshot ID.
 
 ## Host trust boundary and separately authorized activation
 
