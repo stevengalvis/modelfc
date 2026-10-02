@@ -183,6 +183,37 @@ class PrivateResearchMcpTests(unittest.IsolatedAsyncioTestCase):
                 self.assertFalse((await client.call_tool('research_summary', {'snapshot_id': 'a'*32})).is_error)
         self.assertEqual(calls, ['research_summary', 'research_summary'])
 
+    async def test_canceled_handler_stays_busy_until_worker_finishes(self):
+        entered, release = threading.Event(), threading.Event()
+        calls = []
+
+        def blocking(state, name, arguments, request_id):
+            calls.append(name)
+            if len(calls) == 1:
+                entered.set()
+                self.assertTrue(release.wait(5))
+            return adapter.CallToolResult(content=[adapter.TextContent(type='text', text='{}')])
+
+        with patch.object(adapter, '_result', side_effect=blocking):
+            async with Client(adapter.build_server(self.state)) as client:
+                first = asyncio.create_task(client.call_tool('research_summary', {'snapshot_id': 'a'*32}))
+                try:
+                    self.assertTrue(await asyncio.to_thread(entered.wait, 5))
+                    first.cancel()
+                    with self.assertRaises(asyncio.CancelledError):
+                        await first
+                    busy = await client.call_tool('research_summary', {'snapshot_id': 'a'*32})
+                    self.assertTrue(busy.is_error)
+                    self.assertEqual(busy.content[0].text, 'RESEARCH_BUSY')
+                    self.assertEqual(calls, ['research_summary'])
+                finally:
+                    release.set()
+                for _ in range(50):
+                    await asyncio.sleep(0.01)
+                    if (await client.call_tool('research_summary', {'snapshot_id': 'a'*32})).is_error is False:
+                        break
+                self.assertEqual(calls, ['research_summary', 'research_summary'])
+
     async def test_fixture_not_in_snapshot_and_transport_result_bound(self):
         self.run_pilot()
         async with Client(adapter.build_server(self.state)) as client:

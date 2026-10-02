@@ -60,6 +60,8 @@ operator evidence before retrying. No provider work is retried.
 Only one domain operation runs per MCP worker at a time. Concurrent tool calls
 return fixed `RESEARCH_BUSY` instead of queuing research scans or publications;
 retry after the first operation completes while reusing the same snapshot ID.
+Canceling a client call does not stop a running domain thread or release this
+gate early; the worker stays busy until the underlying operation finishes.
 
 ## Host trust boundary and separately authorized activation
 

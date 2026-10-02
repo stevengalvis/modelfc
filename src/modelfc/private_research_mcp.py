@@ -150,8 +150,21 @@ def build_server(state_dir: Path) -> Server:
         # This check/acquire runs without a suspension between them in this loop.
         if operation.locked():
             return CallToolResult(content=[TextContent(type="text", text="RESEARCH_BUSY")], isError=True)
-        async with operation:
-            return await asyncio.to_thread(_result, state, params.name, params.arguments or {}, context.request_id)
+        await operation.acquire()
+        try:
+            work = asyncio.create_task(asyncio.to_thread(
+                _result, state, params.name, params.arguments or {}, context.request_id))
+        except BaseException:
+            operation.release()
+            raise
+
+        def finished(task):
+            operation.release()  # Handler cancellation does not release a running thread.
+            if not task.cancelled():
+                task.exception()  # Consume an orphaned failure after client cancellation.
+
+        work.add_done_callback(finished)
+        return await asyncio.shield(work)
 
     return Server("zeno-private-research", version="0.1.0", instructions=(
         "Private E1 team-corners research. Create one snapshot only when asked for current evidence, "
