@@ -7,7 +7,10 @@ Wants=network-online.target
 Type=simple
 User=modelfc-tunnel
 Group=modelfc-tunnel
-WorkingDirectory=/srv/modelfc/current
+WorkingDirectory=/
+# Resolve current once at service start; its read-only bind mount pins the
+# physical release even if current later changes or tunnel-client changes cwd.
+BindReadOnlyPaths=/srv/modelfc/current:/srv/modelfc-research-release
 ExecStart=/usr/bin/python3 -I -B /opt/modelfc-ops/research_tunnel_launch.py
 LoadCredential=tunnel.key:/etc/modelfc/research/tunnel.key
 Restart=on-failure
@@ -15,6 +18,7 @@ RestartSec=30
 # The sole sudoers rule permits a fixed transition to modelfc-runtime for MCP.
 # NoNewPrivileges would prevent that transition.
 PrivateTmp=yes
+RestrictNamespaces=yes
 ProtectSystem=strict
 ProtectHome=yes
 ReadWritePaths=/var/lib/modelfc/state/research-snapshots /var/lib/modelfc-research

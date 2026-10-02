@@ -95,10 +95,13 @@ directory and a runtime-owned mode-0700
 `/var/lib/modelfc/state/research-snapshots` (empty is valid), plus
 the real `state/prospective/runner.lock`. Creating the empty private snapshot
 directory during authorized installation creates no manifest or fake state
-lock. Verify sandbox read access to immutable evidence while control/budget
-remain read-only. On each start, systemd resolves the physical directory at
-`WorkingDirectory=/srv/modelfc/current`; the MCP launcher validates that
-physical release and protected deployed SHA before importing release source.
+lock. Prepare an empty root-owned `/srv/modelfc-research-release` mountpoint.
+Verify sandbox read access to immutable evidence while control/budget remain
+read-only. On each service start systemd resolves `/srv/modelfc/current` and
+binds its selected physical release read-only at that fixed mountpoint inside
+the service namespace. The privileged MCP launcher requires this mount and
+validates its protected deployed SHA/owners before importing its release source.
+It never trusts the tunnel client's working directory or re-resolves `current`.
 An older release without the adapter fails closed; stop the optional tunnel
 before rolling back to it. The optional venv and root-installed launchers need
 separately reviewed updates when contracts change.

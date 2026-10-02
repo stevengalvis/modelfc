@@ -245,6 +245,8 @@ class PrivateResearchHostTemplateTests(unittest.TestCase):
         self.assertNotIn('modelfc-api', unit)
         self.assertNotIn('ODDSPAPI', unit)
         self.assertIn('LoadCredential=tunnel.key:', unit)
+        self.assertIn('BindReadOnlyPaths=/srv/modelfc/current:/srv/modelfc-research-release', unit)
+        self.assertIn('RestrictNamespaces=yes', unit)
         sudoers = (root / 'ops/vps/modelfc-research-mcp.sudoers').read_text()
         self.assertEqual(len([line for line in sudoers.splitlines() if line and not line.startswith('#')]), 1)
         self.assertIn('modelfc-tunnel ALL=(modelfc-runtime) NOPASSWD:', sudoers)
@@ -256,8 +258,8 @@ class PrivateResearchHostTemplateTests(unittest.TestCase):
         spec = importlib.util.spec_from_file_location('research_mcp_launch', path)
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
-        release = Path('/srv/modelfc/releases/' + 'a'*40 + '-aaaaaaaaaaaa')
-        with patch.object(module.Path, 'cwd', return_value=release), \
+        self.assertNotIn('Path.cwd()', path.read_text())
+        with patch.object(module.os.path, 'ismount', return_value=True), \
                 patch.object(module.pwd, 'getpwnam') as account, \
                 patch.object(module.os, 'geteuid', return_value=1000), \
                 patch.object(module, '_protected'), \
@@ -280,5 +282,6 @@ class PrivateResearchHostTemplateTests(unittest.TestCase):
                 module.launch()
             environment = execute.call_args.args[2]
             self.assertEqual(environment['MODELFC_STATE_DIR'], '/var/lib/modelfc/state')
+            self.assertEqual(environment['PYTHONPATH'], '/srv/modelfc-research-release/src')
             self.assertNotIn('CONTROL_PLANE_API_KEY', environment)
             self.assertNotIn('ODDSPAPI_API_KEY', environment)
