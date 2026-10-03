@@ -422,3 +422,15 @@ label { font-size: 11px; }
   .ti-recent article { grid-template-columns: 1fr 1fr; gap: 10px; } .ti-recent span { grid-column: 1 / -1; text-align: left; }
 }
 @media (max-width: 560px) { .ti-primary article { padding: 18px 14px; } .ti-primary strong { font-size: 27px; } .ti-thresholds { gap: 10px; padding-inline: 15px; } .ti-pattern-grid, .ti-split, .ti-recent { padding-inline: 15px; } }
+
+.ti-comparison-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 24px; }
+.ti-comparison-summary, .ti-comparison-section { padding: 24px; }
+.ti-comparison-section h2 { margin: 0 0 20px; }
+.ti-comparison-grid h2, .ti-comparison-grid h3 { font-size: 16px; overflow-wrap: anywhere; }
+.ti-comparison-grid p { color: var(--muted); font-size: 12px; line-height: 1.5; }
+.ti-comparison-grid .ti-compact-metrics { flex-direction: column; gap: 10px; }
+@media (max-width: 560px) {
+  .ti-comparison-grid { gap: 14px; }
+  .ti-comparison-summary, .ti-comparison-section { padding: 15px; }
+  .ti-comparison-grid select { padding-inline: 5px; }
+}
