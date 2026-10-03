@@ -200,3 +200,10 @@ Prospective collection, runner state, `/root/modelfc-state`, scheduling changes,
 settlement and provider access remain outside this migration. After this refresh
 migration is accepted, use [PROSPECTIVE.md](PROSPECTIVE.md) for the separate runner
 state, credential, launcher and timer cutover.
+
+## Optional public current E1 history reader
+
+The Team Intelligence templates add an explicit modelfc-api ACL option to the
+refresh launcher. See [TEAM_INTELLIGENCE.md](TEAM_INTELLIGENCE.md). Installation is
+separate: keep validator grants, grant no default API ACLs, and verify current E1
+replacement stays readable while other leagues/seasons and refresh state do not.

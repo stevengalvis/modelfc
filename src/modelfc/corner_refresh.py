@@ -10,6 +10,7 @@ import json
 import os
 from pathlib import Path
 import pwd
+import re
 import subprocess
 from tempfile import NamedTemporaryFile
 from urllib.request import urlopen
@@ -34,7 +35,7 @@ def download_csv(url: str) -> bytes:
     return payload
 
 
-def atomic_write(path: Path, payload: bytes, *, validator_read_user: str | None = None) -> None:
+def atomic_write(path: Path, payload: bytes, *, validator_read_user: str | None = None, public_history_read_user: str | None = None) -> None:
     """Publish one complete file on the same filesystem, cleaning up on error."""
     temporary = None
     try:
@@ -44,21 +45,26 @@ def atomic_write(path: Path, payload: bytes, *, validator_read_user: str | None 
             target.flush()
             os.fsync(target.fileno())
         if validator_read_user is not None:
-            prepare_validator_read(temporary, validator_read_user)
+            prepare_read_acl(temporary, validator_read_user)
+        if public_history_read_user is not None:
+            if public_history_read_user != "modelfc-api" or re.fullmatch(r"E1_[0-9]{4}\.csv", path.name) is None:
+                raise ValueError("invalid public history ACL target")
+            prepare_read_acl(temporary, public_history_read_user)
         temporary.replace(path)
     finally:
         if temporary is not None:
             temporary.unlink(missing_ok=True)
 
 
-def prepare_validator_read(path: Path, user: str) -> None:
-    """Grant only the selected user read access before canonical publication."""
+def prepare_read_acl(path: Path, user: str, *, remove: bool = False) -> None:
+    """Set or revoke one named user read ACL; never change publication scope."""
     try:
         uid = pwd.getpwnam(user).pw_uid
-        subprocess.run(['/usr/bin/setfacl', '-m', f'u:{uid}:r--', '--', str(path)],
+        option, entry = ('-x', f'u:{uid}') if remove else ('-m', f'u:{uid}:r--')
+        subprocess.run(['/usr/bin/setfacl', option, entry, '--', str(path)],
                        check=True, timeout=10, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     except (KeyError, OSError, subprocess.SubprocessError):
-        raise ValueError('validator read ACL preparation failed; replacement not published') from None
+        raise ValueError('read ACL preparation failed; replacement not published') from None
 
 
 @contextmanager
@@ -124,7 +130,7 @@ def snapshot(path: Path, league: str, season: str, today: date) -> dict:
 
 
 def refresh_league(config: CornerDataConfig, league: str, today: date, state: Path,
-                   *, validator_read_user: str | None = None) -> dict:
+                   *, validator_read_user: str | None = None, public_history_read_user: str | None = None) -> dict:
     season = current_season(today)
     target = config.directory / f"{league}_{season}.csv"
     url = f"https://www.football-data.co.uk/mmz4281/{season}/{league}.csv"
@@ -139,12 +145,25 @@ def refresh_league(config: CornerDataConfig, league: str, today: date, state: Pa
     if missing:
         raise ValueError(f"download would remove {len(missing)} existing corner fixtures; kept local file")
     changed = old_bytes != payload
+    if public_history_read_user is not None and public_history_read_user != "modelfc-api":
+        raise ValueError("invalid public history reader")
+    if public_history_read_user is not None and league == "E1":
+        # A former public current file must not retain API access as history.
+        prior_day = date(today.year - 1, today.month, 1)
+        prior = config.directory / f"E1_{current_season(prior_day)}.csv"
+        if prior.exists():
+            if prior.is_symlink() or not prior.is_file():
+                raise ValueError("invalid former public history file")
+            prepare_read_acl(prior, public_history_read_user, remove=True)
     if changed:
         if old_bytes is not None:
             backups = state / "backups"
             backups.mkdir(exist_ok=True)
             atomic_write(backups / target.name, old_bytes)
-        if validator_read_user is not None and league in ("E1", "SP1"):
+        if public_history_read_user is not None and league == "E1":
+            atomic_write(target, payload, validator_read_user=validator_read_user,
+                         public_history_read_user=public_history_read_user)
+        elif validator_read_user is not None and league in ("E1", "SP1"):
             atomic_write(target, payload, validator_read_user=validator_read_user)
         else:
             atomic_write(target, payload)
@@ -160,7 +179,7 @@ def refresh_league(config: CornerDataConfig, league: str, today: date, state: Pa
 
 
 def refresh_data(config: CornerDataConfig, today: date | None = None,
-                 *, validator_read_user: str | None = None) -> dict:
+                 *, validator_read_user: str | None = None, public_history_read_user: str | None = None) -> dict:
     today = today or datetime.now(timezone.utc).date()
     config.directory.mkdir(parents=True, exist_ok=True)
     state = config.directory / "data" / "corner-refresh"
@@ -168,7 +187,7 @@ def refresh_data(config: CornerDataConfig, today: date | None = None,
         results = []
         for league in config.leagues:
             try:
-                results.append(refresh_league(config, league, today, state, validator_read_user=validator_read_user))
+                results.append(refresh_league(config, league, today, state, validator_read_user=validator_read_user, public_history_read_user=public_history_read_user))
             except (OSError, ValueError, csv.Error, HTTPException) as error:
                 results.append({"league": league, "status": "failed", "error": str(error)})
         report = {
@@ -204,6 +223,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, default=Path("corner_data.json"))
     parser.add_argument("--validator-read-user", help="grant read ACLs on published E1/SP1 CSVs before rename")
+    parser.add_argument("--public-history-read-user", choices=("modelfc-api",), help="grant current E1 read ACL before rename")
     parser.add_argument("--status", action="store_true", help="show saved results without downloading; recalculate data age")
     args = parser.parse_args()
     try:
@@ -212,7 +232,7 @@ def main() -> None:
             path = config.directory / "data" / "corner-refresh" / "status.json"
             report = json.loads(path.read_text(encoding="utf-8"))
         else:
-            report = refresh_data(config, validator_read_user=args.validator_read_user)
+            report = refresh_data(config, validator_read_user=args.validator_read_user, public_history_read_user=args.public_history_read_user)
         text, unhealthy = format_report(report, datetime.now(timezone.utc).date(), config.max_age_days)
     except (OSError, ValueError) as error:
         parser.error(str(error))

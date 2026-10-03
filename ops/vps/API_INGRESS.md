@@ -205,3 +205,10 @@ publication, take the public API offline first: new immutable files otherwise
 become unreadable to the API account. Never restore or delete immutable evidence, reset budget control, or
 stop the prospective runner as a shortcut. Preserve existing release and host
 manifests for comparison; revoke only the new exposure, leaving writers active.
+
+## Optional Team Intelligence expansion
+
+See [TEAM_INTELLIGENCE.md](TEAM_INTELLIGENCE.md) for the separately authorized
+history traversal/read boundary, current-E1 atomic publication ACL, exact new GET
+routes, cache policy and rollback. The repository template includes those routes;
+this code PR does not activate them or grant history access.

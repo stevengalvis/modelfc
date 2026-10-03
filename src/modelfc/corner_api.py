@@ -9,6 +9,11 @@ from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+import hashlib
+import json
+from modelfc.team_intelligence import (
+    TeamList, TeamProfile, InsightList, TeamIntelligenceError, load_population, BY_ID,
+)
 from pydantic import BaseModel, Field
 
 from modelfc.corner_analysis import MAX_MARKETS_PER_ANALYSIS, CornerMarketRequest
@@ -524,6 +529,53 @@ def create_app(
             return read_performance(state)
         except LedgerError as error:
             return _public_read_error(error)
+
+    @app.middleware("http")
+    async def team_error_cache(request: Request, call_next):
+        response = await call_next(request)
+        path = request.url.path
+        if response.status_code >= 400 and (path in ("/api/v1/teams", "/api/v1/team-insights")
+                                           or path.startswith("/api/v1/teams/")):
+            response.headers["Cache-Control"] = "no-store"
+        return response
+
+    def team_read(request: Request, kind: str, team_id: str | None = None):
+        try:
+            if kind == "profile" and team_id not in BY_ID:
+                raise TeamIntelligenceError("TEAM_NOT_FOUND")
+            population = load_population(config)
+            value = (population.get_team_profile(team_id) if kind == "profile" else
+                     population.find_team_insights() if kind == "insights" else
+                     population.list_team_intelligence())
+            body = value.model_dump(mode="json")
+            # Includes route-specific projection and all contract/rule versions.
+            etag = '"' + hashlib.sha256(json.dumps(body, sort_keys=True, separators=(",", ":"),
+                                                  allow_nan=False).encode()).hexdigest() + '"'
+            headers = {"Cache-Control": "public, max-age=60", "ETag": etag}
+            if any(tag.strip().removeprefix("W/") in (etag, "*")
+                   for tag in request.headers.get("if-none-match", "").split(",")):
+                from fastapi import Response
+                return Response(status_code=304, headers=headers)
+            return JSONResponse(body, headers=headers)
+        except TeamIntelligenceError as error:
+            unknown = str(error) == "TEAM_NOT_FOUND"
+            response = _error("TEAM_NOT_FOUND" if unknown else "TEAM_HISTORY_UNAVAILABLE",
+                              "Team was not found." if unknown else "Team history is temporarily unavailable.",
+                              404 if unknown else 503, retryable=not unknown)
+            response.headers["Cache-Control"] = "no-store"
+            return response
+
+    @app.get("/api/v1/teams", response_model=TeamList)
+    def get_teams(request: Request):
+        return team_read(request, "list")
+
+    @app.get("/api/v1/teams/{team_id}", response_model=TeamProfile)
+    def get_team(team_id: str, request: Request):
+        return team_read(request, "profile", team_id)
+
+    @app.get("/api/v1/team-insights", response_model=InsightList)
+    def get_team_insights(request: Request):
+        return team_read(request, "insights")
 
     return app
 

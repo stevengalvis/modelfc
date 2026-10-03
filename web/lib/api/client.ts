@@ -1,3 +1,4 @@
+import { decodeTeams, decodeTeamProfile, decodeTeamInsights, isTeamId } from "./team-intelligence";
 import { isApiErrorBody, ModelFCApiError } from "./errors";
 import { mockAnalyze, mockCapabilities, mockPredictions, mockOpportunities, mockOpportunityDetails, mockPerformance } from "./mock";
 import { decodePredictions, decodeOpportunities, decodeOpportunityDetail, decodePerformance } from "./prospective";
@@ -155,6 +156,24 @@ export function createApiClient(
     }
   }
   return {
+    async teams(signal?: AbortSignal) {
+      checkConfiguration();
+      signal?.throwIfAborted();
+      return decodeTeams(mode === "mock" ? structuredClone((await import("../../../tests/fixtures/team_intelligence/teams.json")).default) : await requestJson<unknown>(baseUrl!, "/teams", { signal }));
+    },
+    async teamProfile(id: string, signal?: AbortSignal) {
+      checkConfiguration();
+      signal?.throwIfAborted();
+      if (!isTeamId(id)) throw new ModelFCApiError("Team was not found.", "TEAM_NOT_FOUND", false, 404);
+      const mockProfiles = mode === "mock" ? (await import("../../../tests/fixtures/team_intelligence/profiles.json")).default : null;
+      if (mockProfiles && !Object.hasOwn(mockProfiles, id)) throw new ModelFCApiError("Team profile is not included in the mock dataset.", "TEAM_NOT_FOUND", false, 404);
+      return decodeTeamProfile(mockProfiles ? structuredClone(mockProfiles[id as keyof typeof mockProfiles]) : await requestJson<unknown>(baseUrl!, `/teams/${id}`, { signal }), id);
+    },
+    async teamInsights(signal?: AbortSignal) {
+      checkConfiguration();
+      const mockTeams = mode === "mock" ? (await import("../../../tests/fixtures/team_intelligence/teams.json")).default : null;
+      return decodeTeamInsights(mockTeams ? { metadata: structuredClone(mockTeams.metadata), insights: structuredClone(mockTeams.insights) } : await requestJson<unknown>(baseUrl!, "/team-insights", { signal }));
+    },
     async capabilities(signal?: AbortSignal): Promise<CapabilitiesResponse> {
       checkConfiguration();
       const value = mode === "mock" ? structuredClone(mockCapabilities)

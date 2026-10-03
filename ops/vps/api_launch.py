@@ -46,7 +46,8 @@ def launch():
                 or source.read(41) != match[1].encode("ascii")):
             raise ValueError("invalid API provenance")
     for path in (release / ".venv/pyvenv.cfg", release / "src/modelfc/corner_api.py",
-                 release / "src/modelfc/corner_prospective_read.py"):
+                 release / "src/modelfc/corner_prospective_read.py",
+                 release / "src/modelfc/team_intelligence.py"):
         protected(path, deploy_owner)
     python = release / ".venv/bin/python"
     if python.lstat().st_uid != deploy_owner or not python.is_file() or not os.access(python, os.X_OK):

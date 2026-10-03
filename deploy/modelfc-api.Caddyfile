@@ -9,6 +9,20 @@
 		header Cache-Control "no-store"
 		reverse_proxy 127.0.0.1:8000
 	}
+	@team_read {
+		path /api/v1/teams /api/v1/team-insights
+		method GET
+	}
+	handle @team_read {
+		reverse_proxy 127.0.0.1:8000
+	}
+	@team_detail {
+		path_regexp ^/api/v1/teams/[a-z]{1,16}(-[a-z]{1,16})?$
+		method GET
+	}
+	handle @team_detail {
+		reverse_proxy 127.0.0.1:8000
+	}
 	@opportunity_detail {
 		path_regexp ^/api/v1/opportunities/[0-9a-f]{32}$
 		method GET

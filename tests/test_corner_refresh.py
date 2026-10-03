@@ -213,10 +213,10 @@ class CornerRefreshTests(unittest.TestCase):
                 corner_refresh, 'refresh_data', return_value=report) as refresh, patch.object(
                 corner_refresh, 'format_report', return_value=('fixture', False)), redirect_stdout(StringIO()):
             corner_refresh.main()
-        refresh.assert_called_once_with(self.config, validator_read_user='validator')
+        refresh.assert_called_once_with(self.config, validator_read_user='validator', public_history_read_user=None)
 
     def test_no_acl_when_omitted_or_unchanged(self):
-        with patch.object(corner_refresh, 'prepare_validator_read') as prepare:
+        with patch.object(corner_refresh, 'prepare_read_acl') as prepare:
             self.refresh(NEW)
             with patch.object(corner_refresh, 'download_csv', return_value=NEW):
                 corner_refresh.refresh_data(self.config, TODAY, validator_read_user='validator')

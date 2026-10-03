@@ -101,3 +101,23 @@ describe("real read-only prospective API with empty synthetic state", () => {
     });
   });
 });
+
+
+describe("real read-only Team Intelligence HTTP boundary", () => {
+  it("decodes one coherent current population, profile and patterns with honest early trend", async () => {
+    const teams = await live.teams();
+    expect(teams.teams.map(t => t.team.team_id)).toEqual(["birmingham", "millwall"]);
+    expect(teams.teams.every(t => t.coverage.completed === 6 && t.coverage.covered === 6)).toBe(true);
+    expect(teams.teams.every(t => t.recency.trend_state === "INSUFFICIENT_SAMPLE" && t.recency.won_change === null)).toBe(true);
+    const profile = await live.teamProfile("birmingham");
+    expect(profile.metadata.source_revision).toBe(teams.metadata.source_revision);
+    expect(profile.summary.primary.won).toBe(23 / 6);
+    expect(profile.summary.recency.last_five.state).toBe("AVAILABLE");
+    expect(profile.summary.recency.previous_five.state).toBe("INSUFFICIENT_SAMPLE");
+    expect(profile.recent_matches).toHaveLength(6);
+    expect((await live.teamInsights()).insights).toEqual(teams.insights);
+  });
+  it("returns a sanitized unknown-current-team 404 without mock fallback", async () => {
+    await expect(live.teamProfile("cardiff")).rejects.toMatchObject({ code: "TEAM_NOT_FOUND" });
+  });
+});

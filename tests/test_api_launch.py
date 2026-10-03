@@ -55,7 +55,7 @@ class ApiLaunchTests(unittest.TestCase):
         marker = path / ".git/modelfc-deployed-sha"
         marker.write_text(letter * 40)
         marker.chmod(0o444)
-        for name in ("corner_api.py", "corner_prospective_read.py"):
+        for name in ("corner_api.py", "corner_prospective_read.py", "team_intelligence.py"):
             (path / "src/modelfc" / name).touch()
         (path / ".venv/pyvenv.cfg").touch()
         (path / ".venv/bin/python").symlink_to(sys.executable)
@@ -132,7 +132,7 @@ class ApiLaunchTests(unittest.TestCase):
         for blocked in ("/api/v1/capabilities", "/api/v1/opportunities/id", "/docs",
                         "/redoc", "/openapi.json", "/api/v1/analyses", "/anything"):
             self.assertNotIn(blocked, allowed)
-        detail = re.search(r"^\s*path_regexp (.+)$", caddy, re.MULTILINE)
+        detail = re.search(r"@opportunity_detail\s*\{\s*path_regexp (.+)$", caddy, re.MULTILINE)
         self.assertIsNotNone(detail)
         matcher = re.compile(detail.group(1))
         self.assertTrue(matcher.fullmatch("/api/v1/opportunities/" + "a" * 32))
@@ -141,6 +141,24 @@ class ApiLaunchTests(unittest.TestCase):
             self.assertIsNone(matcher.fullmatch(denied))
         self.assertRegex(caddy, r"@opportunity_detail\s*\{\s*path_regexp [^\n]+\s*method GET")
         self.assertRegex(caddy, r"handle @opportunity_detail\s*\{\s*header Cache-Control \"no-store\"\s*reverse_proxy 127.0.0.1:8000")
+
+
+    def test_team_routes_are_bounded_get_only_and_preserve_cache_headers(self):
+        from modelfc.team_intelligence import REGISTRY
+        caddy = (ROOT / "deploy/modelfc-api.Caddyfile").read_text()
+        self.assertRegex(caddy, r"@team_read\s*\{\s*path /api/v1/teams /api/v1/team-insights\s*method GET")
+        detail = re.search(r"@team_detail\s*\{\s*path_regexp (.+)$", caddy, re.MULTILINE)
+        matcher = re.compile(detail.group(1))
+        for team in REGISTRY:
+            self.assertTrue(matcher.fullmatch("/api/v1/teams/" + team.team_id))
+        for path in ("/api/v1/teams/", "/api/v1/teams/Cardiff", "/api/v1/teams/cardiff/",
+                     "/api/v1/teams/../docs", "/api/v1/teams/" + "a"*40, "/api/v1/capabilities"):
+            self.assertIsNone(matcher.fullmatch(path))
+        self.assertRegex(caddy, r"@team_detail\s*\{\s*path_regexp [^\n]+\s*method GET")
+        for name in ("team_read", "team_detail"):
+            handle = re.search(r"handle @" + name + r"\s*\{([^}]+)\}", caddy).group(1)
+            self.assertNotIn("header Cache-Control", handle)
+            self.assertIn("reverse_proxy 127.0.0.1:8000", handle)
 
 
 if __name__ == "__main__":
