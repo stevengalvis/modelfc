@@ -127,3 +127,34 @@ Deliberate duplication is limited to public contract types/validation across
 Python and TypeScript, presentation labels, and explicit synthetic fixture inputs.
 Those enforce the HTTP trust boundary or describe examples, not a second registry
 or a second calculation implementation. The cohesive domain module is unchanged.
+
+## Two-team comparison and cloud lookup
+
+`/teams/compare` is a descriptive comparison linked from the directory and each
+profile. It selects two current-directory IDs and reads each existing profile
+once per selection. Season, home/away and recent windows display backend rates,
+dates, covered/completed denominators and availability. No frontend statistics
+engine or additional API route is introduced. Both decoded profiles must have
+identical metadata, including source revision, before either is shown. A refresh
+between reads fails closed with retry guidance; existing public caches can take
+up to 60 seconds to expire. Changing selection aborts/ignores old responses.
+
+For a Python or cloud executor lookup, load one population, use its directory
+to resolve canonical IDs, then read both profiles from that same object:
+
+```python
+from pathlib import Path
+from modelfc.team_intelligence import load_population
+
+population = load_population(Path("corner_data.json"))
+directory = population.list_team_intelligence()
+# Resolve two distinct IDs from directory.teams; do not guess missing clubs.
+profiles = [population.get_team_profile(team_id) for team_id in selected_ids]
+result = [profile.model_dump(mode="json") for profile in profiles]
+```
+
+Both profiles share the loaded source revision and calculations. No new CLI or
+MCP/plugin is required. The executor must have the existing current-season E1
+CSV and shared lock at the configured location. Missing history is an error,
+not permission to substitute synthetic data.
+This is Championship corner description only, not BTTS, goal totals or forecasts.

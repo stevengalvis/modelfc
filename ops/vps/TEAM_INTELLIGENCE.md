@@ -75,3 +75,41 @@ Intelligence becomes unavailable after replacement: remove new ingress first.
 Restore narrowly reviewed launcher/Caddy files and revoke only new history API
 ACLs when authorized. Do not touch model state, immutable evidence, provider budget
 or prospective units. The feature creates no persistent derived state to migrate.
+
+## Operator checklist — deferred until host work is authorized
+
+Read-only diagnostics first; these do not imply rollout authorization:
+
+1. Record `readlink -f /srv/modelfc/current` and the physical release marker.
+   Inspect effective `modelfc-corner-api.service`, `modelfc-corner-refresh.service`
+   and refresh timer status. Record User/Group, WorkingDirectory, ExecStart,
+   ProtectSystem and read/write/inaccessible paths; avoid dumping environment
+   values or credentials. Compare installed API/refresh launcher hashes to the
+   reviewed release templates. A code merge is not proof of installed launchers.
+2. Inspect the configured history location and current-season E1 filename.
+   Record source hash, owners/modes, named ACLs and shared-lock device/inode,
+   size and link count. Inspect required parent traversal ACLs, existing validator
+   access and any obsolete API season grants. Check source identities against
+   the registry without exposing history or private state in public reports.
+3. Inspect the effective Caddy GET allowlist and existing exact-origin CORS.
+   Probe loopback versus public `/api/v1/teams`, a known profile,
+   `/api/v1/team-insights` and `/api/v1/prospective/performance`; retain status
+   and cache headers. This distinguishes ingress denial from backend history
+   unavailability. Inspect relevant sanitized API logs. Do not grant access,
+   restart/reload services or manually trigger refresh/collection during diagnosis.
+
+Only after reviewing those results and obtaining separate activation approval:
+
+4. Preserve rollback copies. Apply only the traversal/current-E1/shared-lock
+   named ACLs and compatible trusted launcher installation described above;
+   preserve the lock inode and validator grants. Install only the reviewed
+   Team Intelligence GET rules. No extra group, public port, wildcard CORS,
+   directory default ACL or access to another season/league/private record.
+5. Run disposable-state cross-UID/atomic-replacement acceptance first. After
+   activation, verify 200/404/503 cache behavior, ETag/304, denied malformed
+   paths and write methods, and unaffected prospective reads. Verify live
+   directory → profile → comparison at desktop/mobile sizes.
+6. Observe the next normal scheduled refresh to confirm current-E1 ACL survival.
+   Do not manually trigger it. If rollback is needed, remove the new ingress
+   rules first when reverting to a launcher without API ACL publication; revoke
+   only the added history API grants under the separately approved rollback.
