@@ -37,7 +37,7 @@ class PublicHistoryAclTests(unittest.TestCase):
                 canonical=root/('E1_2627.csv' if staging.name.startswith('.E1_') else 'SP1_2627.csv')
                 self.assertFalse(canonical.exists())
                 seen.append((staging.name,user))
-            with patch.object(refresh,'download_csv',side_effect=[PAYLOAD,PAYLOAD.replace(b'E1,',b'SP1,')]),patch.object(refresh,'prepare_validator_read',side_effect=acl):
+            with patch.object(refresh,'download_csv',side_effect=[PAYLOAD,PAYLOAD.replace(b'E1,',b'SP1,')]),patch.object(refresh,'prepare_read_acl',side_effect=acl):
                 result=refresh.refresh_data(config,TODAY,validator_read_user='modelfc-validator',public_history_read_user='modelfc-api')
             self.assertTrue(all(r['status']=='updated' for r in result['results']))
             self.assertEqual([user for _,user in seen],['modelfc-validator','modelfc-api','modelfc-validator'])
@@ -48,7 +48,7 @@ class PublicHistoryAclTests(unittest.TestCase):
         with TemporaryDirectory() as tmp:
             root=Path(tmp);target=root/'E1_2627.csv';target.write_bytes(PAYLOAD)
             before=target.stat().st_ino
-            with patch.object(refresh,'prepare_validator_read',side_effect=[None,ValueError('ACL unavailable')]):
+            with patch.object(refresh,'prepare_read_acl',side_effect=[None,ValueError('ACL unavailable')]):
                 with self.assertRaises(ValueError):refresh.atomic_write(target,PAYLOAD+b'\n',validator_read_user='modelfc-validator',public_history_read_user='modelfc-api')
             self.assertEqual(target.stat().st_ino,before)
             self.assertEqual(target.read_bytes(),PAYLOAD)
@@ -62,9 +62,33 @@ class PublicHistoryAclTests(unittest.TestCase):
     def test_prior_season_read_acl_removed_without_listing(self):
         with TemporaryDirectory() as tmp:
             root=Path(tmp);(root/'E1_2526.csv').write_bytes(b'old')
-            with patch.object(refresh,'download_csv',return_value=PAYLOAD),patch.object(refresh.pwd,'getpwnam',return_value=type('User',(),{'pw_uid':1234})()),patch.object(refresh.subprocess,'run') as run,patch.object(refresh,'prepare_validator_read'):
+            original = refresh.prepare_read_acl
+            def revoke_only(path, user, *, remove=False):
+                if remove: original(path, user, remove=True)
+            with patch.object(refresh,'download_csv',return_value=PAYLOAD),patch.object(refresh.pwd,'getpwnam',return_value=type('User',(),{'pw_uid':1234})()),patch.object(refresh.subprocess,'run') as run,patch.object(refresh,'prepare_read_acl',side_effect=revoke_only):
                 refresh.refresh_data(CornerDataConfig(root,('E1',),14),TODAY,public_history_read_user='modelfc-api')
             self.assertEqual(run.call_args.args[0],['/usr/bin/setfacl','-x','u:1234','--',str(root/'E1_2526.csv')])
+
+    def test_shared_acl_add_remove_command_and_failures(self):
+        import subprocess
+        path=Path('/disposable/E1_2526.csv')
+        user=type('User', (), {'pw_uid':1234})()
+        with patch.object(refresh.pwd,'getpwnam',return_value=user), patch.object(refresh.subprocess,'run') as run:
+            refresh.prepare_read_acl(path, 'modelfc-api')
+            self.assertEqual(run.call_args.args[0], ['/usr/bin/setfacl','-m','u:1234:r--','--',str(path)])
+            refresh.prepare_read_acl(path, 'modelfc-api', remove=True)
+            self.assertEqual(run.call_args.args[0], ['/usr/bin/setfacl','-x','u:1234','--',str(path)])
+            self.assertTrue(run.call_args.kwargs['check'])
+            self.assertEqual(run.call_args.kwargs['timeout'],10)
+        for remove in (False, True):
+            for error in (OSError('private path'), subprocess.TimeoutExpired('setfacl',10), subprocess.CalledProcessError(1,'setfacl')):
+                with self.subTest(remove=remove, error=type(error).__name__), patch.object(refresh.pwd,'getpwnam',return_value=user), patch.object(refresh.subprocess,'run',side_effect=error):
+                    with self.assertRaisesRegex(ValueError,'not published'):
+                        refresh.prepare_read_acl(path, 'modelfc-api', remove=remove)
+            with patch.object(refresh.pwd,'getpwnam',side_effect=KeyError('missing')), patch.object(refresh.subprocess,'run') as run:
+                with self.assertRaisesRegex(ValueError,'not published'):
+                    refresh.prepare_read_acl(path,'modelfc-api',remove=remove)
+                run.assert_not_called()
 
     @unittest.skipUnless(os.geteuid()==0 and ctypes.util.find_library('acl') and cross_uid_available(), 'cross-UID ACL acceptance requires mapped UIDs, root and libacl')
     def test_real_atomic_replacement_cross_uid_isolation(self):
@@ -89,7 +113,7 @@ class PublicHistoryAclTests(unittest.TestCase):
                 if user=='modelfc-api':text='u::rw-,u:65533:r--,u:65534:r--,g::---,m::r--,o::---'
                 set_acl(path,text)
             before=target.stat().st_ino
-            with patch.object(refresh,'prepare_validator_read',side_effect=real_acl):
+            with patch.object(refresh,'prepare_read_acl',side_effect=real_acl):
                 refresh.atomic_write(target,PAYLOAD,validator_read_user='modelfc-validator',public_history_read_user='modelfc-api')
             self.assertNotEqual(target.stat().st_ino,before)
             self.assertEqual(users,['modelfc-validator','modelfc-api'])

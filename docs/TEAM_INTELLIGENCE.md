@@ -103,3 +103,27 @@ source): median lock/open/read/fingerprint 0.11 ms, parse + population + finding
 5.92 ms. Compact overview 18,219 bytes; representative profile 3,857 bytes. These
 are local measurements, not production latency guarantees. This includes exact
 rank comparisons and all structured evidence, and supports omitting a cache.
+
+
+## Representative fixtures and frontend identities
+
+The backend registry remains the only authority for canonical membership. The
+frontend validates the bounded ingress-compatible lowercase slug shape (one or
+two alphabetic segments up to 16 characters each, total length up to 32), route
+identity, uniqueness and response relationships; it does not enumerate clubs.
+The public backend still resolves each ID through its checked-in registry.
+
+The mock overview and four profiles come from one coherent synthetic population:
+Cardiff has available five-vs-five windows, Birmingham has incomplete coverage,
+Portsmouth has an early-season sample, and Millwall has fewer than five matches.
+Every mock overview link has its matching profile and source fingerprint. Other
+valid slugs return an explicit mock-dataset error in mock mode; live reads defer
+membership to the backend. No synthetic profile is copied onto another club.
+Regenerate with `PYTHONPATH=src python -m tests.team_intelligence_data`; Python
+checks every retained JSON response against domain output. The full 24-team
+synthetic generator remains test-only for population, ranking and reader tests.
+
+Deliberate duplication is limited to public contract types/validation across
+Python and TypeScript, presentation labels, and explicit synthetic fixture inputs.
+Those enforce the HTTP trust boundary or describe examples, not a second registry
+or a second calculation implementation. The cohesive domain module is unchanged.

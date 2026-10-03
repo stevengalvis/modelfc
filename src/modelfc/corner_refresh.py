@@ -45,25 +45,26 @@ def atomic_write(path: Path, payload: bytes, *, validator_read_user: str | None 
             target.flush()
             os.fsync(target.fileno())
         if validator_read_user is not None:
-            prepare_validator_read(temporary, validator_read_user)
+            prepare_read_acl(temporary, validator_read_user)
         if public_history_read_user is not None:
             if public_history_read_user != "modelfc-api" or re.fullmatch(r"E1_[0-9]{4}\.csv", path.name) is None:
                 raise ValueError("invalid public history ACL target")
-            prepare_validator_read(temporary, public_history_read_user)
+            prepare_read_acl(temporary, public_history_read_user)
         temporary.replace(path)
     finally:
         if temporary is not None:
             temporary.unlink(missing_ok=True)
 
 
-def prepare_validator_read(path: Path, user: str) -> None:
-    """Grant only the selected user read access before canonical publication."""
+def prepare_read_acl(path: Path, user: str, *, remove: bool = False) -> None:
+    """Set or revoke one named user read ACL; never change publication scope."""
     try:
         uid = pwd.getpwnam(user).pw_uid
-        subprocess.run(['/usr/bin/setfacl', '-m', f'u:{uid}:r--', '--', str(path)],
+        option, entry = ('-x', f'u:{uid}') if remove else ('-m', f'u:{uid}:r--')
+        subprocess.run(['/usr/bin/setfacl', option, entry, '--', str(path)],
                        check=True, timeout=10, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     except (KeyError, OSError, subprocess.SubprocessError):
-        raise ValueError('validator read ACL preparation failed; replacement not published') from None
+        raise ValueError('read ACL preparation failed; replacement not published') from None
 
 
 @contextmanager
@@ -153,12 +154,7 @@ def refresh_league(config: CornerDataConfig, league: str, today: date, state: Pa
         if prior.exists():
             if prior.is_symlink() or not prior.is_file():
                 raise ValueError("invalid former public history file")
-            try:
-                uid = pwd.getpwnam(public_history_read_user).pw_uid
-                subprocess.run(['/usr/bin/setfacl', '-x', f'u:{uid}', '--', str(prior)],
-                               check=True, timeout=10, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            except (KeyError, OSError, subprocess.SubprocessError):
-                raise ValueError("former public history ACL removal failed") from None
+            prepare_read_acl(prior, public_history_read_user, remove=True)
     if changed:
         if old_bytes is not None:
             backups = state / "backups"

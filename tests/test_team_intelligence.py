@@ -13,7 +13,7 @@ from unittest.mock import patch
 from fastapi.testclient import TestClient
 from modelfc import team_intelligence as ti
 from modelfc.corner_api import create_app
-from tests.team_intelligence_data import fixture_bytes, HEADER, TODAY
+from tests.team_intelligence_data import fixture_bytes, representative_population, HEADER, TODAY
 
 
 def population(n=8, missing=None):
@@ -126,11 +126,26 @@ class TeamIntelligenceTests(unittest.TestCase):
         self.assertEqual(ti.current_season(date(2027,6,30)),'2627')
         self.assertEqual(ti.current_season(date(2027,7,1)),'2728')
 
+    def test_all_profiles_remain_valid_without_enumerated_json(self):
+        for n, missing in ((2,None),(8,None),(12,None),(12,(10,0))):
+            p=population(n,missing)
+            for team in p.summaries:
+                profile=p.get_team_profile(team.team.team_id)
+                self.assertEqual(profile.summary,team)
+                self.assertEqual(profile.metadata,p.metadata)
+                self.assertEqual(len(profile.recent_matches),min(n,10))
+                self.assertLessEqual(len(profile.insights),3)
+
     def test_shared_fixtures_are_generated_from_domain(self):
         root=Path(__file__).parent/'fixtures/team_intelligence'
-        p=population()
+        p=representative_population()
         self.assertEqual(json.loads((root/'teams.json').read_text()),p.list_team_intelligence().model_dump(mode='json'))
         profiles=json.loads((root/'profiles.json').read_text())
+        self.assertEqual(set(profiles), {s.team.team_id for s in p.summaries})
+        self.assertEqual(p.get_team_profile('cardiff').summary.recency.trend_state, 'AVAILABLE')
+        self.assertEqual(p.get_team_profile('birmingham').summary.recency.trend_state, 'INCOMPLETE_COVERAGE')
+        self.assertEqual(p.get_team_profile('portsmouth').summary.recency.trend_state, 'INSUFFICIENT_SAMPLE')
+        self.assertEqual(p.get_team_profile('millwall').summary.recency.last_five.state, 'INSUFFICIENT_SAMPLE')
         for s in p.summaries:
             self.assertEqual(profiles[s.team.team_id],p.get_team_profile(s.team.team_id).model_dump(mode='json'))
 

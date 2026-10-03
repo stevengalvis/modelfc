@@ -13,7 +13,7 @@ describe("Team Intelligence pages",()=>{
   const {container}=render(<TeamsDashboard/>);
   expect(screen.getByRole("status")).toHaveTextContent("Loading");
   await screen.findByText(/Data through/);
-  expect(screen.getAllByText("Trend available after 10 matches")).toHaveLength(48);
+  expect(screen.getAllByText("Trend available after 10 matches")).toHaveLength(4);
   expect(screen.getAllByRole("link",{name:"Portsmouth"})[0]).toHaveAttribute("href","/teams/portsmouth");
   expect(container.querySelector(".ti-mobile")).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button",{name:"Won / match"}));

@@ -1,6 +1,7 @@
 import { ModelFCApiError } from "./errors";
 
-export const teamIds = ["birmingham", "blackburn", "bolton", "bristol-city", "burnley", "cardiff", "charlton", "derby", "lincoln", "middlesbrough", "millwall", "norwich", "portsmouth", "preston", "qpr", "sheffield-united", "southampton", "stoke", "swansea", "watford", "west-brom", "west-ham", "wolves", "wrexham"] as const;
+// The backend owns registry membership. This bounds route/response syntax only.
+export const isTeamId = (v: unknown): v is string => typeof v === "string" && v.length <= 32 && /^[a-z]{1,16}(?:-[a-z]{1,16})?$/.test(v);
 export type CoverageState = "AVAILABLE" | "INSUFFICIENT_SAMPLE" | "INCOMPLETE_COVERAGE";
 export type TeamIdentity = { team_id: string; display_name: string; source_name: string };
 export type Sample = { completed: number; n: number; start_date: string | null; end_date: string | null; won_sum: number; conceded_sum: number; won: number | null; conceded: number | null; differential: number | null; total: number | null };
@@ -26,7 +27,7 @@ const integer = (v: unknown, max = 46): v is number => num(v) && Number.isSafeIn
 const date = (v: unknown): v is string => typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v) && Number.isFinite(Date.parse(v + "T00:00:00Z")) && new Date(v + "T00:00:00Z").toISOString().slice(0,10) === v;
 const near = (a: unknown, b: number) => num(a) && Math.abs(a-b) < 1e-9;
 const state = (v: unknown) => ["AVAILABLE", "INSUFFICIENT_SAMPLE", "INCOMPLETE_COVERAGE"].includes(v as string);
-const identity = (v: unknown): v is TeamIdentity => keys(v, "team_id display_name source_name") && teamIds.includes(v.team_id as typeof teamIds[number]) && [v.display_name, v.source_name].every(x => typeof x === "string" && x.trim().length > 0 && x.length <= 64);
+const identity = (v: unknown): v is TeamIdentity => keys(v, "team_id display_name source_name") && isTeamId(v.team_id) && [v.display_name, v.source_name].every(x => typeof x === "string" && x.trim().length > 0 && x.length <= 64);
 const sample = (v: unknown): v is Sample => {
   if (!keys(v, "completed n start_date end_date won_sum conceded_sum won conceded differential total") || !integer(v.completed) || !integer(v.n) || v.n > v.completed || !integer(v.won_sum, 460000) || !integer(v.conceded_sum, 460000)) return false;
   if (v.completed === 0 ? v.start_date !== null || v.end_date !== null : !date(v.start_date) || !date(v.end_date) || v.start_date > v.end_date) return false;
