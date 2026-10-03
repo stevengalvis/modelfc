@@ -7,6 +7,12 @@ probabilistic forecasting.
 The shared frontend/backend contract for the internal corner-analysis product
 is documented in [API_V1.md](API_V1.md).
 
+Coding agents should start with [AGENTS.md](AGENTS.md). The shared
+[V1 product requirements](docs/PRODUCT_V1.md),
+[integration audit](docs/INTEGRATION_STATUS.md), and
+[next agent tasks](docs/AGENT_TASKS.md) distinguish product goals from currently
+implemented, tested, and deployed behavior.
+
 ## Internal batch corner-analysis API
 
 The FastAPI boundary exposes the first V1 frontend/backend vertical slice. One
