@@ -1,0 +1,76 @@
+name: Inspect Team Intelligence baseline
+
+# Inert until separately approved host installation and protected environment setup.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: modelfc-baseline-inspection
+  cancel-in-progress: false
+
+jobs:
+  inspect:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    environment: vps-inspection
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Inspect fixed installed task and publish sanitized result
+        env:
+          INSPECT_KEY_BASE64: ${{ secrets.MODELFC_INSPECT_SSH_KEY_BASE64 }}
+          INSPECT_KEY_FINGERPRINT: ${{ vars.MODELFC_INSPECT_KEY_FINGERPRINT }}
+          INSPECT_HOST: ${{ vars.MODELFC_INSPECT_HOST }}
+          INSPECT_HOST_KEY: ${{ vars.MODELFC_INSPECT_HOST_KEY }}
+          INSPECTOR_SHA256: ${{ vars.MODELFC_INSPECTOR_SHA256 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          scratch="$(mktemp -d)"
+          trap 'rm -rf -- "$scratch"' EXIT
+          python3 - "$scratch" <<'PY'
+          import base64, os, pathlib, re, subprocess, sys
+          try:
+              root = pathlib.Path(sys.argv[1])
+              encoded = os.environ.pop('INSPECT_KEY_BASE64', '').encode('ascii')
+              key = base64.b64decode(encoded, validate=True)
+              assert key and base64.b64encode(key) == encoded
+              assert re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9.-]{0,252}', os.environ['INSPECT_HOST'])
+              assert re.fullmatch(r'[0-9a-f]{64}', os.environ['INSPECTOR_SHA256'])
+              assert re.fullmatch(r'SHA256:[A-Za-z0-9+/]{43}', os.environ['INSPECT_KEY_FINGERPRINT'])
+              assert os.environ['INSPECT_HOST_KEY'].strip()
+              (root / 'key').write_bytes(key)
+              public = subprocess.run(['ssh-keygen', '-y', '-P', '', '-f', str(root / 'key')],
+                                      capture_output=True, check=True, timeout=10).stdout
+              fingerprint = subprocess.run(['ssh-keygen', '-lf', '-', '-E', 'sha256'],
+                                           input=public, capture_output=True, check=True, timeout=10)
+              assert fingerprint.stdout.decode().split()[1] == os.environ['INSPECT_KEY_FINGERPRINT']
+              (root / 'known_hosts').write_text(os.environ['INSPECT_HOST_KEY'])
+          except Exception:
+              print('INSPECTION_CONFIGURATION_INVALID')
+              sys.exit(1)
+          PY
+          unset INSPECT_KEY_BASE64
+          transport=0
+          timeout 75 ssh -F /dev/null -T -o BatchMode=yes -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$scratch/known_hosts" \
+            -o GlobalKnownHostsFile=/dev/null -o ForwardAgent=no -o ClearAllForwardings=yes \
+            -o ConnectTimeout=15 -o ServerAliveInterval=15 -o ServerAliveCountMax=2 \
+            -i "$scratch/key" "modelfc-inspect@$INSPECT_HOST" \
+            inspect-team-baseline-v1 > "$scratch/report" 2>/dev/null || transport=$?
+          if [[ "$transport" != 0 && "$transport" != 1 ]]; then
+            printf '%s\n' 'INSPECTION_TRANSPORT_FAILED'
+            exit 1
+          fi
+          result=0
+          python3 -I ops/vps/team_baseline_inspect.py --validate-report "$INSPECTOR_SHA256" \
+            < "$scratch/report" > "$scratch/sanitized" || result=$?
+          cat "$scratch/sanitized"
+          cat "$scratch/sanitized" >> "$GITHUB_STEP_SUMMARY"
+          exit "$result"
