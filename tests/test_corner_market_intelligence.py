@@ -298,6 +298,30 @@ class MarketIntelligenceTests(unittest.TestCase):
             "teamtotals-corners-team1": {"status": "NO_USABLE_PRICES", "selection_count": 0}}))
         self.assertEqual(self.target(self.fresh_view(minutes=9))["offers"][0]["current_availability"], "UNAVAILABLE")
 
+    def test_aggregate_no_usable_corners_does_not_withdraw_uncovered_family(self):
+        self.publish(self.positive_pair(), availability=self.available())
+        self.publish([], minutes=2, availability=self.available(
+            status="NO_USABLE_CORNERS", families={
+                "totals-corners": {"status": "NO_USABLE_PRICES", "selection_count": 0},
+                "teamtotals-corners-team1": {"status": "MARKET_UNAVAILABLE", "selection_count": 0},
+                "teamtotals-corners-team2": {"status": "MARKET_UNAVAILABLE", "selection_count": 0},
+            }))
+        view = self.fresh_view(minutes=2)
+        offer = self.target(view)["offers"][0]
+        self.assertEqual(offer["current_availability"], "UNKNOWN")
+        self.assertEqual(offer["current_ineligible_reasons"], ["AVAILABILITY_UNKNOWN"])
+        self.assertTrue(offer["qualified"])
+        self.assertFalse(offer["recommendation_eligible"])
+        self.assertEqual(self.target(view)["latest_observed_best"]["best_bookmaker"], "fanduel")
+        self.assertIsNone(self.target(view)["current_best"]["best_bookmaker"])
+        self.publish([], minutes=3, availability=self.available(
+            status="NO_USABLE_CORNERS", families={
+                "teamtotals-corners-team1": {"status": "NO_USABLE_PRICES", "selection_count": 0},
+            }))
+        offer = self.target(self.fresh_view(minutes=3))["offers"][0]
+        self.assertEqual(offer["current_availability"], "UNAVAILABLE")
+        self.assertIn("NO_USABLE_PRICES", offer["current_ineligible_reasons"])
+
     def test_missing_and_incomplete_coverage_is_unknown_not_withdrawn(self):
         self.publish(self.positive_pair(), availability=self.available())
         for index, availability in enumerate(({}, self.available(status="BOOKMAKER_UNAVAILABLE"),

@@ -42,9 +42,11 @@ def _availability(offer, observations):
         checked_at = observation["retrieved_at_utc"]
         book = observation["availability"].get(offer["bookmaker"], {})
         state, reason = "UNKNOWN", "AVAILABILITY_UNKNOWN"
-        if book.get("status") in {"BOOKMAKER_UNUSABLE", "NO_USABLE_CORNERS"}:
+        if book.get("status") == "BOOKMAKER_UNUSABLE":
             state, reason = "UNAVAILABLE", book["status"]
             continue
+        # NO_USABLE_CORNERS aggregates all seen families. Only the relevant
+        # family's explicit unusability can invalidate this older quote.
         family = book.get("families", {}).get(_TEAM_FAMILIES.get(offer["team_side"]), {})
         if family.get("status") == "NO_USABLE_PRICES":
             state, reason = "UNAVAILABLE", "NO_USABLE_PRICES"
