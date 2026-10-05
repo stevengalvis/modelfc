@@ -319,7 +319,7 @@ def evidence_snapshot(state):
             for path in state.rglob("*") if path.is_file()}
 
 
-def verify_materialized_evidence(state, prediction, observation, response, quotes):
+def verify_materialized_evidence(state, prediction, observation, capture, quotes):
     """Inspect actual files, not candidate assessment counts or record loaders.
 
     Expectations use verified quotes/capture pricing and the frozen v1 policy.
@@ -341,16 +341,62 @@ def verify_materialized_evidence(state, prediction, observation, response, quote
             assert record["record_hash"] == digest({k: v for k, v in record.items() if k != "record_hash"})
             record_id = record[kind_to_id[kind]]
             assert path.stem == record_id and record_id not in result
+            assert path == state / kind / parents[kind] / (record_id + ".json")
             result[record_id] = record
         return result
 
     kind_to_id = {"predictions": "prediction_id", "market-observations": "observation_id",
                   "prediction-targets": "target_id", "opportunities": "opportunity_id"}
+    response, request = capture["response"], capture["request"]
+    fixture, forecast, prematch = response["fixture"], response["forecast"], request["prematch"]
     prediction_id = uuid.uuid5(uuid.NAMESPACE_URL,
                               "modelfc:prediction:" + uuid.UUID(hex=response["analysis_id"]).hex).hex
-    assert prediction["prediction_id"] == prediction_id
-    assert records("predictions") == {prediction_id: prediction}
-    assert records("market-observations") == {observation["observation_id"]: observation}
+    parents = {"predictions": "", "prediction-targets": prediction_id, "opportunities": prediction_id,
+        "market-observations": identity("fixture", dict(provider="oddspapi", competition="E1",
+                                                        provider_fixture_id=prematch["fixture"]["fixtureId"]))}
+    observed_selections = []
+    for raw in prematch["selections"]:
+        item = raw["request"]
+        observed_selections.append(dict(
+            selection_id=identity("selection", dict(bookmaker=raw["bookmaker"], market_id=raw["market_id"],
+                outcome_id=raw["outcome_id"], request=item)),
+            client_market_id=item["client_market_id"], bookmaker=raw["bookmaker"],
+            market_type=item["market_type"], team_side=item["team_side"],
+            team=fixture["home_team"] if item["team_side"] == "HOME" else
+                 fixture["away_team"] if item["team_side"] == "AWAY" else None,
+            direction=item["side"], line=item["line"], american_odds=item["american_odds"],
+            decimal_odds=raw["decimal_odds"], provider_market_id=raw["market_id"],
+            provider_outcome_id=raw["outcome_id"], market_name=raw["market_name"], main_line=raw["main_line"],
+            provider_changed_at=raw["changed_at"], bookmaker_changed_at=raw["bookmaker_changed_at"]))
+    retrieved = {item["retrieved_at"] for item in prematch["selections"]}
+    assert len(retrieved) == 1
+    observed_payload = dict(fixture=dict(competition="E1", home_team=fixture["home_team"],
+        away_team=fixture["away_team"], kickoff_utc=fixture["kickoff_at"], provider="oddspapi",
+        provider_fixture_id=prematch["fixture"]["fixtureId"]), retrieved_at_utc=next(iter(retrieved)),
+        availability=prematch["availability"], selections=observed_selections)
+    observation_id = identity("market-observation", observed_payload)
+    expected_observation = dict(schema_version=1, record_type="observation",
+                                observation_id=observation_id, **observed_payload)
+    expected_observation["record_hash"] = digest(expected_observation)
+    configuration = forecast["configuration"]
+    expected_prediction = dict(
+        schema_version=2 if forecast.get("historical_context") is not None else 1,
+        record_type="prediction", prediction_id=prediction_id, analysis_id=response["analysis_id"],
+        forecast_id=response["forecast_id"], created_at_utc=response["created_at"],
+        fixture={**fixture, "provider": "oddspapi", "provider_fixture_id": prematch["fixture"]["fixtureId"]},
+        model=dict(name=forecast["model"], version=forecast["model_version"],
+            configuration={**request["configuration"], "dispersion_size": configuration["dispersion_size"],
+                           "match_total_method": configuration["match_total_method"]},
+            prediction_rule_version="frozen-team-count-distribution-v1"),
+        history=dict(latest_history_date=forecast["latest_history_date"], source_data_hashes=forecast["source_data_hashes"]),
+        distribution={**{key: forecast[key] for key in ("home_expected_corners", "away_expected_corners")},
+                      **{key: configuration[key] for key in ("dispersion_size", "match_total_method")}},
+        capture_reference={key: capture[key] for key in ("request_hash", "response_hash")},
+        source_observation={key: expected_observation[key] for key in ("observation_id", "record_hash", "retrieved_at_utc")},
+        **({"historical_context": forecast["historical_context"]} if forecast.get("historical_context") is not None else {}))
+    expected_prediction["record_hash"] = digest(expected_prediction)
+    assert prediction == expected_prediction and records("predictions") == {prediction_id: expected_prediction}
+    assert observation == expected_observation and records("market-observations") == {observation_id: expected_observation}
     pricing = {item["client_market_id"]: item for item in response["markets"]}
     expected_targets, selections, groups = {}, {}, {}
     for item in quotes.selections:
@@ -775,13 +821,14 @@ def run_capture(sha, snapshot=Path("/history"), output=Path("/output"), mode="OF
             capture_bytes = path.read_bytes()
             record = json.loads(capture_bytes)
             verify_capture(record, response, quotes, sha, snapshot)
+            verified_capture = deepcopy(record)
             prediction, prediction_created = opportunities.store_prediction_from_capture(
                 state, response["analysis_id"])
             observation, _ = opportunities.store_observation_from_capture(state, response["analysis_id"])
             assessment = opportunities.assess_observation(state, prediction, observation)
             assert prediction_created and assessment["targets"] == len(quotes.selections)
             targets, opportunities_count = verify_materialized_evidence(
-                state, prediction, observation, response, quotes)
+                state, prediction, observation, verified_capture, quotes)
             assert mode != "OFFLINE" or opportunities_count > 0
             before_replay = evidence_snapshot(state)
             replaying = True

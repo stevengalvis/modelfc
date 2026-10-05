@@ -116,7 +116,10 @@ Before core PASS, the harness independently reads persisted prediction, observat
 target and opportunity files, verifies hashes and requires complete expected target
 and qualifying-opportunity sets from verified quotes/captured pricing and the frozen
 v1 policy. Candidate assessment counts or record-loader returns cannot substitute
-for files. LIVE may have no qualifying opportunities; the fixed OFFLINE scenario
+for files. Full prediction and source-observation expectations come from a private
+copy of the verified capture, including model version/distribution, history, source
+hashes and observation prices; candidate-returned records are not assertion oracles.
+LIVE may have no qualifying opportunities; the fixed OFFLINE scenario
 must exercise opportunity publication. Replay must preserve these verified bytes.
 
 The run exercises the candidate's real OddsPapi request construction, parsing and

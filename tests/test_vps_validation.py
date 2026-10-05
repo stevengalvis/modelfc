@@ -995,6 +995,43 @@ class HarnessTests(unittest.TestCase):
                 self.assertEqual((report["result"], report["reason"]), ("FAIL", "ASSERTION_FAILED"), report)
                 self.assertEqual(report["core_pipeline"], "FAIL")
 
+    def test_persisted_prediction_and_observation_must_match_verified_capture(self):
+        import shutil
+        from modelfc import corner_opportunities
+        from modelfc.corner_analysis_store import _canonical_hash
+        for mode in ("OFFLINE", "LIVE"):
+            for mutation in ("model-version", "distribution", "capture-reference", "observation-price"):
+                method = "store_observation_from_capture" if mutation == "observation-price" else "store_prediction_from_capture"
+                original = getattr(corner_opportunities, method)
+                def fabricated(state, analysis_id):
+                    record, created = original(state, analysis_id)
+                    if mutation == "model-version":
+                        record["model"]["version"] = "fabricated-version"
+                    elif mutation == "distribution":
+                        record["distribution"]["home_expected_corners"] += 1
+                    elif mutation == "capture-reference":
+                        record["capture_reference"]["response_hash"] = "d" * 64
+                    else:
+                        record["selections"][0]["decimal_odds"] = 9.99
+                    record["record_hash"] = _canonical_hash({k: v for k, v in record.items() if k != "record_hash"})
+                    kind = "market-observations" if mutation == "observation-price" else "predictions"
+                    identity = record["observation_id" if mutation == "observation-price" else "prediction_id"]
+                    path = next(Path(state, kind).rglob(identity + ".json"))
+                    path.write_text(json.dumps(record))
+                    return record, created
+                if mode == "LIVE":
+                    shutil.rmtree(self.output / "state", ignore_errors=True)
+                with self.subTest(mode=mode, mutation=mutation), \
+                        patch.object(corner_opportunities, method, fabricated):
+                    report = OfflineHarnessTests.run_offline(self) if mode == "OFFLINE" else self.execute()
+                    self.assertEqual(report["result"], "FAIL", report)
+                    self.assertEqual(report["core_pipeline"], "FAIL")
+                    if mutation == "observation-price":
+                        # Existing source-observation integrity may reject first.
+                        self.assertIn(report["reason"], ("ASSERTION_FAILED", "EXECUTION_ERROR"))
+                    else:
+                        self.assertEqual(report["reason"], "ASSERTION_FAILED", report)
+
     def test_candidate_cannot_change_expected_transport_via_opener_attributes(self):
         from functools import wraps
         original_quotes = self.provider.OddsPapiClient.quotes
