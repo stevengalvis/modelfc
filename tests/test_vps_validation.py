@@ -455,20 +455,39 @@ class OfflineHarnessTests(unittest.TestCase):
                 harness.OfflineOpener().open(Request(url))
 
     def run_offline(self):
+        from modelfc import corner_analysis_store
+        from modelfc.providers import oddspapi
         temporary = TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         root = Path(temporary.name)
         controller.offline_history(root / "history")
         (root / "output").mkdir()
+        # The installed harness owns a disposable process. These in-process
+        # tests must restore its adapters before subsequent application tests.
         with patch.dict(os.environ, {}, clear=True), \
-                patch.object(harness, "RelayConnection", side_effect=AssertionError("relay forbidden")):
+                patch.object(oddspapi, "configured_history_lock", oddspapi.configured_history_lock), \
+                patch.object(corner_analysis_store, "configured_history_lock", corner_analysis_store.configured_history_lock), \
+                patch.object(corner_analysis_store, "git_commit_sha", corner_analysis_store.git_commit_sha), \
+                patch.object(harness, "RelayConnection", side_effect=AssertionError("relay forbidden")), \
+                patch.object(oddspapi, "build_opener", side_effect=AssertionError("provider HTTP forbidden")):
             return harness.run_capture(SHA, root / "history", root / "output")
+
+    def test_offline_harness_restores_application_hooks(self):
+        from modelfc import corner_analysis_store
+        from modelfc.providers import oddspapi
+        owners = ((oddspapi, "configured_history_lock"),
+                  (corner_analysis_store, "configured_history_lock"),
+                  (corner_analysis_store, "git_commit_sha"))
+        originals = [getattr(owner, name) for owner, name in owners]
+        self.assertEqual(self.run_offline()["result"], "PASS")
+        for (owner, name), original in zip(owners, originals):
+            self.assertIs(getattr(owner, name), original)
 
     def test_default_offline_core_pipeline_and_zero_provider_requests(self):
         report = self.run_offline()
         self.assertEqual((report["result"], report["mode"]), ("PASS", "OFFLINE"), report)
         self.assertEqual(report["core_pipeline"], "PASS")
-        self.assertEqual(report["market_intelligence"], "NOT_APPLICABLE")
+        self.assertEqual(report["market_intelligence"], "PASS")
         self.assertEqual(report["offline_replay"], "PASS")
         self.assertEqual(report["provider_compatibility"], "NOT_RUN")
         self.assertEqual(report["provider_request_count"], 0)
@@ -480,10 +499,20 @@ class OfflineHarnessTests(unittest.TestCase):
         self.assertEqual(report["match_total_count"], report["gated_match_total_count"])
         self.assertEqual(harness.checked_report(report, SHA, "", "OFFLINE"), report)
 
-    def test_market_intelligence_pass_and_broken_component_are_distinct(self):
-        with patch.object(harness, "market_intelligence_component", return_value="PASS"):
-            passed = self.run_offline()
-        self.assertEqual((passed["result"], passed["market_intelligence"]), ("PASS", "PASS"))
+    def test_older_source_without_market_intelligence_is_not_applicable(self):
+        # Simulate an older exported source without the optional module. The
+        # installed harness must exercise core/replay without claiming it ran.
+        with patch.dict(sys.modules, {"modelfc.corner_market_intelligence": None}):
+            report = self.run_offline()
+        self.assertEqual((report["result"], report["market_intelligence"]), ("PASS", "NOT_APPLICABLE"))
+        self.assertEqual((report["core_pipeline"], report["offline_replay"]), ("PASS", "PASS"))
+        self.assertEqual(report["provider_compatibility"], "NOT_RUN")
+        self.assertEqual(report["provider_request_count"], 0)
+        self.assertEqual(report["scenario_request_count"], 3)
+        self.assertEqual(report["replay_api_request_count"], 0)
+        self.assertEqual(harness.checked_report(report, SHA, "", "OFFLINE"), report)
+
+    def test_existing_broken_market_intelligence_component_fails(self):
         broken = ModuleType("modelfc.corner_market_intelligence")
         broken.get_market_intelligence = lambda *_args, **_kwargs: {}
         with patch.dict(sys.modules, {"modelfc.corner_market_intelligence": broken}):
@@ -494,18 +523,16 @@ class OfflineHarnessTests(unittest.TestCase):
                          ("PASS", "PASS"))
         self.assertGreater(failed["target_count"], 0)
         self.assertEqual(failed["provider_request_count"], 0)
+        self.assertEqual(failed["provider_compatibility"], "NOT_RUN")
+        self.assertEqual(failed["scenario_request_count"], 3)
+        self.assertEqual(failed["replay_api_request_count"], 0)
+        self.assertEqual(harness.checked_report(failed, SHA, "", "OFFLINE"), failed)
 
     def test_offline_failure_never_opens_relay_or_external_transport(self):
-        temporary = TemporaryDirectory()
-        self.addCleanup(temporary.cleanup)
-        root = Path(temporary.name)
-        controller.offline_history(root / "history")
-        (root / "output").mkdir()
-        with patch.dict(os.environ, {}, clear=True), \
-                patch.object(harness.OfflineOpener, "open",
-                             side_effect=ValueError("OFFLINE_SCENARIO_INVALID")), \
+        with patch.object(harness.OfflineOpener, "open",
+                          side_effect=ValueError("OFFLINE_SCENARIO_INVALID")), \
                 patch.object(harness, "RelayOpener") as relay:
-            report = harness.run_capture(SHA, root / "history", root / "output")
+            report = self.run_offline()
         self.assertEqual(report["result"], "FAIL")
         self.assertEqual(report["provider_request_count"], 0)
         relay.assert_not_called()
