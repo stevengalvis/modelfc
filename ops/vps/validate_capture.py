@@ -85,6 +85,32 @@ def checked_report(value, sha, secret, expected_mode=None):
     secrets = (secret,) if isinstance(secret, str) else tuple(secret)
     if any(item and item in json.dumps(value, ensure_ascii=False) for item in secrets):
         raise ValueError("SECURITY_ERROR")
+    # Mode and component consistency apply to failed/blocked reports too.
+    if value["mode"] == "OFFLINE":
+        if (value["provider_compatibility"] != "NOT_RUN"
+                or value["provider_request_count"] != 0 or value["result"] == "BLOCKED"):
+            raise ValueError("INVALID_REPORT")
+    elif (value["provider_request_count"] > 3 or value["scenario_request_count"] != 0
+          or value["market_intelligence"] != "NOT_RUN"):
+        raise ValueError("INVALID_REPORT")
+    if (value["result"] != "FAIL" and ("FAIL" in (value[k] for k in COMPONENTS)
+            or value["cleanup_status"] == "FAILED" or value["credential_leakage_check"] is False)):
+        raise ValueError("INVALID_REPORT")
+    if ((value["reason"] == "COMPLETE") != (value["result"] == "PASS")
+            or value["provider_compatibility"] == "BLOCKED" and value["result"] == "PASS"
+            or value["core_pipeline"] == "PASS" and not value["immutable_capture_verified"]
+            or (value["offline_replay"] == "PASS") != value["offline_replay_identical"]
+            or value["offline_replay"] == "PASS" and value["replay_api_request_count"] != 0):
+        raise ValueError("INVALID_REPORT")
+    if value["result"] == "BLOCKED" and (value["reason"] not in {
+            "NO_ELIGIBLE_FIXTURE", "NO_TEAM_TOTALS", "INSUFFICIENT_HISTORY", "HISTORY_UNAVAILABLE"}
+            or value["provider_compatibility"] not in {"BLOCKED", "NOT_RUN"}
+            or any(value[k] != "NOT_RUN" for k in ("core_pipeline", "offline_replay", "market_intelligence"))):
+        raise ValueError("INVALID_REPORT")
+    if ((value["market_intelligence"] in {"PASS", "FAIL", "NOT_APPLICABLE"}
+            or value["provider_compatibility"] == "PASS")
+            and (value["core_pipeline"] != "PASS" or value["offline_replay"] != "PASS")):
+        raise ValueError("INVALID_REPORT")
     if value["result"] == "PASS":
         if (value["reason"] != "COMPLETE" or value["core_pipeline"] != "PASS"
                 or value["offline_replay"] != "PASS" or not all(value[k] for k in FLAGS[:2])
@@ -560,7 +586,7 @@ def main():
         os.dup2(sink.fileno(), 1)
         os.dup2(sink.fileno(), 2)
     sys.path.insert(0, "/subject/src")
-    report = blank_report(args.sha)
+    report = blank_report(args.sha, mode=args.mode.upper())
     try:
         report = run_capture(args.sha, mode=args.mode)
     except BaseException:

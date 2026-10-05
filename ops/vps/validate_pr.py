@@ -531,7 +531,7 @@ def main():
             except Exception as error:
                 reason = str(error) if (isinstance(error, Failure) or
                     isinstance(error, ValueError) and str(error) == "SECURITY_ERROR") else "INVALID_REPORT"
-                report = blank_report(args.sha, reason=reason)
+                report = blank_report(args.sha, reason=reason, mode=trusted_mode)
                 if reason == "SECURITY_ERROR":
                     report["credential_leakage_check"] = False
             try:

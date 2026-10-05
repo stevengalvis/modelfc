@@ -233,11 +233,54 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(removals[0][-1], controller.PREFIX + "d"*32)
 
     def test_report_allowlist_and_secret_rejection(self):
-        report = harness.blank_report(SHA, "BLOCKED", "NO_ELIGIBLE_FIXTURE")
+        report = harness.blank_report(SHA, "BLOCKED", "NO_ELIGIBLE_FIXTURE", mode="LIVE")
         self.assertEqual(harness.checked_report(report, SHA, SECRET), report)
         for mutation in ({"raw_body": SECRET}, {"home_team": SECRET}, {"reason": SECRET}, {"commit_sha": "b"*40}, {"result": "PASS"}):
             with self.subTest(mutation=mutation), self.assertRaises(ValueError):
                 harness.checked_report(dict(report, **mutation), SHA, SECRET)
+
+    def test_report_rejects_contradictions_for_all_results(self):
+        for result, reason in (("FAIL", "EXECUTION_ERROR"), ("BLOCKED", "NO_TEAM_TOTALS")):
+            for mutation in ({"provider_compatibility": "PASS"}, {"provider_request_count": 1}):
+                with self.subTest(result=result, mutation=mutation), self.assertRaisesRegex(ValueError, "INVALID_REPORT"):
+                    harness.checked_report(dict(harness.blank_report(SHA, result, reason), **mutation), SHA, "")
+        offline = harness.blank_report(SHA, "PASS", "COMPLETE")
+        offline.update(core_pipeline="PASS", offline_replay="PASS", market_intelligence="NOT_APPLICABLE",
+                       immutable_capture_verified=True, offline_replay_identical=True,
+                       supported_team_total_count=1, capture_hash="d" * 64)
+        live = dict(offline, mode="LIVE", provider_compatibility="PASS", market_intelligence="NOT_RUN")
+        for mutation in ({"market_intelligence": "FAIL"}, {"core_pipeline": "FAIL"},
+                         {"offline_replay": "FAIL"}, {"provider_request_count": 4},
+                         {"scenario_request_count": 1}, {"cleanup_status": "FAILED"},
+                         {"credential_leakage_check": False}, {"result": "FAIL"}):
+            with self.subTest(mutation=mutation), self.assertRaisesRegex(ValueError, "INVALID_REPORT"):
+                harness.checked_report(dict(live, **mutation), SHA, "", "LIVE")
+        for mutation in ({"offline_replay_identical": False}, {"immutable_capture_verified": False},
+                         {"replay_api_request_count": 1}):
+            with self.subTest(mutation=mutation), self.assertRaisesRegex(ValueError, "INVALID_REPORT"):
+                harness.checked_report(dict(offline, result="FAIL", reason="MARKET_INTELLIGENCE_FAILED",
+                                            market_intelligence="FAIL", **mutation), SHA, "", "OFFLINE")
+        # A failed optional component can preserve successfully completed core/replay.
+        partial = dict(offline, result="FAIL", reason="MARKET_INTELLIGENCE_FAILED", market_intelligence="FAIL")
+        self.assertEqual(harness.checked_report(partial, SHA, "", "OFFLINE"), partial)
+        for mutation in ({"provider_compatibility": "PASS"}, {"core_pipeline": "PASS"},
+                         {"reason": "ASSERTION_FAILED"}):
+            with self.subTest(mutation=mutation), self.assertRaisesRegex(ValueError, "INVALID_REPORT"):
+                harness.checked_report(dict(harness.blank_report(SHA, "BLOCKED", "NO_TEAM_TOTALS", "LIVE"),
+                                            **mutation), SHA, "", "LIVE")
+        with self.assertRaisesRegex(ValueError, "INVALID_REPORT"):
+            harness.checked_report(dict(harness.blank_report(SHA), market_intelligence="PASS"), SHA, "")
+
+    def test_live_launcher_failure_preserves_explicit_mode(self):
+        from contextlib import redirect_stdout
+        with patch.object(sys, "argv", ["validator", "--repository", controller.REPOSITORY,
+                "--pr", "53", "--sha", SHA, "--mode", "live"]), \
+                patch.object(controller, "configuration", return_value=self.config), \
+                patch.object(controller, "command", side_effect=controller.Failure("TIMEOUT")), \
+                patch.object(controller, "cleanup"), redirect_stdout(io.StringIO()) as output:
+            controller.main()
+        result = json.loads(output.getvalue())
+        self.assertEqual((result["mode"], result["result"], result["reason"]), ("LIVE", "FAIL", "TIMEOUT"))
 
     def test_worker_environment_and_host_owned_leakage_check(self):
         from contextlib import nullcontext
