@@ -8,6 +8,7 @@ No-vig pairs always come from the same book/line/observation.
 """
 
 from datetime import datetime, timezone
+import math
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -20,12 +21,97 @@ from modelfc.corner_opportunities import (
 )
 
 
+DEFAULT_MAX_OBSERVATION_AGE_SECONDS = 300
+# Existing normalized availability family identifiers, not provider endpoints.
+_TEAM_FAMILIES = {"HOME": "teamtotals-corners-team1", "AWAY": "teamtotals-corners-team2"}
+_UNUSABLE_OUTCOMES = {"OUTCOME_UNAVAILABLE", "PRICE_UNUSABLE", "PRICE_OR_TIMESTAMP_UNUSABLE"}
+
+
+def _availability(offer, observations):
+    """Consume newer negative evidence; absence is unknown, never withdrawal.
+
+    Only a returned matching selection with CORNERS_RETURNED confirms usability.
+    A RETURNED family alone cannot confirm an older particular line/outcome.
+    IDs in normalized issues are scoped to the recorded provider and bookmaker.
+    """
+    state, reason, checked_at = "UNKNOWN", "AVAILABILITY_UNKNOWN", None
+    for observation in observations:
+        if (_timestamp(observation["retrieved_at_utc"]), observation["observation_id"]) < (
+                _timestamp(offer["retrieved_at_utc"]), offer["observation_id"]):
+            continue
+        checked_at = observation["retrieved_at_utc"]
+        book = observation["availability"].get(offer["bookmaker"], {})
+        state, reason = "UNKNOWN", "AVAILABILITY_UNKNOWN"
+        if book.get("status") in {"BOOKMAKER_UNUSABLE", "NO_USABLE_CORNERS"}:
+            state, reason = "UNAVAILABLE", book["status"]
+            continue
+        family = book.get("families", {}).get(_TEAM_FAMILIES.get(offer["team_side"]), {})
+        if family.get("status") == "NO_USABLE_PRICES":
+            state, reason = "UNAVAILABLE", "NO_USABLE_PRICES"
+            continue
+        affected = [issue for issue in book.get("issues", [])
+                    if issue.get("market_id") == offer["provider_market_id"]
+                    and (issue.get("reason") == "MARKET_UNUSABLE"
+                         or issue.get("outcome_id") == offer["provider_outcome_id"])]
+        negative = sorted(issue["reason"] for issue in affected
+                          if issue.get("reason") == "MARKET_UNUSABLE"
+                          or issue.get("reason") in _UNUSABLE_OUTCOMES)
+        if negative:
+            state, reason = "UNAVAILABLE", negative[0]
+        elif book.get("status") == "CORNERS_RETURNED" and any(
+                selection["selection_id"] == offer["selection_id"]
+                and selection["bookmaker"] == offer["bookmaker"]
+                for selection in observation["selections"]):
+            state, reason = "AVAILABLE", None
+    return state, reason, checked_at
+
+
+def _current_eligibility(offer, observations, as_of, kickoff, max_age):
+    availability, reason, checked_at = _availability(offer, observations)
+    age = (as_of - _timestamp(offer["retrieved_at_utc"])).total_seconds()
+    reasons = []
+    if offer["status"] != "SUPPORTED":
+        reasons.append(offer["unsupported_reason"] or offer["status"])
+    if as_of >= kickoff:
+        reasons.append("NOT_PRE_KICKOFF")
+    if age > max_age:
+        reasons.append("STALE_RETRIEVAL")
+    if availability != "AVAILABLE":
+        reasons.append(reason)
+    current = not reasons
+    recommendation_reasons = list(reasons)
+    if not offer["qualified"]:
+        recommendation_reasons.append("NOT_QUALIFIED")
+    if offer["expected_profit"] is None or offer["expected_profit"] <= 0:
+        recommendation_reasons.append("NONPOSITIVE_OR_UNAVAILABLE_EV")
+    return {**offer, "observation_age_seconds": age,
+            "current_availability": availability, "availability_checked_at_utc": checked_at,
+            "current_eligible": current, "current_ineligible_reasons": reasons,
+            "recommendation_eligible": not recommendation_reasons,
+            "recommendation_ineligible_reasons": recommendation_reasons}
+
+
+def _best_price(offers):
+    available = sorted(offers, key=lambda offer: (
+        -offer["decimal_odds"], offer["bookmaker"],
+        -_timestamp(offer["retrieved_at_utc"]).timestamp(),
+        offer["observation_id"], offer["selection_id"],
+    ))
+    best = available[0] if available else None
+    return {"best_bookmaker": best["bookmaker"] if best else None,
+            "best_american_odds": best["american_odds"] if best else None,
+            "best_decimal_odds": best["decimal_odds"] if best else None,
+            "price_improvement": (best["decimal_odds"] - available[1]["decimal_odds"]
+                                  if len(available) > 1 else None)}
+
+
 def rank_supported_offers(offers: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Qualified first, then EV, no-vig edge, decisive probability and price.
+    """Research ranking: qualification, EV, edge, decisive probability and price.
 
     Missing no-vig edges sort last at equal EV. Final ties use stable prediction,
     target and bookmaker IDs, then newest retrieval and evidence IDs. No input
     is mutated. Unsupported/review-required offers never enter the ranking.
+    This ranking alone does not establish current or recommendation eligibility.
     """
     return sorted((offer for offer in offers if offer["status"] == "SUPPORTED"),
                   key=lambda offer: (
@@ -80,10 +166,14 @@ def _offer(prediction, observation, selection, decisions):
 
 def get_market_intelligence(
     state_dir: str | Path, prediction_id: str, *, as_of: datetime | None = None,
+    max_observation_age_seconds: float = DEFAULT_MAX_OBSERVATION_AGE_SECONDS,
 ) -> dict[str, Any]:
     """Compare latest stored offers, read-only, with optional pre-kickoff replay.
 
-    At/after kickoff return no current offers. Future observations are excluded.
+    Historical latest-observed offers survive kickoff. Current offers expire at
+    kickoff or when retrieval age exceeds the caller's limit (default 300 seconds,
+    inclusive boundary). changedAt never measures freshness. Future observations
+    are excluded. Unknown coverage cannot confirm a current offer.
     The existing reader validates source binding and pre-kickoff observation
     semantics. A newer inconsistent offer remains visible for review, but cannot
     win best-book selection or silently resurrect an older price.
@@ -96,12 +186,16 @@ def get_market_intelligence(
     as_of = as_of or datetime.now(timezone.utc)
     if as_of.tzinfo is None or as_of.utcoffset() is None:
         raise ValueError("as_of must be timezone-aware")
+    if (isinstance(max_observation_age_seconds, bool)
+            or not isinstance(max_observation_age_seconds, (int, float))
+            or not math.isfinite(max_observation_age_seconds) or max_observation_age_seconds <= 0):
+        raise ValueError("max_observation_age_seconds must be finite and positive")
     prediction = load_prediction(state_dir, prediction_id)
     observations = prediction_observations(state_dir, prediction)
     policy = current_qualification_policy()
+    observations = [item for item in observations if _timestamp(item["retrieved_at_utc"]) <= as_of]
     latest = {}
-    if (_timestamp(prediction["created_at_utc"]) <= as_of
-            < _timestamp(prediction["fixture"]["kickoff_at"])):
+    if _timestamp(prediction["created_at_utc"]) <= as_of:
         for observation in observations:
             observed_at = _timestamp(observation["retrieved_at_utc"])
             if observed_at > as_of:
@@ -121,29 +215,28 @@ def get_market_intelligence(
                 if key not in latest or order > latest[key][0]:
                     latest[key] = (order, offer)
     grouped = {}
+    latest = {key: (order, _current_eligibility(
+        offer, observations, as_of, _timestamp(prediction["fixture"]["kickoff_at"]),
+        max_observation_age_seconds,
+    )) for key, (order, offer) in latest.items()}
     for _, offer in latest.values():
         grouped.setdefault(offer["target_id"], []).append(offer)
     targets = []
     for identity, offers in sorted(grouped.items()):
         offers.sort(key=lambda offer: offer["bookmaker"])
-        available = sorted((offer for offer in offers if offer["status"] == "SUPPORTED"),
-                           key=lambda offer: (
-                               -offer["decimal_odds"], offer["bookmaker"],
-                               -_timestamp(offer["retrieved_at_utc"]).timestamp(),
-                               offer["observation_id"], offer["selection_id"],
-                           ))
-        best = available[0] if available else None
         targets.append({
             "prediction_id": prediction["prediction_id"], "target_id": identity,
             "offers": offers,
-            "best_bookmaker": best["bookmaker"] if best else None,
-            "best_american_odds": best["american_odds"] if best else None,
-            "best_decimal_odds": best["decimal_odds"] if best else None,
-            "price_improvement": (best["decimal_odds"] - available[1]["decimal_odds"]
-                                  if len(available) > 1 else None),
+            "latest_observed_best": _best_price(offer for offer in offers if offer["status"] == "SUPPORTED"),
+            "current_best": _best_price(offer for offer in offers if offer["current_eligible"]),
         })
     return {
         "prediction_id": prediction["prediction_id"], "as_of_utc": as_of.astimezone(timezone.utc).isoformat(),
         "qualification_policy": policy, "targets": targets,
-        "ranked_offers": rank_supported_offers(offer for _, offer in latest.values()),
+        "max_observation_age_seconds": max_observation_age_seconds,
+        "research_ranked_offers": rank_supported_offers(offer for _, offer in latest.values()),
+        "current_eligible_offers": rank_supported_offers(offer for _, offer in latest.values()
+                                                       if offer["current_eligible"]),
+        "recommendations": rank_supported_offers(offer for _, offer in latest.values()
+                                                 if offer["recommendation_eligible"]),
     }
