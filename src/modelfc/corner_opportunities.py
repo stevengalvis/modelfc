@@ -506,8 +506,9 @@ def target_id(prediction_id: str, market_type: str, team_side: str | None,
     })
 
 
-def _target_record(prediction: dict[str, Any], selection: dict[str, Any],
-                   materialized_at: str) -> dict[str, Any]:
+def evaluate_target(prediction: dict[str, Any], selection: dict[str, Any],
+                    materialized_at: str) -> dict[str, Any]:
+    """Evaluate a frozen target without publishing or loading any evidence."""
     prediction_id = prediction["prediction_id"]
     market_type, side = selection["market_type"], selection["team_side"]
     direction, line = selection["direction"], selection["line"]
@@ -555,7 +556,7 @@ def materialize_target(
     state = Path(state_dir)
     materialized_at = materialized_at or utc_timestamp()
     _timestamp(materialized_at)
-    record = _target_record(prediction, selection, materialized_at)
+    record = evaluate_target(prediction, selection, materialized_at)
     identity = record["target_id"]
     path = _record_path(state, "prediction-targets", identity, prediction["prediction_id"])
     # Materialization time is evidence of when a later line first appeared, but
@@ -666,6 +667,27 @@ def _prices_are_consistent(selection: dict[str, Any]) -> bool:
     )
 
 
+def paired_price_terms(observation: dict[str, Any]):
+    """Yield unambiguous, consistent same-book Over/Under price pairs.
+
+    Pair only within this observation; never borrow a side from another book,
+    line or retrieval. Shared by evidence assessment and read-time views.
+    """
+    for _, sides in _paired_selections(observation):
+        if not all(_prices_are_consistent(selection) for selection in sides.values()):
+            continue
+        try:
+            implied = {direction: 1 / selection["decimal_odds"]
+                       for direction, selection in sides.items()}
+            total = math.fsum(implied.values())
+            if (not all(math.isfinite(value) and value > 0 for value in implied.values())
+                    or not math.isfinite(total) or total <= 0):
+                continue
+        except (KeyError, TypeError, ZeroDivisionError):
+            continue
+        yield sides, implied, total
+
+
 def assess_observation(
     state_dir: str | Path, prediction: dict[str, Any], observation: dict[str, Any],
 ) -> dict[str, Any]:
@@ -700,19 +722,7 @@ def assess_observation(
         if not _prices_are_consistent(selection)
     }
     created, watchlisted = 0, False
-    for _, sides in _paired_selections(observation):
-        if any(selection["selection_id"] in inconsistent
-               for selection in sides.values()):
-            continue
-        try:
-            implied = {direction: 1 / selection["decimal_odds"]
-                       for direction, selection in sides.items()}
-            total = math.fsum(implied.values())
-            if (not all(math.isfinite(value) and value > 0 for value in implied.values())
-                    or not math.isfinite(total) or total <= 0):
-                continue
-        except (KeyError, TypeError, ZeroDivisionError):
-            continue
+    for sides, implied, total in paired_price_terms(observation):
         for direction, selection in sides.items():
             target = targets[selection["selection_id"]]
             if target["status"] != "SUPPORTED":
