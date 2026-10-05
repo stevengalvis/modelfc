@@ -515,7 +515,7 @@ class OfflineHarnessTests(unittest.TestCase):
         second = harness.offline_responses()
         self.assertEqual(second["fixtures"][0]["fixtureId"],
                          harness.OFFLINE_FIXTURE["fixtureId"])
-        self.assertEqual(harness.OfflineOpener().responses, {})
+        self.assertNotIn("responses", vars(harness.OfflineOpener()))
 
 
 class RelayTests(unittest.TestCase):
@@ -930,6 +930,52 @@ class HarnessTests(unittest.TestCase):
                         patch.object(self.provider, "normalize_odds", incomplete):
                     report = OfflineHarnessTests.run_offline(self) if mode == "OFFLINE" else self.execute()
                     self.assertEqual((report["result"], report["reason"]), ("FAIL", "ASSERTION_FAILED"))
+
+    def test_candidate_cannot_mutate_discovery_and_quote_provenance(self):
+        from functools import wraps
+        original_quotes = self.provider.OddsPapiClient.quotes
+        for mode in ("OFFLINE", "LIVE"):
+            for field, value in (("participant1Name", "Wolves"), ("participant1Id", 999),
+                                 ("startTime", "2026-09-20T11:05:00.000Z")):
+                @wraps(original_quotes)
+                def changed_fixture(client, fixture):
+                    quotes = original_quotes(client, fixture)
+                    fixture[field] = value
+                    quotes.fixture[field] = value
+                    return quotes
+                with self.subTest(mode=mode, field=field), \
+                        patch.object(self.provider.OddsPapiClient, "quotes", changed_fixture):
+                    report = OfflineHarnessTests.run_offline(self) if mode == "OFFLINE" else self.execute()
+                    self.assertEqual((report["result"], report["reason"]), ("FAIL", "ASSERTION_FAILED"))
+
+    def test_candidate_cannot_fabricate_client_market_identity(self):
+        original_normalize = self.provider.normalize_odds
+        def changed_ids(*args, **kwargs):
+            quotes = original_normalize(*args, **kwargs)
+            selections = tuple(replace(item, request=replace(item.request, client_market_id=f"fabricated:{index}"))
+                               for index, item in enumerate(quotes.selections))
+            return replace(quotes, selections=selections)
+        for mode in ("OFFLINE", "LIVE"):
+            with self.subTest(mode=mode), patch.object(self.provider, "normalize_odds", changed_ids):
+                report = OfflineHarnessTests.run_offline(self) if mode == "OFFLINE" else self.execute()
+                self.assertEqual((report["result"], report["reason"]), ("FAIL", "ASSERTION_FAILED"))
+
+    def test_candidate_cannot_change_expected_transport_via_opener_attributes(self):
+        from functools import wraps
+        original_quotes = self.provider.OddsPapiClient.quotes
+        @wraps(original_quotes)
+        def changed_oracle(client, fixture):
+            quotes = original_quotes(client, fixture)
+            # A public attribute on the candidate's client must never be the oracle.
+            client._opener.responses = harness.offline_responses()
+            client._opener.responses["fixtures"][0]["participant1Name"] = "Wolves"
+            client._opener.responses["odds"]["participant1Name"] = "Wolves"
+            fixture["participant1Name"] = "Wolves"
+            quotes.fixture["participant1Name"] = "Wolves"
+            return quotes
+        with patch.object(self.provider.OddsPapiClient, "quotes", changed_oracle):
+            report = OfflineHarnessTests.run_offline(self)
+        self.assertEqual((report["result"], report["reason"]), ("FAIL", "ASSERTION_FAILED"))
 
     def test_no_fixture_blocked_not_pass(self):
         report = self.execute(fixture=False)

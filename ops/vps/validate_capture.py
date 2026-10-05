@@ -137,9 +137,6 @@ class RelayConnection(http.client.HTTPConnection):
 
 
 class RelayOpener:
-    def __init__(self):
-        self.responses = {}
-
     def open(self, request, timeout=30):
         url = urlsplit(request.full_url)
         if url.scheme != "https" or url.netloc != "api.oddspapi.io" or url.fragment:
@@ -157,12 +154,7 @@ class RelayOpener:
             if len(body) > 8 * 1024 * 1024:
                 raise ValueError("PROVIDER_ERROR")
             if response.status >= 400:
-                if response.status == 404 and url.path == "/v4/fixtures":
-                    error = json.loads(body)
-                    if error.get("error", {}).get("code") == "FIXTURE_NOT_FOUND":
-                        self.responses["fixtures"] = []
                 raise HTTPError("redacted", response.status, "provider error", response.headers, io.BytesIO(body))
-            self.responses[url.path.rsplit("/", 1)[-1]] = json.loads(body)
             stream = io.BytesIO(body)
             stream.headers = response.headers
             return stream
@@ -232,7 +224,6 @@ class OfflineOpener:
     """Exact recorded request boundary. It has no socket or relay capability."""
     def __init__(self):
         self.calls = []
-        self.responses = {}
 
     def open(self, request, timeout=30):
         url = urlsplit(request.full_url)
@@ -259,7 +250,6 @@ class OfflineOpener:
             raise ValueError("OFFLINE_SCENARIO_INVALID")
         self.calls.append(endpoint)
         body = io.BytesIO(json.dumps(offline_responses()[endpoint]).encode())
-        self.responses[endpoint] = json.loads(body.getvalue())
         body.headers = {}
         return body
 
@@ -420,12 +410,18 @@ def verify_quote_source(quotes, fixture, payload, metadata, now):
     """Bind complete normalized output to observed data, not candidate claims."""
     assert quotes.fixture == fixture and quotes.competition == "E1"
     assert quotes.retrieved_at == now.isoformat()
+    assert all(payload.get(key) == fixture.get(key) for key in (
+        "fixtureId", "participant1Id", "participant2Id", "participant1Name",
+        "participant2Name", "startTime", "tournamentId", "sportId", "statusId",
+        "categorySlug", "tournamentSlug"))
     expected, availability = observed_corner_contract(payload, metadata, now)
     actual = [(item.bookmaker, item.market_id, item.outcome_id) for item in quotes.selections]
     assert len(actual) == len(set(actual)) and set(actual) == expected
     assert quotes.availability == availability
     dictionary = {str(entry["marketId"]): entry for entry in metadata}
     for selection in quotes.selections:
+        assert selection.request.client_market_id == (
+            f"oddspapi:{fixture['fixtureId']}:{selection.bookmaker}:{selection.market_id}:{selection.outcome_id}")
         meta = dictionary[selection.market_id]
         book = payload["bookmakerOdds"][selection.bookmaker]
         market = book["markets"][selection.market_id]
@@ -578,7 +574,25 @@ def run_capture(sha, snapshot=Path("/history"), output=Path("/output"), mode="OF
     batches, metadata_cache = [], {}
     replaying = False
     now = OFFLINE_NOW if mode == "OFFLINE" else datetime.now(timezone.utc)
-    opener = OfflineOpener() if mode == "OFFLINE" else RelayOpener()
+    # Keep assertion inputs off the candidate-accessible client/opener objects.
+    # Accessing these lexical copies requires interpreter introspection, which
+    # remains outside this shared-interpreter validator's attestation claims.
+    transport_responses = {}
+    base_opener = OfflineOpener if mode == "OFFLINE" else RelayOpener
+    class ObservedOpener(base_opener):
+        def open(self, request, timeout=30):
+            endpoint = urlsplit(request.full_url).path.rsplit("/", 1)[-1]
+            try:
+                stream = super().open(request, timeout)
+            except HTTPError as error:
+                if error.code == 404 and endpoint == "fixtures":
+                    body = json.loads(error.fp.getvalue())
+                    if body.get("error", {}).get("code") == "FIXTURE_NOT_FOUND":
+                        transport_responses[endpoint] = []
+                raise
+            transport_responses[endpoint] = json.loads(stream.getvalue())
+            return stream
+    opener = ObservedOpener()
 
     @wraps(original_get)
     def metered(client, endpoint, **params):
@@ -589,7 +603,7 @@ def run_capture(sha, snapshot=Path("/history"), output=Path("/output"), mode="OF
         if endpoint == "markets" and endpoint in metadata_cache:
             return deepcopy(metadata_cache[endpoint])
         value = original_get(client, endpoint, **params)
-        assert endpoint in opener.responses and value == opener.responses[endpoint]
+        assert endpoint in transport_responses and value == transport_responses[endpoint]
         decoded[endpoint] = value
         if endpoint == "markets":
             metadata_cache[endpoint] = deepcopy(value)
@@ -597,7 +611,7 @@ def run_capture(sha, snapshot=Path("/history"), output=Path("/output"), mode="OF
 
     @wraps(original_normalize)
     def normalized(payload, metadata, fixture, **settings):
-        assert payload == opener.responses["odds"] and metadata == opener.responses["markets"]
+        assert payload == transport_responses["odds"] and metadata == transport_responses["markets"]
         assert any(fixture is item for item in decoded["fixtures"])
         result = original_normalize(payload, metadata, fixture, **settings)
         normalized_results.append(result)
@@ -627,9 +641,10 @@ def run_capture(sha, snapshot=Path("/history"), output=Path("/output"), mode="OF
         for fixture in fixtures[:1]:
             saw_fixture = True
             quotes = client.quotes(fixture)
+            assert any(fixture == item for item in transport_responses["fixtures"])
             assert calls == ["fixtures", "markets", "odds"]
             assert len(normalized_results) == 1 and quotes is normalized_results[0]
-            verify_quote_source(quotes, fixture, opener.responses["odds"], opener.responses["markets"], now)
+            verify_quote_source(quotes, fixture, transport_responses["odds"], transport_responses["markets"], now)
             if mode == "OFFLINE":
                 assert opener.calls == ["fixtures", "markets", "odds"]
             team_count = sum(s.request.market_type == "TEAM_TOTAL" for s in quotes.selections)
