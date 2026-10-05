@@ -480,7 +480,7 @@ class OfflineHarnessTests(unittest.TestCase):
         second = harness.offline_responses()
         self.assertEqual(second["fixtures"][0]["fixtureId"],
                          harness.OFFLINE_FIXTURE["fixtureId"])
-        self.assertNotIn("responses", vars(harness.OfflineOpener()))
+        self.assertEqual(harness.OfflineOpener().responses, {})
 
 
 class RelayTests(unittest.TestCase):
@@ -830,6 +830,49 @@ class HarnessTests(unittest.TestCase):
                 self.assertEqual(report["provider_compatibility"], "NOT_RUN" if mode == "OFFLINE" else "FAIL")
                 self.assertEqual(report["scenario_request_count"], 0)
                 self.assertEqual(report["provider_request_count"], 0)
+
+    def test_candidate_cannot_discard_transport_bodies_for_cached_quotes(self):
+        from functools import wraps
+        original_fixtures = self.provider.OddsPapiClient.fixtures
+        original_quotes = self.provider.OddsPapiClient.quotes
+        @wraps(original_fixtures)
+        def cached_fixtures(client, day):
+            original_fixtures(client, day)
+            return [dict(self.case.quotes.fixture)]
+        @wraps(original_quotes)
+        def cached_quotes(client, fixture):
+            original_quotes(client, fixture)
+            return self.case.quotes
+        for mode in ("OFFLINE", "LIVE"):
+            for method, replacement in (("fixtures", cached_fixtures), ("quotes", cached_quotes)):
+                with self.subTest(mode=mode, method=method), \
+                        patch.object(self.provider.OddsPapiClient, method, replacement):
+                    report = OfflineHarnessTests.run_offline(self) if mode == "OFFLINE" else self.execute()
+                    self.assertEqual((report["result"], report["reason"]), ("FAIL", "ASSERTION_FAILED"))
+
+    def test_candidate_get_cannot_replace_transport_json(self):
+        from functools import wraps
+        original_get = self.provider.OddsPapiClient._get
+        @wraps(original_get)
+        def changed_json(client, endpoint, **params):
+            value = original_get(client, endpoint, **params)
+            if endpoint == "fixtures":
+                value[0]["participant1Name"] = "cached replacement"
+            return value
+        with patch.object(self.provider.OddsPapiClient, "_get", changed_json):
+            report = OfflineHarnessTests.run_offline(self)
+        self.assertEqual((report["result"], report["reason"]), ("FAIL", "ASSERTION_FAILED"))
+
+    def test_candidate_normalization_cannot_invent_observed_prices(self):
+        original_normalize = self.provider.normalize_odds
+        def invented_price(*args, **kwargs):
+            quotes = original_normalize(*args, **kwargs)
+            changed = replace(quotes.selections[0], decimal_odds=9.99)
+            return replace(quotes, selections=(changed,) + quotes.selections[1:])
+        for mode in ("OFFLINE", "LIVE"):
+            with self.subTest(mode=mode), patch.object(self.provider, "normalize_odds", invented_price):
+                report = OfflineHarnessTests.run_offline(self) if mode == "OFFLINE" else self.execute()
+                self.assertEqual((report["result"], report["reason"]), ("FAIL", "ASSERTION_FAILED"))
 
     def test_no_fixture_blocked_not_pass(self):
         report = self.execute(fixture=False)

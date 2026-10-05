@@ -4,6 +4,7 @@ from contextlib import contextmanager
 from copy import deepcopy
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 import fcntl
 import hashlib
 import http.client
@@ -136,6 +137,9 @@ class RelayConnection(http.client.HTTPConnection):
 
 
 class RelayOpener:
+    def __init__(self):
+        self.responses = {}
+
     def open(self, request, timeout=30):
         url = urlsplit(request.full_url)
         if url.scheme != "https" or url.netloc != "api.oddspapi.io" or url.fragment:
@@ -153,7 +157,12 @@ class RelayOpener:
             if len(body) > 8 * 1024 * 1024:
                 raise ValueError("PROVIDER_ERROR")
             if response.status >= 400:
+                if response.status == 404 and url.path == "/v4/fixtures":
+                    error = json.loads(body)
+                    if error.get("error", {}).get("code") == "FIXTURE_NOT_FOUND":
+                        self.responses["fixtures"] = []
                 raise HTTPError("redacted", response.status, "provider error", response.headers, io.BytesIO(body))
+            self.responses[url.path.rsplit("/", 1)[-1]] = json.loads(body)
             stream = io.BytesIO(body)
             stream.headers = response.headers
             return stream
@@ -223,6 +232,7 @@ class OfflineOpener:
     """Exact recorded request boundary. It has no socket or relay capability."""
     def __init__(self):
         self.calls = []
+        self.responses = {}
 
     def open(self, request, timeout=30):
         url = urlsplit(request.full_url)
@@ -249,6 +259,7 @@ class OfflineOpener:
             raise ValueError("OFFLINE_SCENARIO_INVALID")
         self.calls.append(endpoint)
         body = io.BytesIO(json.dumps(offline_responses()[endpoint]).encode())
+        self.responses[endpoint] = json.loads(body.getvalue())
         body.headers = {}
         return body
 
@@ -314,6 +325,44 @@ def verify_capture(record, response, quotes, sha, snapshot):
 def evidence_snapshot(state):
     return {str(path.relative_to(state)): hashlib.sha256(path.read_bytes()).hexdigest()
             for path in state.rglob("*") if path.is_file()}
+
+
+def verify_quote_source(quotes, fixture, payload, metadata, now):
+    """Bind returned normalized fields to observed transport data, not candidate claims."""
+    assert quotes.fixture == fixture and quotes.competition == "E1"
+    assert quotes.retrieved_at == now.isoformat()
+    dictionary = {str(entry["marketId"]): entry for entry in metadata}
+    families = {"totals-corners": ("MATCH_TOTAL", None),
+                "teamtotals-corners-team1": ("TEAM_TOTAL", "HOME"),
+                "teamtotals-corners-team2": ("TEAM_TOTAL", "AWAY")}
+    for selection in quotes.selections:
+        meta = dictionary[selection.market_id]
+        book = payload["bookmakerOdds"][selection.bookmaker]
+        market = book["markets"][selection.market_id]
+        price = market["outcomes"][selection.outcome_id]["players"]["0"]
+        assert book["bookmakerIsActive"] is True and book["suspended"] is False
+        assert market["marketActive"] is True and price["active"] is True
+        assert not any(item.get("staleOdds") is True for item in (payload, book, market, price))
+        assert meta["period"] == "fulltime" and meta["sportId"] == 10 and meta["playerProp"] is False
+        direction = next(item["outcomeName"].upper() for item in meta["outcomes"]
+                         if str(item["outcomeId"]) == selection.outcome_id)
+        decimal = Decimal(str(price["price"]))
+        assert decimal.is_finite() and decimal > 1
+        try:
+            supplied = Decimal(str(price.get("priceAmerican")))
+            assert supplied.is_finite() and supplied == supplied.to_integral_value() and abs(supplied) >= 100
+            american = int(supplied)
+        except (InvalidOperation, AssertionError):
+            american = int(((decimal - 1) * 100 if decimal >= 2 else -100 / (decimal - 1))
+                           .quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+        assert (selection.request.market_type, selection.request.team_side) == families[meta["marketType"]]
+        assert (selection.request.side, selection.request.line, selection.request.american_odds) == (
+            direction, float(meta["handicap"]), american)
+        assert (selection.fixture_id, selection.market_name, selection.decimal_odds,
+                selection.main_line, selection.changed_at, selection.bookmaker_changed_at,
+                selection.retrieved_at) == (fixture["fixtureId"], meta.get("marketName", ""),
+                    float(decimal), price.get("mainLine"), price.get("changedAt"),
+                    price.get("bookmakerChangedAt"), now.isoformat())
 
 
 def market_intelligence_component(state, prediction, quotes, now):
@@ -442,6 +491,8 @@ def run_capture(sha, snapshot=Path("/history"), output=Path("/output"), mode="OF
     original_get = provider.OddsPapiClient._get
     original_now = provider._now
     original_timestamp = provider.utc_timestamp
+    original_normalize = provider.normalize_odds
+    decoded, normalized_results = {}, []
     batches, metadata_cache = [], {}
     replaying = False
     now = OFFLINE_NOW if mode == "OFFLINE" else datetime.now(timezone.utc)
@@ -456,9 +507,19 @@ def run_capture(sha, snapshot=Path("/history"), output=Path("/output"), mode="OF
         if endpoint == "markets" and endpoint in metadata_cache:
             return deepcopy(metadata_cache[endpoint])
         value = original_get(client, endpoint, **params)
+        assert endpoint in opener.responses and value == opener.responses[endpoint]
+        decoded[endpoint] = value
         if endpoint == "markets":
             metadata_cache[endpoint] = deepcopy(value)
         return value
+
+    @wraps(original_normalize)
+    def normalized(payload, metadata, fixture, **settings):
+        assert payload == opener.responses["odds"] and metadata == opener.responses["markets"]
+        assert any(fixture is item for item in decoded["fixtures"])
+        result = original_normalize(payload, metadata, fixture, **settings)
+        normalized_results.append(result)
+        return result
 
     def analyzed(observations, fixture, markets, **settings):
         assert not replaying and 0 < len(markets) <= 32
@@ -470,6 +531,7 @@ def run_capture(sha, snapshot=Path("/history"), output=Path("/output"), mode="OF
 
     provider.analyze_corner_markets = analyzed
     provider.OddsPapiClient._get = metered
+    provider.normalize_odds = normalized
     provider._now = lambda: now
     provider.utc_timestamp = lambda: now.isoformat()
     saw_fixture = False
@@ -478,6 +540,8 @@ def run_capture(sha, snapshot=Path("/history"), output=Path("/output"), mode="OF
             raise ValueError("OFFLINE_SCENARIO_INVALID" if mode == "OFFLINE" else "HISTORY_UNAVAILABLE")
         client = validation_client(provider, "E1", opener)
         fixtures = client.fixtures(now.date())
+        assert "fixtures" in decoded
+        assert all(any(fixture is item for item in decoded["fixtures"]) for fixture in fixtures)
         for fixture in fixtures[:1]:
             saw_fixture = True
             quotes = client.quotes(fixture)
@@ -485,6 +549,8 @@ def run_capture(sha, snapshot=Path("/history"), output=Path("/output"), mode="OF
             if not team_count:
                 continue
             assert calls == ["fixtures", "markets", "odds"]
+            assert len(normalized_results) == 1 and quotes is normalized_results[0]
+            verify_quote_source(quotes, fixture, opener.responses["odds"], opener.responses["markets"], now)
             if mode == "OFFLINE":
                 assert opener.calls == ["fixtures", "markets", "odds"]
             report.update(competition="E1", fixture_id=fixture["fixtureId"],
@@ -579,6 +645,7 @@ def run_capture(sha, snapshot=Path("/history"), output=Path("/output"), mode="OF
         provider.analyze_corner_markets = original_analyze
         provider._now = original_now
         provider.utc_timestamp = original_timestamp
+        provider.normalize_odds = original_normalize
 
 
 def main():

@@ -101,6 +101,12 @@ requests to an in-process recorded opener. The opener has no socket/relay featur
 and returns a freshly materialized response for each exact endpoint.
 OFFLINE PASS requires all three recorded calls in order: `fixtures`, `markets`,
 then `odds`. Cached or hard-coded candidate objects cannot skip this boundary.
+The trusted opener retains the decoded transport bodies. Candidate `_get` results
+must match them; fixtures must originate in that discovery result, and downstream
+quotes must be the actual normalization result for those market/odds bodies.
+Returned fixture, market, line, direction, price and timestamp fields are also
+checked directly against the observed bodies by trusted assertions.
+The same binding checks apply to LIVE responses, without additional upstream calls.
 
 The run exercises the candidate's real OddsPapi request construction, parsing and
 normalization; production history loading; forecasting and probability code;
