@@ -247,10 +247,11 @@ class ControllerTests(unittest.TestCase):
         offline = harness.blank_report(SHA, "PASS", "COMPLETE")
         offline.update(core_pipeline="PASS", offline_replay="PASS", market_intelligence="NOT_APPLICABLE",
                        immutable_capture_verified=True, offline_replay_identical=True,
-                       supported_team_total_count=1, capture_hash="d" * 64, scenario_request_count=3)
+                       supported_team_total_count=1, prediction_count=1, target_count=1, capture_hash="d" * 64, scenario_request_count=3)
         live = dict(offline, mode="LIVE", provider_compatibility="PASS", market_intelligence="NOT_RUN",
                     scenario_request_count=0, provider_request_count=3)
         for mutation in ({"market_intelligence": "FAIL"}, {"core_pipeline": "FAIL"},
+                         {"target_count": 0}, {"prediction_count": 0},
                          {"offline_replay": "FAIL"}, {"provider_request_count": 4}, {"provider_request_count": 0},
                          {"scenario_request_count": 1}, {"cleanup_status": "FAILED"},
                          {"credential_leakage_check": False}, {"result": "FAIL"}):
@@ -288,7 +289,7 @@ class ControllerTests(unittest.TestCase):
         child = harness.blank_report(SHA, "PASS", "COMPLETE", "LIVE")
         child.update(core_pipeline="PASS", offline_replay="PASS", provider_compatibility="PASS",
                      immutable_capture_verified=True, offline_replay_identical=True,
-                     supported_team_total_count=1, capture_hash="d" * 64, provider_request_count=3)
+                     supported_team_total_count=1, prediction_count=1, target_count=1, capture_hash="d" * 64, provider_request_count=3)
         for endpoints in ([], ["/v4/fixtures"], ["/v4/fixtures"] * 3):
             with self.subTest(endpoints=endpoints):
                 relay = controller.Relay(SECRET, Mock())
@@ -309,7 +310,7 @@ class ControllerTests(unittest.TestCase):
         from contextlib import nullcontext
         report = harness.blank_report(SHA, "PASS", "COMPLETE", mode="LIVE")
         report.update(immutable_capture_verified=True, offline_replay_identical=True,
-                      supported_team_total_count=1, capture_hash="d" * 64,
+                      supported_team_total_count=1, prediction_count=1, target_count=1, capture_hash="d" * 64,
                       core_pipeline="PASS", offline_replay="PASS",
                       provider_compatibility="PASS", provider_request_count=3)
         for host_failure in (None, "SECURITY_ERROR"):
@@ -387,7 +388,7 @@ class ControllerTests(unittest.TestCase):
         child = harness.blank_report(SHA, "PASS", "COMPLETE")
         child.update(core_pipeline="PASS", market_intelligence="NOT_APPLICABLE",
                      offline_replay="PASS", provider_compatibility="NOT_RUN",
-                     supported_team_total_count=1, capture_hash="d" * 64,
+                     supported_team_total_count=1, prediction_count=1, target_count=1, capture_hash="d" * 64,
                      immutable_capture_verified=True, offline_replay_identical=True, scenario_request_count=3)
         process = Mock(stdout=io.BytesIO(json.dumps(child).encode()))
         process.wait.return_value = 0
@@ -959,6 +960,40 @@ class HarnessTests(unittest.TestCase):
             with self.subTest(mode=mode), patch.object(self.provider, "normalize_odds", changed_ids):
                 report = OfflineHarnessTests.run_offline(self) if mode == "OFFLINE" else self.execute()
                 self.assertEqual((report["result"], report["reason"]), ("FAIL", "ASSERTION_FAILED"))
+
+    def test_candidate_assessment_must_publish_complete_valid_evidence(self):
+        import shutil
+        from modelfc import corner_opportunities
+        original = corner_opportunities.assess_observation
+        for mode in ("OFFLINE", "LIVE"):
+            for mutation in ("no-write", "missing-opportunity", "missing-target",
+                             "target-probability", "opportunity-price"):
+                def broken(state, prediction, observation):
+                    if mutation == "no-write":
+                        return {"targets": len(observation["selections"]), "opportunities_created": 0}
+                    result = original(state, prediction, observation)
+                    kind = "prediction-targets" if "target" in mutation else "opportunities"
+                    path = next(Path(state, kind).rglob("*.json"))
+                    if mutation.startswith("missing"):
+                        path.unlink()
+                    else:
+                        record = json.loads(path.read_bytes())
+                        if mutation == "target-probability":
+                            record["model_probability"] = 0.99
+                        else:
+                            record["offer"]["decimal_odds"] = 9.99
+                        # A self-consistent hash cannot legitimize invented evidence.
+                        from modelfc.corner_analysis_store import _canonical_hash
+                        record["record_hash"] = _canonical_hash({k: v for k, v in record.items() if k != "record_hash"})
+                        path.write_text(json.dumps(record))
+                    return result
+                if mode == "LIVE":
+                    shutil.rmtree(self.output / "state", ignore_errors=True)
+                with self.subTest(mode=mode, mutation=mutation), \
+                        patch.object(corner_opportunities, "assess_observation", broken):
+                    report = OfflineHarnessTests.run_offline(self) if mode == "OFFLINE" else self.execute()
+                self.assertEqual((report["result"], report["reason"]), ("FAIL", "ASSERTION_FAILED"), report)
+                self.assertEqual(report["core_pipeline"], "FAIL")
 
     def test_candidate_cannot_change_expected_transport_via_opener_attributes(self):
         from functools import wraps

@@ -2,7 +2,7 @@
 import argparse
 from contextlib import contextmanager
 from copy import deepcopy
-from dataclasses import replace
+from dataclasses import asdict, replace
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 import fcntl
@@ -17,6 +17,7 @@ import os
 from pathlib import Path
 import socket
 import sys
+import uuid
 from types import SimpleNamespace
 from urllib.error import HTTPError
 from urllib.parse import parse_qsl, urlencode, urlsplit
@@ -99,7 +100,8 @@ def checked_report(value, sha, secret, expected_mode=None):
         raise ValueError("INVALID_REPORT")
     if ((value["reason"] == "COMPLETE") != (value["result"] == "PASS")
             or value["provider_compatibility"] == "BLOCKED" and value["result"] == "PASS"
-            or value["core_pipeline"] == "PASS" and not value["immutable_capture_verified"]
+            or value["core_pipeline"] == "PASS" and (not value["immutable_capture_verified"]
+                or value["prediction_count"] != 1 or value["target_count"] < 1)
             or (value["offline_replay"] == "PASS") != value["offline_replay_identical"]
             or value["offline_replay"] == "PASS" and value["replay_api_request_count"] != 0):
         raise ValueError("INVALID_REPORT")
@@ -315,6 +317,108 @@ def verify_capture(record, response, quotes, sha, snapshot):
 def evidence_snapshot(state):
     return {str(path.relative_to(state)): hashlib.sha256(path.read_bytes()).hexdigest()
             for path in state.rglob("*") if path.is_file()}
+
+
+def verify_materialized_evidence(state, prediction, observation, response, quotes):
+    """Inspect actual files, not candidate assessment counts or record loaders.
+
+    Expectations use verified quotes/capture pricing and the frozen v1 policy.
+    LIVE may legitimately have no qualifying offers; OFFLINE's trusted scenario
+    must exercise opportunity publication as well as supported/unsupported targets.
+    """
+    def digest(value):
+        return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":"),
+                                         ensure_ascii=False).encode()).hexdigest()
+
+    def identity(namespace, value):
+        return uuid.uuid5(uuid.NAMESPACE_URL, f"modelfc:{namespace}:{digest(value)}").hex
+
+    def records(kind):
+        result = {}
+        for path in (state / kind).rglob("*.json"):
+            assert not path.is_symlink() and path.is_file()
+            record = json.loads(path.read_bytes())
+            assert record["record_hash"] == digest({k: v for k, v in record.items() if k != "record_hash"})
+            record_id = record[kind_to_id[kind]]
+            assert path.stem == record_id and record_id not in result
+            result[record_id] = record
+        return result
+
+    kind_to_id = {"predictions": "prediction_id", "market-observations": "observation_id",
+                  "prediction-targets": "target_id", "opportunities": "opportunity_id"}
+    prediction_id = uuid.uuid5(uuid.NAMESPACE_URL,
+                              "modelfc:prediction:" + uuid.UUID(hex=response["analysis_id"]).hex).hex
+    assert prediction["prediction_id"] == prediction_id
+    assert records("predictions") == {prediction_id: prediction}
+    assert records("market-observations") == {observation["observation_id"]: observation}
+    pricing = {item["client_market_id"]: item for item in response["markets"]}
+    expected_targets, selections, groups = {}, {}, {}
+    for item in quotes.selections:
+        request = item.request
+        target_id = identity("prediction-target", dict(prediction_id=prediction_id,
+            market_type=request.market_type, team_side=request.team_side,
+            direction=request.side, line=float(request.line)))
+        market = pricing[request.client_market_id]
+        target = dict(schema_version=1, record_type="target", target_id=target_id,
+            prediction_id=prediction_id, market_type=request.market_type, team_side=request.team_side,
+            team=market["team"], direction=request.side, line=request.line,
+            prediction_created_at_utc=prediction["created_at_utc"],
+            materialized_at_utc=item.retrieved_at,
+            prediction_rule_version="frozen-team-count-distribution-v1",
+            **{key: market[key] for key in ("status", "unsupported_reason", "model_probability",
+               "push_probability", "decisive_model_probability", "expected_corners")})
+        # Unsupported match targets intentionally have no modeled probabilities.
+        if request.market_type != "TEAM_TOTAL":
+            for key in ("model_probability", "push_probability", "decisive_model_probability", "expected_corners"):
+                target[key] = None
+        target["record_hash"] = digest(target)
+        assert target_id not in expected_targets or expected_targets[target_id] == target
+        expected_targets[target_id] = target
+        selection_id = identity("selection", dict(bookmaker=item.bookmaker, market_id=item.market_id,
+            outcome_id=item.outcome_id, request=asdict(request)))
+        selections[selection_id] = (item, target)
+        groups.setdefault((item.bookmaker, request.market_type, request.team_side, request.line), []).append(selection_id)
+    actual_targets = records("prediction-targets")
+    assert actual_targets == expected_targets
+    expected_opportunities = {}
+    for group in groups.values():
+        sides = {selections[sid][0].request.side: sid for sid in group}
+        if len(group) != 2 or set(sides) != {"OVER", "UNDER"}:
+            continue
+        items = [selections[sid][0] for sid in group]
+        if any(not math.isclose(item.decimal_odds,
+                1 + (item.request.american_odds / 100 if item.request.american_odds > 0
+                     else 100 / -item.request.american_odds), rel_tol=0, abs_tol=0.005) for item in items):
+            continue
+        implied = {direction: 1 / selections[sid][0].decimal_odds for direction, sid in sides.items()}
+        total = math.fsum(implied.values())
+        for direction, sid in sides.items():
+            item, target = selections[sid]
+            if target["status"] != "SUPPORTED":
+                continue
+            no_vig = implied[direction] / total
+            edge = target["decisive_model_probability"] - no_vig
+            if item.request.american_odds < -200 or not (edge > 0.05 or math.isclose(edge, 0.05, rel_tol=0, abs_tol=1e-12)):
+                continue
+            payload = dict(prediction_id=prediction_id, target_id=target["target_id"],
+                observation_id=observation["observation_id"], selection_id=sid,
+                policy_version="team-total-no-vig-v1")
+            oid = identity("opportunity", payload)
+            offer = dict(bookmaker=item.bookmaker, market_type=item.request.market_type,
+                team_side=item.request.team_side, team=target["team"], direction=direction,
+                line=item.request.line, american_odds=item.request.american_odds,
+                decimal_odds=item.decimal_odds, provider_market_id=item.market_id,
+                provider_outcome_id=item.outcome_id)
+            record = dict(schema_version=1, record_type="opportunity", opportunity_id=oid,
+                qualified_at_utc=item.retrieved_at, **payload, offer=offer,
+                policy=dict(minimum_american_odds=-200, minimum_no_vig_edge=0.05, no_vig_price_source="decimal_odds"),
+                model_decisive_probability=target["decisive_model_probability"],
+                paired_implied_probabilities=implied, no_vig_market_probability=no_vig,
+                no_vig_probability_edge=edge)
+            record["record_hash"] = digest(record)
+            expected_opportunities[oid] = record
+    assert records("opportunities") == expected_opportunities
+    return len(actual_targets), len(expected_opportunities)
 
 
 CORNER_FAMILIES = {"totals-corners": ("MATCH_TOTAL", None),
@@ -676,6 +780,9 @@ def run_capture(sha, snapshot=Path("/history"), output=Path("/output"), mode="OF
             observation, _ = opportunities.store_observation_from_capture(state, response["analysis_id"])
             assessment = opportunities.assess_observation(state, prediction, observation)
             assert prediction_created and assessment["targets"] == len(quotes.selections)
+            targets, opportunities_count = verify_materialized_evidence(
+                state, prediction, observation, response, quotes)
+            assert mode != "OFFLINE" or opportunities_count > 0
             before_replay = evidence_snapshot(state)
             replaying = True
             replay, recreated = provider.capture_quotes(
@@ -693,8 +800,6 @@ def run_capture(sha, snapshot=Path("/history"), output=Path("/output"), mode="OF
             assert not replay_calls
             replaying = False
             match_count = len(quotes.selections) - team_count
-            targets = len(list((state / "prediction-targets").rglob("*.json")))
-            opportunities_count = len(opportunities.opportunity_records(state, prediction["prediction_id"]))
             report.update(
                 core_pipeline="PASS", offline_replay="PASS",
                 provider_compatibility="PASS" if mode == "LIVE" else "NOT_RUN",

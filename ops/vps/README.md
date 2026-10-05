@@ -112,6 +112,12 @@ and bookmaker/family/issue availability states, including absent and unusable
 outcomes. This intentionally duplicates the existing wire contract as an
 independent assertion oracle; it does not add a production ingestion path.
 The same binding checks apply to LIVE responses, without additional upstream calls.
+Before core PASS, the harness independently reads persisted prediction, observation,
+target and opportunity files, verifies hashes and requires complete expected target
+and qualifying-opportunity sets from verified quotes/captured pricing and the frozen
+v1 policy. Candidate assessment counts or record-loader returns cannot substitute
+for files. LIVE may have no qualifying opportunities; the fixed OFFLINE scenario
+must exercise opportunity publication. Replay must preserve these verified bytes.
 
 The run exercises the candidate's real OddsPapi request construction, parsing and
 normalization; production history loading; forecasting and probability code;
