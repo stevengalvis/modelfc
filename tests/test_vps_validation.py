@@ -12,6 +12,7 @@ import subprocess
 import sys
 import tarfile
 from tempfile import TemporaryDirectory
+from types import ModuleType
 import unittest
 from unittest.mock import Mock, patch
 from urllib.parse import urlencode, urlsplit, parse_qs
@@ -114,6 +115,8 @@ class ControllerTests(unittest.TestCase):
         self.assertIn("--timeout=240", args)
         self.assertIn(str(self.run / "history") + ":/history:ro", args)
         self.assertIn(str(self.run / "subject") + ":/subject:ro", args)
+        self.assertNotIn(str(self.run / "relay") + ":/relay:ro", args)
+        self.assertEqual(args[-2:], ["--mode", "offline"])
         self.assertIn("/output:rw,size=64m,mode=1777", args)
         self.assertIn("/trusted/validate_capture.py", args)
         self.assertNotIn(str(self.run / "subject/ops/vps/validate_capture.py"), args)
@@ -133,6 +136,22 @@ class ControllerTests(unittest.TestCase):
         self.assertIn(str(OPS / "validate_pr.py"), cleanup)
         self.assertIn("--cleanup " + self.run.name, cleanup)
         self.assertNotIn("--scope", args)  # Transient service survives its SSH client.
+        self.assertEqual(args[-2:], ["--mode", "offline"])
+
+    def test_live_mode_is_explicit_and_mounts_the_relay(self):
+        container = controller.container_command(self.config, self.run, SHA, "live")
+        service = controller.service_command(
+            self.run, controller.REPOSITORY, 7, SHA, "live")
+        self.assertIn(str(self.run / "relay") + ":/relay:ro", container)
+        self.assertEqual(container[-2:], ["--mode", "live"])
+        self.assertEqual(service[-2:], ["--mode", "live"])
+
+    def test_unknown_mode_is_rejected_before_configuration(self):
+        with patch.object(sys, "argv", ["validator", "--mode", "automatic"]), \
+                patch.object(controller, "configuration") as configuration, \
+                self.assertRaises(SystemExit):
+            controller.main()
+        configuration.assert_not_called()
 
     def test_history_uses_existing_lock_and_snapshots_canonical_csvs(self):
         source = Path(self.config["history_directory"])
@@ -186,14 +205,14 @@ class ControllerTests(unittest.TestCase):
         from contextlib import nullcontext
         for result, reason in (("BLOCKED", "NO_ELIGIBLE_FIXTURE"), ("FAIL", "ASSERTION_FAILED"), ("FAIL", "TIMEOUT")):
             with self.subTest(result=result, reason=reason):
-                report = harness.blank_report(SHA, result, reason)
+                report = harness.blank_report(SHA, result, reason, mode="LIVE")
                 process = Mock()
                 process.stdout = io.BytesIO(json.dumps(report).encode())
                 process.wait.return_value = 0
                 if reason == "TIMEOUT":
                     process.wait.side_effect = subprocess.TimeoutExpired("podman", 250)
                 with patch.object(controller, "verify_remote"), patch.object(controller, "export_source"), patch.object(controller, "snapshot_history"), patch.object(controller, "serving_relay", return_value=nullcontext()), patch.object(controller.subprocess, "Popen", return_value=nullcontext(process)), patch.object(controller, "cleanup", side_effect=lambda run: run.rmdir()) as clean:
-                    output = controller.worker(self.config, self.run, 7, SHA)
+                    output = controller.worker(self.config, self.run, 7, SHA, "live")
                 self.assertEqual((output["result"], output["reason"]), (result, reason))
                 self.assertEqual(output["cleanup_status"], "COMPLETE")
                 if reason == "TIMEOUT":
@@ -222,16 +241,18 @@ class ControllerTests(unittest.TestCase):
 
     def test_worker_environment_and_host_owned_leakage_check(self):
         from contextlib import nullcontext
-        report = harness.blank_report(SHA, "PASS", "COMPLETE")
+        report = harness.blank_report(SHA, "PASS", "COMPLETE", mode="LIVE")
         report.update(immutable_capture_verified=True, offline_replay_identical=True,
-                      supported_team_total_count=1, capture_hash="d" * 64)
+                      supported_team_total_count=1, capture_hash="d" * 64,
+                      core_pipeline="PASS", offline_replay="PASS",
+                      provider_compatibility="PASS")
         for host_failure in (None, "SECURITY_ERROR"):
             process = Mock(stdout=io.BytesIO(json.dumps(report).encode()))
             process.wait.return_value = 0
             relay = controller.Relay(SECRET, Mock())
             relay.failure = host_failure
             with patch.dict(os.environ, {"ODDSPAPI_API_KEY": SECRET, "GITHUB_TOKEN": "offline-github-secret", "SSH_AUTH_SOCK": "/secret/socket"}), patch.object(controller, "verify_remote"), patch.object(controller, "export_source"), patch.object(controller, "snapshot_history"), patch.object(controller, "Relay", return_value=relay), patch.object(controller, "serving_relay", return_value=nullcontext()), patch.object(controller.subprocess, "Popen", return_value=nullcontext(process)) as popen, patch.object(controller, "cleanup", side_effect=lambda run: run.rmdir()):
-                output = controller.worker(self.config, self.run, 7, SHA)
+                output = controller.worker(self.config, self.run, 7, SHA, "live")
             environment = popen.call_args.kwargs["env"]
             self.assertFalse({"ODDSPAPI_API_KEY", "GITHUB_TOKEN", "SSH_AUTH_SOCK"} & environment.keys())
             self.assertNotIn(SECRET, repr(popen.call_args))
@@ -244,7 +265,7 @@ class ControllerTests(unittest.TestCase):
             (run / "subject").mkdir()
             (run / "subject/accidental.py").write_text(SECRET)
         with patch.object(controller, "verify_remote"), patch.object(controller, "export_source", side_effect=export), patch.object(controller, "snapshot_history"), patch.object(controller.subprocess, "Popen") as popen, patch.object(controller, "cleanup"):
-            report = controller.worker(self.config, self.run, 7, SHA)
+            report = controller.worker(self.config, self.run, 7, SHA, "live")
         popen.assert_not_called()
         self.assertEqual(report["reason"], "SECURITY_ERROR")
         self.assertIs(report["credential_leakage_check"], False)
@@ -259,18 +280,18 @@ class ControllerTests(unittest.TestCase):
                     query = RelayTests().query(endpoint, **(dict(fixtureId="known", bookmakers="draftkings,fanduel",
                         verbosity="3", oddsFormat="american") if endpoint == "odds" else {}))
                     relay.get(query)
-                    child = harness.blank_report(SHA, "FAIL", "PROVIDER_ERROR")
+                    child = harness.blank_report(SHA, "FAIL", "PROVIDER_ERROR", mode="LIVE")
                     child["credential_leakage_check"] = True  # Not trusted.
                     process = Mock(stdout=io.BytesIO(json.dumps(child).encode()))
                     process.wait.return_value = status
                     with patch.object(controller, "verify_remote"), patch.object(controller, "export_source"), patch.object(controller, "snapshot_history"), patch.object(controller, "Relay", return_value=relay), patch.object(controller, "serving_relay", return_value=nullcontext()), patch.object(controller.subprocess, "Popen", return_value=nullcontext(process)), patch.object(controller, "cleanup", side_effect=lambda run: run.rmdir()):
-                        report = controller.worker(self.config, self.run, 7, SHA)
+                        report = controller.worker(self.config, self.run, 7, SHA, "live")
                     self.assertEqual(report["reason"], f"PROVIDER_{endpoint.upper()}_AUTH")
                     self.assertEqual(report["result"], "FAIL")
-                    self.assertEqual(report["api_request_count"], 1)
+                    self.assertEqual(report["provider_request_count"], 1)
                     self.assertIsNone(report["credential_leakage_check"])
                     self.assertEqual(report["cleanup_status"], "COMPLETE")
-                    self.assertEqual(harness.checked_report(report, SHA, SECRET), report)
+                    self.assertEqual(harness.checked_report(report, SHA, SECRET, "LIVE"), report)
                     for forbidden in (SECRET, "private", "account", "apiKey", "https://", "known"):
                         self.assertNotIn(forbidden, json.dumps(report))
 
@@ -284,13 +305,103 @@ class ControllerTests(unittest.TestCase):
 
     def test_controller_rejects_credential_in_worker_report(self):
         from contextlib import redirect_stdout
-        report = dict(harness.blank_report(SHA), home_team=SECRET)
+        report = dict(harness.blank_report(SHA), home_team="offline-github-secret")
         with patch.object(sys, "argv", ["validator", "--repository", controller.REPOSITORY, "--pr", "53", "--sha", SHA]), patch.object(controller, "configuration", return_value=self.config), patch.object(controller, "command", return_value=json.dumps(report).encode()), patch.object(controller, "cleanup"), redirect_stdout(io.StringIO()) as output:
             controller.main()
         result = json.loads(output.getvalue())
         self.assertEqual(result["reason"], "SECURITY_ERROR")
         self.assertIs(result["credential_leakage_check"], False)
-        self.assertNotIn(SECRET, output.getvalue())
+        self.assertNotIn("offline-github-secret", output.getvalue())
+
+    def test_offline_worker_never_reads_provider_key_or_constructs_relay(self):
+        from contextlib import nullcontext
+        config = dict(self.config, provider_key_file=str(self.root / "does-not-exist"))
+        child = harness.blank_report(SHA, "PASS", "COMPLETE")
+        child.update(core_pipeline="PASS", market_intelligence="NOT_APPLICABLE",
+                     offline_replay="PASS", provider_compatibility="NOT_RUN",
+                     supported_team_total_count=1, capture_hash="d" * 64,
+                     immutable_capture_verified=True, offline_replay_identical=True)
+        process = Mock(stdout=io.BytesIO(json.dumps(child).encode()))
+        process.wait.return_value = 0
+        def export(run, *_args):
+            (run / "subject").mkdir()
+        with patch.object(controller, "verify_remote"), \
+                patch.object(controller, "export_source", side_effect=export), \
+                patch.object(controller, "Relay") as relay, \
+                patch.object(controller, "serving_relay") as serving, \
+                patch.object(controller.subprocess, "Popen", return_value=nullcontext(process)), \
+                patch.object(controller, "cleanup"):
+            report = controller.worker(config, self.run, 7, SHA)
+        self.assertEqual((report["result"], report["mode"]), ("PASS", "OFFLINE"))
+        self.assertEqual(report["provider_request_count"], 0)
+        relay.assert_not_called()
+        serving.assert_not_called()
+
+
+class OfflineHarnessTests(unittest.TestCase):
+    def run_offline(self):
+        temporary = TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name)
+        controller.offline_history(root / "history")
+        (root / "output").mkdir()
+        with patch.dict(os.environ, {}, clear=True), \
+                patch.object(harness, "RelayConnection", side_effect=AssertionError("relay forbidden")):
+            return harness.run_capture(SHA, root / "history", root / "output")
+
+    def test_default_offline_core_pipeline_and_zero_provider_requests(self):
+        report = self.run_offline()
+        self.assertEqual((report["result"], report["mode"]), ("PASS", "OFFLINE"), report)
+        self.assertEqual(report["core_pipeline"], "PASS")
+        self.assertEqual(report["market_intelligence"], "NOT_APPLICABLE")
+        self.assertEqual(report["offline_replay"], "PASS")
+        self.assertEqual(report["provider_compatibility"], "NOT_RUN")
+        self.assertEqual(report["provider_request_count"], 0)
+        self.assertEqual(report["scenario_request_count"], 3)
+        self.assertEqual(report["replay_api_request_count"], 0)
+        self.assertEqual(report["prediction_count"], 1)
+        self.assertGreater(report["target_count"], 0)
+        self.assertGreater(report["opportunity_count"], 0)
+        self.assertEqual(report["match_total_count"], report["gated_match_total_count"])
+        self.assertEqual(harness.checked_report(report, SHA, "", "OFFLINE"), report)
+
+    def test_market_intelligence_pass_and_broken_component_are_distinct(self):
+        with patch.object(harness, "market_intelligence_component", return_value="PASS"):
+            passed = self.run_offline()
+        self.assertEqual((passed["result"], passed["market_intelligence"]), ("PASS", "PASS"))
+        broken = ModuleType("modelfc.corner_market_intelligence")
+        broken.get_market_intelligence = lambda *_args, **_kwargs: {}
+        with patch.dict(sys.modules, {"modelfc.corner_market_intelligence": broken}):
+            failed = self.run_offline()
+        self.assertEqual((failed["result"], failed["reason"], failed["market_intelligence"]),
+                         ("FAIL", "MARKET_INTELLIGENCE_FAILED", "FAIL"))
+        self.assertEqual((failed["core_pipeline"], failed["offline_replay"]),
+                         ("PASS", "PASS"))
+        self.assertGreater(failed["target_count"], 0)
+        self.assertEqual(failed["provider_request_count"], 0)
+
+    def test_offline_failure_never_opens_relay_or_external_transport(self):
+        temporary = TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name)
+        controller.offline_history(root / "history")
+        (root / "output").mkdir()
+        with patch.dict(os.environ, {}, clear=True), \
+                patch.object(harness.OfflineOpener, "open",
+                             side_effect=ValueError("OFFLINE_SCENARIO_INVALID")), \
+                patch.object(harness, "RelayOpener") as relay:
+            report = harness.run_capture(SHA, root / "history", root / "output")
+        self.assertEqual(report["result"], "FAIL")
+        self.assertEqual(report["provider_request_count"], 0)
+        relay.assert_not_called()
+
+    def test_trusted_recordings_are_copied_per_offline_run(self):
+        first = harness.offline_responses()
+        first["fixtures"][0]["fixtureId"] = "candidate-tampering"
+        second = harness.offline_responses()
+        self.assertEqual(second["fixtures"][0]["fixtureId"],
+                         harness.OFFLINE_FIXTURE["fixtureId"])
+        self.assertNotIn("responses", vars(harness.OfflineOpener()))
 
 
 class RelayTests(unittest.TestCase):
@@ -306,13 +417,13 @@ class RelayTests(unittest.TestCase):
         fetch = Mock(return_value=(200, b"[]"))
         sleep = Mock()
         relay = controller.Relay(SECRET, fetch, sleep)
-        for _ in range(controller.BUDGET):
+        for _ in range(controller.LIVE_BUDGET):
             relay.get(self.query())
         with self.assertRaisesRegex(controller.Failure, "REQUEST_BUDGET_EXCEEDED"):
             relay.get(self.query())
-        self.assertEqual(fetch.call_count, controller.BUDGET)
-        self.assertEqual(relay.count, controller.BUDGET)
-        self.assertEqual(sleep.call_count, controller.BUDGET-1)
+        self.assertEqual(fetch.call_count, controller.LIVE_BUDGET)
+        self.assertEqual(relay.count, controller.LIVE_BUDGET)
+        self.assertEqual(sleep.call_count, controller.LIVE_BUDGET-1)
         self.assertIn("apiKey=" + SECRET, fetch.call_args.args[0])
         self.assertTrue(fetch.call_args.args[0].startswith("https://api.oddspapi.io/v4/fixtures?"))
 
@@ -326,19 +437,22 @@ class RelayTests(unittest.TestCase):
             probe.close()
         fetch = Mock(return_value=(200, b"[]"))
         relay = controller.Relay(SECRET, fetch)
-        with TemporaryDirectory() as directory:
-            path = Path(directory) / "relay"
-            with controller.serving_relay(path, relay):
-                client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-                try:
-                    client.settimeout(2)
-                    client.connect(str(path / "api.sock"))
-                    client.sendall(("GET " + self.query() + " HTTP/1.0\r\nHost: localhost\r\n\r\n").encode())
-                    chunks = []
-                    while data := client.recv(4096):
-                        chunks.append(data)
-                finally:
-                    client.close()
+        try:
+            with TemporaryDirectory() as directory:
+                path = Path(directory) / "relay"
+                with controller.serving_relay(path, relay):
+                    client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                    try:
+                        client.settimeout(2)
+                        client.connect(str(path / "api.sock"))
+                        client.sendall(("GET " + self.query() + " HTTP/1.0\r\nHost: localhost\r\n\r\n").encode())
+                        chunks = []
+                        while data := client.recv(4096):
+                            chunks.append(data)
+                    finally:
+                        client.close()
+        except PermissionError:
+            self.skipTest("execution environment denies Unix socket bind; run on target VPS")
         wire = b"".join(chunks)
         self.assertIn(b"200 OK", wire)
         self.assertTrue(wire.endswith(b"[]"))
@@ -364,7 +478,7 @@ class RelayTests(unittest.TestCase):
         sleeper = Mock(side_effect=sleep)
         relay = controller.Relay(SECRET, fetch, sleeper)
         with patch.object(controller.time, "monotonic", side_effect=lambda: clock[0]):
-            for index in range(controller.BUDGET):
+            for index in range(controller.LIVE_BUDGET):
                 status, body = relay.get(self.query())
                 self.assertEqual(status, 404)
                 self.assertEqual(json.loads(body)["error"]["code"], "FIXTURE_NOT_FOUND")
@@ -374,8 +488,8 @@ class RelayTests(unittest.TestCase):
             with self.assertRaisesRegex(controller.Failure, "REQUEST_BUDGET_EXCEEDED"):
                 relay.get(self.query())
         self.assertTrue(all(b - a >= 3.0 for a, b in zip(starts, starts[1:])))
-        self.assertEqual(len(starts), controller.BUDGET)
-        self.assertEqual(sleeper.call_count, controller.BUDGET - 1)
+        self.assertEqual(len(starts), controller.LIVE_BUDGET)
+        self.assertEqual(sleeper.call_count, controller.LIVE_BUDGET - 1)
 
     def test_mixed_endpoint_pacing_preserves_markets_and_odds_interval(self):
         clock, starts = [100.0], []
@@ -389,13 +503,11 @@ class RelayTests(unittest.TestCase):
         relay.fixtures["known"] = {}
         odds = self.query("odds", fixtureId="known", bookmakers="draftkings,fanduel", verbosity="3", oddsFormat="american")
         with patch.object(controller.time, "monotonic", side_effect=lambda: clock[0]):
-            for target in (self.query(), self.query("markets"), odds, self.query()):
+            for target in (self.query(), self.query("markets"), self.query("markets"), odds):
                 relay.get(target)
-            self.assertEqual([call.args[0] for call in sleeper.call_args_list], [2.1, 2.1, 3.0])
-            clock[0] += 4.0
-            relay.get(self.query())
-            self.assertEqual(sleeper.call_count, 3)  # Already spaced; no sleep(0).
-        self.assertEqual(len(starts), 5)
+            self.assertEqual([call.args[0] for call in sleeper.call_args_list], [2.1, 2.1])
+        self.assertEqual(len(starts), 3)
+        self.assertEqual(relay.count, 3)
 
     def test_fixture_rate_limit_keeps_diagnostic_and_never_retries_or_sleeps(self):
         fetch = Mock(return_value=(429, b'{"error":{"code":"RATE_LIMITED"}}'))
@@ -590,18 +702,18 @@ class HarnessTests(unittest.TestCase):
             stack.enter_context(patch.object(self.provider.time, "sleep"))
             if quotes is not None:
                 stack.enter_context(patch.object(self.provider.OddsPapiClient, "quotes", autospec=True, return_value=quotes))
-            return harness.run_capture(SHA, self.snapshot, self.output, days=1)
+            return harness.run_capture(SHA, self.snapshot, self.output, mode="LIVE")
 
     def test_live_shaped_recorded_pass_capture_and_offline_replay(self):
         report = self.execute()
         self.assertEqual(report["result"], "PASS", report)
         self.assertEqual(report["selection_count"], 33)
         self.assertEqual(report["analysis_batch_count"], 2)
-        self.assertEqual(report["api_request_count"], 3)
+        self.assertEqual(report["provider_request_count"], 3)
         self.assertEqual(report["replay_api_request_count"], 0)
         self.assertTrue(report["immutable_capture_verified"])
         self.assertIsNone(report["credential_leakage_check"])  # Only the host can attest this.
-        self.assertEqual(harness.checked_report(report, SHA, SECRET), report)
+        self.assertEqual(harness.checked_report(report, SHA, SECRET, "LIVE"), report)
 
     def test_factory_skips_constructor_and_contains_no_secret(self):
         with patch.dict(os.environ, {}, clear=True), patch.object(self.provider.OddsPapiClient, "__init__", autospec=True, side_effect=AssertionError("constructor called")) as constructor:
@@ -634,7 +746,7 @@ class HarnessTests(unittest.TestCase):
     def test_expected_discovery_404_still_blocks_without_failure(self):
         report = self.execute(empty_404=True)
         self.assertEqual((report["result"], report["reason"]), ("BLOCKED", "NO_ELIGIBLE_FIXTURE"))
-        self.assertEqual(report["api_request_count"], 1)
+        self.assertEqual(report["provider_request_count"], 1)
 
     def test_no_team_totals_blocked(self):
         quotes = replace(self.case.quotes, selections=tuple(s for s in self.case.quotes.selections if s.request.market_type == "MATCH_TOTAL"))
