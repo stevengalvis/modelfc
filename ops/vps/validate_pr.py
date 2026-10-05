@@ -227,6 +227,7 @@ class Relay:
         self.failure = None
         self.fixtures = {}
         self.market_response = None
+        self.upstream_endpoints = []
 
     def get(self, target, headers=None):
         try:
@@ -286,6 +287,7 @@ class Relay:
                 self.sleep(remaining)
         self.last = time.monotonic()
         self.count += 1
+        self.upstream_endpoints.append(endpoint)
         status, body = self.fetch("https://api.oddspapi.io" + endpoint + "?" + urlencode(dict(params, apiKey=self.secret)),
                                   {"User-Agent": "ModelFC/1.0 (VPS validation)", "Accept": "application/json"})
         reject_credentials(body.decode("utf-8", errors="replace"), (self.secret,))
@@ -456,6 +458,9 @@ def worker(config, run, pr, sha, mode="offline"):
             report["provider_request_count"] = relay.count if relay else 0
             if relay and relay.failure:
                 raise Failure(relay.failure)
+            if relay and report["result"] == "PASS" and (
+                    relay.count != 3 or relay.upstream_endpoints != ["/v4/fixtures", "/v4/markets", "/v4/odds"]):
+                raise Failure("ASSERTION_FAILED")
             report["credential_leakage_check"] = True
     except Exception as error:
         reason = (str(error) if isinstance(error, Failure) or (isinstance(error, ValueError) and str(error) in REASONS) else

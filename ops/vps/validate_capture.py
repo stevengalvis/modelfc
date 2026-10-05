@@ -120,9 +120,10 @@ def checked_report(value, sha, secret, expected_mode=None):
         if value["mode"] == "OFFLINE":
             if (value["provider_compatibility"] != "NOT_RUN"
                     or value["provider_request_count"] != 0
+                    or value["scenario_request_count"] != 3
                     or value["market_intelligence"] not in {"PASS", "NOT_APPLICABLE"}):
                 raise ValueError("INVALID_REPORT")
-        elif value["provider_compatibility"] != "PASS":
+        elif value["provider_compatibility"] != "PASS" or value["provider_request_count"] != 3:
             raise ValueError("INVALID_REPORT")
     return value
 
@@ -242,7 +243,9 @@ class OfflineOpener:
                      "bookmakers": "draftkings,fanduel", "verbosity": "3",
                      "language": "en", "oddsFormat": "american"},
         }
-        if endpoint not in expected or values != expected[endpoint] or endpoint in self.calls:
+        if (endpoint not in expected or values != expected[endpoint]
+                or url.path != "/v4/" + endpoint or len(values) != len(params) - 1
+                or self.calls + [endpoint] != ["fixtures", "markets", "odds"][:len(self.calls) + 1]):
             raise ValueError("OFFLINE_SCENARIO_INVALID")
         self.calls.append(endpoint)
         body = io.BytesIO(json.dumps(offline_responses()[endpoint]).encode())
@@ -481,6 +484,9 @@ def run_capture(sha, snapshot=Path("/history"), output=Path("/output"), mode="OF
             team_count = sum(s.request.market_type == "TEAM_TOTAL" for s in quotes.selections)
             if not team_count:
                 continue
+            assert calls == ["fixtures", "markets", "odds"]
+            if mode == "OFFLINE":
+                assert opener.calls == ["fixtures", "markets", "odds"]
             report.update(competition="E1", fixture_id=fixture["fixtureId"],
                           home_team=fixture["participant1Name"], away_team=fixture["participant2Name"],
                           kickoff_utc=fixture["startTime"])

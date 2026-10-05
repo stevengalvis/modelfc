@@ -247,10 +247,11 @@ class ControllerTests(unittest.TestCase):
         offline = harness.blank_report(SHA, "PASS", "COMPLETE")
         offline.update(core_pipeline="PASS", offline_replay="PASS", market_intelligence="NOT_APPLICABLE",
                        immutable_capture_verified=True, offline_replay_identical=True,
-                       supported_team_total_count=1, capture_hash="d" * 64)
-        live = dict(offline, mode="LIVE", provider_compatibility="PASS", market_intelligence="NOT_RUN")
+                       supported_team_total_count=1, capture_hash="d" * 64, scenario_request_count=3)
+        live = dict(offline, mode="LIVE", provider_compatibility="PASS", market_intelligence="NOT_RUN",
+                    scenario_request_count=0, provider_request_count=3)
         for mutation in ({"market_intelligence": "FAIL"}, {"core_pipeline": "FAIL"},
-                         {"offline_replay": "FAIL"}, {"provider_request_count": 4},
+                         {"offline_replay": "FAIL"}, {"provider_request_count": 4}, {"provider_request_count": 0},
                          {"scenario_request_count": 1}, {"cleanup_status": "FAILED"},
                          {"credential_leakage_check": False}, {"result": "FAIL"}):
             with self.subTest(mutation=mutation), self.assertRaisesRegex(ValueError, "INVALID_REPORT"):
@@ -282,18 +283,42 @@ class ControllerTests(unittest.TestCase):
         result = json.loads(output.getvalue())
         self.assertEqual((result["mode"], result["result"], result["reason"]), ("LIVE", "FAIL", "TIMEOUT"))
 
+    def test_live_pass_requires_host_observed_upstream_sequence(self):
+        from contextlib import nullcontext
+        child = harness.blank_report(SHA, "PASS", "COMPLETE", "LIVE")
+        child.update(core_pipeline="PASS", offline_replay="PASS", provider_compatibility="PASS",
+                     immutable_capture_verified=True, offline_replay_identical=True,
+                     supported_team_total_count=1, capture_hash="d" * 64, provider_request_count=3)
+        for endpoints in ([], ["/v4/fixtures"], ["/v4/fixtures"] * 3):
+            with self.subTest(endpoints=endpoints):
+                relay = controller.Relay(SECRET, Mock())
+                relay.upstream_endpoints = endpoints
+                relay.count = len(endpoints)
+                process = Mock(stdout=io.BytesIO(json.dumps(child).encode()))
+                process.wait.return_value = 0
+                with patch.object(controller, "verify_remote"), patch.object(controller, "export_source"), \
+                        patch.object(controller, "snapshot_history"), patch.object(controller, "Relay", return_value=relay), \
+                        patch.object(controller, "serving_relay", return_value=nullcontext()), \
+                        patch.object(controller.subprocess, "Popen", return_value=nullcontext(process)), \
+                        patch.object(controller, "cleanup", side_effect=lambda run: run.rmdir()):
+                    report = controller.worker(self.config, self.run, 7, SHA, "live")
+                self.assertEqual((report["result"], report["reason"]), ("FAIL", "ASSERTION_FAILED"))
+                self.assertEqual(report["provider_request_count"], len(endpoints))
+
     def test_worker_environment_and_host_owned_leakage_check(self):
         from contextlib import nullcontext
         report = harness.blank_report(SHA, "PASS", "COMPLETE", mode="LIVE")
         report.update(immutable_capture_verified=True, offline_replay_identical=True,
                       supported_team_total_count=1, capture_hash="d" * 64,
                       core_pipeline="PASS", offline_replay="PASS",
-                      provider_compatibility="PASS")
+                      provider_compatibility="PASS", provider_request_count=3)
         for host_failure in (None, "SECURITY_ERROR"):
             process = Mock(stdout=io.BytesIO(json.dumps(report).encode()))
             process.wait.return_value = 0
             relay = controller.Relay(SECRET, Mock())
             relay.failure = host_failure
+            relay.count = 3
+            relay.upstream_endpoints = ["/v4/fixtures", "/v4/markets", "/v4/odds"]
             with patch.dict(os.environ, {"ODDSPAPI_API_KEY": SECRET, "GITHUB_TOKEN": "offline-github-secret", "SSH_AUTH_SOCK": "/secret/socket"}), patch.object(controller, "verify_remote"), patch.object(controller, "export_source"), patch.object(controller, "snapshot_history"), patch.object(controller, "Relay", return_value=relay), patch.object(controller, "serving_relay", return_value=nullcontext()), patch.object(controller.subprocess, "Popen", return_value=nullcontext(process)) as popen, patch.object(controller, "cleanup", side_effect=lambda run: run.rmdir()):
                 output = controller.worker(self.config, self.run, 7, SHA, "live")
             environment = popen.call_args.kwargs["env"]
@@ -363,7 +388,7 @@ class ControllerTests(unittest.TestCase):
         child.update(core_pipeline="PASS", market_intelligence="NOT_APPLICABLE",
                      offline_replay="PASS", provider_compatibility="NOT_RUN",
                      supported_team_total_count=1, capture_hash="d" * 64,
-                     immutable_capture_verified=True, offline_replay_identical=True)
+                     immutable_capture_verified=True, offline_replay_identical=True, scenario_request_count=3)
         process = Mock(stdout=io.BytesIO(json.dumps(child).encode()))
         process.wait.return_value = 0
         def export(run, *_args):
@@ -382,6 +407,17 @@ class ControllerTests(unittest.TestCase):
 
 
 class OfflineHarnessTests(unittest.TestCase):
+    def test_recorded_boundary_requires_exact_path_unique_params_and_order(self):
+        from urllib.request import Request
+        params = dict(tournamentId="18", statusId="0", language="en", apiKey="",
+                      bookmakers="draftkings,fanduel", **{"from": "2026-09-20T00:00:00Z",
+                                                           "to": "2026-09-21T00:00:00Z"})
+        fixtures = "https://api.oddspapi.io/v4/fixtures?" + urlencode(params)
+        for url in (fixtures.replace("/v4/", "/v5/"), fixtures + "&language=en",
+                    "https://api.oddspapi.io/v4/markets?apiKey=&language=en"):
+            with self.subTest(url=url), self.assertRaisesRegex(ValueError, "OFFLINE_SCENARIO_INVALID"):
+                harness.OfflineOpener().open(Request(url))
+
     def run_offline(self):
         temporary = TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
@@ -781,6 +817,19 @@ class HarnessTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "SECURITY_ERROR"):
                 harness.RelayOpener().open(Request("https://api.oddspapi.io/v4/markets?apiKey=nonempty"))
         connection.assert_not_called()
+
+    def test_cached_candidate_objects_cannot_skip_boundary_calls(self):
+        for mode in ("OFFLINE", "LIVE"):
+            with self.subTest(mode=mode), \
+                    patch.object(self.provider.OddsPapiClient, "fixtures", autospec=True,
+                                 return_value=[dict(self.case.quotes.fixture)]), \
+                    patch.object(self.provider.OddsPapiClient, "quotes", autospec=True,
+                                 return_value=self.case.quotes):
+                report = OfflineHarnessTests.run_offline(self) if mode == "OFFLINE" else self.execute()
+                self.assertEqual((report["result"], report["reason"]), ("FAIL", "ASSERTION_FAILED"))
+                self.assertEqual(report["provider_compatibility"], "NOT_RUN" if mode == "OFFLINE" else "FAIL")
+                self.assertEqual(report["scenario_request_count"], 0)
+                self.assertEqual(report["provider_request_count"], 0)
 
     def test_no_fixture_blocked_not_pass(self):
         report = self.execute(fixture=False)

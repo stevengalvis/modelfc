@@ -99,6 +99,8 @@ responses, clock, expected assertions and scenario history. Candidate code recei
 the scenario history read-only and can only issue the three exact expected adapter
 requests to an in-process recorded opener. The opener has no socket/relay feature
 and returns a freshly materialized response for each exact endpoint.
+OFFLINE PASS requires all three recorded calls in order: `fixtures`, `markets`,
+then `odds`. Cached or hard-coded candidate objects cannot skip this boundary.
 
 The run exercises the candidate's real OddsPapi request construction, parsing and
 normalization; production history loading; forecasting and probability code;
@@ -125,8 +127,9 @@ Discovery is one deterministic UTC-day E1 request. The first fixture only is
 attempted; absence or unusable team totals is `BLOCKED`, not a reason to probe more
 competitions/dates. At most **3 upstream provider requests** are allowed:
 one discovery, at most one shared `/markets`, and at most one fixture `/odds`.
-A normal successful run is therefore three requests. The hard cap is enforced by
-the trusted relay.
+LIVE PASS requires exactly those three upstream requests in order, verified from
+the trusted host relay's request log, not the candidate's reported count. The
+hard cap is enforced by the trusted relay.
 
 Within one LIVE run, the relay validates `/markets` once, keeps only its sanitized
 serialized response in a run-local cache, and serves subsequent identical metadata
