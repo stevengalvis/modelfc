@@ -16,6 +16,16 @@ connections. A deliberately fake API key exists only inside the test context to
 satisfy the real adapter constructor. The clock is controlled in the test. The
 test disables production evidence ACL opt-in for its disposable files.
 
+The trusted VPS PR validator's default OFFLINE mode reuses this design rather than
+inventing a second fake product path. Its installed harness owns a compact subset
+of the same sanitized fixture/market/odds structures and the same 110-row E1
+history pattern. It runs the exact exported candidate `src/` in the rootless
+no-network container, creates disposable analysis/prediction/target/opportunity
+evidence, and proves byte-identical no-request replay. Unlike this repository test,
+the validator does not import PR tests or let candidate source provide responses,
+the clock, history, or expected assertions. See `ops/vps/README.md` for OFFLINE/LIVE
+mode authorization, reporting, and limits.
+
 ## Scenario and expected result
 
 An upcoming Wolves–West Brom E1 fixture starts at 11:00 UTC on 2026-09-20.
