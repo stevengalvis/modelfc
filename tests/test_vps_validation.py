@@ -12,6 +12,7 @@ import subprocess
 import sys
 import tarfile
 from tempfile import TemporaryDirectory
+from types import ModuleType
 import unittest
 from unittest.mock import Mock, patch
 from urllib.parse import urlencode, urlsplit, parse_qs
@@ -114,6 +115,8 @@ class ControllerTests(unittest.TestCase):
         self.assertIn("--timeout=240", args)
         self.assertIn(str(self.run / "history") + ":/history:ro", args)
         self.assertIn(str(self.run / "subject") + ":/subject:ro", args)
+        self.assertNotIn(str(self.run / "relay") + ":/relay:ro", args)
+        self.assertEqual(args[-2:], ["--mode", "offline"])
         self.assertIn("/output:rw,size=64m,mode=1777", args)
         self.assertIn("/trusted/validate_capture.py", args)
         self.assertNotIn(str(self.run / "subject/ops/vps/validate_capture.py"), args)
@@ -133,6 +136,22 @@ class ControllerTests(unittest.TestCase):
         self.assertIn(str(OPS / "validate_pr.py"), cleanup)
         self.assertIn("--cleanup " + self.run.name, cleanup)
         self.assertNotIn("--scope", args)  # Transient service survives its SSH client.
+        self.assertEqual(args[-2:], ["--mode", "offline"])
+
+    def test_live_mode_is_explicit_and_mounts_the_relay(self):
+        container = controller.container_command(self.config, self.run, SHA, "live")
+        service = controller.service_command(
+            self.run, controller.REPOSITORY, 7, SHA, "live")
+        self.assertIn(str(self.run / "relay") + ":/relay:ro", container)
+        self.assertEqual(container[-2:], ["--mode", "live"])
+        self.assertEqual(service[-2:], ["--mode", "live"])
+
+    def test_unknown_mode_is_rejected_before_configuration(self):
+        with patch.object(sys, "argv", ["validator", "--mode", "automatic"]), \
+                patch.object(controller, "configuration") as configuration, \
+                self.assertRaises(SystemExit):
+            controller.main()
+        configuration.assert_not_called()
 
     def test_history_uses_existing_lock_and_snapshots_canonical_csvs(self):
         source = Path(self.config["history_directory"])
@@ -186,14 +205,14 @@ class ControllerTests(unittest.TestCase):
         from contextlib import nullcontext
         for result, reason in (("BLOCKED", "NO_ELIGIBLE_FIXTURE"), ("FAIL", "ASSERTION_FAILED"), ("FAIL", "TIMEOUT")):
             with self.subTest(result=result, reason=reason):
-                report = harness.blank_report(SHA, result, reason)
+                report = harness.blank_report(SHA, result, reason, mode="LIVE")
                 process = Mock()
                 process.stdout = io.BytesIO(json.dumps(report).encode())
                 process.wait.return_value = 0
                 if reason == "TIMEOUT":
                     process.wait.side_effect = subprocess.TimeoutExpired("podman", 250)
                 with patch.object(controller, "verify_remote"), patch.object(controller, "export_source"), patch.object(controller, "snapshot_history"), patch.object(controller, "serving_relay", return_value=nullcontext()), patch.object(controller.subprocess, "Popen", return_value=nullcontext(process)), patch.object(controller, "cleanup", side_effect=lambda run: run.rmdir()) as clean:
-                    output = controller.worker(self.config, self.run, 7, SHA)
+                    output = controller.worker(self.config, self.run, 7, SHA, "live")
                 self.assertEqual((output["result"], output["reason"]), (result, reason))
                 self.assertEqual(output["cleanup_status"], "COMPLETE")
                 if reason == "TIMEOUT":
@@ -214,24 +233,95 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(removals[0][-1], controller.PREFIX + "d"*32)
 
     def test_report_allowlist_and_secret_rejection(self):
-        report = harness.blank_report(SHA, "BLOCKED", "NO_ELIGIBLE_FIXTURE")
+        report = harness.blank_report(SHA, "BLOCKED", "NO_ELIGIBLE_FIXTURE", mode="LIVE")
         self.assertEqual(harness.checked_report(report, SHA, SECRET), report)
         for mutation in ({"raw_body": SECRET}, {"home_team": SECRET}, {"reason": SECRET}, {"commit_sha": "b"*40}, {"result": "PASS"}):
             with self.subTest(mutation=mutation), self.assertRaises(ValueError):
                 harness.checked_report(dict(report, **mutation), SHA, SECRET)
 
+    def test_report_rejects_contradictions_for_all_results(self):
+        for result, reason in (("FAIL", "EXECUTION_ERROR"), ("BLOCKED", "NO_TEAM_TOTALS")):
+            for mutation in ({"provider_compatibility": "PASS"}, {"provider_request_count": 1}):
+                with self.subTest(result=result, mutation=mutation), self.assertRaisesRegex(ValueError, "INVALID_REPORT"):
+                    harness.checked_report(dict(harness.blank_report(SHA, result, reason), **mutation), SHA, "")
+        offline = harness.blank_report(SHA, "PASS", "COMPLETE")
+        offline.update(core_pipeline="PASS", offline_replay="PASS", market_intelligence="NOT_APPLICABLE",
+                       immutable_capture_verified=True, offline_replay_identical=True,
+                       supported_team_total_count=1, prediction_count=1, target_count=1, capture_hash="d" * 64, scenario_request_count=3)
+        live = dict(offline, mode="LIVE", provider_compatibility="PASS", market_intelligence="NOT_RUN",
+                    scenario_request_count=0, provider_request_count=3)
+        for mutation in ({"market_intelligence": "FAIL"}, {"core_pipeline": "FAIL"},
+                         {"target_count": 0}, {"prediction_count": 0},
+                         {"offline_replay": "FAIL"}, {"provider_request_count": 4}, {"provider_request_count": 0},
+                         {"scenario_request_count": 1}, {"cleanup_status": "FAILED"},
+                         {"credential_leakage_check": False}, {"result": "FAIL"}):
+            with self.subTest(mutation=mutation), self.assertRaisesRegex(ValueError, "INVALID_REPORT"):
+                harness.checked_report(dict(live, **mutation), SHA, "", "LIVE")
+        for mutation in ({"offline_replay_identical": False}, {"immutable_capture_verified": False},
+                         {"replay_api_request_count": 1}):
+            with self.subTest(mutation=mutation), self.assertRaisesRegex(ValueError, "INVALID_REPORT"):
+                harness.checked_report(dict(offline, result="FAIL", reason="MARKET_INTELLIGENCE_FAILED",
+                                            market_intelligence="FAIL", **mutation), SHA, "", "OFFLINE")
+        # A failed optional component can preserve successfully completed core/replay.
+        partial = dict(offline, result="FAIL", reason="MARKET_INTELLIGENCE_FAILED", market_intelligence="FAIL")
+        self.assertEqual(harness.checked_report(partial, SHA, "", "OFFLINE"), partial)
+        for mutation in ({"provider_compatibility": "PASS"}, {"core_pipeline": "PASS"},
+                         {"reason": "ASSERTION_FAILED"}):
+            with self.subTest(mutation=mutation), self.assertRaisesRegex(ValueError, "INVALID_REPORT"):
+                harness.checked_report(dict(harness.blank_report(SHA, "BLOCKED", "NO_TEAM_TOTALS", "LIVE"),
+                                            **mutation), SHA, "", "LIVE")
+        with self.assertRaisesRegex(ValueError, "INVALID_REPORT"):
+            harness.checked_report(dict(harness.blank_report(SHA), market_intelligence="PASS"), SHA, "")
+
+    def test_live_launcher_failure_preserves_explicit_mode(self):
+        from contextlib import redirect_stdout
+        with patch.object(sys, "argv", ["validator", "--repository", controller.REPOSITORY,
+                "--pr", "53", "--sha", SHA, "--mode", "live"]), \
+                patch.object(controller, "configuration", return_value=self.config), \
+                patch.object(controller, "command", side_effect=controller.Failure("TIMEOUT")), \
+                patch.object(controller, "cleanup"), redirect_stdout(io.StringIO()) as output:
+            controller.main()
+        result = json.loads(output.getvalue())
+        self.assertEqual((result["mode"], result["result"], result["reason"]), ("LIVE", "FAIL", "TIMEOUT"))
+
+    def test_live_pass_requires_host_observed_upstream_sequence(self):
+        from contextlib import nullcontext
+        child = harness.blank_report(SHA, "PASS", "COMPLETE", "LIVE")
+        child.update(core_pipeline="PASS", offline_replay="PASS", provider_compatibility="PASS",
+                     immutable_capture_verified=True, offline_replay_identical=True,
+                     supported_team_total_count=1, prediction_count=1, target_count=1, capture_hash="d" * 64, provider_request_count=3)
+        for endpoints in ([], ["/v4/fixtures"], ["/v4/fixtures"] * 3):
+            with self.subTest(endpoints=endpoints):
+                relay = controller.Relay(SECRET, Mock())
+                relay.upstream_endpoints = endpoints
+                relay.count = len(endpoints)
+                process = Mock(stdout=io.BytesIO(json.dumps(child).encode()))
+                process.wait.return_value = 0
+                with patch.object(controller, "verify_remote"), patch.object(controller, "export_source"), \
+                        patch.object(controller, "snapshot_history"), patch.object(controller, "Relay", return_value=relay), \
+                        patch.object(controller, "serving_relay", return_value=nullcontext()), \
+                        patch.object(controller.subprocess, "Popen", return_value=nullcontext(process)), \
+                        patch.object(controller, "cleanup", side_effect=lambda run: run.rmdir()):
+                    report = controller.worker(self.config, self.run, 7, SHA, "live")
+                self.assertEqual((report["result"], report["reason"]), ("FAIL", "ASSERTION_FAILED"))
+                self.assertEqual(report["provider_request_count"], len(endpoints))
+
     def test_worker_environment_and_host_owned_leakage_check(self):
         from contextlib import nullcontext
-        report = harness.blank_report(SHA, "PASS", "COMPLETE")
+        report = harness.blank_report(SHA, "PASS", "COMPLETE", mode="LIVE")
         report.update(immutable_capture_verified=True, offline_replay_identical=True,
-                      supported_team_total_count=1, capture_hash="d" * 64)
+                      supported_team_total_count=1, prediction_count=1, target_count=1, capture_hash="d" * 64,
+                      core_pipeline="PASS", offline_replay="PASS",
+                      provider_compatibility="PASS", provider_request_count=3)
         for host_failure in (None, "SECURITY_ERROR"):
             process = Mock(stdout=io.BytesIO(json.dumps(report).encode()))
             process.wait.return_value = 0
             relay = controller.Relay(SECRET, Mock())
             relay.failure = host_failure
+            relay.count = 3
+            relay.upstream_endpoints = ["/v4/fixtures", "/v4/markets", "/v4/odds"]
             with patch.dict(os.environ, {"ODDSPAPI_API_KEY": SECRET, "GITHUB_TOKEN": "offline-github-secret", "SSH_AUTH_SOCK": "/secret/socket"}), patch.object(controller, "verify_remote"), patch.object(controller, "export_source"), patch.object(controller, "snapshot_history"), patch.object(controller, "Relay", return_value=relay), patch.object(controller, "serving_relay", return_value=nullcontext()), patch.object(controller.subprocess, "Popen", return_value=nullcontext(process)) as popen, patch.object(controller, "cleanup", side_effect=lambda run: run.rmdir()):
-                output = controller.worker(self.config, self.run, 7, SHA)
+                output = controller.worker(self.config, self.run, 7, SHA, "live")
             environment = popen.call_args.kwargs["env"]
             self.assertFalse({"ODDSPAPI_API_KEY", "GITHUB_TOKEN", "SSH_AUTH_SOCK"} & environment.keys())
             self.assertNotIn(SECRET, repr(popen.call_args))
@@ -244,7 +334,7 @@ class ControllerTests(unittest.TestCase):
             (run / "subject").mkdir()
             (run / "subject/accidental.py").write_text(SECRET)
         with patch.object(controller, "verify_remote"), patch.object(controller, "export_source", side_effect=export), patch.object(controller, "snapshot_history"), patch.object(controller.subprocess, "Popen") as popen, patch.object(controller, "cleanup"):
-            report = controller.worker(self.config, self.run, 7, SHA)
+            report = controller.worker(self.config, self.run, 7, SHA, "live")
         popen.assert_not_called()
         self.assertEqual(report["reason"], "SECURITY_ERROR")
         self.assertIs(report["credential_leakage_check"], False)
@@ -259,18 +349,18 @@ class ControllerTests(unittest.TestCase):
                     query = RelayTests().query(endpoint, **(dict(fixtureId="known", bookmakers="draftkings,fanduel",
                         verbosity="3", oddsFormat="american") if endpoint == "odds" else {}))
                     relay.get(query)
-                    child = harness.blank_report(SHA, "FAIL", "PROVIDER_ERROR")
+                    child = harness.blank_report(SHA, "FAIL", "PROVIDER_ERROR", mode="LIVE")
                     child["credential_leakage_check"] = True  # Not trusted.
                     process = Mock(stdout=io.BytesIO(json.dumps(child).encode()))
                     process.wait.return_value = status
                     with patch.object(controller, "verify_remote"), patch.object(controller, "export_source"), patch.object(controller, "snapshot_history"), patch.object(controller, "Relay", return_value=relay), patch.object(controller, "serving_relay", return_value=nullcontext()), patch.object(controller.subprocess, "Popen", return_value=nullcontext(process)), patch.object(controller, "cleanup", side_effect=lambda run: run.rmdir()):
-                        report = controller.worker(self.config, self.run, 7, SHA)
+                        report = controller.worker(self.config, self.run, 7, SHA, "live")
                     self.assertEqual(report["reason"], f"PROVIDER_{endpoint.upper()}_AUTH")
                     self.assertEqual(report["result"], "FAIL")
-                    self.assertEqual(report["api_request_count"], 1)
+                    self.assertEqual(report["provider_request_count"], 1)
                     self.assertIsNone(report["credential_leakage_check"])
                     self.assertEqual(report["cleanup_status"], "COMPLETE")
-                    self.assertEqual(harness.checked_report(report, SHA, SECRET), report)
+                    self.assertEqual(harness.checked_report(report, SHA, SECRET, "LIVE"), report)
                     for forbidden in (SECRET, "private", "account", "apiKey", "https://", "known"):
                         self.assertNotIn(forbidden, json.dumps(report))
 
@@ -284,13 +374,149 @@ class ControllerTests(unittest.TestCase):
 
     def test_controller_rejects_credential_in_worker_report(self):
         from contextlib import redirect_stdout
-        report = dict(harness.blank_report(SHA), home_team=SECRET)
+        report = dict(harness.blank_report(SHA), home_team="offline-github-secret")
         with patch.object(sys, "argv", ["validator", "--repository", controller.REPOSITORY, "--pr", "53", "--sha", SHA]), patch.object(controller, "configuration", return_value=self.config), patch.object(controller, "command", return_value=json.dumps(report).encode()), patch.object(controller, "cleanup"), redirect_stdout(io.StringIO()) as output:
             controller.main()
         result = json.loads(output.getvalue())
         self.assertEqual(result["reason"], "SECURITY_ERROR")
         self.assertIs(result["credential_leakage_check"], False)
-        self.assertNotIn(SECRET, output.getvalue())
+        self.assertNotIn("offline-github-secret", output.getvalue())
+
+    def test_offline_worker_never_reads_provider_key_or_constructs_relay(self):
+        from contextlib import nullcontext
+        config = dict(self.config, provider_key_file=str(self.root / "does-not-exist"))
+        child = harness.blank_report(SHA, "PASS", "COMPLETE")
+        child.update(core_pipeline="PASS", market_intelligence="NOT_APPLICABLE",
+                     offline_replay="PASS", provider_compatibility="NOT_RUN",
+                     supported_team_total_count=1, prediction_count=1, target_count=1, capture_hash="d" * 64,
+                     immutable_capture_verified=True, offline_replay_identical=True, scenario_request_count=3)
+        process = Mock(stdout=io.BytesIO(json.dumps(child).encode()))
+        process.wait.return_value = 0
+        def export(run, *_args):
+            (run / "subject").mkdir()
+        with patch.object(controller, "verify_remote"), \
+                patch.object(controller, "export_source", side_effect=export), \
+                patch.object(controller, "Relay") as relay, \
+                patch.object(controller, "serving_relay") as serving, \
+                patch.object(controller.subprocess, "Popen", return_value=nullcontext(process)), \
+                patch.object(controller, "cleanup"):
+            report = controller.worker(config, self.run, 7, SHA)
+        self.assertEqual((report["result"], report["mode"]), ("PASS", "OFFLINE"))
+        self.assertEqual(report["provider_request_count"], 0)
+        relay.assert_not_called()
+        serving.assert_not_called()
+
+
+class OfflineHarnessTests(unittest.TestCase):
+    def test_trusted_reference_matches_complete_partial_and_unusable_wire_states(self):
+        from modelfc.providers import oddspapi
+        for mutation in ("absent", "book-unusable", "market-unusable", "outcome-missing",
+                         "unknown-outcome", "price-unusable", "invalid-price", "future-time",
+                         "missing-metadata", "decimal-fallback"):
+            with self.subTest(mutation=mutation):
+                responses = harness.offline_responses()
+                payload, metadata = responses["odds"], responses["markets"]
+                book = payload["bookmakerOdds"]["fanduel"]
+                market = book["markets"]["101484"]
+                price = market["outcomes"]["101485"]["players"]["0"]
+                if mutation == "absent":
+                    del payload["bookmakerOdds"]["fanduel"]
+                elif mutation == "book-unusable":
+                    book["suspended"] = True
+                elif mutation == "market-unusable":
+                    market["marketActive"] = False
+                elif mutation == "outcome-missing":
+                    del market["outcomes"]["101485"]
+                elif mutation == "unknown-outcome":
+                    market["outcomes"]["unrecognized"] = {"players": {"0": price}}
+                elif mutation == "price-unusable":
+                    price["active"] = False
+                elif mutation == "invalid-price":
+                    price["price"] = "invalid"
+                elif mutation == "future-time":
+                    price["changedAt"] = "2026-09-21T12:00:00Z"
+                elif mutation == "missing-metadata":
+                    metadata = [item for item in metadata if item["marketId"] != 101484]
+                else:
+                    del price["priceAmerican"]
+                quotes = oddspapi.normalize_odds(payload, metadata, responses["fixtures"][0],
+                    retrieved_at=harness.OFFLINE_NOW.isoformat(), now=harness.OFFLINE_NOW)
+                harness.verify_quote_source(quotes, responses["fixtures"][0], payload, metadata, harness.OFFLINE_NOW)
+
+    def test_recorded_boundary_requires_exact_path_unique_params_and_order(self):
+        from urllib.request import Request
+        params = dict(tournamentId="18", statusId="0", language="en", apiKey="",
+                      bookmakers="draftkings,fanduel", **{"from": "2026-09-20T00:00:00Z",
+                                                           "to": "2026-09-21T00:00:00Z"})
+        fixtures = "https://api.oddspapi.io/v4/fixtures?" + urlencode(params)
+        for url in (fixtures.replace("/v4/", "/v5/"), fixtures + "&language=en",
+                    "https://api.oddspapi.io/v4/markets?apiKey=&language=en"):
+            with self.subTest(url=url), self.assertRaisesRegex(ValueError, "OFFLINE_SCENARIO_INVALID"):
+                harness.OfflineOpener().open(Request(url))
+
+    def run_offline(self):
+        temporary = TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name)
+        controller.offline_history(root / "history")
+        (root / "output").mkdir()
+        with patch.dict(os.environ, {}, clear=True), \
+                patch.object(harness, "RelayConnection", side_effect=AssertionError("relay forbidden")):
+            return harness.run_capture(SHA, root / "history", root / "output")
+
+    def test_default_offline_core_pipeline_and_zero_provider_requests(self):
+        report = self.run_offline()
+        self.assertEqual((report["result"], report["mode"]), ("PASS", "OFFLINE"), report)
+        self.assertEqual(report["core_pipeline"], "PASS")
+        self.assertEqual(report["market_intelligence"], "NOT_APPLICABLE")
+        self.assertEqual(report["offline_replay"], "PASS")
+        self.assertEqual(report["provider_compatibility"], "NOT_RUN")
+        self.assertEqual(report["provider_request_count"], 0)
+        self.assertEqual(report["scenario_request_count"], 3)
+        self.assertEqual(report["replay_api_request_count"], 0)
+        self.assertEqual(report["prediction_count"], 1)
+        self.assertGreater(report["target_count"], 0)
+        self.assertGreater(report["opportunity_count"], 0)
+        self.assertEqual(report["match_total_count"], report["gated_match_total_count"])
+        self.assertEqual(harness.checked_report(report, SHA, "", "OFFLINE"), report)
+
+    def test_market_intelligence_pass_and_broken_component_are_distinct(self):
+        with patch.object(harness, "market_intelligence_component", return_value="PASS"):
+            passed = self.run_offline()
+        self.assertEqual((passed["result"], passed["market_intelligence"]), ("PASS", "PASS"))
+        broken = ModuleType("modelfc.corner_market_intelligence")
+        broken.get_market_intelligence = lambda *_args, **_kwargs: {}
+        with patch.dict(sys.modules, {"modelfc.corner_market_intelligence": broken}):
+            failed = self.run_offline()
+        self.assertEqual((failed["result"], failed["reason"], failed["market_intelligence"]),
+                         ("FAIL", "MARKET_INTELLIGENCE_FAILED", "FAIL"))
+        self.assertEqual((failed["core_pipeline"], failed["offline_replay"]),
+                         ("PASS", "PASS"))
+        self.assertGreater(failed["target_count"], 0)
+        self.assertEqual(failed["provider_request_count"], 0)
+
+    def test_offline_failure_never_opens_relay_or_external_transport(self):
+        temporary = TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name)
+        controller.offline_history(root / "history")
+        (root / "output").mkdir()
+        with patch.dict(os.environ, {}, clear=True), \
+                patch.object(harness.OfflineOpener, "open",
+                             side_effect=ValueError("OFFLINE_SCENARIO_INVALID")), \
+                patch.object(harness, "RelayOpener") as relay:
+            report = harness.run_capture(SHA, root / "history", root / "output")
+        self.assertEqual(report["result"], "FAIL")
+        self.assertEqual(report["provider_request_count"], 0)
+        relay.assert_not_called()
+
+    def test_trusted_recordings_are_copied_per_offline_run(self):
+        first = harness.offline_responses()
+        first["fixtures"][0]["fixtureId"] = "candidate-tampering"
+        second = harness.offline_responses()
+        self.assertEqual(second["fixtures"][0]["fixtureId"],
+                         harness.OFFLINE_FIXTURE["fixtureId"])
+        self.assertNotIn("responses", vars(harness.OfflineOpener()))
 
 
 class RelayTests(unittest.TestCase):
@@ -306,13 +532,13 @@ class RelayTests(unittest.TestCase):
         fetch = Mock(return_value=(200, b"[]"))
         sleep = Mock()
         relay = controller.Relay(SECRET, fetch, sleep)
-        for _ in range(controller.BUDGET):
+        for _ in range(controller.LIVE_BUDGET):
             relay.get(self.query())
         with self.assertRaisesRegex(controller.Failure, "REQUEST_BUDGET_EXCEEDED"):
             relay.get(self.query())
-        self.assertEqual(fetch.call_count, controller.BUDGET)
-        self.assertEqual(relay.count, controller.BUDGET)
-        self.assertEqual(sleep.call_count, controller.BUDGET-1)
+        self.assertEqual(fetch.call_count, controller.LIVE_BUDGET)
+        self.assertEqual(relay.count, controller.LIVE_BUDGET)
+        self.assertEqual(sleep.call_count, controller.LIVE_BUDGET-1)
         self.assertIn("apiKey=" + SECRET, fetch.call_args.args[0])
         self.assertTrue(fetch.call_args.args[0].startswith("https://api.oddspapi.io/v4/fixtures?"))
 
@@ -326,19 +552,22 @@ class RelayTests(unittest.TestCase):
             probe.close()
         fetch = Mock(return_value=(200, b"[]"))
         relay = controller.Relay(SECRET, fetch)
-        with TemporaryDirectory() as directory:
-            path = Path(directory) / "relay"
-            with controller.serving_relay(path, relay):
-                client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-                try:
-                    client.settimeout(2)
-                    client.connect(str(path / "api.sock"))
-                    client.sendall(("GET " + self.query() + " HTTP/1.0\r\nHost: localhost\r\n\r\n").encode())
-                    chunks = []
-                    while data := client.recv(4096):
-                        chunks.append(data)
-                finally:
-                    client.close()
+        try:
+            with TemporaryDirectory() as directory:
+                path = Path(directory) / "relay"
+                with controller.serving_relay(path, relay):
+                    client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                    try:
+                        client.settimeout(2)
+                        client.connect(str(path / "api.sock"))
+                        client.sendall(("GET " + self.query() + " HTTP/1.0\r\nHost: localhost\r\n\r\n").encode())
+                        chunks = []
+                        while data := client.recv(4096):
+                            chunks.append(data)
+                    finally:
+                        client.close()
+        except PermissionError:
+            self.skipTest("execution environment denies Unix socket bind; run on target VPS")
         wire = b"".join(chunks)
         self.assertIn(b"200 OK", wire)
         self.assertTrue(wire.endswith(b"[]"))
@@ -364,7 +593,7 @@ class RelayTests(unittest.TestCase):
         sleeper = Mock(side_effect=sleep)
         relay = controller.Relay(SECRET, fetch, sleeper)
         with patch.object(controller.time, "monotonic", side_effect=lambda: clock[0]):
-            for index in range(controller.BUDGET):
+            for index in range(controller.LIVE_BUDGET):
                 status, body = relay.get(self.query())
                 self.assertEqual(status, 404)
                 self.assertEqual(json.loads(body)["error"]["code"], "FIXTURE_NOT_FOUND")
@@ -374,8 +603,8 @@ class RelayTests(unittest.TestCase):
             with self.assertRaisesRegex(controller.Failure, "REQUEST_BUDGET_EXCEEDED"):
                 relay.get(self.query())
         self.assertTrue(all(b - a >= 3.0 for a, b in zip(starts, starts[1:])))
-        self.assertEqual(len(starts), controller.BUDGET)
-        self.assertEqual(sleeper.call_count, controller.BUDGET - 1)
+        self.assertEqual(len(starts), controller.LIVE_BUDGET)
+        self.assertEqual(sleeper.call_count, controller.LIVE_BUDGET - 1)
 
     def test_mixed_endpoint_pacing_preserves_markets_and_odds_interval(self):
         clock, starts = [100.0], []
@@ -389,13 +618,11 @@ class RelayTests(unittest.TestCase):
         relay.fixtures["known"] = {}
         odds = self.query("odds", fixtureId="known", bookmakers="draftkings,fanduel", verbosity="3", oddsFormat="american")
         with patch.object(controller.time, "monotonic", side_effect=lambda: clock[0]):
-            for target in (self.query(), self.query("markets"), odds, self.query()):
+            for target in (self.query(), self.query("markets"), self.query("markets"), odds):
                 relay.get(target)
-            self.assertEqual([call.args[0] for call in sleeper.call_args_list], [2.1, 2.1, 3.0])
-            clock[0] += 4.0
-            relay.get(self.query())
-            self.assertEqual(sleeper.call_count, 3)  # Already spaced; no sleep(0).
-        self.assertEqual(len(starts), 5)
+            self.assertEqual([call.args[0] for call in sleeper.call_args_list], [2.1, 2.1])
+        self.assertEqual(len(starts), 3)
+        self.assertEqual(relay.count, 3)
 
     def test_fixture_rate_limit_keeps_diagnostic_and_never_retries_or_sleeps(self):
         fetch = Mock(return_value=(429, b'{"error":{"code":"RATE_LIMITED"}}'))
@@ -550,7 +777,7 @@ class HarnessTests(unittest.TestCase):
             original = getattr(owner, name)
             self.addCleanup(setattr, owner, name, original)
 
-    def execute(self, fixture=True, failure=None, quotes=None, empty_404=False):
+    def execute(self, fixture=True, failure=None, quotes=None, empty_404=False, mutate_odds=None):
         from tests.test_oddspapi import recorded
         class Clock(datetime):
             @staticmethod
@@ -570,6 +797,8 @@ class HarnessTests(unittest.TestCase):
                 value = recorded("odds-markets")
             else:
                 value = recorded("wolves-west-brom-odds")
+                if mutate_odds:
+                    mutate_odds(value)
             return 200, json.dumps(value).encode()
         relay = controller.Relay(SECRET, fetch, Mock())
         connection = Mock()
@@ -590,18 +819,18 @@ class HarnessTests(unittest.TestCase):
             stack.enter_context(patch.object(self.provider.time, "sleep"))
             if quotes is not None:
                 stack.enter_context(patch.object(self.provider.OddsPapiClient, "quotes", autospec=True, return_value=quotes))
-            return harness.run_capture(SHA, self.snapshot, self.output, days=1)
+            return harness.run_capture(SHA, self.snapshot, self.output, mode="LIVE")
 
     def test_live_shaped_recorded_pass_capture_and_offline_replay(self):
         report = self.execute()
         self.assertEqual(report["result"], "PASS", report)
         self.assertEqual(report["selection_count"], 33)
         self.assertEqual(report["analysis_batch_count"], 2)
-        self.assertEqual(report["api_request_count"], 3)
+        self.assertEqual(report["provider_request_count"], 3)
         self.assertEqual(report["replay_api_request_count"], 0)
         self.assertTrue(report["immutable_capture_verified"])
         self.assertIsNone(report["credential_leakage_check"])  # Only the host can attest this.
-        self.assertEqual(harness.checked_report(report, SHA, SECRET), report)
+        self.assertEqual(harness.checked_report(report, SHA, SECRET, "LIVE"), report)
 
     def test_factory_skips_constructor_and_contains_no_secret(self):
         with patch.dict(os.environ, {}, clear=True), patch.object(self.provider.OddsPapiClient, "__init__", autospec=True, side_effect=AssertionError("constructor called")) as constructor:
@@ -627,6 +856,199 @@ class HarnessTests(unittest.TestCase):
                 harness.RelayOpener().open(Request("https://api.oddspapi.io/v4/markets?apiKey=nonempty"))
         connection.assert_not_called()
 
+    def test_cached_candidate_objects_cannot_skip_boundary_calls(self):
+        for mode in ("OFFLINE", "LIVE"):
+            with self.subTest(mode=mode), \
+                    patch.object(self.provider.OddsPapiClient, "fixtures", autospec=True,
+                                 return_value=[dict(self.case.quotes.fixture)]), \
+                    patch.object(self.provider.OddsPapiClient, "quotes", autospec=True,
+                                 return_value=self.case.quotes):
+                report = OfflineHarnessTests.run_offline(self) if mode == "OFFLINE" else self.execute()
+                self.assertEqual((report["result"], report["reason"]), ("FAIL", "ASSERTION_FAILED"))
+                self.assertEqual(report["provider_compatibility"], "NOT_RUN" if mode == "OFFLINE" else "FAIL")
+                self.assertEqual(report["scenario_request_count"], 0)
+                self.assertEqual(report["provider_request_count"], 0)
+
+    def test_candidate_cannot_discard_transport_bodies_for_cached_quotes(self):
+        from functools import wraps
+        original_fixtures = self.provider.OddsPapiClient.fixtures
+        original_quotes = self.provider.OddsPapiClient.quotes
+        @wraps(original_fixtures)
+        def cached_fixtures(client, day):
+            original_fixtures(client, day)
+            return [dict(self.case.quotes.fixture)]
+        @wraps(original_quotes)
+        def cached_quotes(client, fixture):
+            original_quotes(client, fixture)
+            return self.case.quotes
+        for mode in ("OFFLINE", "LIVE"):
+            for method, replacement in (("fixtures", cached_fixtures), ("quotes", cached_quotes)):
+                with self.subTest(mode=mode, method=method), \
+                        patch.object(self.provider.OddsPapiClient, method, replacement):
+                    report = OfflineHarnessTests.run_offline(self) if mode == "OFFLINE" else self.execute()
+                    self.assertEqual((report["result"], report["reason"]), ("FAIL", "ASSERTION_FAILED"))
+
+    def test_candidate_get_cannot_replace_transport_json(self):
+        from functools import wraps
+        original_get = self.provider.OddsPapiClient._get
+        @wraps(original_get)
+        def changed_json(client, endpoint, **params):
+            value = original_get(client, endpoint, **params)
+            if endpoint == "fixtures":
+                value[0]["participant1Name"] = "cached replacement"
+            return value
+        with patch.object(self.provider.OddsPapiClient, "_get", changed_json):
+            report = OfflineHarnessTests.run_offline(self)
+        self.assertEqual((report["result"], report["reason"]), ("FAIL", "ASSERTION_FAILED"))
+
+    def test_candidate_normalization_cannot_invent_observed_prices(self):
+        original_normalize = self.provider.normalize_odds
+        def invented_price(*args, **kwargs):
+            quotes = original_normalize(*args, **kwargs)
+            changed = replace(quotes.selections[0], decimal_odds=9.99)
+            return replace(quotes, selections=(changed,) + quotes.selections[1:])
+        for mode in ("OFFLINE", "LIVE"):
+            with self.subTest(mode=mode), patch.object(self.provider, "normalize_odds", invented_price):
+                report = OfflineHarnessTests.run_offline(self) if mode == "OFFLINE" else self.execute()
+                self.assertEqual((report["result"], report["reason"]), ("FAIL", "ASSERTION_FAILED"))
+
+    def test_candidate_cannot_drop_outcomes_or_fabricate_availability(self):
+        from copy import deepcopy
+        original_normalize = self.provider.normalize_odds
+        for mode in ("OFFLINE", "LIVE"):
+            for mutation in ("home-only", "duplicate", "availability"):
+                def incomplete(*args, **kwargs):
+                    quotes = original_normalize(*args, **kwargs)
+                    if mutation == "home-only":
+                        return replace(quotes, selections=tuple(item for item in quotes.selections
+                                                               if item.request.team_side == "HOME"))
+                    if mutation == "duplicate":
+                        return replace(quotes, selections=quotes.selections + (quotes.selections[0],))
+                    availability = deepcopy(quotes.availability)
+                    availability["fanduel"]["status"] = "BOOKMAKER_UNAVAILABLE"
+                    return replace(quotes, availability=availability)
+                with self.subTest(mode=mode, mutation=mutation), \
+                        patch.object(self.provider, "normalize_odds", incomplete):
+                    report = OfflineHarnessTests.run_offline(self) if mode == "OFFLINE" else self.execute()
+                    self.assertEqual((report["result"], report["reason"]), ("FAIL", "ASSERTION_FAILED"))
+
+    def test_candidate_cannot_mutate_discovery_and_quote_provenance(self):
+        from functools import wraps
+        original_quotes = self.provider.OddsPapiClient.quotes
+        for mode in ("OFFLINE", "LIVE"):
+            for field, value in (("participant1Name", "Wolves"), ("participant1Id", 999),
+                                 ("startTime", "2026-09-20T11:05:00.000Z")):
+                @wraps(original_quotes)
+                def changed_fixture(client, fixture):
+                    quotes = original_quotes(client, fixture)
+                    fixture[field] = value
+                    quotes.fixture[field] = value
+                    return quotes
+                with self.subTest(mode=mode, field=field), \
+                        patch.object(self.provider.OddsPapiClient, "quotes", changed_fixture):
+                    report = OfflineHarnessTests.run_offline(self) if mode == "OFFLINE" else self.execute()
+                    self.assertEqual((report["result"], report["reason"]), ("FAIL", "ASSERTION_FAILED"))
+
+    def test_candidate_cannot_fabricate_client_market_identity(self):
+        original_normalize = self.provider.normalize_odds
+        def changed_ids(*args, **kwargs):
+            quotes = original_normalize(*args, **kwargs)
+            selections = tuple(replace(item, request=replace(item.request, client_market_id=f"fabricated:{index}"))
+                               for index, item in enumerate(quotes.selections))
+            return replace(quotes, selections=selections)
+        for mode in ("OFFLINE", "LIVE"):
+            with self.subTest(mode=mode), patch.object(self.provider, "normalize_odds", changed_ids):
+                report = OfflineHarnessTests.run_offline(self) if mode == "OFFLINE" else self.execute()
+                self.assertEqual((report["result"], report["reason"]), ("FAIL", "ASSERTION_FAILED"))
+
+    def test_candidate_assessment_must_publish_complete_valid_evidence(self):
+        import shutil
+        from modelfc import corner_opportunities
+        original = corner_opportunities.assess_observation
+        for mode in ("OFFLINE", "LIVE"):
+            for mutation in ("no-write", "missing-opportunity", "missing-target",
+                             "target-probability", "opportunity-price"):
+                def broken(state, prediction, observation):
+                    if mutation == "no-write":
+                        return {"targets": len(observation["selections"]), "opportunities_created": 0}
+                    result = original(state, prediction, observation)
+                    kind = "prediction-targets" if "target" in mutation else "opportunities"
+                    path = next(Path(state, kind).rglob("*.json"))
+                    if mutation.startswith("missing"):
+                        path.unlink()
+                    else:
+                        record = json.loads(path.read_bytes())
+                        if mutation == "target-probability":
+                            record["model_probability"] = 0.99
+                        else:
+                            record["offer"]["decimal_odds"] = 9.99
+                        # A self-consistent hash cannot legitimize invented evidence.
+                        from modelfc.corner_analysis_store import _canonical_hash
+                        record["record_hash"] = _canonical_hash({k: v for k, v in record.items() if k != "record_hash"})
+                        path.write_text(json.dumps(record))
+                    return result
+                if mode == "LIVE":
+                    shutil.rmtree(self.output / "state", ignore_errors=True)
+                with self.subTest(mode=mode, mutation=mutation), \
+                        patch.object(corner_opportunities, "assess_observation", broken):
+                    report = OfflineHarnessTests.run_offline(self) if mode == "OFFLINE" else self.execute()
+                self.assertEqual((report["result"], report["reason"]), ("FAIL", "ASSERTION_FAILED"), report)
+                self.assertEqual(report["core_pipeline"], "FAIL")
+
+    def test_persisted_prediction_and_observation_must_match_verified_capture(self):
+        import shutil
+        from modelfc import corner_opportunities
+        from modelfc.corner_analysis_store import _canonical_hash
+        for mode in ("OFFLINE", "LIVE"):
+            for mutation in ("model-version", "distribution", "capture-reference", "observation-price"):
+                method = "store_observation_from_capture" if mutation == "observation-price" else "store_prediction_from_capture"
+                original = getattr(corner_opportunities, method)
+                def fabricated(state, analysis_id):
+                    record, created = original(state, analysis_id)
+                    if mutation == "model-version":
+                        record["model"]["version"] = "fabricated-version"
+                    elif mutation == "distribution":
+                        record["distribution"]["home_expected_corners"] += 1
+                    elif mutation == "capture-reference":
+                        record["capture_reference"]["response_hash"] = "d" * 64
+                    else:
+                        record["selections"][0]["decimal_odds"] = 9.99
+                    record["record_hash"] = _canonical_hash({k: v for k, v in record.items() if k != "record_hash"})
+                    kind = "market-observations" if mutation == "observation-price" else "predictions"
+                    identity = record["observation_id" if mutation == "observation-price" else "prediction_id"]
+                    path = next(Path(state, kind).rglob(identity + ".json"))
+                    path.write_text(json.dumps(record))
+                    return record, created
+                if mode == "LIVE":
+                    shutil.rmtree(self.output / "state", ignore_errors=True)
+                with self.subTest(mode=mode, mutation=mutation), \
+                        patch.object(corner_opportunities, method, fabricated):
+                    report = OfflineHarnessTests.run_offline(self) if mode == "OFFLINE" else self.execute()
+                    self.assertEqual(report["result"], "FAIL", report)
+                    self.assertEqual(report["core_pipeline"], "FAIL")
+                    if mutation == "observation-price":
+                        # Existing source-observation integrity may reject first.
+                        self.assertIn(report["reason"], ("ASSERTION_FAILED", "EXECUTION_ERROR"))
+                    else:
+                        self.assertEqual(report["reason"], "ASSERTION_FAILED", report)
+
+    def test_candidate_cannot_change_expected_transport_via_opener_attributes(self):
+        from functools import wraps
+        original_quotes = self.provider.OddsPapiClient.quotes
+        @wraps(original_quotes)
+        def changed_oracle(client, fixture):
+            quotes = original_quotes(client, fixture)
+            # A public attribute on the candidate's client must never be the oracle.
+            client._opener.responses = harness.offline_responses()
+            client._opener.responses["fixtures"][0]["participant1Name"] = "Wolves"
+            client._opener.responses["odds"]["participant1Name"] = "Wolves"
+            fixture["participant1Name"] = "Wolves"
+            quotes.fixture["participant1Name"] = "Wolves"
+            return quotes
+        with patch.object(self.provider.OddsPapiClient, "quotes", changed_oracle):
+            report = OfflineHarnessTests.run_offline(self)
+        self.assertEqual((report["result"], report["reason"]), ("FAIL", "ASSERTION_FAILED"))
+
     def test_no_fixture_blocked_not_pass(self):
         report = self.execute(fixture=False)
         self.assertEqual((report["result"], report["reason"]), ("BLOCKED", "NO_ELIGIBLE_FIXTURE"))
@@ -634,12 +1056,18 @@ class HarnessTests(unittest.TestCase):
     def test_expected_discovery_404_still_blocks_without_failure(self):
         report = self.execute(empty_404=True)
         self.assertEqual((report["result"], report["reason"]), ("BLOCKED", "NO_ELIGIBLE_FIXTURE"))
-        self.assertEqual(report["api_request_count"], 1)
+        self.assertEqual(report["provider_request_count"], 1)
 
     def test_no_team_totals_blocked(self):
-        quotes = replace(self.case.quotes, selections=tuple(s for s in self.case.quotes.selections if s.request.market_type == "MATCH_TOTAL"))
-        report = self.execute(quotes=quotes)
+        from tests.test_oddspapi import recorded
+        match_ids = {str(item["marketId"]) for item in recorded("odds-markets")
+                     if item["marketType"] == "totals-corners"}
+        def match_only(payload):
+            for book in payload["bookmakerOdds"].values():
+                book["markets"] = {mid: market for mid, market in book["markets"].items() if mid in match_ids}
+        report = self.execute(mutate_odds=match_only)
         self.assertEqual((report["result"], report["reason"]), ("BLOCKED", "NO_TEAM_TOTALS"))
+        self.assertEqual(report["provider_request_count"], 3)
 
     def test_insufficient_history_blocked(self):
         with patch.object(self.provider, "capture_quotes", side_effect=ValueError("insufficient away history for team")):

@@ -1,7 +1,7 @@
 """Trusted rootless VPS controller. Install root-owned; never execute it from a PR."""
 import argparse
 import base64
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from datetime import datetime, timedelta, timezone
 import fcntl
 import hashlib
@@ -34,7 +34,7 @@ RUNS = Path("/var/lib/modelfc-validator/runs")
 REPOSITORY = "stevengalvis/modelfc"
 PREFIX = "modelfc-validation-"
 LABEL = "io.modelfc.validation=phase1"
-BUDGET = 8
+LIVE_BUDGET = 3
 MAX_BODY = 8 * 1024 * 1024
 
 
@@ -77,7 +77,7 @@ def root_owned(path):
             raise Failure("INVALID_CONFIGURATION")
 
 
-def configuration():
+def configuration(mode="offline"):
     if os.geteuid() == 0 or pwd.getpwuid(os.geteuid()).pw_name != "modelfc-validator":
         raise Failure("INVALID_CONFIGURATION")
     for path in (CONFIG, TRUSTED / "validate_pr.py", TRUSTED / "validate_capture.py"):
@@ -94,14 +94,16 @@ def configuration():
         raise Failure("INVALID_CONFIGURATION")
     if type(value["max_age_days"]) is not int or value["max_age_days"] < 1:
         raise Failure("INVALID_CONFIGURATION")
-    for key in ("provider_key_file", "github_token_file"):
+    credential_keys = ("github_token_file", "provider_key_file") if mode == "live" else ("github_token_file",)
+    for key in credential_keys:
         path = Path(value[key])
         root_owned(path)
         if path.stat().st_mode & 0o007:
             raise Failure("INVALID_CONFIGURATION")
-    history = Path(value["history_directory"]).resolve(strict=True)
-    if Path(value["history_lock"]).resolve(strict=True) != history / "data/corner-refresh/refresh.lock":
-        raise Failure("INVALID_CONFIGURATION")
+    if mode == "live":
+        history = Path(value["history_directory"]).resolve(strict=True)
+        if Path(value["history_lock"]).resolve(strict=True) != history / "data/corner-refresh/refresh.lock":
+            raise Failure("INVALID_CONFIGURATION")
     return value
 
 
@@ -199,6 +201,24 @@ def snapshot_history(config, destination):
     (destination / "manifest.json").write_text(json.dumps(dict(leagues=leagues, hashes=hashes)))
 
 
+def offline_history(destination):
+    """Create the trusted disposable E1 history used only by OFFLINE mode."""
+    destination.mkdir()
+    rows = ["Div,Date,HomeTeam,AwayTeam,HC,AC"]
+    reference = datetime(2026, 9, 20, 9, tzinfo=timezone.utc)
+    for index in range(110):
+        day = (reference - timedelta(days=111 - index)).strftime("%d/%m/%Y")
+        rows.append(f"E1,{day},Wolves,West Brom,{3 + index % 6},{2 + index % 4}")
+    content = ("\n".join(rows) + "\n").encode()
+    (destination / "E1_2627.csv").write_bytes(content)
+    (destination / "data/corner-refresh").mkdir(parents=True)
+    (destination / "data/corner-refresh/refresh.lock").write_bytes(b"trusted offline lock\n")
+    (destination / "corner_data.json").write_text(json.dumps(dict(
+        data_directory=".", leagues=["E1"], max_age_days=14)))
+    (destination / "manifest.json").write_text(json.dumps(dict(
+        leagues=["E1"], hashes={"E1_2627.csv": hashlib.sha256(content).hexdigest()})))
+
+
 class Relay:
     """One-run, fixed-host HTTP relay; the container itself has no IP network."""
     def __init__(self, secret, fetch=read_url, sleep=time.sleep):
@@ -206,6 +226,8 @@ class Relay:
         self.count, self.last = 0, None
         self.failure = None
         self.fixtures = {}
+        self.market_response = None
+        self.upstream_endpoints = []
 
     def get(self, target, headers=None):
         try:
@@ -237,9 +259,9 @@ class Relay:
         valid = params.get("language") == "en"
         if endpoint == "/v4/fixtures":
             valid &= set(params) == {"tournamentId", "statusId", "language", "bookmakers", "from", "to"}
-            valid &= params.get("tournamentId") in {"18", "8"} and params.get("statusId") == "0"
+            valid &= params.get("tournamentId") == "18" and params.get("statusId") == "0"
             today = datetime.now(timezone.utc).date()
-            windows = {(f"{today+timedelta(days=i)}T00:00:00Z", f"{today+timedelta(days=i+1)}T00:00:00Z") for i in range(3)}
+            windows = {(f"{today}T00:00:00Z", f"{today+timedelta(days=1)}T00:00:00Z")}
             valid &= (params.get("from"), params.get("to")) in windows
         elif endpoint == "/v4/markets":
             valid &= set(params) == {"language"}
@@ -254,7 +276,9 @@ class Relay:
             raise Failure("SECURITY_ERROR")
         if self.failure:
             raise Failure(self.failure)
-        if self.count >= BUDGET:
+        if endpoint == "/v4/markets" and self.market_response is not None:
+            return 200, self.market_response
+        if self.count >= LIVE_BUDGET:
             raise Failure("REQUEST_BUDGET_EXCEEDED")
         if self.last is not None:
             interval = 3.0 if endpoint == "/v4/fixtures" else 2.1
@@ -263,6 +287,7 @@ class Relay:
                 self.sleep(remaining)
         self.last = time.monotonic()
         self.count += 1
+        self.upstream_endpoints.append(endpoint)
         status, body = self.fetch("https://api.oddspapi.io" + endpoint + "?" + urlencode(dict(params, apiKey=self.secret)),
                                   {"User-Agent": "ModelFC/1.0 (VPS validation)", "Accept": "application/json"})
         reject_credentials(body.decode("utf-8", errors="replace"), (self.secret,))
@@ -291,7 +316,10 @@ class Relay:
                     raise Failure(self.provider_reason(target, "MALFORMED"))
                 self.fixtures[fixture["fixtureId"]] = fixture
         try:
-            return status, json.dumps(value, allow_nan=False).encode()
+            sanitized = json.dumps(value, allow_nan=False).encode()
+            if endpoint == "/v4/markets" and status == 200:
+                self.market_response = sanitized
+            return status, sanitized
         except ValueError:
             raise Failure(self.provider_reason(target, "MALFORMED")) from None
 
@@ -342,19 +370,22 @@ def serving_relay(directory, relay):
         thread.join(timeout=35)
 
 
-def container_command(config, run, sha):
-    return ["podman", "run", "--pull=never", "--name", PREFIX + run.name,
+def container_command(config, run, sha, mode="offline"):
+    command = ["podman", "run", "--pull=never", "--name", PREFIX + run.name,
             "--label", LABEL, "--network=none", "--read-only", "--cap-drop=ALL",
             "--security-opt=no-new-privileges", "--userns=keep-id", "--http-proxy=false",
             "--pids-limit=64", "--memory=768m", "--cpus=1", "--timeout=240",
             "--log-driver=none",
             "--volume", f"{run / 'subject'}:/subject:ro",
             "--volume", f"{run / 'history'}:/history:ro",
-            "--volume", f"{run / 'relay'}:/relay:ro",
             "--tmpfs", "/output:rw,size=64m,mode=1777",
             "--tmpfs", "/tmp:rw,size=32m,mode=1777",
             "--entrypoint", "python3", config["image"], "-I", "-B",
-            "/trusted/validate_capture.py", "--sha", sha]
+            "/trusted/validate_capture.py", "--sha", sha, "--mode", mode]
+    if mode == "live":
+        insert = command.index("--tmpfs")
+        command[insert:insert] = ["--volume", f"{run / 'relay'}:/relay:ro"]
+    return command
 
 
 def cleanup(run):
@@ -381,26 +412,36 @@ def abandoned():
             command(["podman", "rm", "--force", "--time=2", name])
 
 
-def worker(config, run, pr, sha):
-    report = blank_report(sha)
+def worker(config, run, pr, sha, mode="offline"):
+    if mode not in {"offline", "live"}:
+        raise Failure("INVALID_CONFIGURATION")
+    trusted_mode = mode.upper()
+    report = blank_report(sha, mode=trusted_mode)
     try:
-        secret = Path(config["provider_key_file"]).read_text().strip()
         token = Path(config["github_token_file"]).read_text().strip()
-        if not secret or not token:
+        if not token:
             raise Failure("INVALID_CONFIGURATION")
         verify_remote(pr, sha, token)
         run.mkdir(mode=0o700)
         export_source(run, pr, sha, token)
-        snapshot_history(config, run / "history")
+        if mode == "live":
+            secret = Path(config["provider_key_file"]).read_text().strip()
+            if not secret:
+                raise Failure("INVALID_CONFIGURATION")
+            snapshot_history(config, run / "history")
+        else:
+            secret = ""
+            offline_history(run / "history")
         # Even an accidental checked-in key must not enter mounted validation input.
         for directory in (run / "subject", run / "history"):
             for path in directory.rglob("*"):
                 if path.is_file():
                     reject_credentials(path.read_text(errors="replace"), (secret, token))
-        relay = Relay(secret)
-        with serving_relay(run / "relay", relay):
+        relay = Relay(secret) if mode == "live" else None
+        relay_context = serving_relay(run / "relay", relay) if relay else nullcontext()
+        with relay_context:
             environment = {k: os.environ[k] for k in ("HOME", "PATH", "USER", "XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS") if k in os.environ}
-            with subprocess.Popen(container_command(config, run, sha), env=environment,
+            with subprocess.Popen(container_command(config, run, sha, mode), env=environment,
                                   stdout=subprocess.PIPE, stderr=subprocess.DEVNULL) as process:
                 raw = process.stdout.read(32769)
                 if len(raw) > 32768:
@@ -411,24 +452,28 @@ def worker(config, run, pr, sha):
                     raise Failure("TIMEOUT" if status == 137 else "EXECUTION_ERROR")
             value = json.loads(raw)
             reject_credentials(value, (secret, token))
-            report = checked_report(value, sha, secret)
+            report = checked_report(value, sha, (secret, token), trusted_mode)
             # Disregard the untrusted process's claim; only the host sets this flag.
             report["credential_leakage_check"] = None
-            report["api_request_count"] = relay.count
-            if relay.failure:
+            report["provider_request_count"] = relay.count if relay else 0
+            if relay and relay.failure:
                 raise Failure(relay.failure)
+            if relay and report["result"] == "PASS" and (
+                    relay.count != 3 or relay.upstream_endpoints != ["/v4/fixtures", "/v4/markets", "/v4/odds"]):
+                raise Failure("ASSERTION_FAILED")
             report["credential_leakage_check"] = True
     except Exception as error:
         reason = (str(error) if isinstance(error, Failure) or (isinstance(error, ValueError) and str(error) in REASONS) else
                   "TIMEOUT" if isinstance(error, subprocess.TimeoutExpired) else "EXECUTION_ERROR")
         # A provider rejection can terminate the process before it emits a report.
-        if "relay" in locals() and relay.failure and reason != "SECURITY_ERROR":
+        if "relay" in locals() and relay and relay.failure and reason != "SECURITY_ERROR":
             reason = relay.failure
-        report = blank_report(sha, result="BLOCKED" if reason == "HISTORY_UNAVAILABLE" else "FAIL", reason=reason)
+        report = blank_report(sha, result="BLOCKED" if reason == "HISTORY_UNAVAILABLE" and mode == "live" else "FAIL",
+                              reason=reason, mode=trusted_mode)
         if reason == "SECURITY_ERROR":
             report["credential_leakage_check"] = False
-        if "relay" in locals():
-            report["api_request_count"] = relay.count
+        if "relay" in locals() and relay:
+            report["provider_request_count"] = relay.count
     finally:
         try:
             cleanup(run)
@@ -438,7 +483,7 @@ def worker(config, run, pr, sha):
     return report
 
 
-def service_command(run, repository, pr, sha):
+def service_command(run, repository, pr, sha, mode="offline"):
     script = str(TRUSTED / "validate_pr.py")
     return ["systemd-run", "--user", "--quiet", "--wait", "--pipe", "--collect",
             "--unit=" + PREFIX + run.name, "--property=RuntimeMaxSec=300",
@@ -447,7 +492,7 @@ def service_command(run, repository, pr, sha):
             "--property=UMask=0077", "--property=StandardError=null",
             f"--property=ExecStopPost=/usr/bin/python3 -I {script} --cleanup {run.name}",
             "/usr/bin/python3", "-I", script, "--worker", run.name,
-            "--repository", repository, "--pr", str(pr), "--sha", sha]
+            "--repository", repository, "--pr", str(pr), "--sha", sha, "--mode", mode]
 
 
 def main():
@@ -455,12 +500,15 @@ def main():
     parser.add_argument("--repository")
     parser.add_argument("--pr", type=int)
     parser.add_argument("--sha", default="")
+    parser.add_argument("--mode", choices=("offline", "live"), default="offline")
     parser.add_argument("--worker", help=argparse.SUPPRESS)
     parser.add_argument("--cleanup", help=argparse.SUPPRESS)
     args = parser.parse_args()
-    report = blank_report(args.sha if re.fullmatch(r"[0-9a-f]{40}", args.sha) else "")
+    trusted_mode = args.mode.upper()
+    report = blank_report(args.sha if re.fullmatch(r"[0-9a-f]{40}", args.sha) else "",
+                          mode=trusted_mode)
     try:
-        config = configuration()
+        config = configuration(args.mode)
         if args.cleanup:
             cleanup(RUNS / args.cleanup)
             return
@@ -476,17 +524,19 @@ def main():
                 except BlockingIOError:
                     raise Failure("BUSY") from None
                 abandoned()
-                report = worker(config, run, args.pr, args.sha)
+                report = worker(config, run, args.pr, args.sha, args.mode)
         else:
             run = RUNS / uuid.uuid4().hex
             try:
-                raw = command(service_command(run, args.repository, args.pr, args.sha), timeout=360)
-                secret = Path(config["provider_key_file"]).read_text().strip()
-                report = checked_report(json.loads(raw), args.sha, secret)
+                raw = command(service_command(run, args.repository, args.pr, args.sha, args.mode), timeout=360)
+                secret = (Path(config["provider_key_file"]).read_text().strip()
+                          if args.mode == "live" else "")
+                token = Path(config["github_token_file"]).read_text().strip()
+                report = checked_report(json.loads(raw), args.sha, (secret, token), trusted_mode)
             except Exception as error:
                 reason = str(error) if (isinstance(error, Failure) or
                     isinstance(error, ValueError) and str(error) == "SECURITY_ERROR") else "INVALID_REPORT"
-                report = blank_report(args.sha, reason=reason)
+                report = blank_report(args.sha, reason=reason, mode=trusted_mode)
                 if reason == "SECURITY_ERROR":
                     report["credential_leakage_check"] = False
             try:
