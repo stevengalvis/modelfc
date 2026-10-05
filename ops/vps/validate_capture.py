@@ -327,14 +327,104 @@ def evidence_snapshot(state):
             for path in state.rglob("*") if path.is_file()}
 
 
+CORNER_FAMILIES = {"totals-corners": ("MATCH_TOTAL", None),
+                   "teamtotals-corners-team1": ("TEAM_TOTAL", "HOME"),
+                   "teamtotals-corners-team2": ("TEAM_TOTAL", "AWAY")}
+
+
+def observed_price(price, now):
+    decimal = Decimal(str(price["price"]))
+    assert decimal.is_finite() and decimal > 1
+    try:
+        supplied = Decimal(str(price.get("priceAmerican")))
+        assert supplied.is_finite() and supplied == supplied.to_integral_value() and abs(supplied) >= 100
+        american = int(supplied)
+    except (InvalidOperation, AssertionError):
+        american = int(((decimal - 1) * 100 if decimal >= 2 else -100 / (decimal - 1))
+                       .quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+    for field in ("changedAt", "bookmakerChangedAt"):
+        if price.get(field) is not None:
+            changed = datetime.fromisoformat(price[field].replace("Z", "+00:00"))
+            assert changed.utcoffset() is not None and changed <= now
+    return float(decimal), american
+
+
+def observed_corner_contract(payload, metadata, now):
+    """Trusted reference for the complete existing fulltime corner wire contract.
+
+    Intentionally independent of the candidate normalizer: this is an assertion
+    oracle, not another production ingestion path or model implementation.
+    """
+    dictionary = {str(entry["marketId"]): entry for entry in metadata}
+    assert len(dictionary) == len(metadata) and all(type(item["marketId"]) is int for item in metadata)
+    identities, availability = set(), {}
+    for bookmaker in ("draftkings", "fanduel"):
+        state = {"status": "BOOKMAKER_UNAVAILABLE", "families": {}, "issues": []}
+        availability[bookmaker] = state
+        if bookmaker not in payload["bookmakerOdds"]:
+            continue
+        book = payload["bookmakerOdds"][bookmaker]
+        if (book.get("bookmakerIsActive") is not True or book.get("suspended") is not False
+                or book.get("staleOdds") is True or payload.get("staleOdds") is True):
+            state["status"] = "BOOKMAKER_UNUSABLE"
+            continue
+        counts, seen = dict.fromkeys(CORNER_FAMILIES, 0), set()
+        for mid, market in sorted(book["markets"].items()):
+            meta = dictionary.get(mid)
+            if meta is None:
+                state["issues"].append({"market_id": mid, "reason": "MISSING_MARKET_METADATA"})
+                continue
+            family = meta.get("marketType")
+            if (family not in CORNER_FAMILIES or meta.get("period") != "fulltime"
+                    or meta.get("sportId") != 10 or meta.get("playerProp") is not False):
+                continue
+            seen.add(family)
+            line = meta.get("handicap")
+            assert type(line) in (int, float) and math.isfinite(line) and line >= 0 and line * 2 == int(line * 2)
+            directions = {str(item["outcomeId"]): item["outcomeName"] for item in meta["outcomes"]}
+            assert len(directions) == len(meta["outcomes"]) and sorted(directions.values()) == ["Over", "Under"]
+            assert all(type(item["outcomeId"]) is int for item in meta["outcomes"])
+            for oid in sorted(set(market["outcomes"]) | set(directions)):
+                reason, price = None, None
+                if oid not in directions:
+                    reason = "UNKNOWN_OUTCOME"
+                elif oid not in market["outcomes"]:
+                    reason = "OUTCOME_UNAVAILABLE"
+                elif market.get("marketActive") is not True or market.get("staleOdds") is True:
+                    reason = "MARKET_UNUSABLE"
+                else:
+                    price = market["outcomes"][oid]["players"].get("0")
+                    if not isinstance(price, dict) or price.get("active") is not True or price.get("staleOdds") is True:
+                        reason = "PRICE_UNUSABLE"
+                if reason is None:
+                    try:
+                        observed_price(price, now)
+                    except (KeyError, ValueError, TypeError, AttributeError, InvalidOperation, OverflowError, AssertionError):
+                        reason = "PRICE_OR_TIMESTAMP_UNUSABLE"
+                if reason is not None:
+                    state["issues"].append({"market_id": mid, "outcome_id": oid, "reason": reason})
+                else:
+                    identities.add((bookmaker, mid, oid))
+                    counts[family] += 1
+        state["families"] = {family: {
+            "status": "RETURNED" if count else "NO_USABLE_PRICES" if family in seen
+            else "METADATA_INCOMPLETE" if any(item["reason"] == "MISSING_MARKET_METADATA" for item in state["issues"])
+            else "MARKET_UNAVAILABLE", "selection_count": count,
+        } for family, count in counts.items()}
+        state["status"] = "CORNERS_RETURNED" if any(counts.values()) else (
+            "NO_USABLE_CORNERS" if seen else "METADATA_INCOMPLETE" if state["issues"] else "CORNER_MARKETS_UNAVAILABLE")
+    return identities, availability
+
+
 def verify_quote_source(quotes, fixture, payload, metadata, now):
-    """Bind returned normalized fields to observed transport data, not candidate claims."""
+    """Bind complete normalized output to observed data, not candidate claims."""
     assert quotes.fixture == fixture and quotes.competition == "E1"
     assert quotes.retrieved_at == now.isoformat()
+    expected, availability = observed_corner_contract(payload, metadata, now)
+    actual = [(item.bookmaker, item.market_id, item.outcome_id) for item in quotes.selections]
+    assert len(actual) == len(set(actual)) and set(actual) == expected
+    assert quotes.availability == availability
     dictionary = {str(entry["marketId"]): entry for entry in metadata}
-    families = {"totals-corners": ("MATCH_TOTAL", None),
-                "teamtotals-corners-team1": ("TEAM_TOTAL", "HOME"),
-                "teamtotals-corners-team2": ("TEAM_TOTAL", "AWAY")}
     for selection in quotes.selections:
         meta = dictionary[selection.market_id]
         book = payload["bookmakerOdds"][selection.bookmaker]
@@ -346,16 +436,8 @@ def verify_quote_source(quotes, fixture, payload, metadata, now):
         assert meta["period"] == "fulltime" and meta["sportId"] == 10 and meta["playerProp"] is False
         direction = next(item["outcomeName"].upper() for item in meta["outcomes"]
                          if str(item["outcomeId"]) == selection.outcome_id)
-        decimal = Decimal(str(price["price"]))
-        assert decimal.is_finite() and decimal > 1
-        try:
-            supplied = Decimal(str(price.get("priceAmerican")))
-            assert supplied.is_finite() and supplied == supplied.to_integral_value() and abs(supplied) >= 100
-            american = int(supplied)
-        except (InvalidOperation, AssertionError):
-            american = int(((decimal - 1) * 100 if decimal >= 2 else -100 / (decimal - 1))
-                           .quantize(Decimal("1"), rounding=ROUND_HALF_UP))
-        assert (selection.request.market_type, selection.request.team_side) == families[meta["marketType"]]
+        decimal, american = observed_price(price, now)
+        assert (selection.request.market_type, selection.request.team_side) == CORNER_FAMILIES[meta["marketType"]]
         assert (selection.request.side, selection.request.line, selection.request.american_odds) == (
             direction, float(meta["handicap"]), american)
         assert (selection.fixture_id, selection.market_name, selection.decimal_odds,
@@ -545,14 +627,14 @@ def run_capture(sha, snapshot=Path("/history"), output=Path("/output"), mode="OF
         for fixture in fixtures[:1]:
             saw_fixture = True
             quotes = client.quotes(fixture)
-            team_count = sum(s.request.market_type == "TEAM_TOTAL" for s in quotes.selections)
-            if not team_count:
-                continue
             assert calls == ["fixtures", "markets", "odds"]
             assert len(normalized_results) == 1 and quotes is normalized_results[0]
             verify_quote_source(quotes, fixture, opener.responses["odds"], opener.responses["markets"], now)
             if mode == "OFFLINE":
                 assert opener.calls == ["fixtures", "markets", "odds"]
+            team_count = sum(s.request.market_type == "TEAM_TOTAL" for s in quotes.selections)
+            if not team_count:
+                continue
             report.update(competition="E1", fixture_id=fixture["fixtureId"],
                           home_team=fixture["participant1Name"], away_team=fixture["participant2Name"],
                           kickoff_utc=fixture["startTime"])

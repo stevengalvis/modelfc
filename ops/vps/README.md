@@ -106,6 +106,10 @@ must match them; fixtures must originate in that discovery result, and downstrea
 quotes must be the actual normalization result for those market/odds bodies.
 Returned fixture, market, line, direction, price and timestamp fields are also
 checked directly against the observed bodies by trusted assertions.
+The trusted reference also checks the complete eligible selection identity set
+and bookmaker/family/issue availability states, including absent and unusable
+outcomes. This intentionally duplicates the existing wire contract as an
+independent assertion oracle; it does not add a production ingestion path.
 The same binding checks apply to LIVE responses, without additional upstream calls.
 
 The run exercises the candidate's real OddsPapi request construction, parsing and

@@ -407,6 +407,41 @@ class ControllerTests(unittest.TestCase):
 
 
 class OfflineHarnessTests(unittest.TestCase):
+    def test_trusted_reference_matches_complete_partial_and_unusable_wire_states(self):
+        from modelfc.providers import oddspapi
+        for mutation in ("absent", "book-unusable", "market-unusable", "outcome-missing",
+                         "unknown-outcome", "price-unusable", "invalid-price", "future-time",
+                         "missing-metadata", "decimal-fallback"):
+            with self.subTest(mutation=mutation):
+                responses = harness.offline_responses()
+                payload, metadata = responses["odds"], responses["markets"]
+                book = payload["bookmakerOdds"]["fanduel"]
+                market = book["markets"]["101484"]
+                price = market["outcomes"]["101485"]["players"]["0"]
+                if mutation == "absent":
+                    del payload["bookmakerOdds"]["fanduel"]
+                elif mutation == "book-unusable":
+                    book["suspended"] = True
+                elif mutation == "market-unusable":
+                    market["marketActive"] = False
+                elif mutation == "outcome-missing":
+                    del market["outcomes"]["101485"]
+                elif mutation == "unknown-outcome":
+                    market["outcomes"]["unrecognized"] = {"players": {"0": price}}
+                elif mutation == "price-unusable":
+                    price["active"] = False
+                elif mutation == "invalid-price":
+                    price["price"] = "invalid"
+                elif mutation == "future-time":
+                    price["changedAt"] = "2026-09-21T12:00:00Z"
+                elif mutation == "missing-metadata":
+                    metadata = [item for item in metadata if item["marketId"] != 101484]
+                else:
+                    del price["priceAmerican"]
+                quotes = oddspapi.normalize_odds(payload, metadata, responses["fixtures"][0],
+                    retrieved_at=harness.OFFLINE_NOW.isoformat(), now=harness.OFFLINE_NOW)
+                harness.verify_quote_source(quotes, responses["fixtures"][0], payload, metadata, harness.OFFLINE_NOW)
+
     def test_recorded_boundary_requires_exact_path_unique_params_and_order(self):
         from urllib.request import Request
         params = dict(tournamentId="18", statusId="0", language="en", apiKey="",
@@ -741,7 +776,7 @@ class HarnessTests(unittest.TestCase):
             original = getattr(owner, name)
             self.addCleanup(setattr, owner, name, original)
 
-    def execute(self, fixture=True, failure=None, quotes=None, empty_404=False):
+    def execute(self, fixture=True, failure=None, quotes=None, empty_404=False, mutate_odds=None):
         from tests.test_oddspapi import recorded
         class Clock(datetime):
             @staticmethod
@@ -761,6 +796,8 @@ class HarnessTests(unittest.TestCase):
                 value = recorded("odds-markets")
             else:
                 value = recorded("wolves-west-brom-odds")
+                if mutate_odds:
+                    mutate_odds(value)
             return 200, json.dumps(value).encode()
         relay = controller.Relay(SECRET, fetch, Mock())
         connection = Mock()
@@ -874,6 +911,26 @@ class HarnessTests(unittest.TestCase):
                 report = OfflineHarnessTests.run_offline(self) if mode == "OFFLINE" else self.execute()
                 self.assertEqual((report["result"], report["reason"]), ("FAIL", "ASSERTION_FAILED"))
 
+    def test_candidate_cannot_drop_outcomes_or_fabricate_availability(self):
+        from copy import deepcopy
+        original_normalize = self.provider.normalize_odds
+        for mode in ("OFFLINE", "LIVE"):
+            for mutation in ("home-only", "duplicate", "availability"):
+                def incomplete(*args, **kwargs):
+                    quotes = original_normalize(*args, **kwargs)
+                    if mutation == "home-only":
+                        return replace(quotes, selections=tuple(item for item in quotes.selections
+                                                               if item.request.team_side == "HOME"))
+                    if mutation == "duplicate":
+                        return replace(quotes, selections=quotes.selections + (quotes.selections[0],))
+                    availability = deepcopy(quotes.availability)
+                    availability["fanduel"]["status"] = "BOOKMAKER_UNAVAILABLE"
+                    return replace(quotes, availability=availability)
+                with self.subTest(mode=mode, mutation=mutation), \
+                        patch.object(self.provider, "normalize_odds", incomplete):
+                    report = OfflineHarnessTests.run_offline(self) if mode == "OFFLINE" else self.execute()
+                    self.assertEqual((report["result"], report["reason"]), ("FAIL", "ASSERTION_FAILED"))
+
     def test_no_fixture_blocked_not_pass(self):
         report = self.execute(fixture=False)
         self.assertEqual((report["result"], report["reason"]), ("BLOCKED", "NO_ELIGIBLE_FIXTURE"))
@@ -884,9 +941,15 @@ class HarnessTests(unittest.TestCase):
         self.assertEqual(report["provider_request_count"], 1)
 
     def test_no_team_totals_blocked(self):
-        quotes = replace(self.case.quotes, selections=tuple(s for s in self.case.quotes.selections if s.request.market_type == "MATCH_TOTAL"))
-        report = self.execute(quotes=quotes)
+        from tests.test_oddspapi import recorded
+        match_ids = {str(item["marketId"]) for item in recorded("odds-markets")
+                     if item["marketType"] == "totals-corners"}
+        def match_only(payload):
+            for book in payload["bookmakerOdds"].values():
+                book["markets"] = {mid: market for mid, market in book["markets"].items() if mid in match_ids}
+        report = self.execute(mutate_odds=match_only)
         self.assertEqual((report["result"], report["reason"]), ("BLOCKED", "NO_TEAM_TOTALS"))
+        self.assertEqual(report["provider_request_count"], 3)
 
     def test_insufficient_history_blocked(self):
         with patch.object(self.provider, "capture_quotes", side_effect=ValueError("insufficient away history for team")):
