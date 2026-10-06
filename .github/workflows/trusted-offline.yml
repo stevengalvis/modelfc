@@ -36,7 +36,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           RESOLVED_SHA: ${{ steps.resolve.outputs.sha }}
-          VALIDATOR_SSH_KEY: ${{ secrets.MODELFC_VALIDATOR_AUTOMATION_SSH_KEY }}
+          VALIDATOR_SSH_KEY_BASE64: ${{ secrets.MODELFC_VALIDATOR_AUTOMATION_SSH_KEY_BASE64 }}
           VALIDATOR_HOST: ${{ vars.MODELFC_VALIDATOR_HOST }}
           VALIDATOR_HOST_KEY: ${{ vars.MODELFC_VALIDATOR_HOST_KEY }}
           VALIDATOR_KEY_FINGERPRINT: ${{ vars.MODELFC_VALIDATOR_AUTOMATION_KEY_FINGERPRINT }}

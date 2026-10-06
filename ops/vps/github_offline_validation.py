@@ -1,5 +1,7 @@
 """Trusted default-branch GitHub helper. Never checkout/import candidate code."""
 import argparse
+import base64
+import binascii
 import json
 import os
 from pathlib import Path
@@ -17,6 +19,8 @@ CONTEXT = 'Trusted OFFLINE'
 SHA = re.compile(r'[0-9a-f]{40}')
 LOGIN = re.compile(r'[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})')
 DEPLOY_FINGERPRINT = 'SHA256:IpHgSvswGdBNFT6ETalX+2rGwbhdfItuXkDS4JSN1LE'
+MAX_PRIVATE_KEY_BYTES = 16384
+MAX_PRIVATE_KEY_BASE64_BYTES = 4 * ((MAX_PRIVATE_KEY_BYTES + 2) // 3)
 
 
 class Rejected(Exception):
@@ -95,31 +99,44 @@ def resolve(event, api):
 
 def transport(number, sha):
     """One bounded SSH invocation; fixed user/command, pinned host and dedicated key."""
+    encoded_value = os.environ.pop('VALIDATOR_SSH_KEY_BASE64', '')
+    try:
+        encoded = encoded_value.encode('ascii')
+        if not encoded or len(encoded) > MAX_PRIVATE_KEY_BASE64_BYTES:
+            raise Rejected
+        key = base64.b64decode(encoded, validate=True)
+        if (not key or len(key) > MAX_PRIVATE_KEY_BYTES
+                or base64.b64encode(key) != encoded):
+            raise Rejected
+    except (UnicodeEncodeError, binascii.Error, ValueError):
+        raise Rejected from None
     host = os.environ.get('VALIDATOR_HOST', '')
     pin = os.environ.get('VALIDATOR_HOST_KEY', '')
     fingerprint = os.environ.get('VALIDATOR_KEY_FINGERPRINT', '')
-    key = os.environ.pop('VALIDATOR_SSH_KEY', '')
     if (not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9.-]{0,252}', host)
             or not re.fullmatch(r'SHA256:[A-Za-z0-9+/]{43}', fingerprint)
             or fingerprint == DEPLOY_FINGERPRINT
-            or not re.fullmatch(re.escape(host) + r' ssh-ed25519 [A-Za-z0-9+/]+={0,2}', pin)
-            or not key or len(key) > 16384):
+            or not re.fullmatch(re.escape(host) + r' ssh-ed25519 [A-Za-z0-9+/]+={0,2}', pin)):
         raise Rejected
     env = {'PATH': '/usr/bin:/bin', 'LANG': 'C'}
     with tempfile.TemporaryDirectory(prefix='zeno-offline-') as directory:
         root = Path(directory)
         private = root / 'identity'
         private.touch(mode=0o600)
-        private.write_text(key)
+        private.write_bytes(key)
         hosts = root / 'known_hosts'
         hosts.write_text(pin + '\n')
-        public = subprocess.run(['/usr/bin/ssh-keygen', '-y', '-P', '', '-f', str(private)],
-                                stdin=subprocess.DEVNULL, capture_output=True, env=env,
-                                timeout=10, check=True)
-        digest = subprocess.run(['/usr/bin/ssh-keygen', '-lf', '-', '-E', 'sha256'],
-                                input=public.stdout, capture_output=True, env=env,
-                                timeout=10, check=True)
-        if digest.stdout.decode('ascii').split()[1] != fingerprint:
+        try:
+            public = subprocess.run(['/usr/bin/ssh-keygen', '-y', '-P', '', '-f', str(private)],
+                                    stdin=subprocess.DEVNULL, capture_output=True, env=env,
+                                    timeout=10, check=True)
+            digest = subprocess.run(['/usr/bin/ssh-keygen', '-lf', '-', '-E', 'sha256'],
+                                    input=public.stdout, capture_output=True, env=env,
+                                    timeout=10, check=True)
+            actual_fingerprint = digest.stdout.decode('ascii').split()[1]
+        except (OSError, subprocess.SubprocessError, UnicodeError, IndexError):
+            raise Rejected from None
+        if actual_fingerprint != fingerprint:
             raise Rejected
         args = ['/usr/bin/ssh', '-F', '/dev/null', '-T', '-o', 'BatchMode=yes',
                 '-o', 'IdentitiesOnly=yes', '-o', 'StrictHostKeyChecking=yes',
