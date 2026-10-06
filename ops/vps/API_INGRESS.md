@@ -2,11 +2,16 @@
 
 This is a staged installation plan, not authorization to install or activate
 anything. The reviewed public routes are exact `GET /api/v1/predictions`,
-`GET /api/v1/opportunities`, `GET /api/v1/prospective/performance`, and
+`GET /api/v1/opportunities`, `GET /api/v1/prospective/performance`,
+`GET /api/v1/recommendations`, and
 `GET /api/v1/opportunities/<32 lowercase hexadecimal characters>`.
 All other methods and paths, including analysis writes, capabilities, malformed
 detail IDs, trailing slashes and FastAPI's documentation, return 404 at Caddy. CORS is a browser
 policy, not the access-control boundary.
+
+Prospective reads, including recommendations, use `Cache-Control: no-store`.
+Merging an ingress-template change does not install or reload the host Caddyfile;
+that requires a separately authorized host update and verification.
 
 ## 1. Repository review, merge, and code deployment
 
@@ -146,12 +151,12 @@ certificate is not a publicly trusted browser certificate.
 Before a separately authorized ingress update, validate the reviewed Caddyfile
 and test a real-format detail ID through TLS. Verify valid GET reaches the API
 (returning detail or sanitized `OPPORTUNITY_NOT_FOUND`), malformed/uppercase IDs,
-trailing slash and POST/PUT/PATCH/DELETE return Caddy 404, the three existing
-GET routes still work, and analyses, capabilities and docs remain blocked.
+trailing slash and POST/PUT/PATCH/DELETE return Caddy 404, all four prospective
+list/performance GET routes still work, and analyses, capabilities and docs remain blocked.
 Inspect no-store response headers and that the upstream remains loopback-only.
 For rollback, restore the previously verified Caddyfile and reload Caddy only
 under separate host authorization. The detail page will then receive a 404;
-the three existing reads and immutable evidence remain available. A code-only
+the other prospective reads and immutable evidence remain available. A code-only
 rollback must account for an ingress rule still pointing at the old detail route.
 Newly published prospective predictions use schema v2 for frozen historical
 counts. Schema v1 remains readable by the new runner/API, but older releases
@@ -162,8 +167,9 @@ editing evidence or starting an incompatible old runner. Caddy-only rollback
 does not change record compatibility.
 
 Stock Caddy does not ship an HTTP request rate-limiting module. Do not add a
-third-party plugin solely for this deployment. Caddy rejects all but four GET
-routes; Uvicorn limits concurrency and systemd limits CPU, tasks and memory.
+third-party plugin solely for this deployment. The prospective allowlist permits
+only the four exact list/performance GET routes and bounded opportunity-detail
+GET; Uvicorn limits concurrency and systemd limits CPU, tasks and memory.
 Monitor request volume, 503s, memory and response latency. If public load
 demonstrates a need for per-client limits, review a separate stock-compatible
 edge or firewall solution before expanding exposure. There is no claim of
@@ -172,8 +178,8 @@ per-IP rate limiting in this first installation.
 ## 4. DNS and external verification
 
 Separately authorize a DNS A record for the selected name. From outside the
-VPS, verify a trusted certificate and each of the three list/performance JSON GETs
-plus a valid-format opportunity detail GET (a nonexistent ID returns sanitized 404). Verify
+VPS, verify a trusted certificate and each of the four prospective
+list/performance JSON GETs plus a valid-format opportunity detail GET (a nonexistent ID returns sanitized 404). Verify
 `POST /api/v1/analyses`, capabilities, malformed opportunity details, docs, OpenAPI,
 unknown paths, trailing slashes, and non-GET methods fail at Caddy. Test exact
 origin CORS from the production frontend; `OPTIONS` should not be required for

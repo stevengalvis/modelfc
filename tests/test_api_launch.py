@@ -128,7 +128,7 @@ class ApiLaunchTests(unittest.TestCase):
         self.assertIsNotNone(match)
         allowed = set(match.group(1).split())
         self.assertEqual(allowed, {"/api/v1/predictions", "/api/v1/opportunities",
-                                   "/api/v1/prospective/performance"})
+                                   "/api/v1/prospective/performance", "/api/v1/recommendations"})
         for blocked in ("/api/v1/capabilities", "/api/v1/opportunities/id", "/docs",
                         "/redoc", "/openapi.json", "/api/v1/analyses", "/anything"):
             self.assertNotIn(blocked, allowed)
@@ -141,6 +141,59 @@ class ApiLaunchTests(unittest.TestCase):
             self.assertIsNone(matcher.fullmatch(denied))
         self.assertRegex(caddy, r"@opportunity_detail\s*\{\s*path_regexp [^\n]+\s*method GET")
         self.assertRegex(caddy, r"handle @opportunity_detail\s*\{\s*header Cache-Control \"no-store\"\s*reverse_proxy 127.0.0.1:8000")
+
+
+    def test_recommendations_join_exact_get_only_no_store_boundary(self):
+        caddy = (ROOT / "deploy/modelfc-api.Caddyfile").read_text()
+        blocks = dict(re.findall(r"^\s*@(\w+)\s*\{\n(.*?)^\s*}\s*$", caddy, re.MULTILINE | re.DOTALL))
+        self.assertEqual(set(blocks), {"public_read", "opportunity_detail", "team_read", "team_detail"})
+        routes = {}
+        for name, block in blocks.items():
+            # The reviewed matchers have exactly one path rule and GET only.
+            lines = [line.strip() for line in block.splitlines() if line.strip()]
+            self.assertEqual(len(lines), 2)
+            self.assertEqual(lines[1], "method GET")
+            rule, value = lines[0].split(" ", 1)
+            self.assertIn(rule, ("path", "path_regexp"))
+            self.assertNotIn("*", value)
+            routes[name] = (rule, value)
+        self.assertEqual(routes["public_read"], ("path", "/api/v1/predictions /api/v1/opportunities "
+                         "/api/v1/prospective/performance /api/v1/recommendations"))
+        self.assertEqual(routes["opportunity_detail"],
+                         ("path_regexp", "^/api/v1/opportunities/[0-9a-f]{32}$"))
+        self.assertEqual(routes["team_read"], ("path", "/api/v1/teams /api/v1/team-insights"))
+        self.assertEqual(routes["team_detail"],
+                         ("path_regexp", "^/api/v1/teams/[a-z]{1,16}(-[a-z]{1,16})?$"))
+        handles = dict(re.findall(r"handle @(\w+)\s*\{([^}]+)\}", caddy))
+        self.assertEqual(set(handles), set(blocks))
+        self.assertEqual(caddy.count("reverse_proxy"), len(handles))
+        for name, handle in handles.items():
+            expected = ["reverse_proxy 127.0.0.1:8000"]
+            if name in ("public_read", "opportunity_detail"):
+                expected.insert(0, 'header Cache-Control "no-store"')
+            self.assertEqual([line.strip() for line in handle.splitlines() if line.strip()], expected)
+        self.assertRegex(caddy, r"handle\s*\{\s*respond 404\s*\}")
+
+        def allowed(method, path):
+            if method != "GET":
+                return False
+            return any(path in value.split() if rule == "path" else re.fullmatch(value, path)
+                       for rule, value in routes.values())
+
+        permitted = ("/api/v1/recommendations", "/api/v1/predictions", "/api/v1/opportunities",
+                     "/api/v1/prospective/performance", "/api/v1/opportunities/" + "a" * 32)
+        denied = ("/api/v1/recommendations/", "/api/v1/recommendations/anything",
+                  "/api/v1/predictions/", "/api/v1/opportunities/", "/api/v1/prospective/performance/",
+                  "/api/v1/opportunities/" + "A" * 32, "/api/v1/opportunities/" + "a" * 32 + "/",
+                  "/api/v1/analyses", "/api/v1/analyses/" + "a" * 32,
+                  "/api/v1/capabilities", "/docs", "/redoc", "/openapi.json", "/api/v1/unknown")
+        for path in permitted:
+            self.assertTrue(allowed("GET", path), path)
+        for method in ("POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"):
+            for path in permitted + denied:
+                self.assertFalse(allowed(method, path), (method, path))
+        for path in denied:
+            self.assertFalse(allowed("GET", path), path)
 
 
     def test_team_routes_are_bounded_get_only_and_preserve_cache_headers(self):
