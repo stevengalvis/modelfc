@@ -5,6 +5,20 @@ setup and acceptance checks below succeed, use the existing manual OFFLINE runbo
 Normal PR CI does not contact the VPS or call OddsPapi. This workflow does not
 install/update the validator, rebuild its image, or deploy application code.
 
+## Maintainer quick start
+
+For routine use after installation and successful initial end-to-end acceptance:
+
+1. Open or update a same-repository PR.
+2. Wait for normal GitHub CI to pass.
+3. As an authorized maintainer, post a new PR comment containing exactly
+   `/validate-offline`, with no whitespace or arguments.
+4. GitHub resolves the PR's current exact head SHA itself, then runs the trusted
+   installed OFFLINE validator against that SHA.
+
+The **Trusted OFFLINE** commit status applies only to that SHA. If the PR head
+changes, wait for CI and post the command again. This command never triggers LIVE.
+
 ## Maintainer workflow and trust boundary
 
 PR CI → comment `/validate-offline` → trusted default-branch workflow resolves
