@@ -127,6 +127,24 @@ def rank_supported_offers(offers: Iterable[dict[str, Any]]) -> list[dict[str, An
                   ))
 
 
+def best_recommendations(offers: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
+    """One actionable book per logical target, then the existing value ranking.
+
+    Price selection uses the existing decimal-price/tie semantics, restricted
+    to recommendation-eligible offers. Historical/research views are unchanged.
+    """
+    grouped = {}
+    for offer in offers:
+        if offer["recommendation_eligible"]:
+            grouped.setdefault((offer["prediction_id"], offer["target_id"]), []).append(offer)
+    selected = []
+    for candidates in grouped.values():
+        best = _best_price(candidates)
+        selected.append(next(offer for offer in candidates
+                             if offer["bookmaker"] == best["best_bookmaker"]))
+    return rank_supported_offers(selected)
+
+
 def _offer(prediction, observation, selection, decisions):
     target = evaluate_target(prediction, selection, observation["retrieved_at_utc"])
     consistent = _prices_are_consistent(selection)
@@ -166,6 +184,17 @@ def _offer(prediction, observation, selection, decisions):
     }
 
 
+def _validated_as_of(as_of, max_observation_age_seconds):
+    as_of = as_of or datetime.now(timezone.utc)
+    if as_of.tzinfo is None or as_of.utcoffset() is None:
+        raise ValueError("as_of must be timezone-aware")
+    if (isinstance(max_observation_age_seconds, bool)
+            or not isinstance(max_observation_age_seconds, (int, float))
+            or not math.isfinite(max_observation_age_seconds) or max_observation_age_seconds <= 0):
+        raise ValueError("max_observation_age_seconds must be finite and positive")
+    return as_of
+
+
 def get_market_intelligence(
     state_dir: str | Path, prediction_id: str, *, as_of: datetime | None = None,
     max_observation_age_seconds: float = DEFAULT_MAX_OBSERVATION_AGE_SECONDS,
@@ -185,15 +214,25 @@ def get_market_intelligence(
     improvement is the decimal-price difference to the next available book,
     equivalent to additional profit per $1 winning stake; single-book is null.
     """
-    as_of = as_of or datetime.now(timezone.utc)
-    if as_of.tzinfo is None or as_of.utcoffset() is None:
-        raise ValueError("as_of must be timezone-aware")
-    if (isinstance(max_observation_age_seconds, bool)
-            or not isinstance(max_observation_age_seconds, (int, float))
-            or not math.isfinite(max_observation_age_seconds) or max_observation_age_seconds <= 0):
-        raise ValueError("max_observation_age_seconds must be finite and positive")
+    as_of = _validated_as_of(as_of, max_observation_age_seconds)
     prediction = load_prediction(state_dir, prediction_id)
-    observations = prediction_observations(state_dir, prediction)
+    return market_intelligence_from_snapshot(
+        prediction, prediction_observations(state_dir, prediction), as_of=as_of,
+        max_observation_age_seconds=max_observation_age_seconds,
+    )
+
+
+def market_intelligence_from_snapshot(
+    prediction: dict[str, Any], observations: list[dict[str, Any]], *,
+    as_of: datetime | None = None,
+    max_observation_age_seconds: float = DEFAULT_MAX_OBSERVATION_AGE_SECONDS,
+) -> dict[str, Any]:
+    """Derive the existing view from validated, chronologically ordered records.
+
+    The caller owns source validation and snapshot locking. This function never
+    reads or writes storage; all predictions in a response can share one as_of.
+    """
+    as_of = _validated_as_of(as_of, max_observation_age_seconds)
     policy = current_qualification_policy()
     observations = [item for item in observations if _timestamp(item["retrieved_at_utc"]) <= as_of]
     latest = {}
