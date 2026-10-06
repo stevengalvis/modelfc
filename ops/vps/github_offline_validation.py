@@ -27,6 +27,27 @@ class Rejected(Exception):
     pass
 
 
+TRANSPORT_STAGES = frozenset({
+    'KEY_SECRET_MISSING', 'KEY_BASE64_INVALID', 'KEY_SIZE_INVALID',
+    'KEY_PARSE_FAILED', 'KEY_FINGERPRINT_FAILED', 'KEY_FINGERPRINT_MISMATCH',
+    'TRANSPORT_CONFIG_INVALID', 'SSH_PROCESS_FAILED', 'SSH_TIMEOUT',
+    'SSH_NONZERO_EXIT', 'SSH_REPORT_TOO_LARGE',
+})
+
+
+class TransportRejected(Rejected):
+    """Only fixed identifiers may cross the transport diagnostic boundary."""
+    def __init__(self, stage):
+        if type(stage) is not str or stage not in TRANSPORT_STAGES:
+            raise ValueError('Invalid transport stage')
+        self._stage = stage
+        super().__init__(stage)
+
+    @property
+    def stage(self):
+        return self._stage
+
+
 class NoRedirect(HTTPRedirectHandler):
     def redirect_request(self, *args, **kwargs):
         return None
@@ -100,16 +121,22 @@ def resolve(event, api):
 def transport(number, sha):
     """One bounded SSH invocation; fixed user/command, pinned host and dedicated key."""
     encoded_value = os.environ.pop('VALIDATOR_SSH_KEY_BASE64', '')
+    if not encoded_value:
+        raise TransportRejected('KEY_SECRET_MISSING')
     try:
         encoded = encoded_value.encode('ascii')
-        if not encoded or len(encoded) > MAX_PRIVATE_KEY_BASE64_BYTES:
-            raise Rejected
+    except UnicodeEncodeError:
+        raise TransportRejected('KEY_BASE64_INVALID') from None
+    if len(encoded) > MAX_PRIVATE_KEY_BASE64_BYTES:
+        raise TransportRejected('KEY_SIZE_INVALID')
+    try:
         key = base64.b64decode(encoded, validate=True)
-        if (not key or len(key) > MAX_PRIVATE_KEY_BYTES
-                or base64.b64encode(key) != encoded):
-            raise Rejected
-    except (UnicodeEncodeError, binascii.Error, ValueError):
-        raise Rejected from None
+    except (binascii.Error, ValueError):
+        raise TransportRejected('KEY_BASE64_INVALID') from None
+    if not key or len(key) > MAX_PRIVATE_KEY_BYTES:
+        raise TransportRejected('KEY_SIZE_INVALID')
+    if base64.b64encode(key) != encoded:
+        raise TransportRejected('KEY_BASE64_INVALID')
     host = os.environ.get('VALIDATOR_HOST', '')
     pin = os.environ.get('VALIDATOR_HOST_KEY', '')
     fingerprint = os.environ.get('VALIDATOR_KEY_FINGERPRINT', '')
@@ -117,40 +144,53 @@ def transport(number, sha):
             or not re.fullmatch(r'SHA256:[A-Za-z0-9+/]{43}', fingerprint)
             or fingerprint == DEPLOY_FINGERPRINT
             or not re.fullmatch(re.escape(host) + r' ssh-ed25519 [A-Za-z0-9+/]+={0,2}', pin)):
-        raise Rejected
+        raise TransportRejected('TRANSPORT_CONFIG_INVALID')
     env = {'PATH': '/usr/bin:/bin', 'LANG': 'C'}
-    with tempfile.TemporaryDirectory(prefix='zeno-offline-') as directory:
-        root = Path(directory)
-        private = root / 'identity'
-        private.touch(mode=0o600)
-        private.write_bytes(key)
-        hosts = root / 'known_hosts'
-        hosts.write_text(pin + '\n')
-        try:
-            public = subprocess.run(['/usr/bin/ssh-keygen', '-y', '-P', '', '-f', str(private)],
-                                    stdin=subprocess.DEVNULL, capture_output=True, env=env,
-                                    timeout=10, check=True)
-            digest = subprocess.run(['/usr/bin/ssh-keygen', '-lf', '-', '-E', 'sha256'],
-                                    input=public.stdout, capture_output=True, env=env,
-                                    timeout=10, check=True)
-            actual_fingerprint = digest.stdout.decode('ascii').split()[1]
-        except (OSError, subprocess.SubprocessError, UnicodeError, IndexError):
-            raise Rejected from None
-        if actual_fingerprint != fingerprint:
-            raise Rejected
-        args = ['/usr/bin/ssh', '-F', '/dev/null', '-T', '-o', 'BatchMode=yes',
-                '-o', 'IdentitiesOnly=yes', '-o', 'StrictHostKeyChecking=yes',
-                '-o', 'UserKnownHostsFile=' + str(hosts), '-o', 'GlobalKnownHostsFile=/dev/null',
-                '-o', 'ForwardAgent=no', '-o', 'ClearAllForwardings=yes',
-                '-o', 'ConnectTimeout=15', '-o', 'ServerAliveInterval=15',
-                '-o', 'ServerAliveCountMax=4', '-i', str(private),
-                'modelfc-validator-automation@' + host,
-                f'validate-offline {REPOSITORY} {number} {sha}']
-        result = subprocess.run(args, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                                stderr=subprocess.DEVNULL, env=env, timeout=420)
-        if result.returncode or len(result.stdout) > MAX_REPORT:
-            raise Rejected
-        return result.stdout
+    try:
+        with tempfile.TemporaryDirectory(prefix='zeno-offline-') as directory:
+            root = Path(directory)
+            private = root / 'identity'
+            private.touch(mode=0o600)
+            private.write_bytes(key)
+            hosts = root / 'known_hosts'
+            hosts.write_text(pin + '\n')
+            try:
+                public = subprocess.run(['/usr/bin/ssh-keygen', '-y', '-P', '', '-f', str(private)],
+                                        stdin=subprocess.DEVNULL, capture_output=True, env=env,
+                                        timeout=10, check=True)
+            except (OSError, subprocess.SubprocessError):
+                raise TransportRejected('KEY_PARSE_FAILED') from None
+            try:
+                digest = subprocess.run(['/usr/bin/ssh-keygen', '-lf', '-', '-E', 'sha256'],
+                                        input=public.stdout, capture_output=True, env=env,
+                                        timeout=10, check=True)
+                actual_fingerprint = digest.stdout.decode('ascii').split()[1]
+            except (OSError, subprocess.SubprocessError, UnicodeError, IndexError):
+                raise TransportRejected('KEY_FINGERPRINT_FAILED') from None
+            if actual_fingerprint != fingerprint:
+                raise TransportRejected('KEY_FINGERPRINT_MISMATCH')
+            args = ['/usr/bin/ssh', '-F', '/dev/null', '-T', '-o', 'BatchMode=yes',
+                    '-o', 'IdentitiesOnly=yes', '-o', 'StrictHostKeyChecking=yes',
+                    '-o', 'UserKnownHostsFile=' + str(hosts), '-o', 'GlobalKnownHostsFile=/dev/null',
+                    '-o', 'ForwardAgent=no', '-o', 'ClearAllForwardings=yes',
+                    '-o', 'ConnectTimeout=15', '-o', 'ServerAliveInterval=15',
+                    '-o', 'ServerAliveCountMax=4', '-i', str(private),
+                    'modelfc-validator-automation@' + host,
+                    f'validate-offline {REPOSITORY} {number} {sha}']
+            try:
+                result = subprocess.run(args, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                        stderr=subprocess.DEVNULL, env=env, timeout=420)
+            except subprocess.TimeoutExpired:
+                raise TransportRejected('SSH_TIMEOUT') from None
+            except (OSError, subprocess.SubprocessError):
+                raise TransportRejected('SSH_PROCESS_FAILED') from None
+            if result.returncode:
+                raise TransportRejected('SSH_NONZERO_EXIT')
+            if len(result.stdout) > MAX_REPORT:
+                raise TransportRejected('SSH_REPORT_TOO_LARGE')
+            return result.stdout
+    except OSError:
+        raise TransportRejected('TRANSPORT_CONFIG_INVALID') from None
 
 
 def execute(event, expected_sha, api, remote=transport):
@@ -177,6 +217,11 @@ def execute(event, expected_sha, api, remote=transport):
             after = current_head(api.call('/pulls/' + str(number)), number)
             if after != sha:
                 description = 'OFFLINE result for old SHA; new head needs validation'
+    except TransportRejected as error:
+        stage = (error.stage if type(error.stage) is str and error.stage in TRANSPORT_STAGES
+                 else 'TRANSPORT_CONFIG_INVALID')
+        state, description = 'error', 'OFFLINE transport failed: ' + stage
+        print(description)
     except Exception:
         state, description = 'error', 'OFFLINE transport, API or timeout failure'
     api.status(sha, state, description)
