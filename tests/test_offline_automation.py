@@ -254,6 +254,141 @@ class ExecutionTests(unittest.TestCase):
             self.assertNotIn('shell', run.call_args.kwargs)
 
 
+class TransportDiagnosticTests(unittest.TestCase):
+    PRIVATE = b'SYNTHETIC_PRIVATE_KEY_CANARY'
+    PUBLIC = b'SYNTHETIC_DERIVED_PUBLIC_KEY_CANARY'
+    STDERR = b'SYNTHETIC_SUBPROCESS_STDERR_CANARY'
+    RAW_OUTPUT = b'SYNTHETIC_ARBITRARY_OUTPUT_CANARY'
+    FINGERPRINT = 'SHA256:' + 'a' * 43
+
+    def environment(self):
+        return {'VALIDATOR_SSH_KEY_BASE64': base64.b64encode(self.PRIVATE).decode('ascii'),
+                'VALIDATOR_HOST': 'validator.example',
+                'VALIDATOR_HOST_KEY': 'validator.example ssh-ed25519 AAAA',
+                'VALIDATOR_KEY_FINGERPRINT': self.FINGERPRINT}
+
+    def results(self):
+        return [SimpleNamespace(stdout=self.PUBLIC, returncode=0),
+                SimpleNamespace(stdout=('256 ' + self.FINGERPRINT + ' test').encode(), returncode=0),
+                SimpleNamespace(stdout=wire(report()), returncode=0)]
+
+    def assert_failure(self, stage, *, changes=None, results=None, calls=0):
+        environment = self.environment()
+        environment.update(changes or {})
+        if environment.get('VALIDATOR_SSH_KEY_BASE64') is None:
+            environment.pop('VALIDATOR_SSH_KEY_BASE64', None)
+        output, errors = io.StringIO(), io.StringIO()
+        client = api()
+        with patch.dict('os.environ', environment, clear=True), \
+                patch.object(runner.subprocess, 'run', side_effect=results or self.results()) as run, \
+                patch('sys.stdout', output), patch('sys.stderr', errors):
+            self.assertEqual(runner.execute(event(), SHA, client, remote=runner.transport), 'error')
+            self.assertNotIn('VALIDATOR_SSH_KEY_BASE64', os.environ)
+        self.assertEqual(run.call_count, calls)  # No retry or later stage after rejection.
+        description = 'OFFLINE transport failed: ' + stage
+        self.assertEqual(client.status.call_args.args, (SHA, 'error', description))
+        self.assertEqual(output.getvalue(), description + '\n')
+        self.assertEqual(errors.getvalue(), '')
+        self.assertEqual([call.args[0] for call in client.status.call_args_list], [SHA, SHA])
+        self.assertIn(stage, runner.TRANSPORT_STAGES)
+        self.assertLessEqual(len(description), 140)
+        surfaced = output.getvalue() + errors.getvalue() + repr(client.status.call_args_list)
+        for payload in (self.PRIVATE.decode(), self.PUBLIC.decode(), self.STDERR.decode(),
+                        self.RAW_OUTPUT.decode(), environment.get('VALIDATOR_SSH_KEY_BASE64', ''),
+                        environment['VALIDATOR_HOST_KEY'], environment['VALIDATOR_KEY_FINGERPRINT']):
+            if payload:
+                self.assertNotIn(payload, surfaced)
+        return run.call_args_list
+
+    def error(self, command):
+        return subprocess.CalledProcessError(1, command, output=self.RAW_OUTPUT, stderr=self.STDERR)
+
+    def test_missing_secret(self):
+        for value in (None, ''):
+            self.assert_failure('KEY_SECRET_MISSING', changes={'VALIDATOR_SSH_KEY_BASE64': value})
+
+    def test_malformed_and_nonascii_base64(self):
+        for value in ('!PRIVATE_SECRET_CANARY!', 'non-ascii-é'):
+            with self.subTest(value=value):
+                self.assert_failure('KEY_BASE64_INVALID', changes={'VALIDATOR_SSH_KEY_BASE64': value})
+
+    def test_noncanonical_base64(self):
+        self.assert_failure('KEY_BASE64_INVALID', changes={'VALIDATOR_SSH_KEY_BASE64': 'Zh=='})
+
+    def test_key_size_invalid(self):
+        for value in ('A' * (runner.MAX_PRIVATE_KEY_BASE64_BYTES + 1),
+                      base64.b64encode(b'x' * (runner.MAX_PRIVATE_KEY_BYTES + 1)).decode('ascii')):
+            self.assert_failure('KEY_SIZE_INVALID', changes={'VALIDATOR_SSH_KEY_BASE64': value})
+
+    def test_invalid_private_key_material(self):
+        self.assert_failure('KEY_PARSE_FAILED', results=[self.error('ssh-keygen -y')], calls=1)
+
+    def test_fingerprint_derivation_failure(self):
+        self.assert_failure('KEY_FINGERPRINT_FAILED',
+                            results=[self.results()[0], self.error('ssh-keygen -lf')], calls=2)
+        for raw in (b'', b'256 \xff test'):
+            self.assert_failure('KEY_FINGERPRINT_FAILED', results=[self.results()[0],
+                                SimpleNamespace(stdout=raw, returncode=0)], calls=2)
+
+    def test_fingerprint_mismatch(self):
+        self.assert_failure('KEY_FINGERPRINT_MISMATCH', results=[self.results()[0],
+            SimpleNamespace(stdout=('256 SHA256:' + 'b' * 43 + ' test').encode(), returncode=0)], calls=2)
+
+    def test_invalid_transport_configuration(self):
+        for field, value in (('VALIDATOR_HOST', '-unsafe'), ('VALIDATOR_HOST_KEY', 'untrusted'),
+                             ('VALIDATOR_KEY_FINGERPRINT', runner.DEPLOY_FINGERPRINT)):
+            self.assert_failure('TRANSPORT_CONFIG_INVALID', changes={field: value})
+
+    def test_ssh_process_launch_failure(self):
+        self.assert_failure('SSH_PROCESS_FAILED', results=self.results()[:2] +
+                            [OSError(self.STDERR.decode())], calls=3)
+
+    def test_ssh_timeout(self):
+        error = subprocess.TimeoutExpired('secret-bearing-command-canary', 420,
+                                           output=self.RAW_OUTPUT, stderr=self.STDERR)
+        self.assert_failure('SSH_TIMEOUT', results=self.results()[:2] + [error], calls=3)
+
+    def test_ssh_nonzero_exit(self):
+        self.assert_failure('SSH_NONZERO_EXIT', results=self.results()[:2] +
+                            [SimpleNamespace(stdout=self.RAW_OUTPUT, returncode=255)], calls=3)
+
+    def test_oversized_report(self):
+        self.assert_failure('SSH_REPORT_TOO_LARGE', results=self.results()[:2] +
+                            [SimpleNamespace(stdout=self.RAW_OUTPUT * policy.MAX_REPORT, returncode=0)], calls=3)
+
+    def test_successful_transport_and_status_unchanged(self):
+        client, output, errors = api(), io.StringIO(), io.StringIO()
+        with patch.dict('os.environ', self.environment(), clear=True), \
+                patch.object(runner.subprocess, 'run', side_effect=self.results()) as run, \
+                patch('sys.stdout', output), patch('sys.stderr', errors):
+            self.assertEqual(runner.execute(event(), SHA, client, remote=runner.transport), 'success')
+        self.assertEqual(run.call_count, 3)
+        self.assertEqual(run.call_args.args[0][0], '/usr/bin/ssh')
+        self.assertEqual(run.call_args.kwargs['stderr'], subprocess.DEVNULL)
+        self.assertEqual((output.getvalue(), errors.getvalue()), ('', ''))
+        self.assertEqual(client.status.call_args.args,
+                         (SHA, 'success', 'OFFLINE PASS; provider compatibility not tested'))
+
+    def test_stage_is_allowlisted_and_independent_of_exception_arguments(self):
+        for value in ('SECRET_NOT_A_STAGE', '', None, ['SSH_TIMEOUT']):
+            with self.assertRaisesRegex(ValueError, '^Invalid transport stage$'):
+                runner.TransportRejected(value)
+        error = runner.TransportRejected('SSH_TIMEOUT')
+        error.args = (self.STDERR.decode(),)
+        client, output = api(), io.StringIO()
+        with patch('sys.stdout', output):
+            self.assertEqual(runner.execute(event(), SHA, client, Mock(side_effect=error)), 'error')
+        self.assertEqual(output.getvalue(), 'OFFLINE transport failed: SSH_TIMEOUT\n')
+        self.assertNotIn(self.STDERR.decode(), repr(client.status.call_args_list))
+        # Defense in depth: internal corruption must not turn a stage into raw text.
+        error._stage = self.PRIVATE.decode()
+        client, output = api(), io.StringIO()
+        with patch('sys.stdout', output):
+            self.assertEqual(runner.execute(event(), SHA, client, Mock(side_effect=error)), 'error')
+        self.assertEqual(output.getvalue(), 'OFFLINE transport failed: TRANSPORT_CONFIG_INVALID\n')
+        self.assertNotIn(self.PRIVATE.decode(), repr(client.status.call_args_list))
+
+
 @unittest.skipUnless(Path('/usr/bin/ssh-keygen').is_file(), 'requires OpenSSH parser')
 class TransportTests(unittest.TestCase):
     @classmethod
