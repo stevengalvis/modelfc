@@ -97,8 +97,16 @@ no stdin, no shell and discarded stderr. It cannot update/install anything or de
 Root ownership/non-writability of wrapper/controller paths is checked at runtime;
 the controller's existing configuration/security checks remain intact.
 
-The GitHub secret `MODELFC_VALIDATOR_AUTOMATION_SSH_KEY` holds only the dedicated
-unencrypted private key. Repository variables:
+The GitHub Actions secret `MODELFC_VALIDATOR_AUTOMATION_SSH_KEY_BASE64` holds only
+the canonical single-line base64 encoding of the dedicated unencrypted private-key
+**file bytes**. Generate that value on Linux/the VPS without modifying the source key:
+
+```sh
+sudo base64 -w 0 /root/.ssh/modelfc-validator-automation
+```
+
+Do not add a newline or other text to the value. The raw private key must **not** be
+placed in repository variables (or in any other GitHub variable). Repository variables:
 
 - `MODELFC_VALIDATOR_HOST`: DNS name or IPv4 address, port 22.
 - `MODELFC_VALIDATOR_HOST_KEY`: one out-of-band verified line
@@ -161,9 +169,10 @@ key files are deleted when transport returns or fails.
    This exact command specification must not acquire wildcards or extra arguments.
    Check `sudo -l -U modelfc-validator-automation`: no other grants. Ensure sshd's
    inherited environment cannot override the forced command or launch startup code.
-5. Add the dedicated private key as the named Actions secret. Add the three named
-   repository variables, verifying the host key out of band. Never use ssh-keyscan
-   as automatic trust-on-first-use in the workflow.
+5. Add the canonical one-line base64 value of the dedicated private-key file bytes as
+   the named Actions secret. Do not add the raw private key to repository variables.
+   Add the three named repository variables, verifying the host key out of band. Never
+   use ssh-keyscan as automatic trust-on-first-use in the workflow.
 6. Acceptance-test on a disposable/current same-repository PR: authorized comment,
    real installed OFFLINE run, exact SHA pending/success, zero upstream requests,
    complete cleanup. Verify unauthorized/fork/closed/malformed requests cannot run;

@@ -1,10 +1,14 @@
 """Offline automation boundary tests: no SSH, VPS or provider operations."""
+import base64
 import importlib.util
 import io
 import json
+import os
 from pathlib import Path
+import stat
 import subprocess
 import sys
+import tempfile
 from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
@@ -27,6 +31,7 @@ wrapper = load('validate_offline_ssh')
 policy = load('offline_report')
 SHA = 'a' * 40
 NEW_SHA = 'b' * 40
+REAL_RUN = subprocess.run
 
 
 def event():
@@ -230,10 +235,11 @@ class ExecutionTests(unittest.TestCase):
             remote.assert_called_once()
 
     def test_nonzero_ssh_exit_even_with_pass_report_is_error(self):
+        encoded = base64.b64encode(b'synthetic offline test key').decode('ascii')
         with patch.dict('os.environ', {'VALIDATOR_HOST': 'validator.example',
                 'VALIDATOR_HOST_KEY': 'validator.example ssh-ed25519 AAAA',
                 'VALIDATOR_KEY_FINGERPRINT': 'SHA256:' + 'a' * 43,
-                'VALIDATOR_SSH_KEY': 'synthetic offline test key'}), patch.object(
+                'VALIDATOR_SSH_KEY_BASE64': encoded}), patch.object(
                 runner.subprocess, 'run', side_effect=[
                     SimpleNamespace(stdout=b'public', returncode=0),
                     SimpleNamespace(stdout=('256 SHA256:' + 'a' * 43 + ' test').encode(), returncode=0),
@@ -246,6 +252,129 @@ class ExecutionTests(unittest.TestCase):
             self.assertIn('ClearAllForwardings=yes', command)
             self.assertIn('BatchMode=yes', command)
             self.assertNotIn('shell', run.call_args.kwargs)
+
+
+@unittest.skipUnless(Path('/usr/bin/ssh-keygen').is_file(), 'requires OpenSSH parser')
+class TransportTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.fixture = tempfile.TemporaryDirectory(prefix='offline-transport-fixture-')
+        cls.addClassCleanup(cls.fixture.cleanup)
+        key = Path(cls.fixture.name) / 'disposable'
+        REAL_RUN(['/usr/bin/ssh-keygen', '-q', '-t', 'ed25519', '-N', '', '-f', str(key)],
+                 capture_output=True, check=True)
+        cls.private = key.read_bytes()
+        cls.public = key.with_suffix('.pub').read_bytes()
+        cls.encoded = base64.b64encode(cls.private).decode('ascii')
+        cls.fingerprint = REAL_RUN(['/usr/bin/ssh-keygen', '-lf', str(key), '-E', 'sha256'],
+                                   capture_output=True, check=True).stdout.decode().split()[1]
+        if cls.fingerprint == runner.DEPLOY_FINGERPRINT:
+            raise AssertionError('disposable test key unexpectedly matches deployment key')
+
+    def invoke(self, encoded_marker=True, *, fingerprint=None, ssh_status=0):
+        commands = []
+        observed = {}
+        environment = {'VALIDATOR_HOST': 'validator.example',
+                       'VALIDATOR_HOST_KEY': 'validator.example ssh-ed25519 AAAA',
+                       'VALIDATOR_KEY_FINGERPRINT': fingerprint or self.fingerprint}
+        if encoded_marker is not False:
+            environment['VALIDATOR_SSH_KEY_BASE64'] = encoded_marker
+
+        def intercept(args, **kwargs):
+            commands.append(args)
+            if args[0] != '/usr/bin/ssh':
+                return REAL_RUN(args, **kwargs)
+            private = Path(args[args.index('-i') + 1])
+            hosts_argument = next(item for item in args
+                                  if item.startswith('UserKnownHostsFile='))
+            hosts = Path(hosts_argument.split('=', 1)[1])
+            observed.update(private_path=private, hosts_path=hosts,
+                            private_bytes=private.read_bytes(),
+                            private_mode=stat.S_IMODE(private.stat().st_mode),
+                            hosts_text=hosts.read_text(),
+                            secret_present='VALIDATOR_SSH_KEY_BASE64' in os.environ,
+                            ssh_kwargs=kwargs)
+            return SimpleNamespace(stdout=wire(report()), returncode=ssh_status)
+
+        stdout, stderr = io.StringIO(), io.StringIO()
+        value = error = None
+        with patch.dict('os.environ', environment, clear=True), \
+                patch.object(runner.subprocess, 'run', side_effect=intercept), \
+                patch('sys.stdout', stdout), patch('sys.stderr', stderr):
+            try:
+                value = runner.transport(99, SHA)
+            except Exception as caught:  # Assert the sanitized type and timing at each call site.
+                error = caught
+            observed['secret_removed'] = 'VALIDATOR_SSH_KEY_BASE64' not in os.environ
+        observed['output'] = stdout.getvalue() + stderr.getvalue()
+        return value, error, commands, observed
+
+    def assert_rejected_before_ssh(self, encoded_marker, *, fingerprint=None):
+        value, error, commands, observed = self.invoke(encoded_marker, fingerprint=fingerprint)
+        self.assertIsNone(value)
+        self.assertIsInstance(error, runner.Rejected)
+        self.assertFalse(any(command[0] == '/usr/bin/ssh' for command in commands))
+        self.assertTrue(observed['secret_removed'])
+        self.assertEqual(observed['output'], '')
+        if encoded_marker is not False and encoded_marker:
+            self.assertNotIn(str(encoded_marker), str(error) + observed['output'])
+        return commands
+
+    def test_canonical_base64_decodes_bytes_and_reaches_pinned_ssh(self):
+        self.assertEqual(base64.b64encode(base64.b64decode(
+            self.encoded, validate=True)).decode('ascii'), self.encoded)
+        value, error, commands, observed = self.invoke(self.encoded)
+        self.assertIsNone(error)
+        self.assertEqual(value, wire(report()))
+        self.assertEqual(sum(command[0] == '/usr/bin/ssh' for command in commands), 1)
+        self.assertEqual(observed['private_bytes'], self.private)
+        self.assertEqual(observed['private_mode'], 0o600)
+        self.assertEqual(observed['hosts_text'], 'validator.example ssh-ed25519 AAAA\n')
+        self.assertFalse(observed['secret_present'])
+        self.assertTrue(observed['secret_removed'])
+        self.assertEqual(observed['output'], '')
+        command = commands[-1]
+        self.assertEqual(command, ['/usr/bin/ssh', '-F', '/dev/null', '-T', '-o',
+            'BatchMode=yes', '-o', 'IdentitiesOnly=yes', '-o',
+            'StrictHostKeyChecking=yes', '-o',
+            'UserKnownHostsFile=' + str(observed['hosts_path']), '-o',
+            'GlobalKnownHostsFile=/dev/null', '-o', 'ForwardAgent=no', '-o',
+            'ClearAllForwardings=yes', '-o', 'ConnectTimeout=15', '-o',
+            'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=4', '-i',
+            str(observed['private_path']), 'modelfc-validator-automation@validator.example',
+            'validate-offline stevengalvis/modelfc 99 ' + SHA])
+        self.assertFalse(observed['private_path'].exists())
+        self.assertFalse(observed['hosts_path'].exists())
+        for payload in (self.encoded, self.private.decode(), self.public.decode().strip()):
+            self.assertNotIn(payload, observed['output'])
+
+    def test_missing_invalid_nonascii_and_noncanonical_base64_fail_before_ssh(self):
+        for value in (False, '', '!invalid-base64!', 'not-ascii-é', 'Zh==', 'Zm9='):
+            with self.subTest(value=value):
+                self.assert_rejected_before_ssh(value)
+
+    def test_empty_and_oversized_decoded_values_fail_before_ssh(self):
+        for value in (base64.b64encode(b'').decode('ascii'),
+                      base64.b64encode(b'x' * (runner.MAX_PRIVATE_KEY_BYTES + 1)).decode('ascii')):
+            with self.subTest(length=len(value)):
+                self.assert_rejected_before_ssh(value)
+
+    def test_invalid_private_key_material_fails_before_ssh_without_leaking(self):
+        raw = b'invalid private key TEST_PRIVATE_KEY_CANARY'
+        encoded = base64.b64encode(raw).decode('ascii')
+        commands = self.assert_rejected_before_ssh(encoded)
+        self.assertEqual([command[0] for command in commands], ['/usr/bin/ssh-keygen'])
+
+    def test_wrong_fingerprint_fails_before_ssh(self):
+        commands = self.assert_rejected_before_ssh(self.encoded,
+                                                   fingerprint='SHA256:' + 'a' * 43)
+        self.assertEqual([command[0] for command in commands],
+                         ['/usr/bin/ssh-keygen', '/usr/bin/ssh-keygen'])
+
+    def test_production_deployment_fingerprint_remains_rejected(self):
+        commands = self.assert_rejected_before_ssh(
+            self.encoded, fingerprint=runner.DEPLOY_FINGERPRINT)
+        self.assertEqual(commands, [])
 
 
 class WrapperTests(unittest.TestCase):
@@ -297,7 +426,8 @@ class WrapperTests(unittest.TestCase):
         with patch.dict('os.environ', {'VALIDATOR_HOST': 'validator.example',
                 'VALIDATOR_HOST_KEY': 'validator.example ssh-ed25519 AAAA',
                 'VALIDATOR_KEY_FINGERPRINT': runner.DEPLOY_FINGERPRINT,
-                'VALIDATOR_SSH_KEY': 'synthetic offline test key'}), \
+                'VALIDATOR_SSH_KEY_BASE64': base64.b64encode(
+                    b'synthetic offline test key').decode('ascii')}), \
                 patch.object(runner.subprocess, 'run') as run:
             with self.assertRaises(runner.Rejected):
                 runner.transport(99, SHA)
@@ -311,6 +441,10 @@ class WrapperTests(unittest.TestCase):
         self.assertIn('persist-credentials: false', workflow)
         self.assertIn('cancel-in-progress: false', workflow)
         self.assertIn('statuses: write', workflow)
+        self.assertIn('VALIDATOR_SSH_KEY_BASE64: '
+                      '${{ secrets.MODELFC_VALIDATOR_AUTOMATION_SSH_KEY_BASE64 }}', workflow)
+        self.assertNotIn('VALIDATOR_SSH_KEY: ${{ secrets.', workflow)
+        self.assertNotIn('secrets.MODELFC_VALIDATOR_AUTOMATION_SSH_KEY }}', workflow)
         for forbidden in ('pull_request_target', 'issues: write', 'secrets.MODELFC_DEPLOY',
                           'github.event.comment.body }}', 'github.event.pull_request.head', 'validate-live'):
             self.assertNotIn(forbidden, workflow)
