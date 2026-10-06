@@ -105,7 +105,7 @@ function Trend({ team }: { team: TeamSummary | TeamOverview }) {
     </span>
   );
 }
-function useRead<T>(load: (signal: AbortSignal) => Promise<T>) {
+export function useRead<T>(load: (signal: AbortSignal) => Promise<T>) {
   const [data, setData] = useState<T | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -132,7 +132,7 @@ function useRead<T>(load: (signal: AbortSignal) => Promise<T>) {
   }, [load, attempt]);
   return { data, loading, error, retry: () => setAttempt((n) => n + 1) };
 }
-function ReadState({
+export function ReadState({
   loading,
   error,
   retry,
@@ -159,7 +159,7 @@ function ReadState({
     );
   return null;
 }
-function DataDate({ metadata }: { metadata: TeamList["metadata"] }) {
+export function DataDate({ metadata }: { metadata: TeamList["metadata"] }) {
   return (
     <p className="ti-data-date">
       EFL Championship · {season(metadata.season)} · Data through{" "}
@@ -440,6 +440,7 @@ export function TeamsDashboard() {
         <div>
           <p className="eyebrow">Championship corners</p>
           <h1>Team Intelligence</h1>
+          <Link className="text-button" href="/teams/compare">Compare two teams →</Link>
           {state.data ? (
             <DataDate metadata={state.data.metadata} />
           ) : (
@@ -529,6 +530,7 @@ export function TeamProfileDashboard({ teamId }: { teamId: string }) {
       <ReadState {...state} />
       {state.data && team && (
         <>
+          <Link className="text-button" href={`/teams/compare?team=${team.team.team_id}`}>Compare with another team →</Link>
           <PrimaryMetrics team={team} />
           <section className="panel">
             <div className="section-title">

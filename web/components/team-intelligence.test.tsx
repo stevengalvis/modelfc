@@ -16,6 +16,7 @@ describe("Team Intelligence pages",()=>{
   expect(screen.getAllByText("Trend available after 10 matches")).toHaveLength(4);
   expect(screen.getAllByRole("link",{name:"Portsmouth"})[0]).toHaveAttribute("href","/teams/portsmouth");
   expect(container.querySelector(".ti-mobile")).toBeInTheDocument();
+  expect(screen.getByRole("link", {name:"Compare two teams →"})).toHaveAttribute("href", "/teams/compare");
   fireEvent.click(screen.getByRole("button",{name:"Won / match"}));
   expect(container.querySelector('th[aria-sort="descending"]')).toHaveTextContent("Won / match");
  });
@@ -25,6 +26,7 @@ describe("Team Intelligence pages",()=>{
   expect(screen.getByRole("heading",{name:"Home and away"})).toBeInTheDocument();
   expect(screen.getByRole("heading",{name:"Match corner thresholds"})).toBeInTheDocument();
   expect(container.querySelectorAll('.ti-recent article')).toHaveLength(8);
+  expect(screen.getByRole("link", {name:"Compare with another team →"})).toHaveAttribute("href", "/teams/compare?team=portsmouth");
   expect(screen.getByText(/Lowest rate ranks first/)).toBeInTheDocument();
   expect(screen.getByText("Trend available after 10 matches")).toBeInTheDocument();
  });
