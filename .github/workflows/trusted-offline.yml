@@ -1,0 +1,43 @@
+name: Trusted OFFLINE validation
+on:
+  issue_comment:
+    types: [created]
+permissions: {}
+jobs:
+  validate:
+    if: >-
+      github.repository == 'stevengalvis/modelfc' &&
+      github.event.issue.pull_request &&
+      github.event.comment.body == '/validate-offline' &&
+      contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    permissions:
+      contents: read
+      pull-requests: read
+      statuses: write
+    concurrency:
+      group: trusted-offline-pr-${{ github.event.issue.number }}
+      cancel-in-progress: false
+    steps:
+      - name: Checkout trusted default-branch event commit only
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          repository: stevengalvis/modelfc
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Authorize and resolve current PR head
+        id: resolve
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 -I ops/vps/github_offline_validation.py resolve
+      - name: Recheck head and invoke installed OFFLINE validator
+        if: steps.resolve.outputs.ready == 'true'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          RESOLVED_SHA: ${{ steps.resolve.outputs.sha }}
+          VALIDATOR_SSH_KEY: ${{ secrets.MODELFC_VALIDATOR_AUTOMATION_SSH_KEY }}
+          VALIDATOR_HOST: ${{ vars.MODELFC_VALIDATOR_HOST }}
+          VALIDATOR_HOST_KEY: ${{ vars.MODELFC_VALIDATOR_HOST_KEY }}
+          VALIDATOR_KEY_FINGERPRINT: ${{ vars.MODELFC_VALIDATOR_AUTOMATION_KEY_FINGERPRINT }}
+        run: python3 -I ops/vps/github_offline_validation.py execute
