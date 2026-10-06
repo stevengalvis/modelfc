@@ -8,6 +8,9 @@ from typing import Any
 
 from modelfc.corner_analysis_outcomes import load_outcome_chain_readonly
 from modelfc.corner_markets import american_odds_terms
+from modelfc.corner_market_intelligence import (
+    best_recommendations, market_intelligence_from_snapshot,
+)
 from modelfc.corner_opportunities import (
     historical_context,
     opportunity_records,
@@ -137,7 +140,8 @@ def _profit(outcome: str | None, american_odds: int) -> float | None:
 
 
 def _empty_inventory() -> dict[str, Any]:
-    return {"predictions": [], "opportunities": [], "targets": {}, "detail": None}
+    return {"predictions": [], "opportunities": [], "targets": {}, "detail": None,
+            "recommendations": []}
 
 
 def _movement_summary(snapshots: list[dict[str, Any]], decisive: float) -> dict[str, Any]:
@@ -328,6 +332,7 @@ def _contains_prospective_records(state: Path) -> bool:
 
 def _locked_inventory(
     state: Path, *, now: datetime, detail_id: str | None = None,
+    include_recommendations: bool = False,
 ) -> dict[str, Any]:
     _state_directory(state, "predictions")
     targets_dir = _state_directory(state, "prediction-targets")
@@ -351,6 +356,8 @@ def _locked_inventory(
     target_views: dict[str, tuple[dict[str, Any], str | None]] = {}
     detail = None
     seen_opportunities: set[str] = set()
+    recommendation_offers = []
+    recommendation_metadata = {}
     for prediction in predictions:
         try:
             prediction_id = prediction["prediction_id"]
@@ -371,6 +378,16 @@ def _locked_inventory(
             outcome = _outcome_tip(state, prediction)
             settlement_status = _status(kickoff, outcome, now)
             opportunities = opportunity_records(state, prediction_id)
+            if include_recommendations and settlement_status == "UPCOMING":
+                intelligence = market_intelligence_from_snapshot(prediction, observations, as_of=now)
+                recommendation_offers.extend(intelligence["recommendations"])
+                recommendation_metadata[prediction_id] = {
+                    "competition": fixture["competition"], "provider": fixture["provider"],
+                    "provider_fixture_id": fixture["provider_fixture_id"],
+                    "kickoff_utc": fixture["kickoff_at"], "home_team": fixture["home_team"],
+                    "away_team": fixture["away_team"],
+                    "policy_version": intelligence["qualification_policy"]["version"],
+                }
             for target in targets:
                 if (target["prediction_id"] != prediction_id
                         or _time(target["prediction_created_at_utc"]) != created
@@ -493,11 +510,22 @@ def _locked_inventory(
         "opportunities": opportunity_views,
         "targets": target_views,
         "detail": detail,
+        "recommendations": [{
+            **recommendation_metadata[offer["prediction_id"]],
+            **{key: offer[key] for key in (
+                "prediction_id", "target_id", "market_type", "team_side", "team",
+                "direction", "line", "bookmaker", "american_odds", "decimal_odds",
+                "retrieved_at_utc", "observation_age_seconds", "availability_checked_at_utc",
+                "model_probability", "push_probability", "decisive_model_probability",
+                "sportsbook_implied_probability", "no_vig_market_probability",
+                "no_vig_probability_edge", "expected_profit", "qualified",
+            )},
+        } for offer in best_recommendations(recommendation_offers)],
     }
 
 
 def _inventory(state_dir: str | Path, *, now: datetime | None = None,
-               detail_id: str | None = None) -> dict[str, Any]:
+               detail_id: str | None = None, include_recommendations: bool = False) -> dict[str, Any]:
     state = Path(state_dir)
     if not state.exists():
         return _empty_inventory()
@@ -513,7 +541,18 @@ def _inventory(state_dir: str | Path, *, now: datetime | None = None,
     # individual immutable publications use the state lock beneath it.
     with existing_read_lock(runner_lock):
         with ledger_read_lock(state):
-            return _locked_inventory(state, now=now, detail_id=detail_id)
+            return _locked_inventory(state, now=now, detail_id=detail_id,
+                                     include_recommendations=include_recommendations)
+
+
+def read_recommendations(state_dir: str | Path) -> list[dict[str, Any]]:
+    """Current actionable offers from one validated runner/ledger snapshot.
+
+    A single response-wide timestamp and the intelligence engine's default
+    300-second retrieval limit apply. All evidence is validated under the same
+    locks as the existing public prospective views; no targets are published.
+    """
+    return _inventory(state_dir, include_recommendations=True)["recommendations"]
 
 
 def read_predictions(state_dir: str | Path) -> list[dict[str, Any]]:

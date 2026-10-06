@@ -20,7 +20,7 @@ from modelfc.corner_analysis import MAX_MARKETS_PER_ANALYSIS, CornerMarketReques
 from modelfc.corner_analysis_store import analyze_and_store, load_analysis
 from modelfc.corner_capabilities import api_capabilities
 from modelfc.corner_prospective_read import (
-    read_opportunities, read_opportunity, read_performance, read_predictions,
+    read_opportunities, read_opportunity, read_performance, read_predictions, read_recommendations,
 )
 from modelfc.ledger_storage import LedgerError, LedgerStorageUnavailable
 
@@ -28,6 +28,37 @@ from modelfc.ledger_storage import LedgerError, LedgerStorageUnavailable
 class StrictModel(BaseModel):
     class Config:
         extra = "forbid"
+
+
+class RecommendationResponse(StrictModel):
+    prediction_id: str
+    target_id: str
+    competition: str
+    provider: str
+    provider_fixture_id: str
+    kickoff_utc: str
+    home_team: str
+    away_team: str
+    market_type: Literal["TEAM_TOTAL"]
+    team_side: Literal["HOME", "AWAY"]
+    team: str
+    direction: Literal["OVER", "UNDER"]
+    line: float = Field(ge=0, allow_inf_nan=False)
+    bookmaker: str
+    american_odds: int
+    decimal_odds: float = Field(gt=1, allow_inf_nan=False)
+    retrieved_at_utc: str
+    observation_age_seconds: float = Field(ge=0, allow_inf_nan=False)
+    availability_checked_at_utc: str
+    model_probability: float = Field(ge=0, le=1, allow_inf_nan=False)
+    push_probability: float = Field(ge=0, le=1, allow_inf_nan=False)
+    decisive_model_probability: float = Field(ge=0, le=1, allow_inf_nan=False)
+    sportsbook_implied_probability: float = Field(ge=0, le=1, allow_inf_nan=False)
+    no_vig_market_probability: float = Field(ge=0, le=1, allow_inf_nan=False)
+    no_vig_probability_edge: float = Field(ge=-1, le=1, allow_inf_nan=False)
+    expected_profit: float = Field(gt=0, allow_inf_nan=False)
+    qualified: Literal[True]
+    policy_version: str
 
 
 class FixtureRequest(StrictModel):
@@ -498,6 +529,13 @@ def create_app(
     def get_opportunities() -> list[dict[str, Any]]:
         try:
             return read_opportunities(state)
+        except LedgerError as error:
+            return _public_read_error(error)
+
+    @app.get("/api/v1/recommendations", response_model=list[RecommendationResponse])
+    def get_recommendations() -> list[dict[str, Any]]:
+        try:
+            return read_recommendations(state)
         except LedgerError as error:
             return _public_read_error(error)
 
