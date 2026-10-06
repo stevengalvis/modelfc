@@ -1,9 +1,10 @@
 # Trusted VPS PR validator
 
 This package validates an explicitly approved Model FC PR head. It does not deploy,
-merge, schedule jobs, install PR dependencies, or provide GitHub Actions integration.
-The operator approving and invoking an exact SHA is the approval boundary. There
-is deliberately no public listener or interactive SSH setup.
+merge, schedule jobs, or install PR dependencies. Manual operator approval remains
+available; the separately installed GitHub OFFLINE integration adds an authorized
+maintainer comment as its approval boundary. There is no public listener or general
+interactive SSH capability. See the separate automation setup linked below.
 
 The validator has two non-escalating modes:
 
@@ -16,14 +17,13 @@ The validator has two non-escalating modes:
   provider-boundary risk and can legitimately return `BLOCKED` when the selected
   E1 window has no usable fixture/team-total market.
 
-There is no validator forced-SSH request parser in this repository version. The
-installed root-owned CLI is the request boundary. Omitting `--mode` resolves to
-OFFLINE; only the trusted invocation may add `--mode live`. Unknown modes are
-rejected by argument parsing. The selected mode is passed explicitly to the
-transient service and installed container harness; candidate source cannot choose
-it, change it, or trigger escalation/fallback. A future forced-command wrapper
-must preserve these exact semantics and parse only an allowlisted fixed-field
-request.
+The installed root-owned CLI is the manual request boundary. Omitting `--mode`
+resolves to OFFLINE; only an explicit operator invocation may add `--mode live`.
+Unknown modes are rejected by argument parsing. The selected mode is passed
+explicitly to the transient service and installed container harness; candidate
+source cannot choose it, change it, or trigger escalation/fallback. The separate
+`validate_offline_ssh.py` forced-command wrapper accepts only the fixed-field
+OFFLINE request after the dedicated automation setup; it never permits LIVE.
 
 ## Previous live-only behavior
 
@@ -408,3 +408,14 @@ Phase 2 (not implemented) must authenticate the caller and bind approval to the
 SHA. This Phase 1 command deliberately does not claim that merely providing a SHA
 proves GitHub approval. No SSH keys, forced commands, workflows, check posting,
 background daemons, installation or live test runs are added here.
+
+## GitHub OFFLINE trigger source (separate installation required)
+
+The bounded `/validate-offline` integration is documented in
+[TRUSTED_OFFLINE_AUTOMATION.md](../../docs/TRUSTED_OFFLINE_AUTOMATION.md).
+It runs trusted default-branch helper code, verifies current maintainer write
+permission and open same-repository exact head, and posts **Trusted OFFLINE** only
+to that SHA. Its new dedicated forced-command SSH identity permits installed
+OFFLINE validation only. It neither automates LIVE nor installs/updates the
+validator. Follow the separate post-merge account/key/host-pin setup and acceptance
+steps before enabling it or considering a required merge check.
