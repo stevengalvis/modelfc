@@ -2,7 +2,8 @@
 
 This is research evidence, not a betting recommendation system. It has no edge
 threshold or qualification policy and does not feed `/api/v1/recommendations`.
-There is no frontend, collection job, provider request, settlement or CLV process.
+There is no frontend, BTTS-specific collection job or provider request, settlement
+or CLV process. Research piggybacks on existing eligible prospective acquisitions.
 
 ## Frozen reference model
 
@@ -73,9 +74,10 @@ For each complete same-book, same-observation Yes/No pair:
 Positive, zero and negative differences and EV are all retained. No cross-book
 pairing is permitted.
 
-The explicit Python pipeline is `history_from_bytes`/`load_goal_history` →
+The Python pipeline is `history_from_bytes`/`load_goal_history` →
 `freeze_btts_forecast` → supplied normalized `BttsObservation` →
-`record_btts_research`. It is not connected to a production runner or scheduler.
+`record_btts_research`. The existing prospective runner invokes this pipeline
+only when it already has an eligible fixture-odds acquisition.
 
 One append-only `BTTS_RESEARCH_SNAPSHOT` schema-v1 bundle contains:
 
@@ -90,7 +92,7 @@ One append-only `BTTS_RESEARCH_SNAPSHOT` schema-v1 bundle contains:
 Records reside in a separate `btts-research` namespace with its own lock. The
 writer publishes complete bundles atomically without overwriting, is idempotent
 for identical bundles, and rejects changes to a frozen fixture forecast. Reads
-validate hashes, schemas and deterministic replay. V1 is bounded to 1,000 bundles
+validate hashes, schemas and deterministic replay. V1 is bounded to 1,000 snapshot bundles and 1,000 frozen forecast records
 of at most 32 KiB each; reaching the limit fails closed, never deletes evidence.
 Future settlement/evaluation can join these stable fixture/comparison identities
 for Brier score, calibration, disagreement buckets and realized performance.
@@ -122,11 +124,58 @@ ties use bookmaker name, newest retrieval and comparison ID. Each comparison
 retains its own book's no-vig pair. Best-price flags are research/display facts,
 not production-qualified or actionable recommendations.
 
+## Prospective acquisition integration
+
+One existing fixture-odds response and its already-retrieved shared market
+metadata feed corner normalization and the independent pure BTTS normalizer.
+`OddsPapiFixtureSnapshot` is an in-memory adapter object; raw provider payloads
+are not added to corner or BTTS evidence. Provider reservations, request guards,
+endpoints, retries, metadata reuse and capture windows are unchanged. An
+acquisition costs the same number of calls with research enabled: one initial
+metadata request per runner client, plus one odds request per eligible fixture.
+There is no independent BTTS fetch, retry or polling path.
+
+Before requesting odds, the runner calls `BttsResearchAcquisition.prepare`:
+
+1. Read coherent configured history through the existing read-only refresh lock.
+2. Exclude same-date/future results and freeze the unchanged arithmetic forecast.
+3. Atomically publish a hash-validated `BTTS_FROZEN_FORECAST` record as
+   `btts-research/forecast-<fixture-identity-hash>.json` under the research lock.
+4. Acquire the existing provider snapshot, then normalize BTTS from that snapshot.
+5. Validate strict `frozen_at < retrieved_at < kickoff` and append the comparison
+   bundle, including any valid incomplete/unavailable coverage evidence.
+
+Later acquisitions reuse the original forecast without reading refreshed history
+or recomputing rates. Existing V1 comparison bundles also establish the original
+forecast. Forecasts are never backfilled after an earlier corner observation if
+no original BTTS forecast exists. The API validates both file types but exposes
+only comparisons; a forecast-only namespace returns `200 []`.
+
+Absent BTTS, missing dictionary coverage, incomplete pairs and explicit
+unavailability do not stop valid corner processing. Valid coverage snapshots
+are retained, with zero comparisons when no book has a complete usable pair.
+Malformed BTTS, future change timestamps, inaccessible history or research
+storage, and invalid research evidence produce fixed, sanitized research review
+reasons. They produce no fabricated comparison and do not change corner
+qualification, opportunity creation or acquisition cadence. There is no research
+retry. Unexpected programming failures retain the runner's existing fail-closed
+boundary.
+
+Run summaries and schema-v1 receipts gain an optional `btts_research` section.
+Legacy receipts remain valid. Its status is `NOT_APPLICABLE` when no supported
+acquisition is attempted, `OK` when research succeeds, or `REVIEW` when a research
+problem occurs. Fixed reasons are `HISTORY_UNAVAILABLE`, `HISTORY_INSUFFICIENT`,
+`FORECAST_REVIEW`, `SNAPSHOT_REVIEW`, and `STORAGE_OR_INTEGRITY_FAILURE`.
+Counters report newly frozen forecasts, successfully recorded snapshots and
+comparisons (including idempotent processing), and per-book incomplete/unavailable
+coverage. Main corner-run status and provider request counts keep their existing
+meaning; operators must inspect the separate research section as well.
+
 ## Activation boundary
 
-The route is not added to production Caddy. This PR does not install a producer,
-change API account permissions, create host evidence, enable another competition
-or perform any provider/VPS operation. A future collection/host activation task
-must separately review permissions for this new namespace and its existing lock,
-provider spending, and public ingress. Existing corner evidence, qualification,
-market support and recommendations are unchanged.
+The route is not added to production Caddy. This repository integration does not
+change API account permissions, create host evidence, enable another competition,
+change services/timers or perform any provider/VPS operation. A separate host
+activation review is still required for any future public ingress and API-account
+read permissions for this namespace and lock. Existing corner evidence,
+qualification, market support and recommendations remain unchanged.

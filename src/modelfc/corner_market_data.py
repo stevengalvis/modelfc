@@ -4,7 +4,7 @@ Provider provenance is opaque to callers. The existing CornerMarketRequest is
 the normalized selection passed to analysis; provider prices remain attached.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime
 from typing import Protocol
 
@@ -44,6 +44,9 @@ class CornerMarketObservation:
     availability: dict
     # Only the adapter reads this when calling the existing capture path.
     provenance: object
+    # Optional in-memory retrieval shared with independent research consumers.
+    # Never serialized into existing corner evidence.
+    supplied_snapshot: object | None = field(default=None, repr=False, compare=False)
 
     def team_for(self, selection: MarketSelection) -> str | None:
         return (self.fixture.home_team if selection.request.team_side == "HOME" else

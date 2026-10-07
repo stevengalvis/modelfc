@@ -10,6 +10,7 @@ import re
 import stat
 import uuid
 
+from modelfc.btts_prospective import validate_summary as validate_btts_summary
 from modelfc.ledger_storage import write_new_record
 
 
@@ -79,7 +80,7 @@ def validate(record, *, path=None, now=None):
             or record["duration_ms"] != _duration_ms(start, end)):
         raise ReceiptError("invalid receipt completion")
     summary = record["summary"]
-    if (not isinstance(summary, dict) or set(summary) != {"status", "reasons",
+    if (not isinstance(summary, dict) or set(summary) - {"btts_research"} != {"status", "reasons",
             "prospective_budget_remaining", *COUNTERS}
             or summary["status"] not in ("OK", "PARTIAL", "FAIL")
             or not isinstance(summary["reasons"], list)
@@ -89,6 +90,11 @@ def validate(record, *, path=None, now=None):
             or any(reason not in REASONS for reason in summary["reasons"])
             or (summary["status"] == "OK") != (not summary["reasons"])):
         raise ReceiptError("invalid receipt summary")
+    if "btts_research" in summary:
+        try:
+            validate_btts_summary(summary["btts_research"])
+        except ValueError:
+            raise ReceiptError("invalid BTTS research summary") from None
     if (any(type(summary[key]) is not int or summary[key] < 0 for key in COUNTERS)
             or (summary["prospective_budget_remaining"] is not None and
                 (type(summary["prospective_budget_remaining"]) is not int or

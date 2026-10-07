@@ -18,6 +18,7 @@ import tempfile
 import time
 import uuid
 
+from modelfc.btts_prospective import BttsResearchAcquisition, new_summary as new_btts_summary
 from modelfc.corner_analysis_store import load_analysis_capture
 from modelfc.corner_analysis_outcomes import OutcomeError, load_outcome_chain, record_outcome
 from modelfc.corner_shadow import store_shadow_from_capture
@@ -328,6 +329,7 @@ def _inventory(state, config, summary, market_data_type):
 
 def _provider_work(path, control, state, config, summary, captured, market_data_type, release_sha):
     client = guard = None
+    research = BttsResearchAcquisition(state, config, summary["btts_research"], _now)
     def get_client():
         nonlocal client, guard
         if client is None:
@@ -473,8 +475,14 @@ def _provider_work(path, control, state, config, summary, captured, market_data_
                    "state": "RESERVED", "at": _now().isoformat()}
         control["attempts"][fid] = attempt
         _save(path, control)
+        # Freeze independently before acquisition, never after inspecting prices.
+        supports_research = callable(getattr(client, "normalize_btts_snapshot", None))
+        btts_forecast = (research.prepare(fixture, allow_new_forecast=not fixture_observations(
+            state, fixture.provider, fixture.competition, fid)) if supports_research else None)
         try:
             quotes = client.get_corner_markets(fixture)
+            if supports_research:
+                research.observe(client, quotes, btts_forecast)
             observation, observation_created = store_market_observation(state, quotes)
             summary["market_observations_created"] += int(observation_created)
             _shadow_stamp(state, observation, release_sha, summary)
@@ -542,7 +550,7 @@ def run_once(*, state_dir, data_config_path, market_data_type: type[MarketDataSo
         "captures_existing", "captures_skipped_no_team_totals", "captures_with_history_warnings",
         "captures_awaiting_kickoff", "outcomes_created", "outcomes_pending", "outcomes_settled",
         "market_observations_created", "opportunities_created",
-        "review_required", "provider_requests"), 0), "prospective_budget_remaining": None, "reasons": []}
+        "review_required", "provider_requests"), 0), "prospective_budget_remaining": None, "reasons": [], "btts_research": new_btts_summary()}
     control = None
     try:
         with _lock(state_dir) as path:

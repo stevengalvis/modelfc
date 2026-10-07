@@ -184,6 +184,16 @@ def select_fixture(fixtures, fixture_id, now, competition="E1"):
 
 
 @dataclass(frozen=True)
+class OddsPapiFixtureSnapshot:
+    """One supplied retrieval, retained in memory only; no independent fetch path."""
+    fixture: dict
+    payload: dict
+    metadata: list
+    retrieved_at: str
+    competition: str
+
+
+@dataclass(frozen=True)
 class OddsPapiQuotes:
     fixture: dict
     selections: tuple[OddsPapiSelection, ...]
@@ -562,24 +572,39 @@ class OddsPapiMarketData(OddsPapiClient):
         if fixture.provider != self.provider_name or fixture.competition != self.config.code:
             raise MarketDataError("FIXTURE_REVIEW")
         try:
-            if not self._reuse_market_metadata:
-                quotes = self.quotes(fixture.provenance)
-            else:
-                validate_fixture(fixture.provenance, _now(), self.config.code)
-                if self._market_metadata is None:
-                    self._market_metadata = self._get("markets", language="en")
-                payload = self._get(
-                    "odds", fixtureId=fixture.provider_fixture_id,
-                    bookmakers=",".join(BOOKMAKERS), verbosity=3,
-                    language="en", oddsFormat="american",
-                )
-                quotes = normalize_odds(
-                    payload, self._market_metadata, fixture.provenance,
-                    retrieved_at=_now().isoformat(), competition=self.config.code,
-                )
-            return CornerMarketObservation(fixture, quotes.selections, quotes.availability, quotes)
+            validate_fixture(fixture.provenance, _now(), self.config.code)
+            metadata = self._market_metadata if self._reuse_market_metadata else None
+            if metadata is None:
+                metadata = self._get("markets", language="en")
+                if self._reuse_market_metadata:
+                    self._market_metadata = metadata
+            payload = self._get(
+                "odds", fixtureId=fixture.provider_fixture_id,
+                bookmakers=",".join(BOOKMAKERS), verbosity=3,
+                language="en", oddsFormat="american",
+            )
+            retrieved_at = _now().isoformat()
+            quotes = normalize_odds(payload, metadata, fixture.provenance,
+                retrieved_at=retrieved_at, competition=self.config.code)
+            snapshot = OddsPapiFixtureSnapshot(dict(fixture.provenance), payload, metadata,
+                                               retrieved_at, self.config.code)
+            return CornerMarketObservation(fixture, quotes.selections, quotes.availability,
+                                           quotes, snapshot)
         except OddsPapiError:
             raise MarketDataError("FIXTURE_REVIEW") from None
+
+    @staticmethod
+    def normalize_btts_snapshot(observation: CornerMarketObservation, *, historical_names, as_of):
+        """Pure second consumer of the exact supplied odds/metadata, never HTTP."""
+        from modelfc.providers.oddspapi_btts import normalize_btts
+        snapshot = observation.supplied_snapshot
+        if (not isinstance(snapshot, OddsPapiFixtureSnapshot)
+                or snapshot.competition != observation.fixture.competition
+                or snapshot.fixture != observation.fixture.provenance):
+            raise OddsPapiError("INVALID_BTTS_SNAPSHOT")
+        return normalize_btts(snapshot.payload, snapshot.metadata, snapshot.fixture,
+            competition=snapshot.competition, historical_names=historical_names,
+            retrieved_at=snapshot.retrieved_at, as_of=as_of)
 
     def capture(self, observation: CornerMarketObservation, *, data_config_path,
                 state_dir, capture_key: str) -> tuple[dict, bool]:
