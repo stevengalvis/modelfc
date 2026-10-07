@@ -198,16 +198,32 @@ def _write_lock(directory: Path):
             os.close(descriptor)
 
 
-def _read_records(directory: Path) -> tuple[ResearchRecord, ...]:
-    results = []
+class FrozenForecastEvidence(ResearchContract):
+    schema_version: Literal[1] = 1
+    record_type: Literal["BTTS_FROZEN_FORECAST"] = "BTTS_FROZEN_FORECAST"
+    record_id: Digest
+    forecast: BttsForecast
+    record_hash: Digest
+
+    @model_validator(mode="after")
+    def validate_evidence(self):
+        if (self.record_id != digest(_fixture_key(self.forecast.fixture))
+                or self.record_hash != digest(self.model_dump(mode="json", exclude={"record_hash"}))):
+            raise ValueError("INVALID_BTTS_FORECAST_EVIDENCE")
+        return self
+
+
+def _read_inventory(directory: Path):
+    results, forecasts = [], {}
     try:
         paths = sorted(directory.iterdir())
-        if len(paths) > MAX_RECORDS + 1:
+        if len(paths) > 2 * MAX_RECORDS + 1:
             raise LedgerStorageUnavailable("BTTS research exceeds V1 bounds")
         for path in paths:
             if path.name == ".lock":
                 continue
-            if not re.fullmatch(r"[0-9a-f]{64}\.json", path.name):
+            forecast_file = re.fullmatch(r"forecast-([0-9a-f]{64})\.json", path.name)
+            if not forecast_file and not re.fullmatch(r"[0-9a-f]{64}\.json", path.name):
                 raise LedgerError("INVALID_BTTS_RESEARCH_EVIDENCE")
             descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
             with os.fdopen(descriptor, "rb") as stream:
@@ -217,27 +233,82 @@ def _read_records(directory: Path) -> tuple[ResearchRecord, ...]:
                 content = stream.read(MAX_RECORD_BYTES + 1)
                 if len(content) > MAX_RECORD_BYTES:
                     raise LedgerError("INVALID_BTTS_RESEARCH_EVIDENCE")
-            record = ResearchRecord.model_validate_json(content)
-            if path.stem != record.record_id:
-                raise LedgerError("INVALID_BTTS_RESEARCH_EVIDENCE")
-            results.append(record)
+            if forecast_file:
+                record = FrozenForecastEvidence.model_validate_json(content)
+                if forecast_file[1] != record.record_id:
+                    raise LedgerError("INVALID_BTTS_FORECAST_EVIDENCE")
+                forecasts[_fixture_key(record.forecast.fixture)] = record.forecast
+            else:
+                record = ResearchRecord.model_validate_json(content)
+                if path.stem != record.record_id:
+                    raise LedgerError("INVALID_BTTS_RESEARCH_EVIDENCE")
+                results.append(record)
+        if max(len(results), len(forecasts)) > MAX_RECORDS:
+            raise LedgerStorageUnavailable("BTTS research exceeds V1 bounds")
     except (ValidationError, ValueError, OverflowError, TypeError) as error:
         if isinstance(error, LedgerError):
             raise
         raise LedgerError("INVALID_BTTS_RESEARCH_EVIDENCE") from None
     except OSError:
         raise LedgerStorageUnavailable("BTTS research storage unavailable") from None
-    frozen = {}
+    frozen = dict(forecasts)
     for record in results:
         fixture_id = _fixture_key(record.forecast.fixture)
         previous = frozen.setdefault(fixture_id, record.forecast)
         if record.forecast != previous:
             raise LedgerError("BTTS frozen forecast changed for existing fixture")
-    return tuple(results)
+    return tuple(results), frozen, len(forecasts)
+
+
+def _read_records(directory: Path) -> tuple[ResearchRecord, ...]:
+    return _read_inventory(directory)[0]
+
+
+def _sync_research_directory(directory: Path) -> None:
+    # Persist both the record name and a newly created research namespace entry.
+    # Reuse also completes interrupted publication before acquisition or counters.
+    for path in (directory, directory.parent):
+        descriptor = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+
+
+def get_or_freeze_btts_forecast(state_dir: Path, fixture: BttsFixture, factory) -> tuple[BttsForecast, bool]:
+    """Publish the first forecast BEFORE acquisition; reuse it across later runs.
+
+    Existing comparison bundles from V1 are also authoritative frozen forecasts.
+    A factory is evaluated only when no forecast for this provider fixture exists.
+    """
+    directory = _directory(Path(state_dir))
+    ensure_directory(directory, "BTTS research")
+    with _write_lock(directory):
+        _, forecasts, forecast_count = _read_inventory(directory)
+        previous = forecasts.get(_fixture_key(fixture))
+        if previous is not None:
+            if previous.fixture != fixture:
+                raise LedgerError("BTTS frozen fixture identity changed")
+            _sync_research_directory(directory)
+            return previous, False
+        if forecast_count >= MAX_RECORDS:
+            raise LedgerStorageUnavailable("BTTS research exceeds V1 bounds")
+        forecast = factory()
+        if forecast.fixture != fixture:
+            raise LedgerError("BTTS frozen fixture identity mismatch")
+        payload = dict(schema_version=1, record_type="BTTS_FROZEN_FORECAST",
+            record_id=digest(_fixture_key(fixture)), forecast=forecast.model_dump(mode="json"))
+        record = FrozenForecastEvidence.model_validate_json(json.dumps({**payload, "record_hash": digest(payload)}))
+        content = record.model_dump(mode="json")
+        if len(json.dumps(content, indent=2, sort_keys=True).encode()) + 1 > MAX_RECORD_BYTES:
+            raise LedgerError("BTTS research record exceeds V1 bounds")
+        write_new_record(directory / f"forecast-{record.record_id}.json", content)
+        _sync_research_directory(directory)
+        return record.forecast, True
 
 
 def record_btts_research(state_dir: Path, forecast: BttsForecast, observation: BttsObservation) -> ResearchRecord:
-    """Explicit offline Python writer, not called by any runner, provider or GET route.
+    """Append-only writer, never called by a GET route.
 
     Unavailable/incomplete snapshots are recorded too, so later coverage evidence
     can prevent an old pair from appearing current without deleting it.
@@ -246,13 +317,17 @@ def record_btts_research(state_dir: Path, forecast: BttsForecast, observation: B
     directory = _directory(Path(state_dir))
     ensure_directory(directory, "BTTS research")
     with _write_lock(directory):
-        records = _read_records(directory)
+        records, forecasts, _ = _read_inventory(directory)
+        saved_forecast = forecasts.get(_fixture_key(forecast.fixture))
+        if saved_forecast is not None and saved_forecast != forecast:
+            raise LedgerError("BTTS frozen forecast changed for existing fixture")
         for previous in records:
             if _fixture_key(previous.forecast.fixture) == _fixture_key(forecast.fixture) and previous.forecast != forecast:
                 raise LedgerError("BTTS frozen forecast changed for existing fixture")
             if previous.record_id == record.record_id:
                 if previous != record:
                     raise LedgerError("INVALID_BTTS_RESEARCH_EVIDENCE")
+                _sync_research_directory(directory)
                 return previous
         if len(records) >= MAX_RECORDS:
             raise LedgerStorageUnavailable("BTTS research exceeds V1 bounds")
@@ -260,6 +335,7 @@ def record_btts_research(state_dir: Path, forecast: BttsForecast, observation: B
         if len(json.dumps(payload, indent=2, sort_keys=True).encode()) + 1 > MAX_RECORD_BYTES:
             raise LedgerError("BTTS research record exceeds V1 bounds")
         write_new_record(directory / f"{record.record_id}.json", payload)
+        _sync_research_directory(directory)
     return record
 
 
