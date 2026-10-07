@@ -171,6 +171,9 @@ class BttsResearchAclTests(unittest.TestCase):
                          and cross_uid_available(),
                          "cross-UID ACL acceptance requires mapped UIDs, root and libacl")
     def test_real_api_uid_can_read_and_share_lock_but_cannot_write(self):
+        # TemporaryDirectory is 0700; allow traversal only so the dropped UID
+        # reaches the production-like state ACL without listing the parent.
+        self.state.parent.chmod(0o711)
         acl = ctypes.CDLL(ctypes.util.find_library("acl"), use_errno=True)
         acl.acl_from_text.argtypes = [ctypes.c_char_p]
         acl.acl_from_text.restype = ctypes.c_void_p
