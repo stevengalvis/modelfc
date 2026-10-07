@@ -122,7 +122,7 @@ class BttsResearchBootstrapTests(unittest.TestCase):
             os.close(descriptor)
         self.assertFalse((self.state / bootstrap.NAMESPACE).exists())
 
-    def test_creation_failure_removes_only_objects_created_by_this_attempt(self):
+    def test_creation_failure_leaves_only_private_recoverable_namespace(self):
         original = os.open
         def fail_lock(path, flags, *args, **kwargs):
             if path == bootstrap.BTTS_LOCK:
@@ -132,8 +132,29 @@ class BttsResearchBootstrapTests(unittest.TestCase):
             with self.assertRaisesRegex(bootstrap.BootstrapError, "BTTS bootstrap failed") as caught:
                 self.invoke()
         self.assertNotIn("private disk detail", str(caught.exception))
-        self.assertFalse((self.state / bootstrap.NAMESPACE).exists())
+        directory = self.state / bootstrap.NAMESPACE
+        self.assertEqual(list(directory.iterdir()), [])
+        self.assertEqual(stat.S_IMODE(directory.stat().st_mode), 0o700)
         self.assertTrue(self.runner_lock.is_file())
+        self.assertEqual(self.invoke(), "CREATED")
+
+    def test_failure_after_lock_publication_preserves_one_lock_inode_for_retry(self):
+        original = os.fsync
+        failed = False
+        def fail_lock_sync(descriptor):
+            nonlocal failed
+            info = os.fstat(descriptor)
+            if stat.S_ISREG(info.st_mode) and not failed:
+                failed = True
+                raise OSError(errno.EIO, "private sync detail")
+            return original(descriptor)
+        with patch.object(bootstrap.os, "fsync", side_effect=fail_lock_sync):
+            with self.assertRaises(bootstrap.BootstrapError):
+                self.invoke()
+        lock = self.state / bootstrap.NAMESPACE / bootstrap.BTTS_LOCK
+        inode = lock.stat().st_ino
+        self.assertEqual(self.invoke(), "READY")
+        self.assertEqual(lock.stat().st_ino, inode)
 
     def test_cli_rejects_arguments_and_wrong_identity_without_mutation(self):
         self.assertEqual(bootstrap.main(["--apply", "--state", str(self.state)]), 2)

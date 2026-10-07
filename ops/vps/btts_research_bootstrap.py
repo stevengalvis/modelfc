@@ -212,21 +212,10 @@ def bootstrap_empty_namespace(state: Path, *, runtime_uid: int, apply: bool,
     except BootstrapRequired:
         raise
     except (BootstrapError, OSError):
-        # Remove only objects created by this invocation and only while their
-        # exact inodes remain named.  Unexpected replacements are never removed.
-        if namespace_descriptor is not None and lock_created and lock_info is not None:
-            try:
-                if _same_object(namespace_descriptor, BTTS_LOCK, lock_info):
-                    os.unlink(BTTS_LOCK, dir_fd=namespace_descriptor)
-            except OSError:
-                pass
-        if state_descriptor is not None and namespace_created and namespace_info is not None:
-            try:
-                if _same_object(state_descriptor, NAMESPACE, namespace_info):
-                    os.rmdir(NAMESPACE, dir_fd=state_descriptor)
-                    os.fsync(state_descriptor)
-            except OSError:
-                pass
+        # Publication is monotonic.  Another runtime process may already have
+        # opened a newly named lock and be waiting for this flock; unlinking it
+        # could split serialization across the old and a replacement inode.
+        # A reviewed retry validates and reuses an exact private partial state.
         raise BootstrapError("BTTS bootstrap failed") from None
     finally:
         for descriptor in reversed(descriptors):
@@ -248,6 +237,7 @@ def main(argv: list[str] | None = None) -> int:
                 or os.getegid() != account.pw_gid
                 or set(os.getgroups()) - {account.pw_gid}):
             raise BootstrapError("invalid activation identity")
+        os.umask(0o077)
         result = bootstrap_empty_namespace(STATE, runtime_uid=runtime_uid, apply=arguments == ["--apply"])
     except BootstrapRequired:
         print(json.dumps({"status": "REQUIRED", "reason": "EMPTY_NAMESPACE"}, sort_keys=True))

@@ -62,14 +62,17 @@ namespace and state root. Repeating it before migration returns `READY` without
 changing either inode. An exact empty directory left by an interrupted attempt
 may receive its missing lock; a symlink, unknown entry, malformed lock, active
 writer, unexpected owner/mode or pre-existing namespace ACL fails closed.
+Once a private namespace or lock name is created it is never unlinked on failure:
+another runtime process may already hold or await that inode. A reviewed retry
+validates and reuses the same private object, preventing split-lock serialization.
 
 After `--apply`, record both new inode identities and require the original parent
 and state ACL bytes, all pre-existing evidence hashes and all corner evidence
 permissions to be unchanged. Require no named API ACL on the new directory or
 lock. Then proceed to the inventory and ACL migration below. If bootstrap or any
 verification fails, keep the timer stopped and do not migrate ACLs. A successfully
-created but still-private empty namespace may remain for an idempotent reviewed
-retry; never delete it after a record exists or an identity differs. If later ACL
+created but still-private empty namespace and lock remain for an idempotent reviewed
+retry; never delete them after publication. If later ACL
 migration fails, restore only ACLs proven changed by its manifest and keep the
 private namespace and lock. Do not rerun bootstrap after migration has added the
 reviewed API ACLs.
