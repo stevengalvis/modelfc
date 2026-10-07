@@ -181,13 +181,19 @@ def _grant_evidence_read(target: Path, state: Path, lock_descriptor: int | None,
     """
     if os.environ.get("MODELFC_EVIDENCE_ACL_USER") != "modelfc-api":
         return
-    allowed = {"analyses", "analysis-outcomes", "predictions", "prediction-targets",
-               "market-observations", "opportunities"}
+    public_ledgers = {"analyses", "analysis-outcomes", "predictions", "prediction-targets",
+                      "market-observations", "opportunities"}
     try:
         relative = target.relative_to(state)
-        if (len(relative.parts) not in (2, 3) or relative.parts[0] not in allowed
-                or target.suffix != ".json"):
+        is_btts = (len(relative.parts) == 2 and relative.parts[0] == "btts-research"
+                   and re.fullmatch(r"(?:forecast-)?[0-9a-f]{64}\.json",
+                                    relative.parts[1]) is not None)
+        is_public_ledger = (len(relative.parts) in (2, 3)
+                            and relative.parts[0] in public_ledgers
+                            and target.suffix == ".json")
+        if not (is_btts or is_public_ledger):
             raise ValueError("invalid public evidence location")
+        selected_lock = state / "btts-research" / ".lock" if is_btts else state / ".lock"
         uid = pwd.getpwnam("modelfc-api").pw_uid
         directories = [state, *(state.joinpath(*relative.parts[:index])
                                for index in range(1, len(relative.parts)))]
@@ -214,11 +220,10 @@ def _grant_evidence_read(target: Path, state: Path, lock_descriptor: int | None,
                 os.close(descriptor)
         # The writer created this real lock on entering ledger_lock. The API
         # needs its read ACL before any new evidence is made visible.
-        lock_path = state / ".lock"
         if lock_descriptor is None:
             raise ValueError("public evidence requires the held state lock")
         lock_info = os.fstat(lock_descriptor)
-        current_lock = lock_path.lstat()
+        current_lock = selected_lock.lstat()
         if (not stat.S_ISREG(lock_info.st_mode) or lock_info.st_uid != os.getuid()
                 or lock_info.st_nlink != 1 or lock_info.st_size != 0
                 or (current_lock.st_dev, current_lock.st_ino) != (lock_info.st_dev, lock_info.st_ino)
@@ -233,7 +238,7 @@ def _grant_evidence_read(target: Path, state: Path, lock_descriptor: int | None,
                        check=True, timeout=10, env={"PATH": "/usr/bin:/bin"},
                        pass_fds=(lock_descriptor,), stdout=subprocess.DEVNULL,
                        stderr=subprocess.DEVNULL)
-        current_lock = lock_path.lstat()
+        current_lock = selected_lock.lstat()
         if ((current_lock.st_dev, current_lock.st_ino) != (lock_info.st_dev, lock_info.st_ino)
                 or not stat.S_ISREG(current_lock.st_mode)
                 or current_lock.st_uid != os.getuid() or current_lock.st_nlink != 1

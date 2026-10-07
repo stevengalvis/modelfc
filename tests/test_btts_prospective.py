@@ -8,8 +8,10 @@ from dataclasses import replace
 from datetime import date, timedelta
 import json
 import os
+from pathlib import Path
 import stat
 import socket
+import subprocess
 import unittest
 from unittest.mock import patch
 import uuid
@@ -183,6 +185,32 @@ class BttsProspectiveTests(unittest.TestCase):
             self.assertEqual(record_btts_research(self.pilot.state, record.forecast, record.observation), record)
             sync.assert_called_once_with(directory)
         self.assertEqual(before, (path.stat().st_ino, path.stat().st_mtime_ns, path.read_bytes()))
+
+    def test_btts_acl_failure_is_sanitized_without_losing_valid_corner_evidence(self):
+        btts_directory_acls = 0
+        original_run = subprocess.run
+        def acl(command, **kwargs):
+            nonlocal btts_directory_acls
+            if command[0] != "/usr/bin/setfacl":
+                return original_run(command, **kwargs)
+            if (command[2].endswith("r-x")
+                    and Path(os.readlink(command[-1])).name == "btts-research"):
+                btts_directory_acls += 1
+                if btts_directory_acls == 2:
+                    raise OSError("private BTTS ACL detail")
+
+        with patch.dict(os.environ, {"MODELFC_EVIDENCE_ACL_USER": "modelfc-api"}), \
+                patch("modelfc.ledger_storage.pwd.getpwnam",
+                      return_value=type("User", (), {"pw_uid": 10001})()), \
+                patch("modelfc.ledger_storage.subprocess.run", side_effect=acl):
+            result = self.run_once()
+        self.assert_corner_success(result)
+        self.assertEqual(result["btts_research"]["status"], "REVIEW")
+        self.assertEqual(result["btts_research"]["snapshots_recorded"], 0)
+        self.assertEqual(result["btts_research"]["comparisons_recorded"], 0)
+        self.assertIn("STORAGE_OR_INTEGRITY_FAILURE", result["btts_research"]["reasons"])
+        self.assertNotIn("private BTTS ACL detail", json.dumps(result))
+        self.assertEqual(self.records(), [])
 
     def test_snapshot_directories_synced_before_success_counters(self):
         from modelfc import btts_prospective, btts_research
