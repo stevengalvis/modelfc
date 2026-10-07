@@ -184,8 +184,8 @@ select:disabled { color: var(--subtle); }
 @media (max-width: 820px) {
   .site-header { grid-template-columns: auto 1fr; height: auto; min-height: 64px; padding: 12px 18px 0; }
   .brand small { display: none; }
-  .site-header nav { grid-column: 1 / -1; order: 3; justify-content: space-between; height: 44px; margin-top: 4px; }
-  .site-header nav a { padding: 0 8px; }
+  .site-header nav { grid-column: 1 / -1; order: 3; justify-content: flex-start; flex-wrap: wrap; gap: 0 14px; height: auto; margin-top: 4px; }
+  .site-header nav a { padding: 0; min-height: 44px; }
   .workspace { padding-top: 30px; }
   .page-heading, .results-heading { align-items: start; flex-direction: column; }
   .data-chip { display: none; }
@@ -422,3 +422,19 @@ label { font-size: 11px; }
   .ti-recent article { grid-template-columns: 1fr 1fr; gap: 10px; } .ti-recent span { grid-column: 1 / -1; text-align: left; }
 }
 @media (max-width: 560px) { .ti-primary article { padding: 18px 14px; } .ti-primary strong { font-size: 27px; } .ti-thresholds { gap: 10px; padding-inline: 15px; } .ti-pattern-grid, .ti-split, .ti-recent { padding-inline: 15px; } }
+
+.recommendations-workspace { max-width: 1060px; }
+.recommendation-list { list-style: none; padding: 0; margin: 28px 0 0; display: grid; gap: 18px; }
+.recommendation-card { padding: 24px; min-width: 0; }
+.recommendation-card h2 { margin: 20px 0 0; font-size: clamp(20px, 3vw, 28px); text-transform: uppercase; overflow-wrap: anywhere; }
+.recommendation-offer { margin-top: 18px; }
+.recommendation-offer p { margin: 0; font-size: 20px; font-weight: 650; }
+.recommendation-offer strong { color: var(--cyan); margin-left: 12px; font: 700 28px var(--font-mono); }
+.recommendation-offer span { color: var(--muted); font-size: 12px; }
+.recommendation-metrics { border-top: 1px solid var(--line); padding-top: 20px; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.recommendation-freshness { border-top: 1px solid var(--line); padding-top: 14px; margin-top: 20px; }
+.recommendation-freshness p { margin: 4px 0; }
+@media (max-width: 560px) {
+  .recommendation-card { padding: 18px 15px; }
+  .recommendation-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}

@@ -260,3 +260,7 @@ export function decodePerformance(value: unknown): ProspectivePerformance {
   ) mismatch("performance");
   return value as unknown as ProspectivePerformance;
 }
+
+// Shared wire-contract primitives; recommendation policy remains backend-owned.
+export { record, nonempty, finite, probability, timestamp, cornerLine, profit,
+  DECIMAL_AMERICAN_ODDS_TOLERANCE };
