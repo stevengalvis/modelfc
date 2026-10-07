@@ -200,8 +200,7 @@ class BttsProspectiveTests(unittest.TestCase):
                     raise OSError("private BTTS ACL detail")
 
         with patch.dict(os.environ, {"MODELFC_EVIDENCE_ACL_USER": "modelfc-api"}), \
-                patch("modelfc.ledger_storage.pwd.getpwnam",
-                      return_value=type("User", (), {"pw_uid": 10001})()), \
+                patch("modelfc.ledger_storage._api_reader_uid", return_value=10001), \
                 patch("modelfc.ledger_storage.subprocess.run", side_effect=acl):
             result = self.run_once()
         self.assert_corner_success(result)

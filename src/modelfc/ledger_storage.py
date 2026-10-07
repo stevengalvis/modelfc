@@ -32,6 +32,11 @@ def utc_timestamp() -> str:
 DEPLOYMENT_RELEASES = Path("/srv/modelfc/releases")
 
 
+def _api_reader_uid() -> int:
+    """Resolve only the dedicated evidence reader account."""
+    return pwd.getpwnam("modelfc-api").pw_uid
+
+
 def _deployed_commit_sha(repository: Path) -> str | None:
     """Read controller metadata only from protected permanent releases.
 
@@ -194,7 +199,7 @@ def _grant_evidence_read(target: Path, state: Path, lock_descriptor: int | None,
         if not (is_btts or is_public_ledger):
             raise ValueError("invalid public evidence location")
         selected_lock = state / "btts-research" / ".lock" if is_btts else state / ".lock"
-        uid = pwd.getpwnam("modelfc-api").pw_uid
+        uid = _api_reader_uid()
         directories = [state, *(state.joinpath(*relative.parts[:index])
                                for index in range(1, len(relative.parts)))]
         for index, directory in enumerate(directories):

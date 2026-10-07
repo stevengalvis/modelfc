@@ -232,7 +232,9 @@ print(json.dumps(result,sort_keys=True))'''
         caddy = (ROOT / "deploy/modelfc-api.Caddyfile").read_text()
         for required in ("modelfc-runtime", "modelfc-api", "MODELFC_EVIDENCE_ACL_USER",
                          "forecast-<64 lowercase hex>.json", "Do not use `-R`",
-                         "Caddy still denies the route", "next normal scheduled run"):
+                         "Caddy still denies the route", "next normal scheduled run",
+                         "btts_research_bootstrap.py", "--clear-groups", "O_NOFOLLOW",
+                         "never invokes `setfacl`", "Do not rerun bootstrap after migration"):
             self.assertIn(required, procedure)
         self.assertIn("ProtectSystem=strict", service)
         self.assertIn("ReadOnlyPaths=/srv/modelfc /etc/modelfc /var/lib/modelfc/state", service)
