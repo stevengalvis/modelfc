@@ -105,6 +105,25 @@ class BttsResearchAclTests(unittest.TestCase):
         self.assertEqual(stat.S_IMODE(
             (self.directory / f"{result.record_id}.json").stat().st_mode), 0o600)
 
+    def test_record_and_lock_acl_metadata_are_synced_before_publication(self):
+        synced = []
+        original_fsync = os.fsync
+        def fsync(descriptor):
+            info = os.fstat(descriptor)
+            synced.append((stat.S_IFMT(info.st_mode), info.st_nlink,
+                           Path(os.readlink(f"/proc/self/fd/{descriptor}"))))
+            return original_fsync(descriptor)
+
+        environment, account, command = self.publication()
+        with environment, account, command, \
+                patch("modelfc.ledger_storage.os.fsync", side_effect=fsync):
+            get_or_freeze_btts_forecast(self.state, fixture(), lambda: forecast())
+        self.assertEqual(synced[0][1], 0)  # serialized unnamed inode
+        self.assertEqual(synced[1][1:], (1, self.directory / ".lock"))
+        self.assertEqual(synced[2][1], 0)  # same unnamed inode after its ACL
+        self.assertTrue(stat.S_ISDIR(synced[3][0]))
+        self.assertTrue(stat.S_ISDIR(synced[4][0]))
+
     def test_wrong_held_lock_and_acl_failure_never_publish(self):
         from modelfc.ledger_storage import write_new_record
 

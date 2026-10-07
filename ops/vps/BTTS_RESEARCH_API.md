@@ -92,9 +92,12 @@ provide future-publication evidence; do not trigger a manual run.
 
 Rollback if inventory validation, any ACL operation, cross-UID read/write denial,
 disposable publication, API validation, hash comparison, or private-boundary
-check fails. Keep the timer stopped, remove only the named `modelfc-api` ACL from
-the exact manifest records, BTTS lock/directory and state traversal entry, then
-verify original hashes/inodes/modes and private read denial. Restore the prior
+check fails. Keep the timer stopped and restore every ACL from the pre-flight
+manifest. Remove the named `modelfc-api` ACL only from the exact BTTS records,
+lock or directory where the manifest proves this activation added it. Preserve
+the pre-existing state-root traversal ACL required by corner evidence; never
+remove or narrow that shared entry during BTTS rollback. Then verify original
+hashes/inodes/modes and private read denial. Restore the prior
 root-owned launcher only if it was changed during a separately reviewed install.
 Do not delete or rewrite BTTS evidence.
 

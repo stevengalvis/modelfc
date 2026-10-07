@@ -244,6 +244,9 @@ def _grant_evidence_read(target: Path, state: Path, lock_descriptor: int | None,
                 or current_lock.st_uid != os.getuid() or current_lock.st_nlink != 1
                 or current_lock.st_size != 0):
             raise ValueError("public evidence lock changed during ACL setup")
+        # Persist the named-user ACL before any evidence depending on this lock
+        # becomes durable or visible.
+        os.fsync(lock_descriptor)
         info = os.fstat(temporary_descriptor)
         if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid()
                 or info.st_nlink != 0):
@@ -258,6 +261,9 @@ def _grant_evidence_read(target: Path, state: Path, lock_descriptor: int | None,
                 or not stat.S_ISREG(current.st_mode) or current.st_uid != os.getuid()
                 or current.st_nlink != 0):
             raise ValueError("public evidence file changed during ACL setup")
+        # setfacl changes inode metadata after the serialized bytes were synced.
+        # Persist both together before linking the immutable inode into place.
+        os.fsync(temporary_descriptor)
     except (ValueError, KeyError, OSError, subprocess.SubprocessError):
         raise LedgerStorageUnavailable("public evidence read ACL failed; record not published") from None
 
