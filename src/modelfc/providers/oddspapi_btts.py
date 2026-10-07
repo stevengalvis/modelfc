@@ -101,6 +101,8 @@ def normalize_btts(payload, metadata, fixture, *, competition, historical_names,
                                     american_odds=_selection_american(price), decimal_odds=float(price["price"]),
                                     retrieved_at_utc=utc(observed),
                                     changed_at_utc=None if price.get("changedAt") is None else utc(timestamp(price["changedAt"])),
+                                    bookmaker_changed_at_utc=None if price.get("bookmakerChangedAt") is None
+                                        else utc(timestamp(price["bookmakerChangedAt"])),
                                     provider_quote_reference=digest({"provider": "oddspapi", "fixture": fixture["fixtureId"],
                                         "bookmaker": book, "market_id": mid, "outcome_id": oid,
                                         "price": price, "retrieved_at_utc": utc(observed)})))

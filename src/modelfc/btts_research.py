@@ -106,7 +106,7 @@ def paired_values(yes: BttsSelection, no: BttsSelection, yes_probability: float)
 
 def comparisons_from_snapshot(forecast: BttsForecast, observation: BttsObservation) -> tuple[BttsComparison, ...]:
     if (forecast.fixture != observation.fixture
-            or timestamp(forecast.frozen_at_utc) > timestamp(observation.retrieved_at_utc)):
+            or timestamp(forecast.frozen_at_utc) >= timestamp(observation.retrieved_at_utc)):
         raise ValueError("BTTS snapshot does not match frozen forecast")
     states = {s.bookmaker: s.status for s in observation.availability}
     results = []

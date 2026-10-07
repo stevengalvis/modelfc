@@ -54,7 +54,9 @@ supported. This shape is tested offline, not certified by live provider validati
 Incomplete coverage is `UNKNOWN`, not a withdrawal. Explicit unusable books,
 markets or outcomes make the pair `UNAVAILABLE`. A complete usable pair is
 `AVAILABLE`. Old `changedAt` does not make a freshly retrieved price stale;
-freshness uses retrieval time. The adapter never performs a request.
+freshness uses retrieval time. Both provider and bookmaker change timestamps
+must not be later than retrieval and are preserved in normalized evidence.
+The adapter never performs a request.
 
 ## Comparison and immutable evidence
 

@@ -110,11 +110,24 @@ class BttsAdapterTests(unittest.TestCase):
 
     def test_malformed_inconsistent_prices_and_future_changed_at_rejected(self):
         for field, wrong in (("price", 1), ("priceAmerican", "999"), ("price", float("nan")),
-                             ("changedAt", utc(NOW + timedelta(seconds=1)))):
+                             ("changedAt", utc(NOW + timedelta(seconds=1))),
+                             ("bookmakerChangedAt", utc(NOW + timedelta(seconds=1))),
+                             ("bookmakerChangedAt", "not-a-timestamp")):
             value = payload()
             value["bookmakerOdds"]["draftkings"]["markets"]["104"]["outcomes"]["104"]["players"]["0"][field] = wrong
             with self.subTest(field=field, wrong=wrong), self.assertRaises(OddsPapiError):
                 self.normalize(value)
+
+    def test_old_bookmaker_changed_at_is_preserved_with_fresh_retrieval(self):
+        value = payload()
+        old = utc(NOW - timedelta(days=3))
+        for book in value["bookmakerOdds"].values():
+            for outcome in book["markets"]["104"]["outcomes"].values():
+                outcome["players"]["0"]["bookmakerChangedAt"] = old
+        observed = self.normalize(value)
+        self.assertTrue(all(s.status == "AVAILABLE" for s in observed.availability))
+        self.assertTrue(all(s.bookmaker_changed_at_utc == old for s in observed.selections))
+        self.assertTrue(all(s.retrieved_at_utc == utc(NOW) for s in observed.selections))
 
     def test_fixture_competition_and_identity_fail_closed(self):
         for field, wrong in (("fixtureId", "other"), ("participant1Id", 99), ("tournamentId", 17),

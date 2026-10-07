@@ -71,6 +71,7 @@ class BttsSelection(ResearchContract):
     # Opaque adapter-generated digest, not a provider market/outcome ID.
     provider_quote_reference: Digest
     changed_at_utc: Text | None = None
+    bookmaker_changed_at_utc: Text | None = None
 
     @model_validator(mode="after")
     def validate_price(self):
@@ -80,8 +81,9 @@ class BttsSelection(ResearchContract):
                             abs_tol=DECIMAL_AMERICAN_ODDS_TOLERANCE):
             raise ValueError("BTTS price representations disagree")
         retrieved = timestamp(self.retrieved_at_utc)
-        if self.changed_at_utc is not None and timestamp(self.changed_at_utc) > retrieved:
-            raise ValueError("BTTS change timestamp is in the future")
+        for changed in (self.changed_at_utc, self.bookmaker_changed_at_utc):
+            if changed is not None and timestamp(changed) > retrieved:
+                raise ValueError("BTTS change timestamp is in the future")
         return self
 
 

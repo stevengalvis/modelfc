@@ -350,6 +350,14 @@ class BttsEvidenceApiTests(unittest.TestCase):
                 self.assertEqual({v["competition"] for v in response.json()}, {competition})
         self.assertEqual(self.client.get("/api/v1/research/btts?competition=E0").status_code, 422)
 
+    def test_forecast_must_strictly_precede_market_observation(self):
+        frozen = NOW - timedelta(minutes=2)
+        for delta in (timedelta(0), -timedelta(microseconds=1)):
+            with self.subTest(delta=delta), self.assertRaises(ValueError):
+                make_record(self.frozen, observation(retrieved=frozen + delta))
+        self.assertEqual(len(make_record(self.frozen,
+            observation(retrieved=frozen + timedelta(microseconds=1))).comparisons), 2)
+
     def test_append_only_idempotent_and_freeze_cannot_change(self):
         first = record_btts_research(self.state, self.frozen, observation())
         path = self.state / "btts-research" / f"{first.record_id}.json"
