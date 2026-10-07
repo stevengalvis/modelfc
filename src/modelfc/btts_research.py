@@ -187,10 +187,16 @@ def _write_lock(directory: Path):
     descriptor = None
     try:
         descriptor = os.open(directory / ".lock", os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600)
-        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+        info = os.fstat(descriptor)
+        current = (directory / ".lock").lstat()
+        if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid()
+                or info.st_nlink != 1 or info.st_size != 0
+                or (current.st_dev, current.st_ino) != (info.st_dev, info.st_ino)
+                or not stat.S_ISREG(current.st_mode) or current.st_uid != os.getuid()
+                or current.st_nlink != 1 or current.st_size != 0):
             raise LedgerStorageUnavailable("BTTS research storage unavailable")
         fcntl.flock(descriptor, fcntl.LOCK_EX)
-        yield
+        yield descriptor
     except OSError:
         raise LedgerStorageUnavailable("BTTS research storage unavailable") from None
     finally:
@@ -283,7 +289,7 @@ def get_or_freeze_btts_forecast(state_dir: Path, fixture: BttsFixture, factory) 
     """
     directory = _directory(Path(state_dir))
     ensure_directory(directory, "BTTS research")
-    with _write_lock(directory):
+    with _write_lock(directory) as lock_descriptor:
         _, forecasts, forecast_count = _read_inventory(directory)
         previous = forecasts.get(_fixture_key(fixture))
         if previous is not None:
@@ -302,7 +308,8 @@ def get_or_freeze_btts_forecast(state_dir: Path, fixture: BttsFixture, factory) 
         content = record.model_dump(mode="json")
         if len(json.dumps(content, indent=2, sort_keys=True).encode()) + 1 > MAX_RECORD_BYTES:
             raise LedgerError("BTTS research record exceeds V1 bounds")
-        write_new_record(directory / f"forecast-{record.record_id}.json", content)
+        write_new_record(directory / f"forecast-{record.record_id}.json", content,
+                         evidence_state=Path(state_dir), evidence_lock_fd=lock_descriptor)
         _sync_research_directory(directory)
         return record.forecast, True
 
@@ -316,7 +323,7 @@ def record_btts_research(state_dir: Path, forecast: BttsForecast, observation: B
     record = make_record(forecast, observation)
     directory = _directory(Path(state_dir))
     ensure_directory(directory, "BTTS research")
-    with _write_lock(directory):
+    with _write_lock(directory) as lock_descriptor:
         records, forecasts, _ = _read_inventory(directory)
         saved_forecast = forecasts.get(_fixture_key(forecast.fixture))
         if saved_forecast is not None and saved_forecast != forecast:
@@ -334,7 +341,8 @@ def record_btts_research(state_dir: Path, forecast: BttsForecast, observation: B
         payload = record.model_dump(mode="json")
         if len(json.dumps(payload, indent=2, sort_keys=True).encode()) + 1 > MAX_RECORD_BYTES:
             raise LedgerError("BTTS research record exceeds V1 bounds")
-        write_new_record(directory / f"{record.record_id}.json", payload)
+        write_new_record(directory / f"{record.record_id}.json", payload,
+                         evidence_state=Path(state_dir), evidence_lock_fd=lock_descriptor)
         _sync_research_directory(directory)
     return record
 

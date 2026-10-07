@@ -38,9 +38,11 @@ Under the existing prospective `runner.lock` (and the state lock if present), gr
 traversal on `/var/lib/modelfc`, traversal on state, read access to the
 existing `state/prospective/runner.lock` and, **only if it already exists**,
 `state/.lock`, and read
-plus traversal **only** on the six public evidence directories and their
-existing nested directories: `analyses`, `analysis-outcomes`, `predictions`,
-`prediction-targets`, `market-observations`, `opportunities`. Grant read access
+plus traversal **only** on the six prospective public evidence directories and
+their existing nested directories: `analyses`, `analysis-outcomes`, `predictions`,
+`prediction-targets`, `market-observations`, `opportunities`. BTTS research uses
+its separate, explicitly reviewed boundary in [BTTS_RESEARCH_API.md](BTTS_RESEARCH_API.md).
+Grant read access
 only to their existing referenced JSON records. Record before/after metadata,
 bytes and hashes; do not replace, edit or reserialize any immutable evidence.
 Do not grant traversal/read to `prospective/control.json`, `budget-events`,
@@ -60,7 +62,8 @@ launcher only after the account, ACL tool, migration and compatible reviewed
 release are verified. Coordinate with the hourly timer, wait for the current
 run to exit, and preserve the old launcher for rollback. The new trusted
 launcher opts the writer into `MODELFC_EVIDENCE_ACL_USER=modelfc-api` in its
-clean child environment. Only the six evidence record families receive a read
+clean child environment. Only the six prospective evidence record families and
+the separately bounded `btts-research` family receive a read
 ACL on the unnamed temporary inode **before** atomic publication; their new parent
 directories receive narrowly scoped traversal/read ACLs through validated
 directory descriptors, with path identity checked after each ACL. ACL failure aborts

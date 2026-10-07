@@ -177,9 +177,12 @@ meaning; operators must inspect the separate research section as well.
 
 ## Activation boundary
 
-The route is not added to production Caddy. This repository integration does not
-change API account permissions, create host evidence, enable another competition,
-change services/timers or perform any provider/VPS operation. A separate host
-activation review is still required for any future public ingress and API-account
-read permissions for this namespace and lock. Existing corner evidence,
-qualification, market support and recommendations remain unchanged.
+The route is not added to production Caddy. Future records receive the narrowly
+reviewed API-reader ACL before immutable publication when the installed launcher
+enables the existing evidence ACL policy. Existing records still require the
+separate bounded migration in
+[BTTS_RESEARCH_API.md](../ops/vps/BTTS_RESEARCH_API.md); merge/deployment alone
+does not modify them or the host. Public ingress remains separate work. This
+repository change does not create host evidence, enable another competition,
+change services/timers or perform any provider/VPS operation. Existing corner
+evidence, qualification, market support and recommendations remain unchanged.
