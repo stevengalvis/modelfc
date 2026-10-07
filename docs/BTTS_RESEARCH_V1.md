@@ -141,6 +141,8 @@ Before requesting odds, the runner calls `BttsResearchAcquisition.prepare`:
 2. Exclude same-date/future results and freeze the unchanged arithmetic forecast.
 3. Atomically publish a hash-validated `BTTS_FROZEN_FORECAST` record as
    `btts-research/forecast-<fixture-identity-hash>.json` under the research lock.
+   Fsync the record, research directory and namespace parent before acquisition.
+   Reuse also fsyncs the directories to complete any interrupted publication.
 4. Acquire the existing provider snapshot, then normalize BTTS from that snapshot.
 5. Validate strict `frozen_at < retrieved_at < kickoff` and append the comparison
    bundle, including any valid incomplete/unavailable coverage evidence.

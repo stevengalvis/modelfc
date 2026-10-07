@@ -7,6 +7,8 @@ from copy import deepcopy
 from dataclasses import replace
 from datetime import date, timedelta
 import json
+import os
+import stat
 import socket
 import unittest
 from unittest.mock import patch
@@ -104,6 +106,57 @@ class BttsProspectiveTests(unittest.TestCase):
         response = self.client.get("/api/v1/research/btts?competition=E1")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(len(response.json()), 2)
+
+    def test_forecast_directory_and_namespace_parent_fsynced_before_odds(self):
+        directory = self.pilot.state / "btts-research"
+        synced = []
+        original_fsync, original_http = os.fsync, self.pilot.http
+        def fsync(descriptor):
+            if stat.S_ISDIR(os.fstat(descriptor).st_mode):
+                synced.append(os.readlink(f"/proc/self/fd/{descriptor}"))
+            return original_fsync(descriptor)
+        def http(request, **kwargs):
+            if "/odds?" in request.full_url:
+                self.assertIn(str(directory), synced)
+                self.assertIn(str(directory.parent), synced)
+                self.forecast()  # Validate the already published forecast, not a mock.
+            return original_http(request, **kwargs)
+        with patch("modelfc.btts_research.os.fsync", side_effect=fsync), \
+                patch("urllib.request.OpenerDirector.open", side_effect=http):
+            result = self.run_once()
+        self.assert_corner_success(result)
+        self.assertEqual(result["btts_research"]["comparisons_recorded"], 2)
+
+    def test_directory_fsync_failure_blocks_research_not_corners_and_reuse_resyncs(self):
+        directory = self.pilot.state / "btts-research"
+        original_fsync = os.fsync
+        def fsync(descriptor):
+            if (stat.S_ISDIR(os.fstat(descriptor).st_mode)
+                    and os.readlink(f"/proc/self/fd/{descriptor}") == str(directory)):
+                raise OSError("private disk detail")
+            return original_fsync(descriptor)
+        with patch("modelfc.btts_research.os.fsync", side_effect=fsync):
+            result = self.run_once()
+        self.assert_corner_success(result)
+        self.assertEqual(result["btts_research"]["status"], "REVIEW")
+        self.assertEqual(result["btts_research"]["snapshots_recorded"], 0)
+        self.assertNotIn("private disk detail", json.dumps(result))
+        self.assertEqual(self.records(), [])
+        forecast = self.forecast()
+        self.pilot.now = self.pilot.now.replace(hour=10)
+        synced = []
+        def successful_sync(descriptor):
+            if stat.S_ISDIR(os.fstat(descriptor).st_mode):
+                synced.append(os.readlink(f"/proc/self/fd/{descriptor}"))
+            return original_fsync(descriptor)
+        with patch("modelfc.btts_research.os.fsync", side_effect=successful_sync):
+            retry = self.run_once()
+        self.assertIn(str(directory), synced)
+        self.assertIn(str(directory.parent), synced)
+        self.assertEqual(retry["provider_requests"], 2)
+        self.assertEqual(retry["btts_research"]["forecasts_frozen"], 0)
+        self.assertEqual(retry["btts_research"]["comparisons_recorded"], 2)
+        self.assertEqual(self.records()[0].forecast, forecast)
 
     def test_equivalent_run_request_counts_and_corner_evidence_bytes_unchanged(self):
         class CornerOnly(provider.OddsPapiMarketData):

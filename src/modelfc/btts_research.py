@@ -264,6 +264,17 @@ def _read_records(directory: Path) -> tuple[ResearchRecord, ...]:
     return _read_inventory(directory)[0]
 
 
+def _sync_forecast_directory(directory: Path) -> None:
+    # Persist both the record name and a newly created research namespace entry.
+    # Also run on reuse: a prior interrupted/failed sync must complete before odds.
+    for path in (directory, directory.parent):
+        descriptor = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+
+
 def get_or_freeze_btts_forecast(state_dir: Path, fixture: BttsFixture, factory) -> tuple[BttsForecast, bool]:
     """Publish the first forecast BEFORE acquisition; reuse it across later runs.
 
@@ -278,6 +289,7 @@ def get_or_freeze_btts_forecast(state_dir: Path, fixture: BttsFixture, factory) 
         if previous is not None:
             if previous.fixture != fixture:
                 raise LedgerError("BTTS frozen fixture identity changed")
+            _sync_forecast_directory(directory)
             return previous, False
         if forecast_count >= MAX_RECORDS:
             raise LedgerStorageUnavailable("BTTS research exceeds V1 bounds")
@@ -291,6 +303,7 @@ def get_or_freeze_btts_forecast(state_dir: Path, fixture: BttsFixture, factory) 
         if len(json.dumps(content, indent=2, sort_keys=True).encode()) + 1 > MAX_RECORD_BYTES:
             raise LedgerError("BTTS research record exceeds V1 bounds")
         write_new_record(directory / f"forecast-{record.record_id}.json", content)
+        _sync_forecast_directory(directory)
         return record.forecast, True
 
 
