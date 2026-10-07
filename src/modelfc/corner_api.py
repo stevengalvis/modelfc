@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 from typing import Any, Literal
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -23,6 +23,8 @@ from modelfc.corner_prospective_read import (
     read_opportunities, read_opportunity, read_performance, read_predictions, read_recommendations,
 )
 from modelfc.ledger_storage import LedgerError, LedgerStorageUnavailable
+from modelfc.btts_research import BttsResearchResponse, read_btts_research
+from modelfc.btts_market_data import ENABLED_COMPETITIONS
 
 
 class StrictModel(BaseModel):
@@ -531,6 +533,19 @@ def create_app(
             return read_opportunities(state)
         except LedgerError as error:
             return _public_read_error(error)
+
+    @app.get("/api/v1/research/btts", response_model=list[BttsResearchResponse])
+    def get_btts_research(response: Response, competition: str = "E1"):
+        response.headers["Cache-Control"] = "no-store"
+        if competition not in ENABLED_COMPETITIONS:
+            error = _error("UNSUPPORTED_COMPETITION", "BTTS research competition is not enabled.", 422)
+        else:
+            try:
+                return read_btts_research(state, competition)
+            except LedgerError as cause:
+                error = _public_read_error(cause)
+        error.headers["Cache-Control"] = "no-store"
+        return error
 
     @app.get("/api/v1/recommendations", response_model=list[RecommendationResponse])
     def get_recommendations() -> list[dict[str, Any]]:
