@@ -8,7 +8,6 @@ import os
 from pathlib import Path
 import stat
 import subprocess
-import sys
 from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
@@ -216,7 +215,7 @@ try:
  result['create']=True
 except PermissionError: result['create']=False
 print(json.dumps(result,sort_keys=True))'''
-        result = subprocess.run([sys.executable, "-I", "-B", "-c", code, str(self.state)],
+        result = subprocess.run(["/usr/bin/python3", "-I", "-B", "-c", code, str(self.state)],
                                 user=65534, group=65534, extra_groups=[], check=True,
                                 capture_output=True, text=True)
         self.assertEqual(json.loads(result.stdout), {
