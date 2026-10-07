@@ -20,6 +20,64 @@ namespace parent are fsynced before acquisition or success accounting. The same
 launcher opt-in used by corner evidence, `MODELFC_EVIDENCE_ACL_USER=modelfc-api`,
 is required; a one-time migration alone is not sufficient.
 
+## Empty-namespace bootstrap (only when no BTTS namespace exists)
+
+The evidence migration below intentionally does not create storage. For a host
+where `/var/lib/modelfc/state/btts-research` is genuinely absent, install the
+reviewed `ops/vps/btts_research_bootstrap.py` from the exact merged release as
+`/usr/local/libexec/modelfc-btts-research-bootstrap.py`, owned by `root:root`,
+mode `0555`. Record and compare its source and installed SHA-256. Do not use a
+copy from a PR branch or an unpinned checkout. Installing or invoking this helper
+is a separate authorized host action; ordinary deployment never does it.
+
+Before bootstrap, record the active release SHA; installed launcher/unit/helper
+hashes; owner, mode, device/inode and access/default ACL of
+`/var/lib/modelfc`, `state`, `prospective`, and `prospective/runner.lock`; and a
+name/inode/size/SHA-256 manifest of existing immutable state evidence. Require
+the BTTS path and BTTS lock to be absent. Wait for the oneshot to exit, stop only
+the prospective timer, and verify no catch-up or manual run is pending. Do not
+start the prospective runner or use a provider credential as a bootstrap test.
+
+Run the fixed-path helper with the runtime UID/GID and no supplementary groups:
+
+```sh
+runtime_uid="$(id -u modelfc-runtime)"
+runtime_gid="$(id -g modelfc-runtime)"
+setpriv --reuid="$runtime_uid" --regid="$runtime_gid" --clear-groups \
+  /usr/bin/python3 -I -B /usr/local/libexec/modelfc-btts-research-bootstrap.py --check
+# EMPTY_NAMESPACE is the required result on a genuinely empty host.
+setpriv --reuid="$runtime_uid" --regid="$runtime_gid" --clear-groups \
+  /usr/bin/python3 -I -B /usr/local/libexec/modelfc-btts-research-bootstrap.py --apply
+setpriv --reuid="$runtime_uid" --regid="$runtime_gid" --clear-groups \
+  /usr/bin/python3 -I -B /usr/local/libexec/modelfc-btts-research-bootstrap.py --check
+```
+
+The helper has no path argument, runs only as the real non-root runtime account,
+opens every path component and lock with `O_NOFOLLOW` (using `O_PATH` for the
+traverse-only runtime parent), takes the existing runner
+lock exclusively and nonblocking, rejects default ACLs, and creates only a `0700`
+runtime-owned `btts-research` directory and its empty, singly linked `0600`
+`.lock`. It never invokes `setfacl`, never grants API access, and fsyncs the lock,
+namespace and state root. Repeating `--apply` before migration returns `READY`
+without changing either inode and repeats all three durability syncs; `--check`
+never syncs or writes. An exact empty directory left by an interrupted attempt
+may receive its missing lock; a symlink, unknown entry, malformed lock, active
+writer, unexpected owner/mode or pre-existing namespace ACL fails closed.
+Once a private namespace or lock name is created it is never unlinked on failure:
+another runtime process may already hold or await that inode. A reviewed retry
+validates and reuses the same private object, preventing split-lock serialization.
+
+After `--apply`, record both new inode identities and require the original parent
+and state ACL bytes, all pre-existing evidence hashes and all corner evidence
+permissions to be unchanged. Require no named API ACL on the new directory or
+lock. Then proceed to the inventory and ACL migration below. If bootstrap or any
+verification fails, keep the timer stopped and do not migrate ACLs. A successfully
+created but still-private empty namespace and lock remain for an idempotent reviewed
+retry; never delete them after publication. If later ACL
+migration fails, restore only ACLs proven changed by its manifest and keep the
+private namespace and lock. Do not rerun bootstrap after migration has added the
+reviewed API ACLs.
+
 ## Pre-flight and immutable inventory
 
 Perform this only after the reviewed release containing this change is deployed.
@@ -31,8 +89,9 @@ effective unit properties and confirm the API account has no runtime/deploy grou
 
 Wait for the current oneshot to exit, stop only the prospective timer, and take
 an exclusive nonblocking lock on the existing
-`/var/lib/modelfc/state/prospective/runner.lock`. Do not create any missing lock
-or namespace. Require all of the following before changing an ACL:
+`/var/lib/modelfc/state/prospective/runner.lock`. At this stage do not create any
+missing lock or namespace: a missing empty namespace must first use the separately
+reviewed bootstrap above. Require all of the following before changing an ACL:
 
 - state, `btts-research`, and `prospective` are real directories owned by
   `modelfc-runtime`, with no group/other write bit;
