@@ -7,9 +7,64 @@ import type { Recommendation } from "@/lib/api/types";
 import RecommendationsPage from "@/app/recommendations/page";
 import { RecommendationsDashboard } from "./recommendations-dashboard";
 
-afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks(); });
 
 describe("Recommendations workspace", () => {
+  it("refreshes the API after a minute and removes backend-expired recommendations", async () => {
+    vi.useFakeTimers();
+    const get = vi.spyOn(api, "recommendations").mockResolvedValueOnce(mockRecommendations).mockResolvedValueOnce([]);
+    render(<RecommendationsDashboard />);
+    await act(async () => {});
+    expect(screen.getByRole("article")).toBeInTheDocument();
+    await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+    expect(get).toHaveBeenCalledTimes(2);
+    expect(get.mock.calls[0][0]?.aborted).toBe(true);
+    expect(screen.queryByRole("article")).not.toBeInTheDocument();
+    expect(screen.getByText("No current recommendations")).toBeInTheDocument();
+  });
+  it("refreshes an empty response to discover backend-returned recommendations", async () => {
+    vi.useFakeTimers();
+    vi.spyOn(api, "recommendations").mockResolvedValueOnce([]).mockResolvedValueOnce(mockRecommendations);
+    render(<RecommendationsDashboard />);
+    await act(async () => {});
+    expect(screen.getByText("No current recommendations")).toBeInTheDocument();
+    await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+    expect(screen.getByRole("article")).toBeInTheDocument();
+  });
+  it("hides the previous offers while a refresh is pending and on refresh failure", async () => {
+    vi.useFakeTimers();
+    let fail!: (error: Error) => void;
+    vi.spyOn(api, "recommendations").mockResolvedValueOnce(mockRecommendations)
+      .mockImplementationOnce(() => new Promise((_, reject) => { fail = reject; }));
+    render(<RecommendationsDashboard />);
+    await act(async () => {});
+    await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+    expect(screen.getByRole("status")).toBeInTheDocument();
+    expect(screen.queryByRole("article")).not.toBeInTheDocument();
+    await act(async () => { fail(new Error("private backend failure")); });
+    expect(screen.getByRole("alert")).toBeInTheDocument();
+    expect(screen.queryByRole("article")).not.toBeInTheDocument();
+  });
+  it("refreshes on window focus and removes the listener on unmount", async () => {
+    const get = vi.spyOn(api, "recommendations").mockResolvedValue(mockRecommendations);
+    const view = render(<RecommendationsDashboard />);
+    await screen.findByRole("article");
+    fireEvent(window, new Event("focus"));
+    await act(async () => {});
+    expect(get).toHaveBeenCalledTimes(2);
+    view.unmount();
+    fireEvent(window, new Event("focus"));
+    expect(get).toHaveBeenCalledTimes(2);
+  });
+  it("clears the scheduled refresh on unmount", async () => {
+    vi.useFakeTimers();
+    const get = vi.spyOn(api, "recommendations").mockResolvedValue(mockRecommendations);
+    const view = render(<RecommendationsDashboard />);
+    await act(async () => {});
+    view.unmount();
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(get).toHaveBeenCalledTimes(1);
+  });
   it("renders the page, active navigation and all backend card facts", async () => {
     vi.spyOn(api, "recommendations").mockResolvedValue(structuredClone(mockRecommendations));
     render(<RecommendationsPage />);

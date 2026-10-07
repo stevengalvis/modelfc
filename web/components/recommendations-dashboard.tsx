@@ -4,6 +4,9 @@ import { useEffect, useState } from "react";
 import { api } from "@/lib/api/client";
 import type { Recommendation } from "@/lib/api/types";
 
+// UI read cadence only; the backend owns freshness and eligibility policy.
+const READ_REFRESH_INTERVAL_MS = 60_000;
+
 const percent = (value: number) => `${(value * 100).toFixed(1)}%`;
 const signed = (value: number, digits: number) => `${value >= 0 ? "+" : "-"}${Math.abs(value).toFixed(digits)}`;
 const utc = (value: string) => new Intl.DateTimeFormat("en-GB", {
@@ -39,15 +42,30 @@ export function RecommendationsDashboard() {
   const [attempt, setAttempt] = useState(0);
   useEffect(() => {
     const controller = new AbortController();
+    let refreshTimer: number | undefined;
+    const refresh = () => {
+      if (controller.signal.aborted) return;
+      setLoading(true);
+      setFailed(false);
+      setAttempt((value) => value + 1);
+    };
+    window.addEventListener("focus", refresh);
     api.recommendations(controller.signal).then((value) => {
       if (!controller.signal.aborted) setItems(value);
     }).catch(() => {
       // Never display API messages, exception text or malformed response contents.
       if (!controller.signal.aborted) setFailed(true);
     }).finally(() => {
-      if (!controller.signal.aborted) setLoading(false);
+      if (!controller.signal.aborted) {
+        setLoading(false);
+        refreshTimer = window.setTimeout(refresh, READ_REFRESH_INTERVAL_MS);
+      }
     });
-    return () => controller.abort();
+    return () => {
+      controller.abort();
+      window.clearTimeout(refreshTimer);
+      window.removeEventListener("focus", refresh);
+    };
   }, [attempt]);
 
   return <div className="workspace recommendations-workspace">
