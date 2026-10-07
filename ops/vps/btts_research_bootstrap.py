@@ -197,9 +197,11 @@ def bootstrap_empty_namespace(state: Path, *, runtime_uid: int, apply: bool,
         if os.listdir(namespace_descriptor) != [BTTS_LOCK]:
             raise BootstrapError("namespace changed")
 
-        if lock_created:
+        # An apply retry may be completing a prior attempt whose durability sync
+        # failed after publication.  Repeat all three syncs even when the exact
+        # namespace and lock already existed; check-only remains read-only.
+        if apply:
             os.fsync(lock_descriptor)
-        if namespace_created or lock_created:
             os.fsync(namespace_descriptor)
             os.fsync(state_descriptor)
         if (_acl(state_descriptor, ACL_ACCESS) != state_acl

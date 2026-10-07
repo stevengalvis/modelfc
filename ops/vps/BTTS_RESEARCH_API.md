@@ -58,8 +58,9 @@ traverse-only runtime parent), takes the existing runner
 lock exclusively and nonblocking, rejects default ACLs, and creates only a `0700`
 runtime-owned `btts-research` directory and its empty, singly linked `0600`
 `.lock`. It never invokes `setfacl`, never grants API access, and fsyncs the lock,
-namespace and state root. Repeating it before migration returns `READY` without
-changing either inode. An exact empty directory left by an interrupted attempt
+namespace and state root. Repeating `--apply` before migration returns `READY`
+without changing either inode and repeats all three durability syncs; `--check`
+never syncs or writes. An exact empty directory left by an interrupted attempt
 may receive its missing lock; a symlink, unknown entry, malformed lock, active
 writer, unexpected owner/mode or pre-existing namespace ACL fails closed.
 Once a private namespace or lock name is created it is never unlinked on failure:

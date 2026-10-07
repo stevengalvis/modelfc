@@ -153,8 +153,20 @@ class BttsResearchBootstrapTests(unittest.TestCase):
                 self.invoke()
         lock = self.state / bootstrap.NAMESPACE / bootstrap.BTTS_LOCK
         inode = lock.stat().st_ino
-        self.assertEqual(self.invoke(), "READY")
+        synced = []
+        def fsync(descriptor):
+            info = os.fstat(descriptor)
+            synced.append((stat.S_IFMT(info.st_mode),
+                           Path(os.readlink(f"/proc/self/fd/{descriptor}")).name))
+            return original(descriptor)
+        with patch.object(bootstrap.os, "fsync", side_effect=fsync):
+            self.assertEqual(self.invoke(), "READY")
         self.assertEqual(lock.stat().st_ino, inode)
+        self.assertEqual(synced, [
+            (stat.S_IFREG, bootstrap.BTTS_LOCK),
+            (stat.S_IFDIR, bootstrap.NAMESPACE),
+            (stat.S_IFDIR, self.state.name),
+        ])
 
     def test_cli_rejects_arguments_and_wrong_identity_without_mutation(self):
         self.assertEqual(bootstrap.main(["--apply", "--state", str(self.state)]), 2)
