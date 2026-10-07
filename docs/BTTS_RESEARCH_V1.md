@@ -145,7 +145,9 @@ Before requesting odds, the runner calls `BttsResearchAcquisition.prepare`:
    Reuse also fsyncs the directories to complete any interrupted publication.
 4. Acquire the existing provider snapshot, then normalize BTTS from that snapshot.
 5. Validate strict `frozen_at < retrieved_at < kickoff` and append the comparison
-   bundle, including any valid incomplete/unavailable coverage evidence.
+   bundle, including any valid incomplete/unavailable coverage evidence. Fsync
+   its file, research directory and namespace parent before counting success;
+   identical replay also completes directory sync before returning.
 
 Later acquisitions reuse the original forecast without reading refreshed history
 or recomputing rates. Existing V1 comparison bundles also establish the original

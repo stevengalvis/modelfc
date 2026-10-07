@@ -23,7 +23,7 @@ from modelfc.btts_research import (
     read_btts_research, record_btts_research,
 )
 from modelfc.corner_api import create_app
-from modelfc.ledger_storage import LedgerError
+from modelfc.ledger_storage import LedgerError, LedgerStorageUnavailable
 from modelfc.prospective_run_receipts import latest
 from modelfc.providers import oddspapi as provider
 from tests import test_corner_prospective as pilot_module
@@ -157,6 +157,52 @@ class BttsProspectiveTests(unittest.TestCase):
         self.assertEqual(retry["btts_research"]["forecasts_frozen"], 0)
         self.assertEqual(retry["btts_research"]["comparisons_recorded"], 2)
         self.assertEqual(self.records()[0].forecast, forecast)
+
+    def test_snapshot_sync_failure_not_counted_and_identical_replay_resyncs(self):
+        from modelfc import btts_research
+        directory = self.pilot.state / "btts-research"
+        original_sync = btts_research._sync_research_directory
+        def fail_snapshot_sync(path):
+            if any(path.glob("[0-9a-f]" * 64 + ".json")):
+                raise OSError("private snapshot disk detail")
+            return original_sync(path)
+        with patch("modelfc.btts_research._sync_research_directory", side_effect=fail_snapshot_sync):
+            result = self.run_once()
+        self.assert_corner_success(result)
+        self.assertEqual(result["btts_research"]["snapshots_recorded"], 0)
+        self.assertEqual(result["btts_research"]["comparisons_recorded"], 0)
+        self.assertEqual(result["btts_research"]["reasons"], ["STORAGE_OR_INTEGRITY_FAILURE"])
+        self.assertNotIn("private snapshot disk detail", json.dumps(result))
+        record = self.records()[0]
+        path = directory / f"{record.record_id}.json"
+        before = (path.stat().st_ino, path.stat().st_mtime_ns, path.read_bytes())
+        with patch("modelfc.btts_research._sync_research_directory", side_effect=OSError("private detail")):
+            with self.assertRaises(LedgerStorageUnavailable):
+                record_btts_research(self.pilot.state, record.forecast, record.observation)
+        with patch("modelfc.btts_research._sync_research_directory", wraps=original_sync) as sync:
+            self.assertEqual(record_btts_research(self.pilot.state, record.forecast, record.observation), record)
+            sync.assert_called_once_with(directory)
+        self.assertEqual(before, (path.stat().st_ino, path.stat().st_mtime_ns, path.read_bytes()))
+
+    def test_snapshot_directories_synced_before_success_counters(self):
+        from modelfc import btts_prospective, btts_research
+        original_sync = btts_research._sync_research_directory
+        original_record = btts_prospective.record_btts_research
+        synced = []
+        def sync(path):
+            original_sync(path)
+            synced.append(path)
+        def record(*args, **kwargs):
+            synced.clear()
+            result = original_record(*args, **kwargs)
+            self.assertEqual(synced, [self.pilot.state / "btts-research"])
+            return result
+        with patch("modelfc.btts_research._sync_research_directory", side_effect=sync), \
+                patch("modelfc.btts_prospective.record_btts_research", side_effect=record):
+            result = self.run_once()
+        self.assert_corner_success(result)
+        self.assertEqual(result["btts_research"]["snapshots_recorded"], 1)
+        self.assertEqual(result["btts_research"]["comparisons_recorded"], 2)
 
     def test_equivalent_run_request_counts_and_corner_evidence_bytes_unchanged(self):
         class CornerOnly(provider.OddsPapiMarketData):

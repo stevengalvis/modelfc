@@ -264,9 +264,9 @@ def _read_records(directory: Path) -> tuple[ResearchRecord, ...]:
     return _read_inventory(directory)[0]
 
 
-def _sync_forecast_directory(directory: Path) -> None:
+def _sync_research_directory(directory: Path) -> None:
     # Persist both the record name and a newly created research namespace entry.
-    # Also run on reuse: a prior interrupted/failed sync must complete before odds.
+    # Reuse also completes interrupted publication before acquisition or counters.
     for path in (directory, directory.parent):
         descriptor = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
         try:
@@ -289,7 +289,7 @@ def get_or_freeze_btts_forecast(state_dir: Path, fixture: BttsFixture, factory) 
         if previous is not None:
             if previous.fixture != fixture:
                 raise LedgerError("BTTS frozen fixture identity changed")
-            _sync_forecast_directory(directory)
+            _sync_research_directory(directory)
             return previous, False
         if forecast_count >= MAX_RECORDS:
             raise LedgerStorageUnavailable("BTTS research exceeds V1 bounds")
@@ -303,7 +303,7 @@ def get_or_freeze_btts_forecast(state_dir: Path, fixture: BttsFixture, factory) 
         if len(json.dumps(content, indent=2, sort_keys=True).encode()) + 1 > MAX_RECORD_BYTES:
             raise LedgerError("BTTS research record exceeds V1 bounds")
         write_new_record(directory / f"forecast-{record.record_id}.json", content)
-        _sync_forecast_directory(directory)
+        _sync_research_directory(directory)
         return record.forecast, True
 
 
@@ -327,6 +327,7 @@ def record_btts_research(state_dir: Path, forecast: BttsForecast, observation: B
             if previous.record_id == record.record_id:
                 if previous != record:
                     raise LedgerError("INVALID_BTTS_RESEARCH_EVIDENCE")
+                _sync_research_directory(directory)
                 return previous
         if len(records) >= MAX_RECORDS:
             raise LedgerStorageUnavailable("BTTS research exceeds V1 bounds")
@@ -334,6 +335,7 @@ def record_btts_research(state_dir: Path, forecast: BttsForecast, observation: B
         if len(json.dumps(payload, indent=2, sort_keys=True).encode()) + 1 > MAX_RECORD_BYTES:
             raise LedgerError("BTTS research record exceeds V1 bounds")
         write_new_record(directory / f"{record.record_id}.json", payload)
+        _sync_research_directory(directory)
     return record
 
 
