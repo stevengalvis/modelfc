@@ -1,9 +1,11 @@
+import { decodeRecommendations } from "./recommendations";
+import { mockRecommendations } from "./mock-recommendations";
 import { decodeTeams, decodeTeamProfile, decodeTeamInsights, isTeamId } from "./team-intelligence";
 import { isApiErrorBody, ModelFCApiError } from "./errors";
 import { mockAnalyze, mockCapabilities, mockPredictions, mockOpportunities, mockOpportunityDetails, mockPerformance } from "./mock";
 import { decodePredictions, decodeOpportunities, decodeOpportunityDetail, decodePerformance } from "./prospective";
 import { decodeCapabilities } from "./capabilities";
-import type { AnalysisRequest, AnalysisResponse, CapabilitiesResponse, ProspectivePrediction, ProspectiveOpportunity, OpportunityDetail, ProspectivePerformance } from "./types";
+import type { AnalysisRequest, AnalysisResponse, CapabilitiesResponse, ProspectivePrediction, ProspectiveOpportunity, OpportunityDetail, ProspectivePerformance, Recommendation } from "./types";
 
 const API_BASE = process.env.NEXT_PUBLIC_MODELFC_API_URL;
 // A deployment must opt into mock mode explicitly. Missing configuration is
@@ -179,6 +181,12 @@ export function createApiClient(
       const value = mode === "mock" ? structuredClone(mockCapabilities)
         : await requestJson<unknown>(baseUrl!, "/capabilities", { signal });
       return decodeCapabilities(value);
+    },
+    async recommendations(signal?: AbortSignal): Promise<Recommendation[]> {
+      checkConfiguration();
+      signal?.throwIfAborted();
+      return decodeRecommendations(mode === "mock" ? structuredClone(mockRecommendations)
+        : await requestJson<unknown>(baseUrl!, "/recommendations", { signal, cache: "no-store" }));
     },
     async predictions(signal?: AbortSignal): Promise<ProspectivePrediction[]> {
       checkConfiguration();

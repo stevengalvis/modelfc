@@ -266,3 +266,35 @@ export interface ProspectivePerformance {
     unresolved_open_opportunities: number;
   };
 }
+
+/** One backend-selected, current recommendation-eligible offer per logical target. */
+export interface Recommendation {
+  prediction_id: string;
+  target_id: string;
+  competition: string;
+  provider: string;
+  provider_fixture_id: string;
+  kickoff_utc: string;
+  home_team: string;
+  away_team: string;
+  market_type: "TEAM_TOTAL";
+  team_side: "HOME" | "AWAY";
+  team: string;
+  direction: "OVER" | "UNDER";
+  line: number;
+  bookmaker: string;
+  american_odds: number;
+  decimal_odds: number;
+  retrieved_at_utc: string;
+  observation_age_seconds: number;
+  availability_checked_at_utc: string;
+  model_probability: number;
+  push_probability: number;
+  decisive_model_probability: number;
+  sportsbook_implied_probability: number;
+  no_vig_market_probability: number;
+  no_vig_probability_edge: number;
+  expected_profit: number;
+  qualified: true;
+  policy_version: string;
+}

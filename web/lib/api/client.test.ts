@@ -283,3 +283,37 @@ describe("analysis response boundary", () => {
       .rejects.toMatchObject({ code: "ANALYSIS_CONTRACT_MISMATCH" });
   });
 });
+
+
+describe("recommendations API mode isolation", () => {
+  it("requests live recommendations with abort/no-store and never falls back to mock", async () => {
+    const fetcher = vi.fn().mockResolvedValueOnce(new Response("[]", { status: 200 }))
+      .mockRejectedValueOnce(new Error("offline"));
+    vi.stubGlobal("fetch", fetcher);
+    const signal = new AbortController().signal;
+    const client = createApiClient("live", "https://api.example.test/api/v1/");
+    expect(await client.recommendations(signal)).toEqual([]);
+    expect(fetcher).toHaveBeenCalledWith("https://api.example.test/api/v1/recommendations", { signal, cache: "no-store", headers: {} });
+    await expect(client.recommendations()).rejects.toThrow("offline");
+  });
+  it("rejects malformed live JSON without substituting mock offers", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("bad-json", { status: 200 })));
+    await expect(createApiClient("live", "https://api.test").recommendations()).rejects.toThrow("outside the V1 contract");
+  });
+  it("uses clearly identified deterministic fixtures only in explicit mock mode", async () => {
+    const fetcher = vi.fn();
+    vi.stubGlobal("fetch", fetcher);
+    const client = createApiClient("mock");
+    const first = await client.recommendations();
+    expect(first[0].home_team).toMatch(/^Demo /);
+    first[0].team = "changed";
+    expect((await client.recommendations())[0].team).toBe("Demo West Ham");
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+  it("requires configuration and honors an already aborted request", async () => {
+    await expect(createApiClient(undefined).recommendations()).rejects.toThrow("Set API mode");
+    await expect(createApiClient("live").recommendations()).rejects.toThrow("Set API mode");
+    const controller = new AbortController(); controller.abort();
+    await expect(createApiClient("mock").recommendations(controller.signal)).rejects.toThrow();
+  });
+});
