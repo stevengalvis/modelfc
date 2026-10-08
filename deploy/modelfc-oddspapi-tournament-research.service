@@ -10,6 +10,7 @@ Group=modelfc-runtime
 WorkingDirectory=/srv/modelfc/current
 ExecStart=/usr/bin/python3 -I -B /usr/local/libexec/modelfc-tournament-research-launch.py
 LoadCredential=oddspapi.key:/etc/modelfc/credentials/oddspapi.key
+LoadCredential=tournament-authorization.json:/etc/modelfc/oddspapi-tournament-research.json
 UMask=0077
 StandardInput=null
 UnsetEnvironment=GITHUB_TOKEN GH_TOKEN SSH_AUTH_SOCK PYTHONPATH PYTHONHOME LD_PRELOAD LD_LIBRARY_PATH LD_AUDIT ODDSPAPI_API_KEY

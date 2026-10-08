@@ -65,7 +65,7 @@ FAMILIES = (
     "ALTERNATE_GOAL_TOTALS", "HOME_TEAM_GOAL_TOTALS", "AWAY_TEAM_GOAL_TOTALS",
 )
 STATE_PATH = Path("/var/lib/modelfc/state")
-AUTHORIZATION_PATH = Path("/etc/modelfc/oddspapi-tournament-research.json")
+AUTHORIZATION_CREDENTIAL = "tournament-authorization.json"
 METADATA_PATH = Path("/etc/modelfc/oddspapi-market-metadata.json")
 
 
@@ -311,7 +311,8 @@ def analyze_batch(payload: object, metadata: object, *, observed_at: datetime) -
 def _analyze_book(book: object, dictionary: dict, *, observed_at: datetime,
                   fixture_stale: bool) -> dict:
     empty = {family: {"status": "MISSING", "usable_priced_outcomes": 0,
-                      "market_count": 0, "latest_changed_at_utc": None}
+                      "market_count": 0, "complete_market_count": 0,
+                      "latest_changed_at_utc": None}
              for family in FAMILIES}
     if book is None:
         return {"status": "MISSING", "unsupported_metadata_markets": 0, "families": empty}
@@ -326,7 +327,7 @@ def _analyze_book(book: object, dictionary: dict, *, observed_at: datetime,
                        or book.get("suspended") is not False) and not book_inactive
     accumulators = {family: {"markets": 0, "usable": 0, "stale": False,
                              "inactive": False, "incomplete": False,
-                             "latest": None} for family in FAMILIES}
+                             "complete_markets": 0, "latest": None} for family in FAMILIES}
     unsupported = 0
     for market_id, market in sorted(markets.items()):
         definition = dictionary.get(market_id)
@@ -341,6 +342,7 @@ def _analyze_book(book: object, dictionary: dict, *, observed_at: datetime,
         market_incomplete = book_incomplete or market.get("marketActive") not in (True, False)
         market_stale = book_stale or market.get("staleOdds") is True
         outcome_family = {str(value["outcomeId"]): base_family for value in metadata["outcomes"]}
+        usable_outcomes = {}
         for outcome_id, outcome in market["outcomes"].items():
             family = outcome_family.get(outcome_id)
             if family is None:
@@ -376,16 +378,22 @@ def _analyze_book(book: object, dictionary: dict, *, observed_at: datetime,
                 accumulator["inactive"] |= state["inactive"]
                 accumulator["incomplete"] |= state["incomplete"]
                 accumulator["usable"] += int(state["usable"])
+                if state["usable"]:
+                    usable_outcomes.setdefault(actual_family, set()).add(outcome_id)
                 if (state["latest"] and (accumulator["latest"] is None
                                          or state["latest"] > accumulator["latest"])):
                     accumulator["latest"] = state["latest"]
         for family in families_seen:
             accumulators[family]["markets"] += 1
+            required_outcomes = len(outcome_family) if family == base_family else 2
+            accumulators[family]["complete_markets"] += int(
+                required_outcomes >= 2
+                and len(usable_outcomes.get(family, ())) == required_outcomes)
     result = {}
     for family, value in accumulators.items():
         if value["markets"] == 0:
             status = "UNSUPPORTED_METADATA" if unsupported and not dictionary else "MISSING"
-        elif value["usable"] >= 2:
+        elif value["complete_markets"]:
             status = "AVAILABLE"
         elif value["stale"]:
             status = "STALE"
@@ -397,6 +405,7 @@ def _analyze_book(book: object, dictionary: dict, *, observed_at: datetime,
             status = "INCOMPLETE"
         result[family] = {"status": status, "usable_priced_outcomes": value["usable"],
                           "market_count": value["markets"],
+                          "complete_market_count": value["complete_markets"],
                           "latest_changed_at_utc": value["latest"]}
     status = ("STALE" if book_stale else "INACTIVE" if book_inactive
               else "INCOMPLETE" if book_incomplete else "AVAILABLE")
@@ -450,8 +459,6 @@ def execute(*, state: Path, authorization_path: Path, metadata_path: Path,
         compressed = gzip.compress(raw, compresslevel=9, mtime=0) if raw else b""
         if len(compressed) > MAX_COMPRESSED_BYTES:
             failure, compressed = {"code": "COMPRESSED_RESPONSE_TOO_LARGE", "http_status": None}, b""
-        if compressed:
-            _write_bytes(directory / "response.json.gz", compressed)
         analysis = None
         if batch is not None and failure is None:
             try:
@@ -461,6 +468,8 @@ def execute(*, state: Path, authorization_path: Path, metadata_path: Path,
         completed_at = clock().astimezone(timezone.utc)
         if completed_at < response_received_at:
             _fail("CLOCK_INVALID")
+        if compressed:
+            _write_bytes(directory / "response.json.gz", compressed)
         report = {
             "version": SCHEMA_VERSION, "experiment": EXPERIMENT,
             "status": "COMPLETE" if failure is None else "FAILED",
@@ -489,7 +498,12 @@ def main(argv=None) -> int:
         print("TOURNAMENT_RESEARCH_ARGUMENTS_REJECTED", file=sys.stderr)
         return 2
     try:
-        report = execute(state=STATE_PATH, authorization_path=AUTHORIZATION_PATH,
+        credential_directory = Path(os.environ.get("CREDENTIALS_DIRECTORY", ""))
+        if (not credential_directory.is_absolute() or credential_directory.is_symlink()
+                or not credential_directory.is_dir()):
+            _fail("AUTHORIZATION_INVALID")
+        report = execute(state=STATE_PATH,
+                         authorization_path=credential_directory / AUTHORIZATION_CREDENTIAL,
                          metadata_path=METADATA_PATH)
     except (TournamentResearchError, LedgerError, RunnerError) as error:
         code = str(error)

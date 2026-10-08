@@ -1,6 +1,7 @@
 """Root-installed launcher for the one-shot OddsPapi tournament experiment."""
 
 import os
+import json
 from pathlib import Path
 import pwd
 import re
@@ -13,6 +14,7 @@ STATE = Path("/var/lib/modelfc/state")
 AUTHORIZATION = Path("/etc/modelfc/oddspapi-tournament-research.json")
 METADATA = Path("/etc/modelfc/oddspapi-market-metadata.json")
 CREDENTIAL_NAME = "oddspapi.key"
+AUTHORIZATION_CREDENTIAL_NAME = "tournament-authorization.json"
 
 
 def protected(path, owner, *, directory=False, private=False):
@@ -23,23 +25,30 @@ def protected(path, owner, *, directory=False, private=False):
         raise ValueError("invalid tournament research path")
 
 
-def credential() -> str:
+def credential(name=CREDENTIAL_NAME, *, json_document=False) -> str:
     directory_value = os.environ.get("CREDENTIALS_DIRECTORY")
     if not directory_value:
         raise ValueError("missing tournament research credential")
     directory = Path(directory_value)
     if not directory.is_absolute() or directory.is_symlink() or not directory.is_dir():
         raise ValueError("invalid tournament research credential")
-    descriptor = os.open(directory / CREDENTIAL_NAME,
+    descriptor = os.open(directory / name,
                          os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     with os.fdopen(descriptor, "rb") as source:
         info, raw = os.fstat(source.fileno()), source.read(4097)
     if not stat.S_ISREG(info.st_mode) or not 1 <= len(raw) <= 4096:
         raise ValueError("invalid tournament research credential")
     try:
-        value = raw.decode("ascii").strip()
+        value = raw.decode("utf-8" if json_document else "ascii").strip()
     except UnicodeDecodeError:
         raise ValueError("invalid tournament research credential") from None
+    if json_document:
+        try:
+            if not isinstance(json.loads(value), dict):
+                raise ValueError
+        except (TypeError, ValueError):
+            raise ValueError("invalid tournament research credential") from None
+        return value
     if not value or any(character.isspace() or not character.isprintable() for character in value):
         raise ValueError("invalid tournament research credential")
     return value
@@ -78,9 +87,11 @@ def launch():
     protected(AUTHORIZATION, 0, private=True)
     protected(METADATA, 0)
     key = credential()
+    credential(AUTHORIZATION_CREDENTIAL_NAME, json_document=True)
     environment = {"PATH": "/usr/bin:/bin", "HOME": "/nonexistent", "LANG": "C.UTF-8",
                    "PYTHONPATH": str(release / "src"), "PYTHONNOUSERSITE": "1",
-                   "PYTHONDONTWRITEBYTECODE": "1", "ODDSPAPI_API_KEY": key}
+                   "PYTHONDONTWRITEBYTECODE": "1", "ODDSPAPI_API_KEY": key,
+                   "CREDENTIALS_DIRECTORY": os.environ["CREDENTIALS_DIRECTORY"]}
     os.execve(str(python), [str(python), "-B", "-P", "-s", "-m",
               "modelfc.oddspapi_tournament_research"], environment)
 

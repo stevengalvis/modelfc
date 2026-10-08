@@ -546,6 +546,7 @@ class OddsPapiTournamentResearchClient:
                 r"\\u([0-9a-fA-F]{4})",
                 lambda match: chr(int(match.group(1), 16)), decoded,
             )
+            candidate = re.sub(r"\\([\\/\"])", lambda match: match.group(1), candidate)
             candidate = unquote(candidate)
             if candidate == decoded:
                 return False

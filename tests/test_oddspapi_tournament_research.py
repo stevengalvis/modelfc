@@ -157,7 +157,8 @@ class TournamentTransportTests(unittest.TestCase):
             client = oddspapi.OddsPapiTournamentResearchClient(
                 request_guard=Guard(), max_response_bytes=4096)
             for raw in (b'not-json apiKey=private%2fkey%3D1',
-                        b'not-json apiKey=private/key=\\u0031'):
+                        b'not-json apiKey=private/key=\\u0031',
+                        b'not-json apiKey=private\\/key=1'):
                 client = oddspapi.OddsPapiTournamentResearchClient(
                     request_guard=Guard(), max_response_bytes=4096)
                 with self.subTest(raw=raw), patch.object(
@@ -238,6 +239,24 @@ class InventoryTests(unittest.TestCase):
         self.assertEqual(btts_result["usable_priced_outcomes"], 1)
         self.assertEqual(btts_result["status"], "INCOMPLETE")
 
+    def test_two_incomplete_markets_do_not_fabricate_a_pair(self):
+        definitions = metadata()
+        definitions.append({"marketId": 9, "marketName": "Over Under",
+            "marketType": "totals", "period": "fulltime", "handicap": 3.5,
+            "sportId": 10, "playerProp": False,
+            "outcomes": [{"outcomeId": 90, "outcomeName": "Over"},
+                         {"outcomeId": 91, "outcomeName": "Under"}]})
+        value = payload()[0]
+        markets = value["bookmakerOdds"]["draftkings"]["markets"]
+        markets["6"] = market(6, complete=False)
+        markets["9"] = market(9, complete=False)
+        result = research.analyze_batch([value], definitions, observed_at=NOW)
+        row = next(item for item in result["competitions"] if item["tournament_id"] == 18)
+        goals = row["fixtures"][0]["bookmakers"]["draftkings"]["families"]["MATCH_GOAL_TOTALS"]
+        self.assertEqual(goals["usable_priced_outcomes"], 2)
+        self.assertEqual(goals["complete_market_count"], 0)
+        self.assertEqual(goals["status"], "INCOMPLETE")
+
     def test_malformed_metadata_and_response_rejected(self):
         bad = metadata(); bad[0]["outcomes"] = "bad"
         with self.assertRaisesRegex(research.TournamentResearchError, "MARKET_METADATA_INVALID"):
@@ -313,6 +332,18 @@ class ExecutionTests(unittest.TestCase):
                             if row["tournament_id"] == 18)
         self.assertEqual(championship["fixtures"][0]["bookmakers"]["draftkings"]
                          ["families"]["BTTS"]["status"], "AVAILABLE")
+
+    def test_backward_completion_clock_never_persists_raw_without_report(self):
+        client, _ = self.client()
+        clocks = iter((NOW, NOW + timedelta(seconds=2), NOW + timedelta(seconds=1)))
+        with self.assertRaisesRegex(research.TournamentResearchError, "CLOCK_INVALID"):
+            research.execute(state=self.state, authorization_path=self.auth,
+                             metadata_path=self.meta, clock=lambda: next(clocks),
+                             client_type=client)
+        directory = self.state / "provider-research/oddspapi-tournament-v1"
+        self.assertTrue((directory / "attempt.json").exists())
+        self.assertFalse((directory / "response.json.gz").exists())
+        self.assertFalse((directory / "report.json").exists())
 
     def test_conservative_reservation_private_capture_and_production_isolation(self):
         client, calls = self.client()
@@ -411,6 +442,7 @@ class OperatorBoundaryTests(unittest.TestCase):
         self.metadata.write_text("[]")
         self.credentials = root / "credentials"; self.credentials.mkdir()
         (self.credentials / "oddspapi.key").write_text(SECRET)
+        (self.credentials / "tournament-authorization.json").write_text("{}")
         owner = type("Account", (), {"pw_uid": os.getuid()})()
         for item in (patch.object(launcher, "RELEASES", self.releases),
                      patch.object(launcher, "STATE", self.state),
@@ -435,7 +467,7 @@ class OperatorBoundaryTests(unittest.TestCase):
                                 "modelfc.oddspapi_tournament_research"])
         self.assertEqual(set(environment), {"PATH", "HOME", "LANG", "PYTHONPATH",
                                              "PYTHONNOUSERSITE", "PYTHONDONTWRITEBYTECODE",
-                                             "ODDSPAPI_API_KEY"})
+                                             "ODDSPAPI_API_KEY", "CREDENTIALS_DIRECTORY"})
         self.assertEqual(environment["ODDSPAPI_API_KEY"], SECRET)
         self.assertNotIn("inherited", repr(execute.call_args))
 
@@ -443,6 +475,7 @@ class OperatorBoundaryTests(unittest.TestCase):
         service = (ROOT / "deploy/modelfc-oddspapi-tournament-research.service").read_text()
         for required in ("Type=oneshot", "User=modelfc-runtime", "Group=modelfc-runtime",
                          "LoadCredential=oddspapi.key:/etc/modelfc/credentials/oddspapi.key",
+                         "LoadCredential=tournament-authorization.json:/etc/modelfc/oddspapi-tournament-research.json",
                          "ReadOnlyPaths=/srv/modelfc /etc/modelfc",
                          "ReadWritePaths=/var/lib/modelfc/state",
                          "InaccessiblePaths=-/etc/modelfc/credentials", "NoNewPrivileges=yes"):
