@@ -1,8 +1,9 @@
-"""Offline, deterministic football-only projection of an existing market cache.
+"""Offline, deterministic core-market projection of an existing market cache.
 
-No provider client, credentials, or production state are accessed. Definitions
-are retained whole, including unsupported football families, to preserve the
-inventory's known-ID boundary. Research loader limits remain unchanged.
+No provider client, credentials, or production state are accessed. Selected
+definitions are retained whole; an ID-only exclusion index preserves the
+inventory's known-ID boundary without retaining unrelated definitions. Research
+loader limits remain unchanged.
 """
 from __future__ import annotations
 
@@ -14,10 +15,11 @@ from pathlib import Path
 
 from modelfc.oddspapi_tournament_research import (
     MAX_METADATA_BYTES, MAX_METADATA_ROWS, TournamentResearchError,
-    _classify_metadata, _metadata_index, _read_regular, _write_bytes,
+    _classify_metadata, _metadata_index, _metadata_exclusion, _read_regular, _write_bytes,
+    METADATA_FILTER_VERSION,
 )
 
-FILTER_VERSION = "football-whole-definitions-v1"
+FILTER_VERSION = METADATA_FILTER_VERSION
 MAX_SOURCE_BYTES = 32 * 1024 * 1024
 MAX_SOURCE_ROWS = 100_000
 
@@ -54,6 +56,7 @@ def filter_metadata(raw: bytes) -> tuple[bytes, dict]:
         seen = set()
         retained = []
         counts = {}
+        excluded = {"EXCLUDED_BY_ALLOWLIST": [], "UNSUPPORTED_FAMILY": []}
         for row in source:
             # Use the research validator even for removed rows; malformed or
             # colliding source identities must never disappear through filtering.
@@ -63,7 +66,8 @@ def filter_metadata(raw: bytes) -> tuple[bytes, dict]:
                 _reject()
             seen.add(identity)
             for field in ("marketType", "period", "marketName"):
-                if field in row and not isinstance(row[field], str):
+                if (field in row and not isinstance(row[field], str)
+                        and not (field == "period" and row[field] is None)):
                     _reject()
             if "playerProp" in row and type(row["playerProp"]) is not bool:
                 _reject()
@@ -72,16 +76,22 @@ def filter_metadata(raw: bytes) -> tuple[bytes, dict]:
                     _reject()
                 if "outcomeName" in outcome and not isinstance(outcome["outcomeName"], str):
                     _reject()
-            if row["sportId"] == 10:
-                family = _classify_metadata(row)
-                if family is not None and not row["outcomes"]:
-                    _reject()
+            family = _classify_metadata(row)
+            if family is not None:
                 retained.append(row)
-                label = family or "UNSUPPORTED_FOOTBALL"
-                counts[label] = counts.get(label, 0) + 1
+                counts[family] = counts.get(family, 0) + 1
+            else:
+                excluded[_metadata_exclusion(row)].append(identity)
         retained.sort(key=lambda row: row["marketId"])
-        _metadata_index(retained)
-        output = (json.dumps(retained, sort_keys=True, separators=(",", ":"),
+        artifact = {
+            "filter_version": FILTER_VERSION,
+            "source_sha256": hashlib.sha256(raw).hexdigest(),
+            "source_entries": len(source),
+            "markets": retained,
+            "excluded_ids": {reason: sorted(ids) for reason, ids in excluded.items()},
+        }
+        _metadata_index(artifact)
+        output = (json.dumps(artifact, sort_keys=True, separators=(",", ":"),
                              ensure_ascii=True, allow_nan=False) + "\n").encode("ascii")
     except (ValueError, TypeError, OverflowError, UnicodeError, RecursionError):
         _reject()
@@ -93,6 +103,8 @@ def filter_metadata(raw: bytes) -> tuple[bytes, dict]:
         "source_bytes": len(raw), "source_entries": len(source),
         "filtered_sha256": hashlib.sha256(output).hexdigest(),
         "filtered_bytes": len(output), "filtered_entries": len(retained),
+        "excluded_entries": len(source) - len(retained),
+        "excluded_reason_counts": {reason: len(ids) for reason, ids in excluded.items()},
         "sport_id": 10, "family_entries": dict(sorted(counts.items())),
     }
 

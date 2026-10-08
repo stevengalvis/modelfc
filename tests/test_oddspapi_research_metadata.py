@@ -7,8 +7,8 @@ import unittest
 from unittest.mock import patch
 
 from modelfc.oddspapi_research_metadata import filter_metadata, main
-from modelfc.oddspapi_tournament_research import TournamentResearchError, analyze_batch
-from tests.test_oddspapi_tournament_research import metadata, payload, NOW
+from modelfc.oddspapi_tournament_research import TournamentResearchError, analyze_batch, _metadata_index
+from tests.test_oddspapi_tournament_research import metadata, payload, market, NOW
 
 
 class ResearchMetadataTests(unittest.TestCase):
@@ -21,12 +21,12 @@ class ResearchMetadataTests(unittest.TestCase):
         alternate.update(marketId=99, handicap=6.5)
         rows.append(alternate)
         output, receipt = filter_metadata(self.encode(rows))
-        self.assertEqual(json.loads(output), sorted(rows, key=lambda row: row['marketId']))
+        self.assertEqual(json.loads(output)["markets"], sorted(rows, key=lambda row: row['marketId']))
         self.assertEqual(receipt['filtered_entries'], 9)
         self.assertEqual(receipt['filtered_sha256'], hashlib.sha256(output).hexdigest())
         self.assertEqual(receipt['source_sha256'], hashlib.sha256(self.encode(rows)).hexdigest())
 
-    def test_other_sports_removed_but_unsupported_football_and_player_props_retained(self):
+    def test_non_target_sports_unsupported_families_and_player_props_excluded(self):
         rows = metadata()
         for mid, sport, kind, prop in ((90, 1, 'totals', False),
                                       (91, 10, 'moneyline', False),
@@ -35,8 +35,10 @@ class ResearchMetadataTests(unittest.TestCase):
             row.update(marketId=mid, sportId=sport, marketType=kind, playerProp=prop)
             rows.append(row)
         output, receipt = filter_metadata(self.encode(rows))
-        self.assertEqual([row['marketId'] for row in json.loads(output)], list(range(1, 9)) + [91, 92])
-        self.assertEqual(receipt['family_entries']['UNSUPPORTED_FOOTBALL'], 2)
+        self.assertEqual([row['marketId'] for row in json.loads(output)['markets']], list(range(1, 9)))
+        self.assertEqual(receipt['excluded_entries'], 3)
+        self.assertEqual(json.loads(output)['excluded_ids'], {
+            'EXCLUDED_BY_ALLOWLIST': [90, 92], 'UNSUPPORTED_FAMILY': [91]})
 
     def test_inventory_identical_for_complete_and_missing_outcome_mappings(self):
         rows = metadata()
@@ -59,7 +61,9 @@ class ResearchMetadataTests(unittest.TestCase):
         rows = metadata()
         output, _ = filter_metadata(self.encode(rows))
         reordered, _ = filter_metadata(self.encode(list(reversed(rows))))
-        self.assertEqual(output, reordered)
+        self.assertEqual(output, filter_metadata(self.encode(rows))[0])
+        self.assertEqual(json.loads(output)['markets'], json.loads(reordered)['markets'])
+        self.assertEqual(json.loads(output)['excluded_ids'], json.loads(reordered)['excluded_ids'])
         with patch('modelfc.oddspapi_research_metadata.MAX_METADATA_BYTES', len(output) - 1):
             with self.assertRaisesRegex(TournamentResearchError, 'LIMIT_EXCEEDED'):
                 filter_metadata(self.encode(rows))
@@ -95,7 +99,76 @@ class ResearchMetadataTests(unittest.TestCase):
         output, receipt = filter_metadata(self.encode(rows))
         self.assertEqual(receipt['source_entries'], 33115)
         self.assertEqual(receipt['filtered_entries'], 8)
-        self.assertEqual(json.loads(output), metadata())
+        self.assertEqual(json.loads(output)["markets"], metadata())
+
+    def test_btts_104_uses_verified_type_and_yes_no_mapping(self):
+        rows = metadata()
+        btts = dict(rows[4], marketId=104, marketType='bothteamsscore', marketName='Localized name')
+        rows.append(btts)
+        output, _ = filter_metadata(self.encode(rows))
+        self.assertEqual(json.loads(output)['markets'][-1], btts)
+        dictionary, _ = _metadata_index(json.loads(output))
+        self.assertEqual(dictionary['104'][1], 'BTTS')
+        for names in (('Over', 'Under'), ('Yes', 'Yes'), ('Yes',)):
+            broken = copy.deepcopy(btts)
+            broken['outcomes'] = [{'outcomeId': i + 1, 'outcomeName': name} for i, name in enumerate(names)]
+            with self.subTest(names=names), self.assertRaises(TournamentResearchError):
+                filter_metadata(self.encode([broken]))
+
+    def test_null_unknown_and_missing_period_excluded_without_normalizing(self):
+        rows = metadata()
+        for mid, period in ((101, None), (102, 'extra-time'), (103, '')):
+            rows.append(dict(rows[0], marketId=mid, period=period))
+        missing = dict(rows[0], marketId=105)
+        del missing['period']
+        rows.append(missing)
+        rows.append(dict(rows[1], marketId=106, period='p1'))
+        output, _ = filter_metadata(self.encode(rows))
+        artifact = json.loads(output)
+        self.assertEqual(artifact['markets'], metadata())
+        self.assertEqual(artifact['excluded_ids']['EXCLUDED_BY_ALLOWLIST'], [101, 102, 103, 105, 106])
+        self.assertIsNone(rows[8]['period'])
+
+    def test_excluded_missing_and_unsupported_are_distinct_per_book(self):
+        rows = metadata()
+        rows.extend([dict(rows[0], marketId=101, period=None),
+                     dict(rows[0], marketId=102, marketType='moneyline')])
+        output, _ = filter_metadata(self.encode(rows))
+        value = payload()
+        value[0]['bookmakerOdds']['draftkings']['markets'] = {
+            '101': market(101), '102': market(102), '999': market(999)}
+        result = analyze_batch(value, json.loads(output), observed_at=NOW)
+        books = next(row for row in result['competitions'] if row['tournament_id'] == 18)['fixtures'][0]['bookmakers']
+        self.assertEqual(books['draftkings']['metadata_diagnostics'], [
+            {'market_id': '101', 'status': 'EXCLUDED_BY_ALLOWLIST'},
+            {'market_id': '102', 'status': 'UNSUPPORTED_FAMILY'},
+            {'market_id': '999', 'status': 'MISSING_METADATA'}])
+        self.assertEqual(books['draftkings']['unsupported_metadata_markets'], 1)
+        self.assertEqual(books['fanduel']['metadata_diagnostics'], [])
+        self.assertEqual(books['fanduel']['families']['BTTS']['status'], 'AVAILABLE')
+        del value[0]['bookmakerOdds']['draftkings']['markets']['999']
+        result = analyze_batch(value, json.loads(output), observed_at=NOW)
+        book = next(row for row in result['competitions'] if row['tournament_id'] == 18)['fixtures'][0]['bookmakers']['draftkings']
+        self.assertTrue(all(family['status'] == 'EXCLUDED_BY_ALLOWLIST' for family in book['families'].values()))
+
+    def test_filtered_manifest_rejects_collisions_invalid_counts_and_unscoped_rows(self):
+        output, _ = filter_metadata(self.encode(metadata()))
+        for change in ('collision', 'count', 'unsupported', 'unknown_field', 'bad_id'):
+            artifact = json.loads(output)
+            if change == 'collision':
+                artifact['excluded_ids']['UNSUPPORTED_FAMILY'] = [1]
+                artifact['source_entries'] += 1
+            elif change == 'count':
+                artifact['source_entries'] += 1
+            elif change == 'unsupported':
+                artifact['markets'][0]['marketType'] = 'moneyline'
+            elif change == 'unknown_field':
+                artifact['anything'] = True
+            else:
+                artifact['excluded_ids']['UNSUPPORTED_FAMILY'] = [True]
+                artifact['source_entries'] += 1
+            with self.subTest(change=change), self.assertRaises(TournamentResearchError):
+                _metadata_index(artifact)
 
     def test_cli_pins_source_writes_private_exclusive_artifacts_and_rejects_symlink(self):
         with tempfile.TemporaryDirectory() as directory:
