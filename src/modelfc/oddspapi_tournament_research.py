@@ -348,6 +348,7 @@ def _analyze_book(book: object, dictionary: dict, *, observed_at: datetime,
                 continue
             if not isinstance(outcome, dict) or not isinstance(outcome.get("players"), dict):
                 _fail("BATCH_RESPONSE_INVALID")
+            outcome_states = {}
             for player in outcome["players"].values():
                 actual_family = family
                 if family == "MATCH_GOAL_TOTALS" and isinstance(player, dict):
@@ -355,17 +356,29 @@ def _analyze_book(book: object, dictionary: dict, *, observed_at: datetime,
                                      else "ALTERNATE_GOAL_TOTALS")
                 families_seen.add(actual_family)
                 usable, stale, latest = _priced(player, observed_at=observed_at)
-                accumulator = accumulators[actual_family]
-                accumulator["stale"] |= stale or market_stale
                 player_inactive = isinstance(player, dict) and player.get("active") is False
                 player_incomplete = (not isinstance(player, dict)
                                      or player.get("active") not in (True, False))
-                accumulator["inactive"] |= market_inactive or player_inactive
-                accumulator["incomplete"] |= market_incomplete or player_incomplete
-                if usable and not market_inactive and not market_incomplete and not market_stale:
-                    accumulator["usable"] += 1
-                if latest and (accumulator["latest"] is None or latest > accumulator["latest"]):
-                    accumulator["latest"] = latest
+                state = outcome_states.setdefault(actual_family, {
+                    "usable": False, "stale": False, "inactive": False,
+                    "incomplete": False, "latest": None,
+                })
+                state["stale"] |= stale or market_stale
+                state["inactive"] |= market_inactive or player_inactive
+                state["incomplete"] |= market_incomplete or player_incomplete
+                state["usable"] |= (usable and not market_inactive
+                                    and not market_incomplete and not market_stale)
+                if latest and (state["latest"] is None or latest > state["latest"]):
+                    state["latest"] = latest
+            for actual_family, state in outcome_states.items():
+                accumulator = accumulators[actual_family]
+                accumulator["stale"] |= state["stale"]
+                accumulator["inactive"] |= state["inactive"]
+                accumulator["incomplete"] |= state["incomplete"]
+                accumulator["usable"] += int(state["usable"])
+                if (state["latest"] and (accumulator["latest"] is None
+                                         or state["latest"] > accumulator["latest"])):
+                    accumulator["latest"] = state["latest"]
         for family in families_seen:
             accumulators[family]["markets"] += 1
     result = {}

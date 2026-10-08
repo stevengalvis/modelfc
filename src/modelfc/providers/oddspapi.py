@@ -16,12 +16,11 @@ import json
 import math
 import os
 from pathlib import Path
-import re
 from types import MappingProxyType
 import time
 import uuid
 from urllib.error import HTTPError, URLError
-from urllib.parse import quote, urlencode
+from urllib.parse import unquote, urlencode
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from modelfc.corner_analysis import (
@@ -505,11 +504,7 @@ class OddsPapiTournamentResearchClient:
                 raise OddsPapiTournamentResearchError(
                     "RESPONSE_TOO_LARGE", http_status=status,
                 )
-            encoded_forms = {self._encoded_key}
-            url_encoded = quote(self._key, safe="").encode("ascii")
-            encoded_forms.update((url_encoded, re.sub(
-                rb"%[0-9A-F]{2}", lambda match: match.group(0).lower(), url_encoded)))
-            if any(value in raw for value in encoded_forms):
+            if self._encoded_key in raw:
                 raise OddsPapiTournamentResearchError(
                     "CREDENTIAL_BOUNDARY", http_status=status,
                 )
@@ -529,7 +524,15 @@ class OddsPapiTournamentResearchClient:
 
     def _credential_in_json(self, value):
         if isinstance(value, str):
-            return self._key in value
+            decoded = value
+            for _ in range(4):
+                if self._key in decoded:
+                    return True
+                candidate = unquote(decoded)
+                if candidate == decoded:
+                    return False
+                decoded = candidate
+            return self._key in decoded
         if isinstance(value, list):
             return any(self._credential_in_json(item) for item in value)
         if isinstance(value, dict):

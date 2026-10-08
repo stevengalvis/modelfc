@@ -154,10 +154,12 @@ class TournamentTransportTests(unittest.TestCase):
         self.assertNotIn(SECRET, str(caught.exception))
 
     def test_encoded_credential_reflection_is_rejected_before_capture(self):
-        with patch.dict(os.environ, {"ODDSPAPI_API_KEY": "private/key1"}):
-            for raw in (b'{"value":"private/key\\u0031"}',
-                        b'{"value":"private%2Fkey1"}',
-                        b'{"private/key\\u0031":"value"}'):
+        with patch.dict(os.environ, {"ODDSPAPI_API_KEY": "private/key=1"}):
+            for raw in (b'{"value":"private/key=\\u0031"}',
+                        b'{"value":"private%2Fkey%3D1"}',
+                        b'{"value":"private%2fkey%3D1"}',
+                        b'{"value":"private%252fkey%253D1"}',
+                        b'{"private/key=\\u0031":"value"}'):
                 client = oddspapi.OddsPapiTournamentResearchClient(
                     request_guard=Guard(), max_response_bytes=4096)
                 with self.subTest(raw=raw), patch.object(
@@ -208,6 +210,17 @@ class InventoryTests(unittest.TestCase):
         self.assertEqual(draftkings["status"], "INCOMPLETE")
         self.assertEqual(draftkings["families"]["BTTS"]["status"], "INCOMPLETE")
         self.assertEqual(draftkings["families"]["BTTS"]["usable_priced_outcomes"], 0)
+
+    def test_multiple_players_under_one_outcome_count_once(self):
+        value = payload()[0]
+        btts = value["bookmakerOdds"]["draftkings"]["markets"]["5"]
+        only = btts["outcomes"].pop("51")
+        btts["outcomes"]["50"]["players"]["1"] = dict(only["players"]["0"])
+        result = research.analyze_batch([value], metadata(), observed_at=NOW)
+        row = next(item for item in result["competitions"] if item["tournament_id"] == 18)
+        btts_result = row["fixtures"][0]["bookmakers"]["draftkings"]["families"]["BTTS"]
+        self.assertEqual(btts_result["usable_priced_outcomes"], 1)
+        self.assertEqual(btts_result["status"], "INCOMPLETE")
 
     def test_malformed_metadata_and_response_rejected(self):
         bad = metadata(); bad[0]["outcomes"] = "bad"
