@@ -153,6 +153,14 @@ class TournamentTransportTests(unittest.TestCase):
                          ("MALFORMED_JSON", b"not-json"))
         self.assertNotIn(SECRET, str(caught.exception))
 
+        client = self.client()
+        with patch.object(client._opener, "open", return_value=Response(
+                b'[{"fixtureId":"fixture-1","statusId":NaN}]')):
+            with self.assertRaises(oddspapi.OddsPapiTournamentResearchError) as caught:
+                client.retrieve(tournament_ids=research.TOURNAMENT_IDS,
+                                bookmakers=oddspapi.BOOKMAKERS)
+        self.assertEqual(caught.exception.code, "MALFORMED_JSON")
+
         with patch.dict(os.environ, {"ODDSPAPI_API_KEY": "private/key=1"}):
             client = oddspapi.OddsPapiTournamentResearchClient(
                 request_guard=Guard(), max_response_bytes=4096)
@@ -216,6 +224,17 @@ class InventoryTests(unittest.TestCase):
         self.assertEqual(books["draftkings"]["families"]["HOME_TEAM_CORNERS"]["status"], "INACTIVE")
         self.assertEqual(books["draftkings"]["families"]["BTTS"]["status"], "INCOMPLETE")
         self.assertEqual(books["draftkings"]["unsupported_metadata_markets"], 1)
+
+    def test_only_unknown_returned_market_is_unsupported_not_missing(self):
+        value = payload()[0]
+        value["bookmakerOdds"]["draftkings"]["markets"] = {"999": market(999)}
+        result = research.analyze_batch([value], metadata(), observed_at=NOW)
+        row = next(item for item in result["competitions"] if item["tournament_id"] == 18)
+        draftkings = row["fixtures"][0]["bookmakers"]["draftkings"]
+        self.assertEqual(draftkings["unsupported_metadata_markets"], 1)
+        self.assertTrue(all(
+            family["status"] == "UNSUPPORTED_METADATA"
+            for family in draftkings["families"].values()))
 
     def test_missing_bookmaker_activity_flags_never_report_available(self):
         value = payload()[0]

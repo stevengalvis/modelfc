@@ -58,6 +58,10 @@ TEAM_ALIASES = MappingProxyType({
 })
 
 
+def _reject_json_constant(_value):
+    raise ValueError
+
+
 @dataclass(frozen=True)
 class Competition:
     code: str
@@ -514,7 +518,7 @@ class OddsPapiTournamentResearchClient:
                     "CREDENTIAL_BOUNDARY", http_status=status,
                 )
             try:
-                payload = json.loads(raw)
+                payload = json.loads(raw, parse_constant=_reject_json_constant)
             except (ValueError, UnicodeError):
                 raise OddsPapiTournamentResearchError(
                     "MALFORMED_JSON", http_status=status, raw=raw,

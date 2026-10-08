@@ -398,7 +398,9 @@ def _analyze_book(book: object, dictionary: dict, *, observed_at: datetime,
     result = {}
     for family, value in accumulators.items():
         if value["markets"] == 0:
-            status = "UNSUPPORTED_METADATA" if unsupported and not dictionary else "MISSING"
+            # An unknown returned market could belong to any unobserved family.
+            # Do not report confirmed absence when the cache cannot classify it.
+            status = "UNSUPPORTED_METADATA" if unsupported else "MISSING"
         elif value["complete_markets"]:
             status = "AVAILABLE"
         elif value["stale"]:
