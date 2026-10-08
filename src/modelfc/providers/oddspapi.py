@@ -16,11 +16,12 @@ import json
 import math
 import os
 from pathlib import Path
+import re
 from types import MappingProxyType
 import time
 import uuid
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from modelfc.corner_analysis import (
@@ -504,7 +505,11 @@ class OddsPapiTournamentResearchClient:
                 raise OddsPapiTournamentResearchError(
                     "RESPONSE_TOO_LARGE", http_status=status,
                 )
-            if self._encoded_key in raw:
+            encoded_forms = {self._encoded_key}
+            url_encoded = quote(self._key, safe="").encode("ascii")
+            encoded_forms.update((url_encoded, re.sub(
+                rb"%[0-9A-F]{2}", lambda match: match.group(0).lower(), url_encoded)))
+            if any(value in raw for value in encoded_forms):
                 raise OddsPapiTournamentResearchError(
                     "CREDENTIAL_BOUNDARY", http_status=status,
                 )
@@ -514,9 +519,23 @@ class OddsPapiTournamentResearchClient:
                 raise OddsPapiTournamentResearchError(
                     "MALFORMED_JSON", http_status=status, raw=raw,
                 ) from None
+            if self._credential_in_json(payload):
+                raise OddsPapiTournamentResearchError(
+                    "CREDENTIAL_BOUNDARY", http_status=status,
+                )
             return OddsPapiTournamentBatch(payload, raw, status, usage)
         finally:
             self.request_guard.after_request()
+
+    def _credential_in_json(self, value):
+        if isinstance(value, str):
+            return self._key in value
+        if isinstance(value, list):
+            return any(self._credential_in_json(item) for item in value)
+        if isinstance(value, dict):
+            return any(self._credential_in_json(key) or self._credential_in_json(item)
+                       for key, item in value.items())
+        return False
 
 
 class OddsPapiClient:

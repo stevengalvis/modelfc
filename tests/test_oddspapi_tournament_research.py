@@ -153,6 +153,20 @@ class TournamentTransportTests(unittest.TestCase):
                          ("MALFORMED_JSON", b"not-json"))
         self.assertNotIn(SECRET, str(caught.exception))
 
+    def test_encoded_credential_reflection_is_rejected_before_capture(self):
+        with patch.dict(os.environ, {"ODDSPAPI_API_KEY": "private/key1"}):
+            for raw in (b'{"value":"private/key\\u0031"}',
+                        b'{"value":"private%2Fkey1"}',
+                        b'{"private/key\\u0031":"value"}'):
+                client = oddspapi.OddsPapiTournamentResearchClient(
+                    request_guard=Guard(), max_response_bytes=4096)
+                with self.subTest(raw=raw), patch.object(
+                        client._opener, "open", return_value=Response(raw)):
+                    with self.assertRaisesRegex(
+                            oddspapi.OddsPapiTournamentResearchError, "CREDENTIAL_BOUNDARY"):
+                        client.retrieve(tournament_ids=research.TOURNAMENT_IDS,
+                                        bookmakers=oddspapi.BOOKMAKERS)
+
 
 class InventoryTests(unittest.TestCase):
     def test_market_family_inventory_and_empty_competitions(self):
@@ -182,6 +196,18 @@ class InventoryTests(unittest.TestCase):
         self.assertEqual(books["draftkings"]["families"]["HOME_TEAM_CORNERS"]["status"], "INACTIVE")
         self.assertEqual(books["draftkings"]["families"]["BTTS"]["status"], "INCOMPLETE")
         self.assertEqual(books["draftkings"]["unsupported_metadata_markets"], 1)
+
+    def test_missing_bookmaker_activity_flags_never_report_available(self):
+        value = payload()[0]
+        book = value["bookmakerOdds"]["draftkings"]
+        del book["bookmakerIsActive"]
+        del book["suspended"]
+        result = research.analyze_batch([value], metadata(), observed_at=NOW)
+        row = next(item for item in result["competitions"] if item["tournament_id"] == 18)
+        draftkings = row["fixtures"][0]["bookmakers"]["draftkings"]
+        self.assertEqual(draftkings["status"], "INCOMPLETE")
+        self.assertEqual(draftkings["families"]["BTTS"]["status"], "INCOMPLETE")
+        self.assertEqual(draftkings["families"]["BTTS"]["usable_priced_outcomes"], 0)
 
     def test_malformed_metadata_and_response_rejected(self):
         bad = metadata(); bad[0]["outcomes"] = "bad"

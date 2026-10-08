@@ -322,8 +322,11 @@ def _analyze_book(book: object, dictionary: dict, *, observed_at: datetime,
         _fail("BATCH_RESPONSE_INVALID")
     book_stale = fixture_stale or book.get("staleOdds") is True
     book_inactive = book.get("bookmakerIsActive") is False or book.get("suspended") is True
+    book_incomplete = (book.get("bookmakerIsActive") is not True
+                       or book.get("suspended") is not False) and not book_inactive
     accumulators = {family: {"markets": 0, "usable": 0, "stale": False,
-                             "inactive": False, "latest": None} for family in FAMILIES}
+                             "inactive": False, "incomplete": False,
+                             "latest": None} for family in FAMILIES}
     unsupported = 0
     for market_id, market in sorted(markets.items()):
         definition = dictionary.get(market_id)
@@ -335,6 +338,7 @@ def _analyze_book(book: object, dictionary: dict, *, observed_at: datetime,
         metadata, base_family = definition
         families_seen = set()
         market_inactive = book_inactive or market.get("marketActive") is False
+        market_incomplete = book_incomplete or market.get("marketActive") not in (True, False)
         market_stale = book_stale or market.get("staleOdds") is True
         outcome_family = {str(value["outcomeId"]): base_family for value in metadata["outcomes"]}
         for outcome_id, outcome in market["outcomes"].items():
@@ -353,9 +357,12 @@ def _analyze_book(book: object, dictionary: dict, *, observed_at: datetime,
                 usable, stale, latest = _priced(player, observed_at=observed_at)
                 accumulator = accumulators[actual_family]
                 accumulator["stale"] |= stale or market_stale
-                accumulator["inactive"] |= market_inactive or not (isinstance(player, dict)
-                                                                     and player.get("active") is True)
-                if usable and not market_inactive and not market_stale:
+                player_inactive = isinstance(player, dict) and player.get("active") is False
+                player_incomplete = (not isinstance(player, dict)
+                                     or player.get("active") not in (True, False))
+                accumulator["inactive"] |= market_inactive or player_inactive
+                accumulator["incomplete"] |= market_incomplete or player_incomplete
+                if usable and not market_inactive and not market_incomplete and not market_stale:
                     accumulator["usable"] += 1
                 if latest and (accumulator["latest"] is None or latest > accumulator["latest"]):
                     accumulator["latest"] = latest
@@ -371,12 +378,15 @@ def _analyze_book(book: object, dictionary: dict, *, observed_at: datetime,
             status = "STALE"
         elif value["inactive"] and value["usable"] == 0:
             status = "INACTIVE"
+        elif value["incomplete"]:
+            status = "INCOMPLETE"
         else:
             status = "INCOMPLETE"
         result[family] = {"status": status, "usable_priced_outcomes": value["usable"],
                           "market_count": value["markets"],
                           "latest_changed_at_utc": value["latest"]}
-    status = "STALE" if book_stale else "INACTIVE" if book_inactive else "AVAILABLE"
+    status = ("STALE" if book_stale else "INACTIVE" if book_inactive
+              else "INCOMPLETE" if book_incomplete else "AVAILABLE")
     return {"status": status, "unsupported_metadata_markets": unsupported, "families": result}
 
 
