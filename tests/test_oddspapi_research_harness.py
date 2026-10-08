@@ -106,9 +106,24 @@ class SessionTests(unittest.TestCase):
         self.value = plan(); self.value["market_metadata_sha256"] = hashlib.sha256(self.meta.read_bytes()).hexdigest()
         self.auth = self.credentials / harness.PLAN_CREDENTIAL
         self.install_plan()
+        # CI runs as an ordinary account. Model only the root-installed input
+        # inodes, while retaining real writer ownership, modes and path checks.
+        self.real_fstat = os.fstat
+        def installed_input_stat(descriptor):
+            info = self.real_fstat(descriptor)
+            for path in (self.meta, self.auth):
+                try:
+                    source = path.lstat()
+                except FileNotFoundError:
+                    continue
+                if (info.st_dev, info.st_ino) == (source.st_dev, source.st_ino):
+                    fields = list(info); fields[4] = 0
+                    return os.stat_result(fields)
+            return info
         for item in (patch.object(harness, "PATH_ANCHOR", self.root), patch.object(harness, "STATE_PATH", self.state),
                      patch.object(harness, "CREDENTIAL_DIRECTORY", self.credentials), patch.object(harness, "METADATA_PATH", self.meta),
                      patch.object(prospective, "_now", return_value=NOW), patch.object(prospective.time, "sleep"),
+                     patch.object(harness.os, "fstat", side_effect=installed_input_stat),
                      patch.dict(os.environ, {"ODDSPAPI_API_KEY": SECRET}),
                      patch("urllib.request.OpenerDirector.open", side_effect=AssertionError("live network forbidden"))):
             item.start(); self.addCleanup(item.stop)
@@ -325,6 +340,18 @@ class SessionTests(unittest.TestCase):
         research.unlink()
         self.credentials.rename(self.root / "real-credentials"); self.credentials.symlink_to(self.root / "real-credentials")
         with self.assertRaises(harness.ResearchHarnessError): self.execute([])
+        self.assertEqual(self.reserved(), 0)
+
+    def test_root_installed_input_owner_is_still_required(self):
+        def wrong_owner(descriptor):
+            info = self.real_fstat(descriptor)
+            if (info.st_dev, info.st_ino) == (self.meta.stat().st_dev, self.meta.stat().st_ino):
+                fields = list(info); fields[4] = 12345
+                return os.stat_result(fields)
+            return info
+        with patch.object(harness.os, "fstat", side_effect=wrong_owner):
+            with self.assertRaisesRegex(harness.ResearchHarnessError, "PATH_INVALID"):
+                harness._read(self.meta, 16384, root_owned=True)
         self.assertEqual(self.reserved(), 0)
 
     def test_lock_control_state_and_metadata_symlink_denial(self):
