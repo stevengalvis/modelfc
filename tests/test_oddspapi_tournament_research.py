@@ -2,6 +2,7 @@
 
 from datetime import date, datetime, timedelta, timezone
 from io import BytesIO
+from http.client import IncompleteRead
 import gzip
 import hashlib
 import importlib.util
@@ -123,6 +124,89 @@ class TournamentTransportTests(unittest.TestCase):
                                     "REQUEST_NOT_AUTHORIZED"):
             client.retrieve(tournament_ids=research.TOURNAMENT_IDS,
                             bookmakers=oddspapi.BOOKMAKERS)
+
+    def http_failure(self, raw, *, stream=None):
+        client = self.client()
+        body = stream if stream is not None else BytesIO(raw)
+        failure = HTTPError("https://private.invalid/?apiKey=" + SECRET,
+                            400, "secret rejection " + SECRET, {}, body)
+        with patch.object(client._opener, "open", side_effect=failure) as opened:
+            with self.assertRaises(oddspapi.OddsPapiTournamentResearchError) as caught:
+                client.retrieve(tournament_ids=research.TOURNAMENT_IDS,
+                                bookmakers=oddspapi.BOOKMAKERS)
+        error = caught.exception
+        self.assertEqual((error.code, error.http_status, error.raw), ("HTTP_FAILURE", 400, b""))
+        self.assertEqual(str(error), "HTTP_FAILURE")
+        self.assertEqual((opened.call_count, client.request_guard.after), (1, 1))
+        self.assertTrue(body.closed)
+        with self.assertRaisesRegex(Exception, "REQUEST_NOT_AUTHORIZED"):
+            client.retrieve(tournament_ids=research.TOURNAMENT_IDS,
+                            bookmakers=oddspapi.BOOKMAKERS)
+        return error.diagnostic
+
+    def test_http_400_only_allowlisted_tokens_survive(self):
+        raw = json.dumps({"error": {"code": "TOO_MANY_BOOKMAKERS", "parameter": "bookmakers",
+                                   "message": "private arbitrary message", "url": "https://private.invalid"},
+                          "payload": {"odds": "sensitive"}}).encode()
+        diagnostic = self.http_failure(raw)
+        self.assertEqual(diagnostic, oddspapi.TournamentHttpDiagnostic(
+            "JSON", "TOO_MANY_BOOKMAKERS", "bookmakers"))
+        serialized = json.dumps(diagnostic.__dict__)
+        for forbidden in (SECRET, "private", "https://", "sensitive", "odds", "message"):
+            self.assertNotIn(forbidden, serialized)
+
+    def test_http_400_unknown_conflicting_or_nonstring_tokens_are_not_echoed(self):
+        for payload in (
+            {"code": "private arbitrary rejection", "parameter": "apiKey"},
+            {"code": ["TOO_MANY_BOOKMAKERS"], "parameter": {"secret": SECRET}},
+            {"code": "TOO_MANY_BOOKMAKERS", "error": {"code": "REQUEST_LIMIT_EXCEEDED"}},
+            ["private arbitrary rejection"],
+        ):
+            with self.subTest(payload=payload):
+                diagnostic = self.http_failure(json.dumps(payload).encode())
+                expected = "CREDENTIAL_BOUNDARY" if SECRET in json.dumps(payload) else "JSON"
+                self.assertEqual(diagnostic, oddspapi.TournamentHttpDiagnostic(expected))
+
+    def test_http_400_empty_malformed_duplicate_deep_and_oversized_bodies(self):
+        cases = (
+            (b"", "EMPTY"), (b"<html>private rejection</html>", "MALFORMED_JSON"),
+            (b'{"code":"TOO_MANY_BOOKMAKERS","code":"REQUEST_LIMIT_EXCEEDED"}', "MALFORMED_JSON"),
+            (b'{"code":NaN}', "MALFORMED_JSON"),
+            (b"[" * 1500 + b"0" + b"]" * 1500, "MALFORMED_JSON"),
+            (b"x" * (oddspapi.MAX_RESEARCH_ERROR_BYTES + 1), "TOO_LARGE"),
+        )
+        for raw, state in cases:
+            with self.subTest(state=state):
+                self.assertEqual(self.http_failure(raw), oddspapi.TournamentHttpDiagnostic(state))
+
+    def test_http_400_read_failure_is_fixed_and_bounded(self):
+        for failure in (OSError("secret body " + SECRET), IncompleteRead(SECRET.encode()),
+                        TimeoutError(SECRET)):
+            with self.subTest(failure=type(failure).__name__):
+                body = Mock()
+                body.read.side_effect = failure
+                body.closed = True
+                self.assertEqual(self.http_failure(b"", stream=body),
+                                 oddspapi.TournamentHttpDiagnostic("READ_FAILED"))
+                body.read.assert_called_once_with(oddspapi.MAX_RESEARCH_ERROR_BYTES + 1)
+                body.close.assert_called_once_with()
+
+    def test_http_400_reflected_credentials_in_encodings_are_suppressed(self):
+        for raw in (SECRET.encode(), json.dumps({"message": SECRET}).encode("utf-16le"),
+                    json.dumps({"message": "".join("\\u%04x" % ord(c) for c in SECRET)}).encode(),
+                    json.dumps({"code": "TOO_MANY_BOOKMAKERS", "message":
+                                "".join("%%%02X" % ord(c) for c in SECRET)}).encode()):
+            with self.subTest(raw=raw):
+                self.assertEqual(self.http_failure(raw),
+                                 oddspapi.TournamentHttpDiagnostic("CREDENTIAL_BOUNDARY"))
+
+    def test_http_diagnostic_rejects_arbitrary_fields(self):
+        for args in (("PRIVATE",), ("JSON", SECRET), ("JSON", "UNRECOGNIZED", "apiKey"),
+                     ("EMPTY", "TOO_MANY_BOOKMAKERS"), ([],)):
+            with self.subTest(args=args), self.assertRaisesRegex(ValueError, "INVALID_HTTP_DIAGNOSTIC"):
+                oddspapi.TournamentHttpDiagnostic(*args)
+        with self.assertRaisesRegex(ValueError, "INVALID_HTTP_DIAGNOSTIC"):
+            oddspapi.OddsPapiTournamentResearchError("HTTP_FAILURE", diagnostic={"message": SECRET})
 
     def test_rejects_changed_request_and_production_client_still_denies_endpoint(self):
         client = self.client()
@@ -514,6 +598,24 @@ class ExecutionTests(unittest.TestCase):
             research.execute(state=self.state, authorization_path=self.auth,
                              metadata_path=self.meta, clock=lambda: NOW,
                              client_type=client)
+        self.assertEqual(len(calls), 1)
+
+    def test_http_400_diagnostic_private_report_has_no_raw_error_capture(self):
+        diagnostic = oddspapi.TournamentHttpDiagnostic("JSON", "TOO_MANY_BOOKMAKERS", "bookmakers")
+        client, calls = self.client(failure=oddspapi.OddsPapiTournamentResearchError(
+            "HTTP_FAILURE", http_status=400, diagnostic=diagnostic))
+        report = self.execute(client)
+        self.assertEqual(report["http_result"], {
+            "code": "HTTP_FAILURE", "http_status": 400,
+            "diagnostic": {"body_state": "JSON", "rejection_code": "TOO_MANY_BOOKMAKERS",
+                           "parameter": "bookmakers"},
+        })
+        self.assertEqual(report["provider_accounting"]["requests_attempted"], 1)
+        self.assertFalse(report["provider_accounting"]["reservation_refunded"])
+        directory = self.state / "provider-research/oddspapi-tournament-v1"
+        self.assertFalse((directory / "response.json.gz").exists())
+        self.assertEqual((report["response_size_bytes"], report["raw_response_sha256"]), (0, None))
+        self.assertNotIn(SECRET, (directory / "report.json").read_text())
         self.assertEqual(len(calls), 1)
 
     def test_insufficient_budget_rejected_before_transport(self):

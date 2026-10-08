@@ -8,6 +8,7 @@ or alter production evidence.  Importing this module never performs network IO.
 from __future__ import annotations
 
 from contextlib import contextmanager
+from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
 import fcntl
 import gzip
@@ -549,6 +550,8 @@ def execute(*, state: Path, authorization_path: Path, metadata_path: Path,
             raw = batch.raw
         except OddsPapiTournamentResearchError as error:
             failure = {"code": error.code, "http_status": error.http_status}
+            if error.diagnostic is not None:
+                failure["diagnostic"] = asdict(error.diagnostic)
             raw = error.raw
         response_received_at = clock().astimezone(timezone.utc)
         if response_received_at < now:

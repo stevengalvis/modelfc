@@ -12,6 +12,7 @@ from copy import deepcopy
 from dataclasses import asdict, dataclass, replace
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+from http.client import HTTPException
 import json
 import html
 import math
@@ -104,14 +105,48 @@ class OddsPapiError(ValueError):
     """An explicit provider/normalization failure; messages never include URLs."""
 
 
+MAX_RESEARCH_ERROR_BYTES = 8192
+RESEARCH_ERROR_BODY_STATES = frozenset({
+    "EMPTY", "TOO_LARGE", "READ_FAILED", "CREDENTIAL_BOUNDARY", "MALFORMED_JSON", "JSON",
+})
+# Exact codes documented by the provider; recognition does not imply that a code
+# applies to this endpoint. Never publish an arbitrary provider message or code.
+RESEARCH_REJECTION_CODES = frozenset({
+    "UNRECOGNIZED", "TOO_MANY_BOOKMAKERS", "REQUEST_LIMIT_EXCEEDED",
+})
+RESEARCH_REJECTION_PARAMETERS = frozenset({
+    "UNRECOGNIZED", "tournamentIds", "bookmakers", "language", "verbosity",
+})
+
+
+@dataclass(frozen=True)
+class TournamentHttpDiagnostic:
+    body_state: str
+    rejection_code: str = "UNRECOGNIZED"
+    parameter: str = "UNRECOGNIZED"
+
+    def __post_init__(self):
+        if (any(type(value) is not str for value in
+                (self.body_state, self.rejection_code, self.parameter))
+                or self.body_state not in RESEARCH_ERROR_BODY_STATES
+                or self.rejection_code not in RESEARCH_REJECTION_CODES
+                or self.parameter not in RESEARCH_REJECTION_PARAMETERS
+                or (self.body_state != "JSON" and
+                    (self.rejection_code != "UNRECOGNIZED" or self.parameter != "UNRECOGNIZED"))):
+            raise ValueError("INVALID_HTTP_DIAGNOSTIC")
+
+
 class OddsPapiTournamentResearchError(OddsPapiError):
     """Fixed-code failure from the one-shot tournament research transport."""
 
-    def __init__(self, code, *, http_status=None, raw=b""):
+    def __init__(self, code, *, http_status=None, raw=b"", diagnostic=None):
+        if diagnostic is not None and type(diagnostic) is not TournamentHttpDiagnostic:
+            raise ValueError("INVALID_HTTP_DIAGNOSTIC")
         super().__init__(code)
         self.code = code
         self.http_status = http_status
         self.raw = raw
+        self.diagnostic = diagnostic
 
 
 @dataclass(frozen=True)
@@ -518,9 +553,12 @@ class OddsPapiTournamentResearchClient:
                              if k.lower().startswith(("x-ratelimit", "x-requests"))}
             except HTTPError as error:
                 status = error.code
-                error.close()
+                try:
+                    diagnostic = self._http_error_diagnostic(error)
+                finally:
+                    error.close()
                 raise OddsPapiTournamentResearchError(
-                    "HTTP_FAILURE", http_status=status,
+                    "HTTP_FAILURE", http_status=status, diagnostic=diagnostic,
                 ) from None
             except (URLError, TimeoutError, OSError):
                 raise OddsPapiTournamentResearchError("NETWORK_FAILURE") from None
@@ -547,6 +585,56 @@ class OddsPapiTournamentResearchClient:
             return OddsPapiTournamentBatch(payload, raw, status, usage)
         finally:
             self.request_guard.after_request()
+
+    def _http_error_diagnostic(self, error):
+        """Read once, bounded; discard the body and expose only fixed tokens."""
+        try:
+            raw = error.read(MAX_RESEARCH_ERROR_BYTES + 1)
+        except (OSError, TimeoutError, ValueError, HTTPException):
+            return TournamentHttpDiagnostic("READ_FAILED")
+        if len(raw) > MAX_RESEARCH_ERROR_BYTES:
+            return TournamentHttpDiagnostic("TOO_LARGE")
+        if not raw:
+            return TournamentHttpDiagnostic("EMPTY")
+        if self._credential_in_raw(raw):
+            return TournamentHttpDiagnostic("CREDENTIAL_BOUNDARY")
+
+        def unique_object(pairs):
+            result = {}
+            for key, value in pairs:
+                if key in result:
+                    raise ValueError
+                result[key] = value
+            return result
+
+        try:
+            payload = json.loads(raw, object_pairs_hook=unique_object,
+                                 parse_constant=_reject_json_constant,
+                                 parse_float=_finite_json_float, parse_int=_finite_json_int)
+        except (ValueError, UnicodeError, RecursionError):
+            return TournamentHttpDiagnostic("MALFORMED_JSON")
+        try:
+            if self._credential_in_json(payload):
+                return TournamentHttpDiagnostic("CREDENTIAL_BOUNDARY")
+        except RecursionError:
+            return TournamentHttpDiagnostic("MALFORMED_JSON")
+        # Do not mine free text. Accept only explicit code/parameter fields in
+        # an object, optionally in its error object; conflicting tokens fail closed.
+        objects = [payload] if isinstance(payload, dict) else []
+        if objects and isinstance(payload.get("error"), dict):
+            objects.append(payload["error"])
+
+        def token(field, allowed):
+            values = [obj[field] for obj in objects if field in obj]
+            if (not values or any(type(value) is not str or value not in allowed
+                                  for value in values) or len(set(values)) != 1):
+                return "UNRECOGNIZED"
+            return values[0]
+
+        return TournamentHttpDiagnostic(
+            "JSON", token("code", RESEARCH_REJECTION_CODES),
+            token("parameter", RESEARCH_REJECTION_PARAMETERS),
+        )
 
     def _credential_in_json(self, value):
         if isinstance(value, str):
