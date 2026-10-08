@@ -174,15 +174,26 @@ def enroll_production_budget(state_dir, expected_allowance, expected_reserved):
 
 class _RequestBudgetGuard:
     """Persist bounded reservations and pacing across runner invocations."""
-    def __init__(self, path, control, summary):
+    _PRODUCTION_KINDS = frozenset(("FIXTURE_DISCOVERY", "MARKET_METADATA", "FIXTURE_ODDS"))
+
+    def __init__(self, path, control, summary, *, allowed_kinds=None, invocation_limit=8):
         self.path, self.control, self.summary = path, control, summary
+        self.allowed_kinds = (self._PRODUCTION_KINDS if allowed_kinds is None
+                              else frozenset(allowed_kinds))
+        profile = (self.allowed_kinds, invocation_limit)
+        if profile not in ((self._PRODUCTION_KINDS, 8),
+                           (frozenset({"TOURNAMENT_RESEARCH"}), 1)):
+            raise RunnerError("REQUEST_BUDGET")
+        self.invocation_limit = invocation_limit
         self.reserved = self.tokens = 0
 
     def reserve(self, count):
         period = self.control["period"]
         if not date.fromisoformat(period["start"]) <= _now().date() < date.fromisoformat(period["end"]):
             raise RunnerError("PERIOD_EXPIRED")
-        if self.reserved + count > 8 or period["reserved"] + count > period["allowance"]:
+        if (type(count) is not int or count <= 0
+                or self.reserved + count > self.invocation_limit
+                or period["reserved"] + count > period["allowance"]):
             raise RunnerError("REQUEST_BUDGET")
         period["reserved"] += count
         self.reserved += count
@@ -190,7 +201,7 @@ class _RequestBudgetGuard:
         _save(self.path, self.control)
 
     def before_request(self, kind):
-        if self.tokens <= 0 or kind not in ("FIXTURE_DISCOVERY", "MARKET_METADATA", "FIXTURE_ODDS"):
+        if self.tokens <= 0 or kind not in self.allowed_kinds:
             raise RunnerError("REQUEST_BUDGET")
         last = self.control["last_request"]
         interval = 3.0 if kind == "FIXTURE_DISCOVERY" else 2.1
