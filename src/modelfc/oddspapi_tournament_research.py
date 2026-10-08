@@ -444,6 +444,9 @@ def execute(*, state: Path, authorization_path: Path, metadata_path: Path,
         except OddsPapiTournamentResearchError as error:
             failure = {"code": error.code, "http_status": error.http_status}
             raw = error.raw
+        response_received_at = clock().astimezone(timezone.utc)
+        if response_received_at < now:
+            _fail("CLOCK_INVALID")
         compressed = gzip.compress(raw, compresslevel=9, mtime=0) if raw else b""
         if len(compressed) > MAX_COMPRESSED_BYTES:
             failure, compressed = {"code": "COMPRESSED_RESPONSE_TOO_LARGE", "http_status": None}, b""
@@ -452,14 +455,17 @@ def execute(*, state: Path, authorization_path: Path, metadata_path: Path,
         analysis = None
         if batch is not None and failure is None:
             try:
-                analysis = analyze_batch(batch.payload, metadata, observed_at=now)
+                analysis = analyze_batch(batch.payload, metadata, observed_at=response_received_at)
             except TournamentResearchError as error:
                 failure = {"code": str(error), "http_status": batch.http_status}
         completed_at = clock().astimezone(timezone.utc)
+        if completed_at < response_received_at:
+            _fail("CLOCK_INVALID")
         report = {
             "version": SCHEMA_VERSION, "experiment": EXPERIMENT,
             "status": "COMPLETE" if failure is None else "FAILED",
             "requested_at_utc": attempted_at,
+            "response_received_at_utc": response_received_at.isoformat().replace("+00:00", "Z"),
             "completed_at_utc": completed_at.isoformat().replace("+00:00", "Z"),
             "raw_retention_until_utc": (now + timedelta(days=RAW_RETENTION_DAYS)).isoformat().replace("+00:00", "Z"),
             "request": {"endpoint": "/v4/odds-by-tournaments",

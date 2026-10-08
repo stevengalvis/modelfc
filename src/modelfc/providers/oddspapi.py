@@ -16,6 +16,7 @@ import json
 import math
 import os
 from pathlib import Path
+import re
 from types import MappingProxyType
 import time
 import uuid
@@ -504,7 +505,11 @@ class OddsPapiTournamentResearchClient:
                 raise OddsPapiTournamentResearchError(
                     "RESPONSE_TOO_LARGE", http_status=status,
                 )
-            if self._encoded_key in raw:
+            try:
+                raw_text = raw.decode("utf-8")
+            except UnicodeDecodeError:
+                raw_text = raw.decode("latin-1")
+            if self._credential_in_text(raw_text):
                 raise OddsPapiTournamentResearchError(
                     "CREDENTIAL_BOUNDARY", http_status=status,
                 )
@@ -524,21 +529,28 @@ class OddsPapiTournamentResearchClient:
 
     def _credential_in_json(self, value):
         if isinstance(value, str):
-            decoded = value
-            for _ in range(4):
-                if self._key in decoded:
-                    return True
-                candidate = unquote(decoded)
-                if candidate == decoded:
-                    return False
-                decoded = candidate
-            return self._key in decoded
+            return self._credential_in_text(value)
         if isinstance(value, list):
             return any(self._credential_in_json(item) for item in value)
         if isinstance(value, dict):
             return any(self._credential_in_json(key) or self._credential_in_json(item)
                        for key, item in value.items())
         return False
+
+    def _credential_in_text(self, value):
+        decoded = value
+        for _ in range(4):
+            if self._key in decoded:
+                return True
+            candidate = re.sub(
+                r"\\u([0-9a-fA-F]{4})",
+                lambda match: chr(int(match.group(1), 16)), decoded,
+            )
+            candidate = unquote(candidate)
+            if candidate == decoded:
+                return False
+            decoded = candidate
+        return self._key in decoded
 
 
 class OddsPapiClient:

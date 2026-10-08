@@ -153,6 +153,22 @@ class TournamentTransportTests(unittest.TestCase):
                          ("MALFORMED_JSON", b"not-json"))
         self.assertNotIn(SECRET, str(caught.exception))
 
+        with patch.dict(os.environ, {"ODDSPAPI_API_KEY": "private/key=1"}):
+            client = oddspapi.OddsPapiTournamentResearchClient(
+                request_guard=Guard(), max_response_bytes=4096)
+            for raw in (b'not-json apiKey=private%2fkey%3D1',
+                        b'not-json apiKey=private/key=\\u0031'):
+                client = oddspapi.OddsPapiTournamentResearchClient(
+                    request_guard=Guard(), max_response_bytes=4096)
+                with self.subTest(raw=raw), patch.object(
+                        client._opener, "open", return_value=Response(raw)):
+                    with self.assertRaisesRegex(
+                            oddspapi.OddsPapiTournamentResearchError,
+                            "CREDENTIAL_BOUNDARY") as reflected:
+                        client.retrieve(tournament_ids=research.TOURNAMENT_IDS,
+                                        bookmakers=oddspapi.BOOKMAKERS)
+                self.assertEqual(reflected.exception.raw, b"")
+
     def test_encoded_credential_reflection_is_rejected_before_capture(self):
         with patch.dict(os.environ, {"ODDSPAPI_API_KEY": "private/key=1"}):
             for raw in (b'{"value":"private/key=\\u0031"}',
@@ -273,10 +289,30 @@ class ExecutionTests(unittest.TestCase):
         return Fake, calls
 
     def execute(self, client_type):
-        clocks = iter((NOW, NOW + timedelta(seconds=1)))
+        clocks = iter((NOW, NOW + timedelta(seconds=1), NOW + timedelta(seconds=2)))
         return research.execute(state=self.state, authorization_path=self.auth,
                                 metadata_path=self.meta, clock=lambda: next(clocks),
                                 client_type=client_type)
+
+    def test_analysis_uses_post_retrieval_observation_timestamp(self):
+        value = payload()
+        for book in value[0]["bookmakerOdds"].values():
+            for market_value in book["markets"].values():
+                for outcome in market_value["outcomes"].values():
+                    for player in outcome["players"].values():
+                        player["changedAt"] = "2026-10-08T12:00:01Z"
+        response = oddspapi.OddsPapiTournamentBatch(
+            value, json.dumps(value, separators=(",", ":")).encode(), 200, {})
+        client, _ = self.client(response=response)
+        clocks = iter((NOW, NOW + timedelta(seconds=2), NOW + timedelta(seconds=3)))
+        report = research.execute(state=self.state, authorization_path=self.auth,
+                                  metadata_path=self.meta, clock=lambda: next(clocks),
+                                  client_type=client)
+        self.assertEqual(report["response_received_at_utc"], "2026-10-08T12:00:02Z")
+        championship = next(row for row in report["analysis"]["competitions"]
+                            if row["tournament_id"] == 18)
+        self.assertEqual(championship["fixtures"][0]["bookmakers"]["draftkings"]
+                         ["families"]["BTTS"]["status"], "AVAILABLE")
 
     def test_conservative_reservation_private_capture_and_production_isolation(self):
         client, calls = self.client()
