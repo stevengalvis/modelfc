@@ -240,7 +240,8 @@ print(json.dumps(result,sort_keys=True))'''
         self.assertIn("ReadOnlyPaths=/srv/modelfc /etc/modelfc /var/lib/modelfc/state", service)
         self.assertNotIn("ReadWritePaths=/var/lib/modelfc/state", service)
         self.assertRegex(caddy, r"@btts_research\s*\{\s*path /api/v1/research/btts\s*"
-                         r"method GET\s*query competition E1\s*\}")
+                         r"method GET\s*expression `\{http\.request\.uri\.query\} == "
+                         r'"competition=E1"`\s*\}')
         self.assertRegex(caddy, r"handle @btts_research\s*\{\s*"
                          r"header Cache-Control \"no-store\"\s*reverse_proxy 127.0.0.1:8000\s*\}")
 
