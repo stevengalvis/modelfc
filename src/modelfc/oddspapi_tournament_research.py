@@ -460,6 +460,13 @@ def _analyze_book(book: object, dictionary: dict, *, observed_at: datetime,
                 if (state["latest"] and (accumulator["latest"] is None
                                          or state["latest"] > accumulator["latest"])):
                     accumulator["latest"] = state["latest"]
+        if not families_seen:
+            # The definition is known and present, even when no mapped outcome
+            # has a player quote. Do not fabricate sportsbook absence.
+            families_seen.add(base_family)
+            accumulators[base_family]["incomplete"] = True
+            accumulators[base_family]["inactive"] |= market_inactive
+            accumulators[base_family]["stale"] |= market_stale
         for family in families_seen:
             accumulators[family]["markets"] += 1
             required_outcomes = len(outcome_family) if family == base_family else 2

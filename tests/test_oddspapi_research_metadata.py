@@ -151,6 +151,27 @@ class ResearchMetadataTests(unittest.TestCase):
         book = next(row for row in result['competitions'] if row['tournament_id'] == 18)['fixtures'][0]['bookmakers']['draftkings']
         self.assertTrue(all(family['status'] == 'EXCLUDED_BY_ALLOWLIST' for family in book['families'].values()))
 
+    def test_btts_104_inventory_preserves_present_incomplete_inactive_and_stale(self):
+        btts = dict(metadata()[4], marketId=104, marketType='bothteamsscore')
+        output, _ = filter_metadata(self.encode([btts]))
+        for status, flags, empty in (
+                ('AVAILABLE', {}, False), ('INCOMPLETE', {}, True),
+                ('INACTIVE', {'marketActive': False}, True),
+                ('STALE', {'staleOdds': True}, True)):
+            value = payload()
+            offer = market(5)
+            offer.update(flags)
+            if empty:
+                offer['outcomes'] = {}
+            value[0]['bookmakerOdds']['draftkings']['markets'] = {'104': offer}
+            value[0]['bookmakerOdds']['fanduel']['markets'] = {}
+            result = analyze_batch(value, json.loads(output), observed_at=NOW)
+            books = next(row for row in result['competitions'] if row['tournament_id'] == 18)['fixtures'][0]['bookmakers']
+            with self.subTest(status=status):
+                self.assertEqual(books['draftkings']['families']['BTTS']['status'], status)
+                self.assertEqual(books['draftkings']['families']['BTTS']['market_count'], 1)
+                self.assertEqual(books['fanduel']['families']['BTTS']['status'], 'MISSING')
+
     def test_filtered_manifest_rejects_collisions_invalid_counts_and_unscoped_rows(self):
         output, _ = filter_metadata(self.encode(metadata()))
         for change in ('collision', 'count', 'unsupported', 'unknown_field', 'bad_id'):
