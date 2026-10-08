@@ -180,15 +180,17 @@ def _private_directory(state: Path) -> Path:
     return directory
 
 
-def _write_bytes(path: Path, payload: bytes) -> None:
+def _write_bytes(path: Path, payload: bytes, *, directory_fd: int | None = None) -> None:
     try:
-        descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
-                             0o600)
+        descriptor = os.open(path if directory_fd is None else path.name,
+                             os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                             0o600, dir_fd=directory_fd)
         with os.fdopen(descriptor, "wb") as output:
             output.write(payload)
             output.flush()
             os.fsync(output.fileno())
-        directory = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        directory = (os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+                     if directory_fd is None else os.dup(directory_fd))
         try:
             os.fsync(directory)
         finally:
