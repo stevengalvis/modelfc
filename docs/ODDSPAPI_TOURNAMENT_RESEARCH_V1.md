@@ -50,8 +50,10 @@ provider accepts ten tournaments until the single authorized response exists.
   fixture fallbacks, discovery calls, or metadata calls.
 - The production provider credential is supplied only through systemd
   `LoadCredential`. The root-only authorization is supplied through a separate
-  read-only systemd credential. The launcher exposes only the fixed module
-  entrypoint.
+  read-only systemd credential. The launcher accepts only the unit's exact
+  `/run/credentials/modelfc-oddspapi-tournament-research.service` directory,
+  never a caller-selected credential directory, and exposes only the fixed
+  module entrypoint.
 - The root-owned authorization must attest at least one provider request remains.
   This is a short-lived operator preflight assertion, not a provider counter.
 - The analyzer consumes an exact SHA-256-pinned cached `/markets` dictionary.

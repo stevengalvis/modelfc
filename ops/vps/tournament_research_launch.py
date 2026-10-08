@@ -13,6 +13,8 @@ RELEASES = Path("/srv/modelfc/releases")
 STATE = Path("/var/lib/modelfc/state")
 AUTHORIZATION = Path("/etc/modelfc/oddspapi-tournament-research.json")
 METADATA = Path("/etc/modelfc/oddspapi-market-metadata.json")
+CREDENTIAL_DIRECTORY = Path(
+    "/run/credentials/modelfc-oddspapi-tournament-research.service")
 CREDENTIAL_NAME = "oddspapi.key"
 AUTHORIZATION_CREDENTIAL_NAME = "tournament-authorization.json"
 
@@ -30,7 +32,8 @@ def credential(name=CREDENTIAL_NAME, *, json_document=False) -> str:
     if not directory_value:
         raise ValueError("missing tournament research credential")
     directory = Path(directory_value)
-    if not directory.is_absolute() or directory.is_symlink() or not directory.is_dir():
+    if (directory != CREDENTIAL_DIRECTORY or directory.is_symlink()
+            or not directory.is_dir()):
         raise ValueError("invalid tournament research credential")
     descriptor = os.open(directory / name,
                          os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)

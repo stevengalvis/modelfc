@@ -538,6 +538,7 @@ class OperatorBoundaryTests(unittest.TestCase):
                      patch.object(launcher, "STATE", self.state),
                      patch.object(launcher, "AUTHORIZATION", self.authorization),
                      patch.object(launcher, "METADATA", self.metadata),
+                     patch.object(launcher, "CREDENTIAL_DIRECTORY", self.credentials),
                      patch.object(launcher.pwd, "getpwnam", return_value=owner)):
             item.start(); self.addCleanup(item.stop)
         original = launcher.protected
@@ -560,6 +561,16 @@ class OperatorBoundaryTests(unittest.TestCase):
                                              "ODDSPAPI_API_KEY", "CREDENTIALS_DIRECTORY"})
         self.assertEqual(environment["ODDSPAPI_API_KEY"], SECRET)
         self.assertNotIn("inherited", repr(execute.call_args))
+
+    def test_launcher_rejects_non_systemd_credential_directory(self):
+        attacker = Path(self.temporary.name) / "attacker-credentials"
+        attacker.mkdir()
+        (attacker / "oddspapi.key").write_text(SECRET)
+        (attacker / "tournament-authorization.json").write_text("{}")
+        with patch.object(Path, "cwd", return_value=self.release), patch.dict(
+                os.environ, {"CREDENTIALS_DIRECTORY": str(attacker)}, clear=True):
+            with self.assertRaisesRegex(ValueError, "invalid tournament research credential"):
+                launcher.launch()
 
     def test_service_is_manual_private_and_has_no_timer_or_broad_paths(self):
         service = (ROOT / "deploy/modelfc-oddspapi-tournament-research.service").read_text()
