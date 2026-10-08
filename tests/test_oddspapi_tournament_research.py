@@ -447,6 +447,30 @@ class ExecutionTests(unittest.TestCase):
         self.assertEqual(championship["fixtures"][0]["bookmakers"]["draftkings"]
                          ["families"]["BTTS"]["status"], "AVAILABLE")
 
+    def test_execution_materializes_validated_paths_once(self):
+        forged = Path(self.temporary.name) / "forged.json"
+        forged.write_text("{}")
+
+        class FlippingPath:
+            def __init__(inner, expected):
+                inner.expected = expected
+                inner.calls = 0
+
+            def __fspath__(inner):
+                inner.calls += 1
+                return str(inner.expected if inner.calls == 1 else forged)
+
+        authorization = FlippingPath(self.auth)
+        metadata_path = FlippingPath(self.meta)
+        client, calls = self.client()
+        clocks = iter((NOW, NOW + timedelta(seconds=1), NOW + timedelta(seconds=2)))
+        report = research.execute(
+            state=self.state, authorization_path=authorization,
+            metadata_path=metadata_path, clock=lambda: next(clocks), client_type=client)
+        self.assertEqual(report["status"], "COMPLETE")
+        self.assertEqual((authorization.calls, metadata_path.calls), (1, 1))
+        self.assertEqual(len(calls), 1)
+
     def test_backward_completion_clock_never_persists_raw_without_report(self):
         client, _ = self.client()
         clocks = iter((NOW, NOW + timedelta(seconds=2), NOW + timedelta(seconds=1)))

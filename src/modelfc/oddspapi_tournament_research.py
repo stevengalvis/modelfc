@@ -431,9 +431,12 @@ def _analyze_book(book: object, dictionary: dict, *, observed_at: datetime,
 def execute(*, state: Path, authorization_path: Path, metadata_path: Path,
             clock=_now, client_type=OddsPapiTournamentResearchClient) -> dict:
     """Consume the reviewed one-shot authorization and capture its result."""
+    state = Path(state)
+    authorization_path = Path(authorization_path)
+    metadata_path = Path(metadata_path)
     expected_authorization = SYSTEMD_CREDENTIAL_DIRECTORY / AUTHORIZATION_CREDENTIAL
-    if (Path(state) != STATE_PATH or Path(authorization_path) != expected_authorization
-            or Path(metadata_path) != METADATA_PATH):
+    if (state != STATE_PATH or authorization_path != expected_authorization
+            or metadata_path != METADATA_PATH):
         _fail("AUTHORIZATION_INVALID")
     now = clock().astimezone(timezone.utc)
     authorization, metadata = load_authorization(authorization_path, metadata_path, now=now)
