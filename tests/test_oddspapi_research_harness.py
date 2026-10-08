@@ -197,6 +197,30 @@ class SessionTests(unittest.TestCase):
         failure = HTTPError("private", 400, SECRET, {}, BytesIO(b'{"code":"REQUEST_LIMIT_EXCEEDED"}'))
         self.assertEqual(self.execute([failure])["stop_reason"], "REVIEW_REQUIRED")
 
+    def test_ambiguous_400_diagnostics_cannot_authorize_billable_fallback(self):
+        bodies = (
+            b'not JSON', b'x' * (oddspapi.MAX_RESEARCH_ERROR_BYTES + 1), b'',
+            json.dumps({"code": "TOO_MANY_BOOKMAKERS", "parameter": "bookmaker", "message": SECRET}).encode(),
+            b'{"code":"UNKNOWN_REJECTION","parameter":"bookmaker"}',
+            b'{"code":"TOO_MANY_BOOKMAKERS"}',
+            b'{"code":"TOO_MANY_BOOKMAKERS","parameter":"bookmakers"}',
+            b'{"code":"TOO_MANY_BOOKMAKERS","parameter":"apiKey"}',
+            b'{"code":"TOO_MANY_BOOKMAKERS","parameter":"tournamentIds"}',
+        )
+        for raw in bodies:
+            self.value["experiment_id"] += "x"; self.install_plan()
+            failure = HTTPError("private", 400, SECRET, {}, BytesIO(raw))
+            report = self.execute([failure])
+            self.assertEqual((len(self.calls), report["requests_attempted"], report["stop_reason"]), (1, 1, "REVIEW_REQUIRED"))
+            self.assertEqual(len(report["variants"]), 1)
+            self.assertFalse((self.directory / "attempt-02.json").exists())
+        self.value["experiment_id"] += "x"; self.install_plan()
+        class Unreadable(BytesIO):
+            def read(self, *args):
+                raise OSError(SECRET)
+        failure = HTTPError("private", 400, SECRET, {}, Unreadable())
+        self.assertEqual(self.execute([failure])["stop_reason"], "REVIEW_REQUIRED")
+
     def test_reservation_and_intent_are_durable_before_every_http(self):
         attempts = []
         def opened(request, **kwargs):

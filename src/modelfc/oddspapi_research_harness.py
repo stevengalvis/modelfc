@@ -154,6 +154,16 @@ def eligible(row, outcomes):
     return not row["when"] or any(outcomes.get(item["variant_id"]) == item["result"] for item in row["when"])
 
 
+def _contract_rejection(failure, status, parameters):
+    """An ambiguous HTTP 400 must not authorize another billable variant."""
+    diagnostic = failure.get("diagnostic", {})
+    book_key = "bookmaker" if "bookmaker" in parameters else "bookmakers"
+    return (failure["code"] == "HTTP_FAILURE" and status == 400
+            and diagnostic.get("body_state") == "JSON"
+            and diagnostic.get("rejection_code") == "TOO_MANY_BOOKMAKERS"
+            and diagnostic.get("parameter") == book_key)
+
+
 class _PlanGuard:
     """Recheck the immutable authorization after the shared budget guard's pacing."""
 
@@ -381,8 +391,7 @@ def execute(*, clock=_now, client_type=OddsPapiPlannedResearchClient):
                 if compressed:
                     inventory._write_bytes(Path(attempt_id + ".json.gz"), compressed, directory_fd=directory)
                 result = ("SUCCESS" if failure is None else "HTTP_FAILURE"
-                          if failure["code"] == "HTTP_FAILURE" and status == 400
-                          and failure.get("diagnostic", {}).get("rejection_code") != "REQUEST_LIMIT_EXCEEDED"
+                          if _contract_rejection(failure, status, row["parameters"])
                           else "REVIEW_REQUIRED")
                 report = {"version": VERSION, "variant_id": row["id"], "plan_sha256": plan_hash,
                     "request": {"endpoint": ENDPOINT, "parameters": row["parameters"]},

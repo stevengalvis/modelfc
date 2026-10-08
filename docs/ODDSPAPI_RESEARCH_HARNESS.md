@@ -100,7 +100,15 @@ There are no general expressions, callbacks, scripts, shell commands or retries.
 
 `SUCCESS` means a parsed, inventory-valid response; valid empty data is success,
 not proof of useful market coverage. The branch condition `HTTP_FAILURE` means
-an explicit returned HTTP **400** contract rejection. Authentication, quota,
+an explicit returned HTTP **400** contract rejection with JSON body state,
+allowlisted `TOO_MANY_BOOKMAKERS` code and a `parameter` diagnostic matching
+the request's exact `bookmaker`/`bookmakers` key. This is the only recognized
+contract-rejection code in V1; it does not assert the provider will return it.
+Unrecognized, missing, conflicting or unreadable diagnostics, including a
+credential-reflecting error body, stop for review. A generic 400 is insufficient
+to spend another credit. If the observed error is outside this policy, preserve
+the session and obtain a separately approved new plan; do not expand execution
+authorization in place. Authentication, quota,
 other HTTP/server failures, network failure, malformed data, credential reflection,
 oversize data or invalid inventory stop the session for review; they do not
 activate the fallback. A rejection followed by an explicitly different approved
