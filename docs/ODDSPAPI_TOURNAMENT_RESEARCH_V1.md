@@ -143,3 +143,70 @@ explicit host change:
 If any ownership, mode, hash, quota, budget, lock, or namespace check differs
 from the reviewed expectation, stop. Do not edit the provider control file or
 budget counters by hand.
+
+## Offline metadata compatibility and installation
+
+The all-sports cache reported during preflight was 9,962,679 bytes with 33,115
+entries. It exceeds both reviewed research-loader limits (8 MiB and 25,000
+rows). Do not install it directly or increase those limits to accommodate it.
+
+Use `modelfc.oddspapi_research_metadata` from the exact reviewed merged release
+on a private copy of the **existing** cache. No HTTP or credentials are needed.
+The offline input limit is 32 MiB / 100,000 rows; this does not change execution
+limits. The filter retains every `sportId == 10` definition, including player
+props and unsupported football families, with all fields and outcome mappings
+unchanged. It removes only definitions explicitly belonging to other sports.
+Missing sport identities, malformed definitions, duplicate market/outcome IDs,
+non-finite numbers and empty mappings for recognized families fail closed.
+Known unsupported football IDs remain known; unknown market IDs and missing
+outcome mappings remain explicitly counted by the existing inventory.
+Alternate lines are not deduplicated or selected by handicap.
+
+In a private scratch directory, using the pinned release's locked Python:
+
+```sh
+PYTHONPATH=/path/to/reviewed-release/src /path/to/locked-python \
+  -m modelfc.oddspapi_research_metadata \
+  /private/existing-markets.json /private/football-markets.json \
+  --source-sha256 <independently-verified-source-sha256>
+```
+
+Outputs are exclusive, mode `0600`, and never replace existing files. The
+adjacent `.provenance.json` records filter version, source SHA/size/count,
+output SHA/size/count and classified family counts. Definitions are ordered by
+numeric market ID, JSON object keys are sorted, and canonical compact JSON ends
+with one newline. The source hash intentionally depends on original bytes.
+Keep both files together; if publication of either fails, treat the build as
+incomplete and rebuild into new unused filenames. Preserve the original cache.
+
+Before a separately authorized VPS installation:
+
+1. Verify the deployed/reviewed source SHA and independently hash the existing
+   cache. Verify its parent directories and source are not symlinks; operate
+   only within root-controlled private directories.
+2. Build twice into distinct unused filenames and compare output SHA-256.
+   Inspect provenance and independently confirm every football row/outcome
+   equals the corresponding original definition. Confirm every requested
+   family present in the source remains present. Record absent families as
+   absent source coverage, never proof of provider unavailability.
+3. Confirm the actual output is at most 8 MiB and 25,000 rows. If all football
+   definitions still exceed either limit, **stop for separate review**. This
+   procedure has no lossy fallback or automatic limit increase.
+4. Install only the validated filtered bytes at the existing exact metadata
+   path, root-owned and non-writable (for example `root:modelfc-runtime 0640`,
+   after verifying the existing service account/group). Use a root-controlled
+   staging file and atomic replacement. Do not change credential, state-root,
+   or production-evidence permissions. Preserve the previous installed file
+   and provenance in private operator storage for rollback.
+5. Rehash installed bytes and validate them through the existing research
+   metadata loader offline. Keep the provenance sidecar private for audit.
+   The separately issued short-lived authorization must pin the **filtered**
+   SHA, not the original all-sports SHA. Do not modify budget/control counters.
+6. On any mismatch, stop and restore the prior installed metadata if replaced;
+   discard/invalidate any authorization referencing incorrect bytes. Do not
+   start the research service. Installation is not authorization to execute.
+
+The real preflight cache is not checked into this repository. Its actual
+filtered byte count, row count, family coverage and SHA must be recorded from
+that supplied cache before installation; synthetic tests do not establish
+those production-cache measurements. No fresh metadata fetch is permitted.
