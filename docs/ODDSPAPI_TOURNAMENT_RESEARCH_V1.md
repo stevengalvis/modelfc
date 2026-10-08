@@ -1,5 +1,73 @@
 # Guarded OddsPapi tournament research V1
 
+## HTTP 400 investigation and bounded rejection diagnostics
+
+The operator-reported attempt at `2026-10-08T15:01:33.833307Z` returned
+HTTP 400 and consumed one credit (reported remaining quota: 228/250).
+Its error body was discarded by the original transport. No cached rejection
+body is checked into this repository; the exact rejection cause is unknown.
+This investigation makes no provider requests and does not authorize a retry.
+
+The [dedicated v4 endpoint documentation](https://oddspapi.io/en/docs/get-odds-by-tournaments)
+was checked on 2026-10-08 against the existing serializer:
+
+| Item | Existing request | Documented contract / limitation |
+| --- | --- | --- |
+| Method/path | GET `/v4/odds-by-tournaments` | Exact match |
+| `tournamentIds` | `27070,325,17,18,8,35,34,52,37,238` | Comma-separated IDs; no tournament-count maximum stated |
+| `bookmakers` | `draftkings,fanduel` | Comma-separated slugs, maximum three; betfair-ex maximum one (not requested) |
+| `language` | `en` | Optional language; en is the documented default |
+| `verbosity` | `3` | Optional number; 3 appears in the endpoint example; exhaustive allowed values not stated |
+| Authentication | `apiKey`, never printed | Query parameter required by the official overview |
+| Encoding | Standard `urlencode`, commas encoded as `%2C` | Decodes to the documented comma-separated strings; no alternate encoding specified |
+| Casing | Exact camelCase parameter names, lowercase slugs | Matches documented spellings; case-insensitivity is not promised |
+| Cooldown | One request, no retry | Dedicated endpoint states 1000 ms cooldown |
+
+Both lists are supported together by the dedicated parameter contract. That
+does not prove that this account accepts this particular ten-tournament/two-book
+combination or that every cached ID remains valid. The provider's
+[overview](https://oddspapi.io/en/docs) instead shows singular `bookmaker` in
+its multi-tournament example, conflicting with the dedicated page's plural
+`bookmakers`. No request parameter is changed on the strength of that conflict.
+The official sportsbook pages identify the requested slugs as
+[draftkings](https://oddspapi.io/sportsbooks/draftkings) and
+[fanduel](https://oddspapi.io/sportsbooks/fanduel).
+
+Plausible, **unconfirmed** causes are documentation/runtime parameter drift,
+rejection of a cached tournament ID (Colombia remains specifically Apertura),
+or undocumented batch/account/combination restrictions. There is insufficient
+evidence to rank these confidently. Neither a two-book maximum violation nor
+quota exhaustion is demonstrated: the documented maximum is three, and the
+[quota documentation](https://oddspapi.io/en/docs/requests-and-quota) describes
+exhaustion as HTTP 429. HTTP 400 alone cannot identify the faulty parameter.
+Any provider clarification or future billable attempt needs separate operator
+authorization; do not reset the durable attempt marker or reservation.
+
+For a future separately authorized request, HTTP failures now read at most
+8 KiB plus one overflow byte from the **same** response, without retries or
+another HTTP call. The raw error body, headers, exception message and URL are
+never captured or logged. Credential reflections, including escaped encodings,
+suppress all rejection detail. JSON rejects duplicate keys, nonfinite numbers
+and excessive nesting. The optional private `http_result.diagnostic` contains
+only these fixed tokens:
+
+- `body_state`: `EMPTY`, `TOO_LARGE`, `READ_FAILED`, `CREDENTIAL_BOUNDARY`,
+  `MALFORMED_JSON`, or `JSON`.
+- `rejection_code`: `TOO_MANY_BOOKMAKERS`, `REQUEST_LIMIT_EXCEEDED`, or
+  `UNRECOGNIZED`. These codes appear in provider documentation; the former is
+  documented for [historical odds](https://oddspapi.io/blog/how-many-bookmakers-backtest/),
+  so its recognition does not assert applicability to this endpoint.
+- `parameter`: `tournamentIds`, `bookmakers`, `language`, `verbosity`, or
+  `UNRECOGNIZED`.
+
+Only explicit `code` and `parameter` fields in the JSON object or its `error`
+object are considered. Unknown/conflicting values are not echoed. No free-text
+message is mined for a cause; an unrecognized response may still require
+provider clarification. Existing HTTP status/error codes remain unchanged.
+The body is closed even on rejection/read failure, request accounting completes,
+and reservation, one-shot marker, locks and production endpoint restrictions
+remain unchanged. No raw HTTP error file is published or exposed through APIs.
+
 This capability is a private, research-only one-shot experiment. It is not a
 production acquisition window, does not create corner or BTTS evidence, and is
 not exposed through an API. Merging this source does not install or run it.
