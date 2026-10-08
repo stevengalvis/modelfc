@@ -353,14 +353,20 @@ def _analyze_book(book: object, dictionary: dict, *, observed_at: datetime,
             outcome_states = {}
             for player in outcome["players"].values():
                 actual_family = family
+                line_incomplete = False
                 if family == "MATCH_GOAL_TOTALS" and isinstance(player, dict):
-                    actual_family = ("MATCH_GOAL_TOTALS" if player.get("mainLine") is True
-                                     else "ALTERNATE_GOAL_TOTALS")
+                    if player.get("mainLine") is True:
+                        actual_family = "MATCH_GOAL_TOTALS"
+                    elif player.get("mainLine") is False:
+                        actual_family = "ALTERNATE_GOAL_TOTALS"
+                    else:
+                        line_incomplete = True
                 families_seen.add(actual_family)
                 usable, stale, latest = _priced(player, observed_at=observed_at)
                 player_inactive = isinstance(player, dict) and player.get("active") is False
                 player_incomplete = (not isinstance(player, dict)
-                                     or player.get("active") not in (True, False))
+                                     or player.get("active") not in (True, False)
+                                     or line_incomplete)
                 state = outcome_states.setdefault(actual_family, {
                     "usable": False, "stale": False, "inactive": False,
                     "incomplete": False, "latest": None,
@@ -368,7 +374,7 @@ def _analyze_book(book: object, dictionary: dict, *, observed_at: datetime,
                 state["stale"] |= stale or market_stale
                 state["inactive"] |= market_inactive or player_inactive
                 state["incomplete"] |= market_incomplete or player_incomplete
-                state["usable"] |= (usable and not market_inactive
+                state["usable"] |= (usable and not line_incomplete and not market_inactive
                                     and not market_incomplete and not market_stale)
                 if latest and (state["latest"] is None or latest > state["latest"]):
                     state["latest"] = latest

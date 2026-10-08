@@ -176,6 +176,7 @@ class TournamentTransportTests(unittest.TestCase):
                         b'{"value":"private%2Fkey%3D1"}',
                         b'{"value":"private%2fkey%3D1"}',
                         b'{"value":"private%252fkey%253D1"}',
+                        b'{"value":"private%25252525252fkey%25252525253D1"}',
                         b'{"private/key=\\u0031":"value"}'):
                 client = oddspapi.OddsPapiTournamentResearchClient(
                     request_guard=Guard(), max_response_bytes=4096)
@@ -256,6 +257,18 @@ class InventoryTests(unittest.TestCase):
         self.assertEqual(goals["usable_priced_outcomes"], 2)
         self.assertEqual(goals["complete_market_count"], 0)
         self.assertEqual(goals["status"], "INCOMPLETE")
+
+    def test_missing_main_line_is_incomplete_not_alternate(self):
+        value = payload()[0]
+        goals = value["bookmakerOdds"]["draftkings"]["markets"]["6"]
+        for outcome in goals["outcomes"].values():
+            del outcome["players"]["0"]["mainLine"]
+        result = research.analyze_batch([value], metadata(), observed_at=NOW)
+        row = next(item for item in result["competitions"] if item["tournament_id"] == 18)
+        families = row["fixtures"][0]["bookmakers"]["draftkings"]["families"]
+        self.assertEqual(families["MATCH_GOAL_TOTALS"]["status"], "INCOMPLETE")
+        self.assertEqual(families["MATCH_GOAL_TOTALS"]["usable_priced_outcomes"], 0)
+        self.assertEqual(families["ALTERNATE_GOAL_TOTALS"]["status"], "MISSING")
 
     def test_malformed_metadata_and_response_rejected(self):
         bad = metadata(); bad[0]["outcomes"] = "bad"

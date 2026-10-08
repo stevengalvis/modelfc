@@ -539,7 +539,11 @@ class OddsPapiTournamentResearchClient:
 
     def _credential_in_text(self, value):
         decoded = value
-        for _ in range(4):
+        # Decoding may expose another escape marker, so use the bounded input
+        # length rather than only the markers visible in the first layer.
+        # Reject over-complex input if it has not stabilized at the cap.
+        maximum = min(len(value) + 1, 128)
+        for _ in range(maximum):
             if self._key in decoded:
                 return True
             candidate = re.sub(
@@ -551,7 +555,9 @@ class OddsPapiTournamentResearchClient:
             if candidate == decoded:
                 return False
             decoded = candidate
-        return self._key in decoded
+        # The representation did not reach a fixed point inside the safe work
+        # bound. Treat it as credential-bearing and fail closed.
+        return True
 
 
 class OddsPapiClient:
