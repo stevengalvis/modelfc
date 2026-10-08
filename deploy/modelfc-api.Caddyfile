@@ -12,7 +12,7 @@
 	@btts_research {
 		path /api/v1/research/btts
 		method GET
-		query competition E1
+		expression `{http.request.uri.query} == "competition=E1"`
 	}
 	handle @btts_research {
 		header Cache-Control "no-store"
