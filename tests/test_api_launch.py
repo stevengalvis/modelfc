@@ -158,7 +158,8 @@ class ApiLaunchTests(unittest.TestCase):
             self.assertNotIn("*", value)
             routes[name] = (rule, value)
             if name == "btts_research":
-                self.assertEqual(lines[2], "query competition E1")
+                self.assertEqual(lines[2],
+                                 'expression `{http.request.uri.query} == "competition=E1"`')
         self.assertEqual(routes["public_read"], ("path", "/api/v1/predictions /api/v1/opportunities "
                          "/api/v1/prospective/performance /api/v1/recommendations"))
         self.assertEqual(routes["opportunity_detail"],
@@ -177,11 +178,11 @@ class ApiLaunchTests(unittest.TestCase):
             self.assertEqual([line.strip() for line in handle.splitlines() if line.strip()], expected)
         self.assertRegex(caddy, r"handle\s*\{\s*respond 404\s*\}")
 
-        def allowed(method, path, query=None):
+        def allowed(method, path, raw_query=""):
             if method != "GET":
                 return False
             return any((path in value.split() if rule == "path" else re.fullmatch(value, path))
-                       and (name != "btts_research" or query == {"competition": "E1"})
+                       and (name != "btts_research" or raw_query == "competition=E1")
                        for name, (rule, value) in routes.items())
 
         permitted = ("/api/v1/recommendations", "/api/v1/predictions", "/api/v1/opportunities",
@@ -193,17 +194,18 @@ class ApiLaunchTests(unittest.TestCase):
                   "/api/v1/capabilities", "/docs", "/redoc", "/openapi.json", "/api/v1/unknown")
         for path in permitted:
             self.assertTrue(allowed("GET", path), path)
-        self.assertTrue(allowed("GET", "/api/v1/research/btts", {"competition": "E1"}))
-        for query in (None, {}, {"competition": "E0"}):
+        self.assertTrue(allowed("GET", "/api/v1/research/btts", "competition=E1"))
+        for query in ("", "competition=E0", "competition=E1&extra=value",
+                      "extra=value&competition=E1", "competition=E1&competition=E0"):
             self.assertFalse(allowed("GET", "/api/v1/research/btts", query), query)
         for method in ("POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"):
             for path in permitted + denied:
                 self.assertFalse(allowed(method, path), (method, path))
-            self.assertFalse(allowed(method, "/api/v1/research/btts", {"competition": "E1"}))
+            self.assertFalse(allowed(method, "/api/v1/research/btts", "competition=E1"))
         for path in denied:
             self.assertFalse(allowed("GET", path), path)
         for path in ("/api/v1/research/btts/", "/api/v1/research/unknown"):
-            self.assertFalse(allowed("GET", path, {"competition": "E1"}), path)
+            self.assertFalse(allowed("GET", path, "competition=E1"), path)
 
 
     def test_team_routes_are_bounded_get_only_and_preserve_cache_headers(self):
