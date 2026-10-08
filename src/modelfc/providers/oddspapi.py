@@ -115,7 +115,7 @@ RESEARCH_REJECTION_CODES = frozenset({
     "UNRECOGNIZED", "TOO_MANY_BOOKMAKERS", "REQUEST_LIMIT_EXCEEDED",
 })
 RESEARCH_REJECTION_PARAMETERS = frozenset({
-    "UNRECOGNIZED", "tournamentIds", "bookmakers", "language", "verbosity",
+    "UNRECOGNIZED", "tournamentIds", "bookmaker", "bookmakers", "language", "verbosity",
 })
 
 
@@ -532,14 +532,18 @@ class OddsPapiTournamentResearchClient:
                 or tuple(bookmakers) != BOOKMAKERS):
             raise OddsPapiTournamentResearchError("REQUEST_NOT_AUTHORIZED")
         self._used = True
-        self.request_guard.before_request(self.request_kind)
         params = {
             "tournamentIds": ",".join(str(value) for value in tournament_ids),
             "bookmakers": ",".join(bookmakers),
             "language": "en",
             "verbosity": 3,
-            "apiKey": self._key,
         }
+        return self._retrieve_parameters(params)
+
+    def _retrieve_parameters(self, params):
+        params = validated_research_parameters(params)
+        self.request_guard.before_request(self.request_kind)
+        params["apiKey"] = self._key
         request = Request(
             f"{BASE_URL}/{self.endpoint}?" + urlencode(params),
             headers={"User-Agent": USER_AGENT, "Accept": "application/json"},
@@ -560,7 +564,7 @@ class OddsPapiTournamentResearchClient:
                 raise OddsPapiTournamentResearchError(
                     "HTTP_FAILURE", http_status=status, diagnostic=diagnostic,
                 ) from None
-            except (URLError, TimeoutError, OSError):
+            except (URLError, TimeoutError, OSError, HTTPException):
                 raise OddsPapiTournamentResearchError("NETWORK_FAILURE") from None
             if len(raw) > self.max_response_bytes:
                 raise OddsPapiTournamentResearchError(
@@ -574,11 +578,15 @@ class OddsPapiTournamentResearchClient:
                 payload = json.loads(raw, parse_constant=_reject_json_constant,
                                      parse_float=_finite_json_float,
                                      parse_int=_finite_json_int)
-            except (ValueError, UnicodeError):
+            except (ValueError, UnicodeError, RecursionError):
                 raise OddsPapiTournamentResearchError(
                     "MALFORMED_JSON", http_status=status, raw=raw,
                 ) from None
-            if self._credential_in_json(payload):
+            try:
+                credential_found = self._credential_in_json(payload)
+            except RecursionError:
+                raise OddsPapiTournamentResearchError("MALFORMED_JSON", http_status=status) from None
+            if credential_found:
                 raise OddsPapiTournamentResearchError(
                     "CREDENTIAL_BOUNDARY", http_status=status,
                 )
@@ -679,6 +687,45 @@ class OddsPapiTournamentResearchClient:
         # The representation did not reach a fixed point inside the safe work
         # bound. Treat it as credential-bearing and fail closed.
         return True
+
+
+def validated_research_parameters(value):
+    """Only reviewed tournament parameters, never URLs or credentials."""
+    if not isinstance(value, dict):
+        raise OddsPapiTournamentResearchError("REQUEST_NOT_AUTHORIZED")
+    book_key = "bookmaker" if "bookmaker" in value else "bookmakers"
+    if (set(value) != {"tournamentIds", book_key, "language", "verbosity"}
+            or value.get("language") != "en" or type(value.get("verbosity")) is not int
+            or value["verbosity"] != 3 or type(value.get("tournamentIds")) is not str
+            or not re.fullmatch(r"[1-9][0-9]*(?:,[1-9][0-9]*){0,9}", value["tournamentIds"])
+            or type(value.get(book_key)) is not str):
+        raise OddsPapiTournamentResearchError("REQUEST_NOT_AUTHORIZED")
+    ids = value["tournamentIds"].split(",")
+    books = value[book_key].split(",")
+    if (len(set(ids)) != len(ids) or any(item not in {str(value) for value in RESEARCH_TOURNAMENT_IDS} for item in ids)
+            or len(set(books)) != len(books) or any(book not in BOOKMAKERS for book in books)
+            or not 1 <= len(books) <= (1 if book_key == "bookmaker" else 2)):
+        raise OddsPapiTournamentResearchError("REQUEST_NOT_AUTHORIZED")
+    return dict(value)
+
+
+class OddsPapiPlannedResearchClient(OddsPapiTournamentResearchClient):
+    """One use per approved variant, at most three calls, fixed endpoint."""
+
+    def __init__(self, *, variants, max_requests, request_guard, max_response_bytes):
+        super().__init__(request_guard=request_guard, max_response_bytes=max_response_bytes)
+        if type(max_requests) is not int or not 1 <= max_requests <= 3:
+            raise OddsPapiTournamentResearchError("REQUEST_NOT_AUTHORIZED")
+        self._approved = {row["id"]: validated_research_parameters(row["parameters"]) for row in variants}
+        self._remaining = max_requests
+        self._attempted = set()
+
+    def retrieve(self, *, variant_id):
+        if (variant_id not in self._approved or variant_id in self._attempted or self._remaining <= 0):
+            raise OddsPapiTournamentResearchError("REQUEST_NOT_AUTHORIZED")
+        self._attempted.add(variant_id)
+        self._remaining -= 1
+        return self._retrieve_parameters(self._approved[variant_id])
 
 
 class OddsPapiClient:

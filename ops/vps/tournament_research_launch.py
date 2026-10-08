@@ -17,6 +17,9 @@ CREDENTIAL_DIRECTORY = Path(
     "/run/credentials/modelfc-oddspapi-tournament-research.service")
 CREDENTIAL_NAME = "oddspapi.key"
 AUTHORIZATION_CREDENTIAL_NAME = "tournament-authorization.json"
+HARNESS_CREDENTIAL_DIRECTORY = Path("/run/credentials/modelfc-oddspapi-research.service")
+HARNESS_AUTHORIZATION = Path("/etc/modelfc/oddspapi-research-plan.json")
+HARNESS_PLAN_NAME = "research-plan.json"
 
 
 def protected(path, owner, *, directory=False, private=False):
@@ -27,19 +30,19 @@ def protected(path, owner, *, directory=False, private=False):
         raise ValueError("invalid tournament research path")
 
 
-def credential(name=CREDENTIAL_NAME, *, json_document=False) -> str:
+def credential(name=CREDENTIAL_NAME, *, json_document=False, expected_directory=None, limit=4096) -> str:
     directory_value = os.environ.get("CREDENTIALS_DIRECTORY")
     if not directory_value:
         raise ValueError("missing tournament research credential")
     directory = Path(directory_value)
-    if (directory != CREDENTIAL_DIRECTORY or directory.is_symlink()
+    if (directory != (expected_directory or CREDENTIAL_DIRECTORY) or directory.is_symlink()
             or not directory.is_dir()):
         raise ValueError("invalid tournament research credential")
     descriptor = os.open(directory / name,
                          os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     with os.fdopen(descriptor, "rb") as source:
-        info, raw = os.fstat(source.fileno()), source.read(4097)
-    if not stat.S_ISREG(info.st_mode) or not 1 <= len(raw) <= 4096:
+        info, raw = os.fstat(source.fileno()), source.read(limit + 1)
+    if not stat.S_ISREG(info.st_mode) or not 1 <= len(raw) <= limit:
         raise ValueError("invalid tournament research credential")
     try:
         value = raw.decode("utf-8" if json_document else "ascii").strip()
@@ -58,6 +61,11 @@ def credential(name=CREDENTIAL_NAME, *, json_document=False) -> str:
 
 
 def launch():
+    harness = os.environ.get("CREDENTIALS_DIRECTORY") == str(HARNESS_CREDENTIAL_DIRECTORY)
+    credential_directory = HARNESS_CREDENTIAL_DIRECTORY if harness else CREDENTIAL_DIRECTORY
+    authorization = HARNESS_AUTHORIZATION if harness else AUTHORIZATION
+    authorization_name = HARNESS_PLAN_NAME if harness else AUTHORIZATION_CREDENTIAL_NAME
+    module = "modelfc.oddspapi_research_harness" if harness else "modelfc.oddspapi_tournament_research"
     release = Path.cwd()
     match = re.fullmatch(r"([0-9a-f]{40})-[0-9a-f]{12}", release.name)
     if release.parent != RELEASES or match is None:
@@ -82,25 +90,30 @@ def launch():
                  release / "src/modelfc/corner_prospective_budget.py",
                  release / "src/modelfc/ledger_storage.py"):
         protected(path, deploy_owner)
+    if harness:
+        protected(release / "src/modelfc/oddspapi_research_harness.py", deploy_owner)
     python = release / ".venv/bin/python"
     if python.lstat().st_uid != deploy_owner or not python.is_file() or not os.access(python, os.X_OK):
         raise ValueError("invalid tournament research interpreter")
     protected(STATE, runtime_owner, directory=True)
-    protected(AUTHORIZATION.parent, 0, directory=True)
-    protected(AUTHORIZATION, 0, private=True)
+    protected(authorization.parent, 0, directory=True)
+    protected(authorization, 0, private=True)
     protected(METADATA, 0)
-    key = credential()
-    credential(AUTHORIZATION_CREDENTIAL_NAME, json_document=True)
+    key = credential(expected_directory=credential_directory)
+    credential(authorization_name, json_document=True, expected_directory=credential_directory,
+               limit=16384 if harness else 4096)
     environment = {"PATH": "/usr/bin:/bin", "HOME": "/nonexistent", "LANG": "C.UTF-8",
                    "PYTHONPATH": str(release / "src"), "PYTHONNOUSERSITE": "1",
                    "PYTHONDONTWRITEBYTECODE": "1", "ODDSPAPI_API_KEY": key,
                    "CREDENTIALS_DIRECTORY": os.environ["CREDENTIALS_DIRECTORY"]}
     os.execve(str(python), [str(python), "-B", "-P", "-s", "-m",
-              "modelfc.oddspapi_tournament_research"], environment)
+              module], environment)
 
 
 def main():
     try:
+        if sys.argv[1:]:
+            raise ValueError("invalid tournament research arguments")
         launch()
     except (OSError, ValueError, KeyError):
         print("TOURNAMENT_RESEARCH_LAUNCH_FAILED", file=sys.stderr)

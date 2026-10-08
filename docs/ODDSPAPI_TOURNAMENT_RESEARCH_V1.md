@@ -1,5 +1,9 @@
 # Guarded OddsPapi tournament research V1
 
+For new explicitly approved request variants, use the separate
+[reusable research harness](ODDSPAPI_RESEARCH_HARNESS.md). It preserves this
+original one-shot authorization and history; it does not reset or rerun V1.
+
 ## HTTP 400 investigation and bounded rejection diagnostics
 
 The operator-reported attempt at `2026-10-08T15:01:33.833307Z` returned
