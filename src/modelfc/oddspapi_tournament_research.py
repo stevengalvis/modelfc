@@ -198,13 +198,94 @@ def _write_bytes(path: Path, payload: bytes) -> None:
         _fail("RESEARCH_STORAGE_UNAVAILABLE")
 
 
+# Provider participant semantics follow the existing corner normalizer:
+# team1 is home, team2 is away. No display-name substring matching.
+RESEARCH_MARKET_TYPES = {
+    ("bothteamsscore", "fulltime"): "BTTS",
+    ("totals", "fulltime"): "MATCH_GOAL_TOTALS",
+    ("teamtotals-team1", "fulltime"): "HOME_TEAM_GOAL_TOTALS",
+    ("teamtotals-team2", "fulltime"): "AWAY_TEAM_GOAL_TOTALS",
+    ("totals-corners", "fulltime"): "MATCH_CORNER_TOTALS",
+    ("teamtotals-corners-team1", "fulltime"): "HOME_TEAM_CORNERS",
+    ("teamtotals-corners-team2", "fulltime"): "AWAY_TEAM_CORNERS",
+    ("totals-corners", "p1"): "FIRST_HALF_CORNERS",
+}
+METADATA_FILTER_VERSION = "core-betting-definitions-v2"
+MAX_METADATA_ID_INDEX = 100_000  # IDs only, never additional market definitions.
+
+
+def _classify_metadata(item: dict) -> str | None:
+    if item.get("sportId") != 10 or item.get("playerProp") is not False:
+        return None
+    kind, period = item.get("marketType"), item.get("period")
+    if not isinstance(kind, str) or not isinstance(period, str):
+        return None  # Null never means fulltime.
+    family = RESEARCH_MARKET_TYPES.get((kind, period))
+    if family is None:
+        return None
+    # Preserve the exact legacy BTTS shape already used by the offline adapter.
+    if (kind == "totals" and item.get("marketName") == "Both Teams To Score"
+            and type(item.get("handicap")) in (int, float) and item["handicap"] == 0):
+        family = "BTTS"
+    outcomes = item.get("outcomes")
+    if not isinstance(outcomes, list):
+        _fail("MARKET_METADATA_INVALID")
+    names = [row.get("outcomeName") for row in outcomes if isinstance(row, dict)]
+    required = {"Yes", "No"} if family == "BTTS" else {"Over", "Under"}
+    if len(names) != 2 or any(not isinstance(name, str) for name in names) or set(names) != required:
+        _fail("MARKET_METADATA_INVALID")
+    if family != "BTTS":
+        line = item.get("handicap")
+        try:
+            valid_line = type(line) in (int, float) and math.isfinite(line) and line >= 0
+        except OverflowError:
+            valid_line = False
+        if not valid_line:
+            _fail("MARKET_METADATA_INVALID")
+    return family
+
+
+def _metadata_exclusion(item: dict) -> str:
+    if not isinstance(item.get("marketType"), str) or item["marketType"] not in {kind for kind, _ in RESEARCH_MARKET_TYPES}:
+        return "UNSUPPORTED_FAMILY"
+    return "EXCLUDED_BY_ALLOWLIST"
+
+
+def _metadata_parts(metadata: object) -> tuple[list, dict[str, str]]:
+    if isinstance(metadata, list):
+        return metadata, {}
+    expected = {"filter_version", "source_sha256", "source_entries", "markets", "excluded_ids"}
+    if (not isinstance(metadata, dict) or set(metadata) != expected
+            or metadata["filter_version"] != METADATA_FILTER_VERSION
+            or not isinstance(metadata["source_sha256"], str)
+            or not re.fullmatch(r"[0-9a-f]{64}", metadata["source_sha256"])
+            or type(metadata["source_entries"]) is not int
+            or not 1 <= metadata["source_entries"] <= MAX_METADATA_ID_INDEX
+            or not isinstance(metadata["markets"], list)
+            or not isinstance(metadata["excluded_ids"], dict)
+            or set(metadata["excluded_ids"]) != {"EXCLUDED_BY_ALLOWLIST", "UNSUPPORTED_FAMILY"}):
+        _fail("MARKET_METADATA_INVALID")
+    excluded = {}
+    for reason, identities in metadata["excluded_ids"].items():
+        if not isinstance(identities, list) or len(identities) > MAX_METADATA_ID_INDEX:
+            _fail("MARKET_METADATA_INVALID")
+        for identity in identities:
+            if type(identity) is not int or identity <= 0 or str(identity) in excluded:
+                _fail("MARKET_METADATA_INVALID")
+            excluded[str(identity)] = reason
+    if len(excluded) + len(metadata["markets"]) != metadata["source_entries"]:
+        _fail("MARKET_METADATA_INVALID")
+    return metadata["markets"], excluded
+
+
 def _metadata_index(metadata: object) -> tuple[dict[str, tuple[dict, str]], frozenset[str]]:
-    if not isinstance(metadata, list) or not 1 <= len(metadata) <= MAX_METADATA_ROWS:
+    rows, excluded = _metadata_parts(metadata)
+    if not 1 <= len(rows) <= MAX_METADATA_ROWS:
         _fail("MARKET_METADATA_INVALID")
     indexed: dict[str, tuple[dict, str]] = {}
-    known_ids = set()
-    for item in metadata:
-        if not isinstance(item, dict) or type(item.get("marketId")) is not int:
+    known_ids = set(excluded)
+    for item in rows:
+        if not isinstance(item, dict) or type(item.get("marketId")) is not int or item["marketId"] <= 0:
             _fail("MARKET_METADATA_INVALID")
         key = str(item["marketId"])
         if key in known_ids:
@@ -215,39 +296,16 @@ def _metadata_index(metadata: object) -> tuple[dict[str, tuple[dict, str]], froz
             _fail("MARKET_METADATA_INVALID")
         outcome_ids = set()
         for outcome in outcomes:
-            if not isinstance(outcome, dict) or type(outcome.get("outcomeId")) is not int:
-                _fail("MARKET_METADATA_INVALID")
-            if outcome["outcomeId"] in outcome_ids:
+            if (not isinstance(outcome, dict) or type(outcome.get("outcomeId")) is not int
+                    or outcome["outcomeId"] <= 0 or outcome["outcomeId"] in outcome_ids):
                 _fail("MARKET_METADATA_INVALID")
             outcome_ids.add(outcome["outcomeId"])
         family = _classify_metadata(item)
         if family is not None:
             indexed[key] = (item, family)
+        elif isinstance(metadata, dict):
+            _fail("MARKET_METADATA_INVALID")  # Filtered definitions must be allowlisted.
     return indexed, frozenset(known_ids)
-
-
-def _classify_metadata(item: dict) -> str | None:
-    if item.get("sportId") != 10 or item.get("playerProp") is not False:
-        return None
-    kind, period, name = item.get("marketType"), item.get("period"), item.get("marketName")
-    if kind == "totals-corners" and period == "fulltime":
-        return "MATCH_CORNER_TOTALS"
-    if kind == "teamtotals-corners-team1" and period == "fulltime":
-        return "HOME_TEAM_CORNERS"
-    if kind == "teamtotals-corners-team2" and period == "fulltime":
-        return "AWAY_TEAM_CORNERS"
-    if kind and "corners" in kind and period == "p1":
-        return "FIRST_HALF_CORNERS"
-    if (name == "Both Teams To Score" and kind == "totals" and period == "fulltime"
-            and item.get("handicap") == 0):
-        return "BTTS"
-    if kind == "teamtotals-team1" and period == "fulltime":
-        return "HOME_TEAM_GOAL_TOTALS"
-    if kind == "teamtotals-team2" and period == "fulltime":
-        return "AWAY_TEAM_GOAL_TOTALS"
-    if kind == "totals" and period == "fulltime":
-        return "MATCH_GOAL_TOTALS"
-    return None
 
 
 def _priced(player: object, *, observed_at: datetime) -> tuple[bool, bool, str | None]:
@@ -275,6 +333,9 @@ def analyze_batch(payload: object, metadata: object, *, observed_at: datetime) -
     if fixtures is None or len(fixtures) > MAX_FIXTURES:
         _fail("BATCH_RESPONSE_INVALID")
     dictionary, known_market_ids = _metadata_index(metadata)
+    rows, excluded_ids = _metadata_parts(metadata)
+    excluded_ids.update({str(row["marketId"]): _metadata_exclusion(row)
+                         for row in rows if str(row["marketId"]) not in dictionary})
     competition_rows = {value: {"tournament_id": value, "name": TOURNAMENT_BY_ID[value][1],
         "cached_slug": TOURNAMENT_BY_ID[value][2], "uncertainty": TOURNAMENT_BY_ID[value][3],
         "fixture_count": 0, "fixtures": []} for value in TOURNAMENT_IDS}
@@ -302,7 +363,7 @@ def analyze_batch(payload: object, metadata: object, *, observed_at: datetime) -
             fixture_row["bookmakers"][bookmaker] = _analyze_book(
                 books.get(bookmaker), dictionary, observed_at=observed_at,
                 fixture_stale=fixture.get("staleOdds") is True,
-                known_market_ids=known_market_ids,
+                known_market_ids=known_market_ids, excluded_ids=excluded_ids,
             )
         row = competition_rows[tournament_id]
         row["fixture_count"] += 1
@@ -314,14 +375,14 @@ def analyze_batch(payload: object, metadata: object, *, observed_at: datetime) -
 
 
 def _analyze_book(book: object, dictionary: dict, *, observed_at: datetime,
-                  fixture_stale: bool, known_market_ids: frozenset[str]) -> dict:
+                  fixture_stale: bool, known_market_ids: frozenset[str], excluded_ids: dict[str, str]) -> dict:
     empty = {family: {"status": "MISSING", "usable_priced_outcomes": 0,
                       "market_count": 0, "complete_market_count": 0,
                       "latest_changed_at_utc": None}
              for family in FAMILIES}
     if book is None:
         return {"status": "MISSING", "unsupported_metadata_markets": 0,
-                "unsupported_metadata_outcomes": 0, "families": empty}
+                "unsupported_metadata_outcomes": 0, "metadata_diagnostics": [], "families": empty}
     if not isinstance(book, dict) or not isinstance(book.get("markets"), dict):
         _fail("BATCH_RESPONSE_INVALID")
     markets = book["markets"]
@@ -336,10 +397,13 @@ def _analyze_book(book: object, dictionary: dict, *, observed_at: datetime,
                              "complete_markets": 0, "latest": None} for family in FAMILIES}
     unsupported_markets = 0
     unsupported_outcomes = 0
+    metadata_diagnostics = []
     for market_id, market in sorted(markets.items()):
         definition = dictionary.get(market_id)
         if definition is None:
             unsupported_markets += int(market_id not in known_market_ids)
+            metadata_diagnostics.append({"market_id": market_id,
+                "status": excluded_ids.get(market_id, "MISSING_METADATA")})
             continue
         if not isinstance(market, dict) or not isinstance(market.get("outcomes"), dict):
             _fail("BATCH_RESPONSE_INVALID")
@@ -396,6 +460,13 @@ def _analyze_book(book: object, dictionary: dict, *, observed_at: datetime,
                 if (state["latest"] and (accumulator["latest"] is None
                                          or state["latest"] > accumulator["latest"])):
                     accumulator["latest"] = state["latest"]
+        if not families_seen:
+            # The definition is known and present, even when no mapped outcome
+            # has a player quote. Do not fabricate sportsbook absence.
+            families_seen.add(base_family)
+            accumulators[base_family]["incomplete"] = True
+            accumulators[base_family]["inactive"] |= market_inactive
+            accumulators[base_family]["stale"] |= market_stale
         for family in families_seen:
             accumulators[family]["markets"] += 1
             required_outcomes = len(outcome_family) if family == base_family else 2
@@ -407,7 +478,9 @@ def _analyze_book(book: object, dictionary: dict, *, observed_at: datetime,
         if value["markets"] == 0:
             # An unknown returned market could belong to any unobserved family.
             # Do not report confirmed absence when the cache cannot classify it.
-            status = "UNSUPPORTED_METADATA" if unsupported_markets else "MISSING"
+            status = ("UNSUPPORTED_METADATA" if unsupported_markets else
+                      "EXCLUDED_BY_ALLOWLIST" if any(row["status"] == "EXCLUDED_BY_ALLOWLIST"
+                                                    for row in metadata_diagnostics) else "MISSING")
         elif value["complete_markets"]:
             status = "AVAILABLE"
         elif value["stale"]:
@@ -425,7 +498,8 @@ def _analyze_book(book: object, dictionary: dict, *, observed_at: datetime,
     status = ("STALE" if book_stale else "INACTIVE" if book_inactive
               else "INCOMPLETE" if book_incomplete else "AVAILABLE")
     return {"status": status, "unsupported_metadata_markets": unsupported_markets,
-            "unsupported_metadata_outcomes": unsupported_outcomes, "families": result}
+            "unsupported_metadata_outcomes": unsupported_outcomes,
+            "metadata_diagnostics": metadata_diagnostics, "families": result}
 
 
 def execute(*, state: Path, authorization_path: Path, metadata_path: Path,
