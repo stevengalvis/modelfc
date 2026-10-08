@@ -42,6 +42,7 @@ from modelfc.matches import UpcomingFixture
 
 BASE_URL = "https://api.oddspapi.io/v4"
 BOOKMAKERS = ("draftkings", "fanduel")
+RESEARCH_TOURNAMENT_IDS = (27070, 325, 17, 18, 8, 35, 34, 52, 37, 238)
 MAX_QUOTE_AGE_SECONDS = 300
 USER_AGENT = "ModelFC/1.0 (OddsPapi integration)"
 FAMILIES = {
@@ -77,6 +78,24 @@ COMPETITIONS = MappingProxyType({
 
 class OddsPapiError(ValueError):
     """An explicit provider/normalization failure; messages never include URLs."""
+
+
+class OddsPapiTournamentResearchError(OddsPapiError):
+    """Fixed-code failure from the one-shot tournament research transport."""
+
+    def __init__(self, code, *, http_status=None, raw=b""):
+        super().__init__(code)
+        self.code = code
+        self.http_status = http_status
+        self.raw = raw
+
+
+@dataclass(frozen=True)
+class OddsPapiTournamentBatch:
+    payload: object
+    raw: bytes
+    http_status: int
+    usage_headers: dict[str, str]
 
 
 def _object(value):
@@ -418,6 +437,86 @@ class _NoRedirect(HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         # Do not forward query credentials to a redirected destination.
         return None
+
+
+class OddsPapiTournamentResearchClient:
+    """Single-use, fixed-shape v4 tournament transport for private research.
+
+    This boundary deliberately does not inherit ``OddsPapiMarketData``.  That
+    keeps the production acquisition allowlist limited to fixtures, markets,
+    and odds while still reusing its credential and redirect safety model.
+    """
+
+    endpoint = "odds-by-tournaments"
+    request_kind = "TOURNAMENT_RESEARCH"
+
+    def __init__(self, *, request_guard, max_response_bytes):
+        self._key = os.environ.get("ODDSPAPI_API_KEY", "").strip()
+        try:
+            encoded_key = self._key.encode("ascii")
+        except UnicodeEncodeError:
+            encoded_key = b""
+        if (not encoded_key or any(character.isspace() or not character.isprintable()
+                                   for character in self._key)):
+            raise OddsPapiTournamentResearchError("PROVIDER_CONFIGURATION")
+        self._encoded_key = encoded_key
+        if (request_guard is None or type(max_response_bytes) is not int
+                or not 1 <= max_response_bytes <= 32 * 1024 * 1024):
+            raise OddsPapiTournamentResearchError("TRANSPORT_CONFIGURATION")
+        self.request_guard = request_guard
+        self.max_response_bytes = max_response_bytes
+        self._opener = build_opener(_NoRedirect())
+        self._used = False
+
+    def retrieve(self, *, tournament_ids, bookmakers):
+        if (self._used or tuple(tournament_ids) != RESEARCH_TOURNAMENT_IDS
+                or tuple(bookmakers) != BOOKMAKERS):
+            raise OddsPapiTournamentResearchError("REQUEST_NOT_AUTHORIZED")
+        self._used = True
+        self.request_guard.before_request(self.request_kind)
+        params = {
+            "tournamentIds": ",".join(str(value) for value in tournament_ids),
+            "bookmakers": ",".join(bookmakers),
+            "language": "en",
+            "verbosity": 3,
+            "apiKey": self._key,
+        }
+        request = Request(
+            f"{BASE_URL}/{self.endpoint}?" + urlencode(params),
+            headers={"User-Agent": USER_AGENT, "Accept": "application/json"},
+        )
+        try:
+            try:
+                with self._opener.open(request, timeout=30) as response:
+                    raw = response.read(self.max_response_bytes + 1)
+                    status = response.getcode()
+                    usage = {k: v for k, v in response.headers.items()
+                             if k.lower().startswith(("x-ratelimit", "x-requests"))}
+            except HTTPError as error:
+                status = error.code
+                error.close()
+                raise OddsPapiTournamentResearchError(
+                    "HTTP_FAILURE", http_status=status,
+                ) from None
+            except (URLError, TimeoutError, OSError):
+                raise OddsPapiTournamentResearchError("NETWORK_FAILURE") from None
+            if len(raw) > self.max_response_bytes:
+                raise OddsPapiTournamentResearchError(
+                    "RESPONSE_TOO_LARGE", http_status=status,
+                )
+            if self._encoded_key in raw:
+                raise OddsPapiTournamentResearchError(
+                    "CREDENTIAL_BOUNDARY", http_status=status,
+                )
+            try:
+                payload = json.loads(raw)
+            except (ValueError, UnicodeError):
+                raise OddsPapiTournamentResearchError(
+                    "MALFORMED_JSON", http_status=status, raw=raw,
+                ) from None
+            return OddsPapiTournamentBatch(payload, raw, status, usage)
+        finally:
+            self.request_guard.after_request()
 
 
 class OddsPapiClient:
