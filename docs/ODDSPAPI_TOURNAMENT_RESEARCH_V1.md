@@ -53,8 +53,9 @@ provider accepts ten tournaments until the single authorized response exists.
   read-only systemd credential. The launcher accepts only the unit's exact
   `/run/credentials/modelfc-oddspapi-tournament-research.service` directory,
   never a caller-selected credential directory. The executable module repeats
-  the same exact-path check, and the launcher exposes only that fixed module
-  entrypoint.
+  the same exact-path check, and its execution boundary also pins the state,
+  authorization, and metadata paths. The launcher exposes only that fixed
+  module entrypoint.
 - The root-owned authorization must attest at least one provider request remains.
   This is a short-lived operator preflight assertion, not a provider counter.
 - The analyzer consumes an exact SHA-256-pinned cached `/markets` dictionary.

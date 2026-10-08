@@ -70,6 +70,17 @@ def _finite_json_float(value):
     return parsed
 
 
+def _finite_json_int(value):
+    parsed = int(value)
+    try:
+        finite = math.isfinite(float(parsed))
+    except OverflowError:
+        finite = False
+    if not finite:
+        raise ValueError
+    return parsed
+
+
 @dataclass(frozen=True)
 class Competition:
     code: str
@@ -523,7 +534,8 @@ class OddsPapiTournamentResearchClient:
                 )
             try:
                 payload = json.loads(raw, parse_constant=_reject_json_constant,
-                                     parse_float=_finite_json_float)
+                                     parse_float=_finite_json_float,
+                                     parse_int=_finite_json_int)
             except (ValueError, UnicodeError):
                 raise OddsPapiTournamentResearchError(
                     "MALFORMED_JSON", http_status=status, raw=raw,

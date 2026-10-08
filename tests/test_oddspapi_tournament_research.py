@@ -169,6 +169,15 @@ class TournamentTransportTests(unittest.TestCase):
                                 bookmakers=oddspapi.BOOKMAKERS)
         self.assertEqual(caught.exception.code, "MALFORMED_JSON")
 
+        client = self.client()
+        huge_integer = b"9" * 400
+        raw = b'[{"fixtureId":"fixture-1","price":' + huge_integer + b'}]'
+        with patch.object(client._opener, "open", return_value=Response(raw)):
+            with self.assertRaises(oddspapi.OddsPapiTournamentResearchError) as caught:
+                client.retrieve(tournament_ids=research.TOURNAMENT_IDS,
+                                bookmakers=oddspapi.BOOKMAKERS)
+        self.assertEqual(caught.exception.code, "MALFORMED_JSON")
+
         with patch.dict(os.environ, {"ODDSPAPI_API_KEY": "private/key=1"}):
             client = oddspapi.OddsPapiTournamentResearchClient(
                 request_guard=Guard(), max_response_bytes=4096)
@@ -383,6 +392,13 @@ class ExecutionTests(unittest.TestCase):
             "provider_requests_remaining": 1,
             "market_metadata_sha256": hashlib.sha256(raw).hexdigest(),
         }))
+        for item in (
+                patch.object(research, "STATE_PATH", self.state),
+                patch.object(research, "SYSTEMD_CREDENTIAL_DIRECTORY", root),
+                patch.object(research, "AUTHORIZATION_CREDENTIAL", self.auth.name),
+                patch.object(research, "METADATA_PATH", self.meta)):
+            item.start()
+            self.addCleanup(item.stop)
         with patch.object(prospective, "_now", return_value=NOW):
             prospective.initialize_period(self.state, date(2026, 10, 1),
                                           date(2026, 11, 1), allowance=40)
