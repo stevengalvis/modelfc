@@ -232,14 +232,17 @@ print(json.dumps(result,sort_keys=True))'''
         caddy = (ROOT / "deploy/modelfc-api.Caddyfile").read_text()
         for required in ("modelfc-runtime", "modelfc-api", "MODELFC_EVIDENCE_ACL_USER",
                          "forecast-<64 lowercase hex>.json", "Do not use `-R`",
-                         "Caddy still denies the route", "next normal scheduled run",
+                         "does not install or reload Caddy", "next normal scheduled run",
                          "btts_research_bootstrap.py", "--clear-groups", "O_NOFOLLOW",
                          "never invokes `setfacl`", "Do not rerun bootstrap after migration"):
             self.assertIn(required, procedure)
         self.assertIn("ProtectSystem=strict", service)
         self.assertIn("ReadOnlyPaths=/srv/modelfc /etc/modelfc /var/lib/modelfc/state", service)
         self.assertNotIn("ReadWritePaths=/var/lib/modelfc/state", service)
-        self.assertNotIn("/api/v1/research/btts", caddy)
+        self.assertRegex(caddy, r"@btts_research\s*\{\s*path /api/v1/research/btts\s*"
+                         r"method GET\s*query competition E1\s*\}")
+        self.assertRegex(caddy, r"handle @btts_research\s*\{\s*"
+                         r"header Cache-Control \"no-store\"\s*reverse_proxy 127.0.0.1:8000\s*\}")
 
 
 if __name__ == "__main__":

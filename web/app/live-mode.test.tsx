@@ -27,7 +27,21 @@ describe("site modes", () => {
     expect(screen.queryByRole("link", { name: "Analyze" })).not.toBeInTheDocument();
     const navigation = screen.getByRole("navigation", { name: "Primary navigation" });
     expect(Array.from(navigation.querySelectorAll("a")).map((link) => link.textContent))
-      .toEqual(["Recommendations", "Predictions", "Teams", "Performance"]);
+      .toEqual(["Recommendations", "Predictions", "Teams", "BTTS Value", "Performance"]);
+  });
+
+  it("keeps live BTTS empty and isolated from deterministic mock research", async () => {
+    vi.stubEnv("NEXT_PUBLIC_MODELFC_API_MODE", "live");
+    vi.stubEnv("NEXT_PUBLIC_MODELFC_API_URL", "https://api.example.test/api/v1");
+    const fetcher = vi.fn().mockResolvedValue(new Response("[]", { status: 200 }));
+    vi.stubGlobal("fetch", fetcher);
+    const { default: BttsResearch } = await import("./research/btts/page");
+    render(<BttsResearch />);
+    await screen.findByText("No BTTS research comparisons yet");
+    expect(fetcher).toHaveBeenCalledWith("https://api.example.test/api/v1/research/btts?competition=E1",
+      expect.objectContaining({ cache: "no-store" }));
+    expect(screen.queryByText(/Demo West Ham/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("article")).not.toBeInTheDocument();
   });
   it("retains the Analyze workspace and home redirect in mock mode", async () => {
     vi.stubEnv("NEXT_PUBLIC_MODELFC_API_MODE", "mock");

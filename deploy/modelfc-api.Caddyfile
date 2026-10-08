@@ -9,6 +9,15 @@
 		header Cache-Control "no-store"
 		reverse_proxy 127.0.0.1:8000
 	}
+	@btts_research {
+		path /api/v1/research/btts
+		method GET
+		query competition E1
+	}
+	handle @btts_research {
+		header Cache-Control "no-store"
+		reverse_proxy 127.0.0.1:8000
+	}
 	@team_read {
 		path /api/v1/teams /api/v1/team-insights
 		method GET

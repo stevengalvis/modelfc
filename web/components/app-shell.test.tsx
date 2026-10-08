@@ -21,4 +21,12 @@ describe("AppShell", () => {
     expect(analyze).toHaveAttribute("href", "/analyze");
     expect(analyze).toHaveAttribute("aria-current", "page");
   });
+
+  it("links the BTTS research workspace without removing existing navigation", () => {
+    render(<AppShell active="BTTS Value"><p>Workspace</p></AppShell>);
+    expect(screen.getByRole("link", { name: "BTTS Value" })).toHaveAttribute("href", "/research/btts");
+    expect(screen.getByRole("link", { name: "BTTS Value" })).toHaveAttribute("aria-current", "page");
+    for (const label of ["Analyze", "Recommendations", "Predictions", "Teams", "Performance"])
+      expect(screen.getByRole("link", { name: label })).toBeInTheDocument();
+  });
 });

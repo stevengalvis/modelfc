@@ -1,9 +1,11 @@
 # BTTS research API-reader ACL activation
 
 This is a reviewed, separately authorized host procedure. Merging code does not
-change the VPS, existing evidence, services, Caddy or the public route surface.
-The BTTS route remains blocked by Caddy. Do not run the prospective collector or
-make a provider request as an activation test.
+change the VPS, existing evidence, services or the live Caddy configuration.
+The repository ingress template separately permits only the reviewed E1 BTTS
+research GET. This ACL procedure does not install or reload Caddy; follow
+[API_INGRESS.md](API_INGRESS.md) under separate host authorization. Do not run
+the prospective collector or make a provider request as an activation test.
 
 ## Access policy
 
@@ -143,7 +145,9 @@ after recording results. Do not invoke the runner against production state.
 
 Run the local API under its existing read-only unit and request
 `GET /api/v1/research/btts?competition=E1` through loopback. Require a valid
-response and no state metadata/byte changes. Confirm Caddy still denies the route.
+response and no state metadata/byte changes. Do not install or reload Caddy as
+part of this storage activation. If ingress has not been separately activated,
+confirm the live Caddy configuration still denies the route.
 Restart the timer only after all checks pass. Let the next normal scheduled run
 provide future-publication evidence; do not trigger a manual run.
 

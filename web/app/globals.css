@@ -438,3 +438,52 @@ label { font-size: 11px; }
   .recommendation-card { padding: 18px 15px; }
   .recommendation-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
+
+/* BTTS research: backend-owned current status and best-price facts. */
+.btts-workspace { max-width: 1120px; }
+.btts-page-heading { align-items: center; }
+.btts-competition { width: min(260px, 100%); }
+.btts-research-notice { margin: -10px 0 26px; padding: 13px 15px; border: 1px solid var(--line-violet); border-radius: 9px; color: var(--muted); font-size: 12px; line-height: 1.5; background: rgba(150,110,218,.05); }
+.btts-research-notice strong { color: var(--violet); }
+.btts-fixtures { display: grid; gap: 22px; }
+.btts-fixture { margin: 0; }
+.btts-fixture-head { display: flex; justify-content: space-between; gap: 24px; padding: 24px; border-bottom: 1px solid var(--line); }
+.btts-fixture-head h2 { margin: 7px 0 8px; font-size: clamp(21px, 3vw, 30px); }
+.btts-fixture-head h2 span { color: var(--muted); font-weight: 400; }
+.btts-fixture-head p { margin: 0; color: var(--muted); font: 11px/1.5 var(--font-mono); }
+.btts-research-chip, .btts-status, .btts-best { flex: none; align-self: start; border-radius: 99px; padding: 7px 9px; font: 600 9px/1 var(--font-mono); text-transform: uppercase; letter-spacing: .06em; }
+.btts-research-chip { color: var(--violet); background: rgba(150,110,218,.12); }
+.btts-comparison-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.btts-comparison { min-width: 0; padding: 22px 24px; border-left: 1px solid var(--line); }
+.btts-comparison:first-child { border-left: 0; }
+.btts-comparison.historical { background: rgba(255,139,74,.025); }
+.btts-book-head { display: flex; align-items: start; justify-content: space-between; gap: 15px; }
+.btts-book-head h2 { margin: 0; font-size: 18px; }
+.btts-book-head div > span { color: var(--muted); font-size: 11px; }
+.btts-status.available { color: var(--cyan); background: var(--cyan-soft); }
+.btts-status.historical { color: var(--orange); background: rgba(255,139,74,.1); }
+.btts-history-warning { color: var(--orange); font-size: 11px; line-height: 1.5; }
+.btts-sides { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 13px; margin-top: 20px; }
+.btts-side { min-width: 0; padding: 16px; border: 1px solid var(--line-violet); border-radius: 9px; background: var(--panel-raised); }
+.btts-side-heading { display: flex; min-height: 30px; align-items: start; justify-content: space-between; gap: 8px; }
+.btts-side h3 { margin: 0; font-size: 12px; }
+.btts-best { padding: 5px 7px; color: var(--cyan); background: var(--cyan-soft); font-size: 7px; }
+.btts-price { display: block; margin: 12px 0 17px; color: var(--cyan); font: 700 25px/1 var(--font-mono); }
+.btts-metrics { display: grid; gap: 10px; margin: 0; }
+.btts-metrics div { display: flex; justify-content: space-between; gap: 8px; }
+.btts-metrics dt { color: var(--subtle); font-size: 10px; }
+.btts-metrics dd { margin: 0; text-align: right; font: 600 11px/1.4 var(--font-mono); }
+.btts-provenance { margin-top: 18px; padding-top: 13px; border-top: 1px solid var(--line); color: var(--muted); font: 10px/1.5 var(--font-mono); overflow-wrap: anywhere; }
+.btts-provenance p { margin: 4px 0; }
+@media (max-width: 900px) {
+  .btts-comparison-list { grid-template-columns: 1fr; }
+  .btts-comparison { border-left: 0; border-top: 1px solid var(--line); }
+  .btts-comparison:first-child { border-top: 0; }
+}
+@media (max-width: 560px) {
+  .btts-page-heading { align-items: stretch; }
+  .btts-competition { width: 100%; }
+  .btts-fixture-head { padding: 18px 15px; }
+  .btts-comparison { padding: 18px 15px; }
+  .btts-sides { grid-template-columns: 1fr; }
+}
