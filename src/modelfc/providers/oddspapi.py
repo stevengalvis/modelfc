@@ -13,6 +13,7 @@ from dataclasses import asdict, dataclass, replace
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 import json
+import html
 import math
 import os
 from pathlib import Path
@@ -563,6 +564,7 @@ class OddsPapiTournamentResearchClient:
             )
             candidate = re.sub(r"\\([\\/\"])", lambda match: match.group(1), candidate)
             candidate = unquote(candidate)
+            candidate = html.unescape(candidate)
             if candidate == decoded:
                 return False
             decoded = candidate

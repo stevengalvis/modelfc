@@ -196,16 +196,18 @@ def _write_bytes(path: Path, payload: bytes) -> None:
         _fail("RESEARCH_STORAGE_UNAVAILABLE")
 
 
-def _metadata_index(metadata: object) -> dict[str, tuple[dict, str]]:
+def _metadata_index(metadata: object) -> tuple[dict[str, tuple[dict, str]], frozenset[str]]:
     if not isinstance(metadata, list) or not 1 <= len(metadata) <= MAX_METADATA_ROWS:
         _fail("MARKET_METADATA_INVALID")
     indexed: dict[str, tuple[dict, str]] = {}
+    known_ids = set()
     for item in metadata:
         if not isinstance(item, dict) or type(item.get("marketId")) is not int:
             _fail("MARKET_METADATA_INVALID")
         key = str(item["marketId"])
-        if key in indexed:
+        if key in known_ids:
             _fail("MARKET_METADATA_INVALID")
+        known_ids.add(key)
         outcomes = item.get("outcomes")
         if not isinstance(outcomes, list):
             _fail("MARKET_METADATA_INVALID")
@@ -219,7 +221,7 @@ def _metadata_index(metadata: object) -> dict[str, tuple[dict, str]]:
         family = _classify_metadata(item)
         if family is not None:
             indexed[key] = (item, family)
-    return indexed
+    return indexed, frozenset(known_ids)
 
 
 def _classify_metadata(item: dict) -> str | None:
@@ -270,7 +272,7 @@ def analyze_batch(payload: object, metadata: object, *, observed_at: datetime) -
     fixtures = payload if isinstance(payload, list) else [payload] if isinstance(payload, dict) else None
     if fixtures is None or len(fixtures) > MAX_FIXTURES:
         _fail("BATCH_RESPONSE_INVALID")
-    dictionary = _metadata_index(metadata)
+    dictionary, known_market_ids = _metadata_index(metadata)
     competition_rows = {value: {"tournament_id": value, "name": TOURNAMENT_BY_ID[value][1],
         "cached_slug": TOURNAMENT_BY_ID[value][2], "uncertainty": TOURNAMENT_BY_ID[value][3],
         "fixture_count": 0, "fixtures": []} for value in TOURNAMENT_IDS}
@@ -298,6 +300,7 @@ def analyze_batch(payload: object, metadata: object, *, observed_at: datetime) -
             fixture_row["bookmakers"][bookmaker] = _analyze_book(
                 books.get(bookmaker), dictionary, observed_at=observed_at,
                 fixture_stale=fixture.get("staleOdds") is True,
+                known_market_ids=known_market_ids,
             )
         row = competition_rows[tournament_id]
         row["fixture_count"] += 1
@@ -309,7 +312,7 @@ def analyze_batch(payload: object, metadata: object, *, observed_at: datetime) -
 
 
 def _analyze_book(book: object, dictionary: dict, *, observed_at: datetime,
-                  fixture_stale: bool) -> dict:
+                  fixture_stale: bool, known_market_ids: frozenset[str]) -> dict:
     empty = {family: {"status": "MISSING", "usable_priced_outcomes": 0,
                       "market_count": 0, "complete_market_count": 0,
                       "latest_changed_at_utc": None}
@@ -334,7 +337,7 @@ def _analyze_book(book: object, dictionary: dict, *, observed_at: datetime,
     for market_id, market in sorted(markets.items()):
         definition = dictionary.get(market_id)
         if definition is None:
-            unsupported_markets += 1
+            unsupported_markets += int(market_id not in known_market_ids)
             continue
         if not isinstance(market, dict) or not isinstance(market.get("outcomes"), dict):
             _fail("BATCH_RESPONSE_INVALID")

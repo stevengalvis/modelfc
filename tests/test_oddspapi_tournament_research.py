@@ -195,6 +195,18 @@ class TournamentTransportTests(unittest.TestCase):
                         client.retrieve(tournament_ids=research.TOURNAMENT_IDS,
                                         bookmakers=oddspapi.BOOKMAKERS)
 
+        with patch.dict(os.environ, {"ODDSPAPI_API_KEY": "private&key=1"}):
+            client = oddspapi.OddsPapiTournamentResearchClient(
+                request_guard=Guard(), max_response_bytes=4096)
+            with patch.object(client._opener, "open", return_value=Response(
+                    b'gateway error: private&amp;key=1')):
+                with self.assertRaisesRegex(
+                        oddspapi.OddsPapiTournamentResearchError,
+                        "CREDENTIAL_BOUNDARY") as reflected:
+                    client.retrieve(tournament_ids=research.TOURNAMENT_IDS,
+                                    bookmakers=oddspapi.BOOKMAKERS)
+            self.assertEqual(reflected.exception.raw, b"")
+
     def test_truncated_wide_unicode_credential_reflection_is_rejected(self):
         with patch.dict(os.environ, {"ODDSPAPI_API_KEY": "private/key=1"}):
             for encoding in ("utf-16-le", "utf-16-be", "utf-32-le", "utf-32-be"):
@@ -264,6 +276,23 @@ class InventoryTests(unittest.TestCase):
         self.assertEqual(analyzed["unsupported_metadata_outcomes"], 1)
         self.assertEqual(analyzed["families"]["BTTS"]["status"], "AVAILABLE")
         self.assertEqual(analyzed["families"]["MATCH_CORNER_TOTALS"]["status"], "MISSING")
+
+    def test_cached_non_target_market_does_not_report_unsupported_metadata(self):
+        definitions = metadata()
+        definitions.append({
+            "marketId": 99, "marketName": "Moneyline", "marketType": "moneyline",
+            "period": "fulltime", "sportId": 10, "playerProp": False,
+            "outcomes": [{"outcomeId": 990, "outcomeName": "Home"},
+                         {"outcomeId": 991, "outcomeName": "Away"}],
+        })
+        value = payload()[0]
+        value["bookmakerOdds"]["draftkings"]["markets"] = {"99": market(99)}
+        result = research.analyze_batch([value], definitions, observed_at=NOW)
+        row = next(item for item in result["competitions"] if item["tournament_id"] == 18)
+        analyzed = row["fixtures"][0]["bookmakers"]["draftkings"]
+        self.assertEqual(analyzed["unsupported_metadata_markets"], 0)
+        self.assertTrue(all(
+            family["status"] == "MISSING" for family in analyzed["families"].values()))
 
     def test_missing_bookmaker_activity_flags_never_report_available(self):
         value = payload()[0]
