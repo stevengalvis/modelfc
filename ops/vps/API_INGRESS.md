@@ -4,12 +4,17 @@ This is a staged installation plan, not authorization to install or activate
 anything. The reviewed public routes are exact `GET /api/v1/predictions`,
 `GET /api/v1/opportunities`, `GET /api/v1/prospective/performance`,
 `GET /api/v1/recommendations`, and
+`GET /api/v1/research/btts?competition=E1`, plus
 `GET /api/v1/opportunities/<32 lowercase hexadecimal characters>`.
 All other methods and paths, including analysis writes, capabilities, malformed
 detail IDs, trailing slashes and FastAPI's documentation, return 404 at Caddy. CORS is a browser
 policy, not the access-control boundary.
 
-Prospective reads, including recommendations, use `Cache-Control: no-store`.
+Prospective reads and the BTTS research read use `Cache-Control: no-store`.
+The BTTS route is limited to the exact path and the enabled `competition=E1`
+query. Other research paths, missing/unsupported competition values, trailing
+slashes and non-GET methods remain outside the Caddy allowlist. The response is
+research evidence, not a production-qualified recommendation.
 Merging an ingress-template change does not install or reload the host Caddyfile;
 that requires a separately authorized host update and verification.
 
@@ -155,7 +160,8 @@ Before a separately authorized ingress update, validate the reviewed Caddyfile
 and test a real-format detail ID through TLS. Verify valid GET reaches the API
 (returning detail or sanitized `OPPORTUNITY_NOT_FOUND`), malformed/uppercase IDs,
 trailing slash and POST/PUT/PATCH/DELETE return Caddy 404, all four prospective
-list/performance GET routes still work, and analyses, capabilities and docs remain blocked.
+list/performance GET routes and the exact BTTS research GET still work, and
+analyses, capabilities, other research paths and docs remain blocked.
 Inspect no-store response headers and that the upstream remains loopback-only.
 For rollback, restore the previously verified Caddyfile and reload Caddy only
 under separate host authorization. The detail page will then receive a 404;
@@ -182,7 +188,8 @@ per-IP rate limiting in this first installation.
 
 Separately authorize a DNS A record for the selected name. From outside the
 VPS, verify a trusted certificate and each of the four prospective
-list/performance JSON GETs plus a valid-format opportunity detail GET (a nonexistent ID returns sanitized 404). Verify
+list/performance JSON GETs, the exact E1 BTTS research GET, plus a valid-format
+opportunity detail GET (a nonexistent ID returns sanitized 404). Verify
 `POST /api/v1/analyses`, capabilities, malformed opportunity details, docs, OpenAPI,
 unknown paths, trailing slashes, and non-GET methods fail at Caddy. Test exact
 origin CORS from the production frontend; `OPTIONS` should not be required for

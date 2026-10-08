@@ -1,11 +1,13 @@
 import { decodeRecommendations } from "./recommendations";
 import { mockRecommendations } from "./mock-recommendations";
+import { decodeBttsResearch, isBttsCompetition } from "./btts-research";
+import { mockBttsResearch } from "./mock-btts-research";
 import { decodeTeams, decodeTeamProfile, decodeTeamInsights, isTeamId } from "./team-intelligence";
 import { isApiErrorBody, ModelFCApiError } from "./errors";
 import { mockAnalyze, mockCapabilities, mockPredictions, mockOpportunities, mockOpportunityDetails, mockPerformance } from "./mock";
 import { decodePredictions, decodeOpportunities, decodeOpportunityDetail, decodePerformance } from "./prospective";
 import { decodeCapabilities } from "./capabilities";
-import type { AnalysisRequest, AnalysisResponse, CapabilitiesResponse, ProspectivePrediction, ProspectiveOpportunity, OpportunityDetail, ProspectivePerformance, Recommendation } from "./types";
+import type { AnalysisRequest, AnalysisResponse, BttsCompetition, BttsResearchComparison, CapabilitiesResponse, ProspectivePrediction, ProspectiveOpportunity, OpportunityDetail, ProspectivePerformance, Recommendation } from "./types";
 
 const API_BASE = process.env.NEXT_PUBLIC_MODELFC_API_URL;
 // A deployment must opt into mock mode explicitly. Missing configuration is
@@ -187,6 +189,18 @@ export function createApiClient(
       signal?.throwIfAborted();
       return decodeRecommendations(mode === "mock" ? structuredClone(mockRecommendations)
         : await requestJson<unknown>(baseUrl!, "/recommendations", { signal, cache: "no-store" }));
+    },
+    async bttsResearch(competition: BttsCompetition, signal?: AbortSignal): Promise<BttsResearchComparison[]> {
+      checkConfiguration();
+      signal?.throwIfAborted();
+      if (!isBttsCompetition(competition)) {
+        throw new ModelFCApiError("BTTS research competition is not supported.",
+          "UNSUPPORTED_COMPETITION", false, 422);
+      }
+      const value = mode === "mock" ? structuredClone(mockBttsResearch)
+        : await requestJson<unknown>(baseUrl!, `/research/btts?competition=${encodeURIComponent(competition)}`,
+          { signal, cache: "no-store" });
+      return decodeBttsResearch(value, competition);
     },
     async predictions(signal?: AbortSignal): Promise<ProspectivePrediction[]> {
       checkConfiguration();

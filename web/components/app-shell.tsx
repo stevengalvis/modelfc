@@ -7,6 +7,7 @@ const links = [
   { label: "Recommendations", href: "/recommendations" },
   { label: "Predictions", href: "/predictions" },
   { label: "Teams", href: "/teams" },
+  { label: "BTTS Value", href: "/research/btts" },
   { label: "Performance", href: "/performance" },
 ] as const;
 

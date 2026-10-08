@@ -298,3 +298,60 @@ export interface Recommendation {
   qualified: true;
   policy_version: string;
 }
+
+export type BttsCompetition = "E1";
+export type BttsCurrentStatus = "AVAILABLE" | "STALE" | "UNAVAILABLE" | "UNKNOWN"
+  | "SUPERSEDED" | "KICKED_OFF" | "FUTURE_OBSERVATION";
+
+export interface BttsResearchValue {
+  competition: BttsCompetition;
+  side: "YES" | "NO";
+  american_odds: number;
+  decimal_odds: number;
+  model_probability: number;
+  sportsbook_implied_probability: number;
+  no_vig_market_probability: number;
+  model_minus_market_difference: number;
+  expected_profit: number;
+  provider_quote_reference: string;
+}
+
+/** Immutable research comparison. Backend ordering and current-price status are authoritative. */
+export interface BttsResearchComparison {
+  comparison_id: string;
+  competition: BttsCompetition;
+  research_only: true;
+  rule_version: "btts-paired-decimal-v1";
+  fixture: {
+    competition: BttsCompetition;
+    provider: string;
+    provider_fixture_id: string;
+    home_team: string;
+    away_team: string;
+    kickoff_utc: string;
+  };
+  forecast_id: string;
+  observation_id: string;
+  observation_timestamp_utc: string;
+  frozen_at_utc: string;
+  model_name: "team-opponent-arithmetic-poisson-btts";
+  model_version: "deepfc-arithmetic-btts-v1";
+  deepfc_source_commit: string;
+  home_expected_goals: number;
+  away_expected_goals: number;
+  yes_probability: number;
+  no_probability: number;
+  history_cutoff_date: string;
+  latest_history_date: string;
+  history_matches: number;
+  source_data_hashes: Array<{ competition: BttsCompetition; filename: string; sha256: string }>;
+  bookmaker: "draftkings" | "fanduel";
+  yes: BttsResearchValue;
+  no: BttsResearchValue;
+  provider_snapshot_sha256: string;
+  provider_metadata_sha256: string;
+  current_status: BttsCurrentStatus;
+  observation_age_seconds: number | null;
+  best_yes_price: boolean;
+  best_no_price: boolean;
+}
