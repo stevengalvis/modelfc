@@ -66,6 +66,8 @@ FAMILIES = (
 )
 STATE_PATH = Path("/var/lib/modelfc/state")
 AUTHORIZATION_CREDENTIAL = "tournament-authorization.json"
+SYSTEMD_CREDENTIAL_DIRECTORY = Path(
+    "/run/credentials/modelfc-oddspapi-tournament-research.service")
 METADATA_PATH = Path("/etc/modelfc/oddspapi-market-metadata.json")
 
 
@@ -513,7 +515,8 @@ def main(argv=None) -> int:
         return 2
     try:
         credential_directory = Path(os.environ.get("CREDENTIALS_DIRECTORY", ""))
-        if (not credential_directory.is_absolute() or credential_directory.is_symlink()
+        if (credential_directory != SYSTEMD_CREDENTIAL_DIRECTORY
+                or credential_directory.is_symlink()
                 or not credential_directory.is_dir()):
             _fail("AUTHORIZATION_INVALID")
         report = execute(state=STATE_PATH,

@@ -63,6 +63,13 @@ def _reject_json_constant(_value):
     raise ValueError
 
 
+def _finite_json_float(value):
+    parsed = float(value)
+    if not math.isfinite(parsed):
+        raise ValueError
+    return parsed
+
+
 @dataclass(frozen=True)
 class Competition:
     code: str
@@ -515,7 +522,8 @@ class OddsPapiTournamentResearchClient:
                     "CREDENTIAL_BOUNDARY", http_status=status,
                 )
             try:
-                payload = json.loads(raw, parse_constant=_reject_json_constant)
+                payload = json.loads(raw, parse_constant=_reject_json_constant,
+                                     parse_float=_finite_json_float)
             except (ValueError, UnicodeError):
                 raise OddsPapiTournamentResearchError(
                     "MALFORMED_JSON", http_status=status, raw=raw,

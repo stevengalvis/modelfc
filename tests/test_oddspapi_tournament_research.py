@@ -161,6 +161,14 @@ class TournamentTransportTests(unittest.TestCase):
                                 bookmakers=oddspapi.BOOKMAKERS)
         self.assertEqual(caught.exception.code, "MALFORMED_JSON")
 
+        client = self.client()
+        with patch.object(client._opener, "open", return_value=Response(
+                b'[{"fixtureId":"fixture-1","statusId":1e400}]')):
+            with self.assertRaises(oddspapi.OddsPapiTournamentResearchError) as caught:
+                client.retrieve(tournament_ids=research.TOURNAMENT_IDS,
+                                bookmakers=oddspapi.BOOKMAKERS)
+        self.assertEqual(caught.exception.code, "MALFORMED_JSON")
+
         with patch.dict(os.environ, {"ODDSPAPI_API_KEY": "private/key=1"}):
             client = oddspapi.OddsPapiTournamentResearchClient(
                 request_guard=Guard(), max_response_bytes=4096)
@@ -505,6 +513,14 @@ class ExecutionTests(unittest.TestCase):
     def test_cli_rejects_arguments_without_network(self):
         with patch.object(research, "execute", side_effect=AssertionError("must not execute")):
             self.assertEqual(research.main(["--endpoint", "odds"]), 2)
+
+    def test_cli_rejects_caller_selected_credential_directory(self):
+        forged = self.state / "forged-credentials"
+        forged.mkdir()
+        (forged / research.AUTHORIZATION_CREDENTIAL).write_text(self.auth.read_text())
+        with patch.dict(os.environ, {"CREDENTIALS_DIRECTORY": str(forged)}, clear=True), \
+                patch.object(research, "execute", side_effect=AssertionError("must not execute")):
+            self.assertEqual(research.main([]), 1)
 
 
 class OperatorBoundaryTests(unittest.TestCase):
