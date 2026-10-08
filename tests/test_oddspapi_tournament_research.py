@@ -195,6 +195,21 @@ class TournamentTransportTests(unittest.TestCase):
                         client.retrieve(tournament_ids=research.TOURNAMENT_IDS,
                                         bookmakers=oddspapi.BOOKMAKERS)
 
+    def test_truncated_wide_unicode_credential_reflection_is_rejected(self):
+        with patch.dict(os.environ, {"ODDSPAPI_API_KEY": "private/key=1"}):
+            for encoding in ("utf-16-le", "utf-16-be", "utf-32-le", "utf-32-be"):
+                raw = '{"value":"private/key=1"'.encode(encoding)
+                client = oddspapi.OddsPapiTournamentResearchClient(
+                    request_guard=Guard(), max_response_bytes=4096)
+                with self.subTest(encoding=encoding), patch.object(
+                        client._opener, "open", return_value=Response(raw)):
+                    with self.assertRaisesRegex(
+                            oddspapi.OddsPapiTournamentResearchError,
+                            "CREDENTIAL_BOUNDARY") as reflected:
+                        client.retrieve(tournament_ids=research.TOURNAMENT_IDS,
+                                        bookmakers=oddspapi.BOOKMAKERS)
+                self.assertEqual(reflected.exception.raw, b"")
+
 
 class InventoryTests(unittest.TestCase):
     def test_market_family_inventory_and_empty_competitions(self):
@@ -235,6 +250,20 @@ class InventoryTests(unittest.TestCase):
         self.assertTrue(all(
             family["status"] == "UNSUPPORTED_METADATA"
             for family in draftkings["families"].values()))
+
+    def test_unknown_outcome_does_not_misclassify_unrelated_families(self):
+        value = payload()[0]
+        draftkings = value["bookmakerOdds"]["draftkings"]
+        btts = draftkings["markets"]["5"]
+        btts["outcomes"]["unexpected"] = btts["outcomes"]["50"]
+        draftkings["markets"] = {"5": btts}
+        result = research.analyze_batch([value], metadata(), observed_at=NOW)
+        row = next(item for item in result["competitions"] if item["tournament_id"] == 18)
+        analyzed = row["fixtures"][0]["bookmakers"]["draftkings"]
+        self.assertEqual(analyzed["unsupported_metadata_markets"], 0)
+        self.assertEqual(analyzed["unsupported_metadata_outcomes"], 1)
+        self.assertEqual(analyzed["families"]["BTTS"]["status"], "AVAILABLE")
+        self.assertEqual(analyzed["families"]["MATCH_CORNER_TOTALS"]["status"], "MISSING")
 
     def test_missing_bookmaker_activity_flags_never_report_available(self):
         value = payload()[0]

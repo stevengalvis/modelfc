@@ -315,7 +315,8 @@ def _analyze_book(book: object, dictionary: dict, *, observed_at: datetime,
                       "latest_changed_at_utc": None}
              for family in FAMILIES}
     if book is None:
-        return {"status": "MISSING", "unsupported_metadata_markets": 0, "families": empty}
+        return {"status": "MISSING", "unsupported_metadata_markets": 0,
+                "unsupported_metadata_outcomes": 0, "families": empty}
     if not isinstance(book, dict) or not isinstance(book.get("markets"), dict):
         _fail("BATCH_RESPONSE_INVALID")
     markets = book["markets"]
@@ -328,11 +329,12 @@ def _analyze_book(book: object, dictionary: dict, *, observed_at: datetime,
     accumulators = {family: {"markets": 0, "usable": 0, "stale": False,
                              "inactive": False, "incomplete": False,
                              "complete_markets": 0, "latest": None} for family in FAMILIES}
-    unsupported = 0
+    unsupported_markets = 0
+    unsupported_outcomes = 0
     for market_id, market in sorted(markets.items()):
         definition = dictionary.get(market_id)
         if definition is None:
-            unsupported += 1
+            unsupported_markets += 1
             continue
         if not isinstance(market, dict) or not isinstance(market.get("outcomes"), dict):
             _fail("BATCH_RESPONSE_INVALID")
@@ -346,7 +348,7 @@ def _analyze_book(book: object, dictionary: dict, *, observed_at: datetime,
         for outcome_id, outcome in market["outcomes"].items():
             family = outcome_family.get(outcome_id)
             if family is None:
-                unsupported += 1
+                unsupported_outcomes += 1
                 continue
             if not isinstance(outcome, dict) or not isinstance(outcome.get("players"), dict):
                 _fail("BATCH_RESPONSE_INVALID")
@@ -400,7 +402,7 @@ def _analyze_book(book: object, dictionary: dict, *, observed_at: datetime,
         if value["markets"] == 0:
             # An unknown returned market could belong to any unobserved family.
             # Do not report confirmed absence when the cache cannot classify it.
-            status = "UNSUPPORTED_METADATA" if unsupported else "MISSING"
+            status = "UNSUPPORTED_METADATA" if unsupported_markets else "MISSING"
         elif value["complete_markets"]:
             status = "AVAILABLE"
         elif value["stale"]:
@@ -417,7 +419,8 @@ def _analyze_book(book: object, dictionary: dict, *, observed_at: datetime,
                           "latest_changed_at_utc": value["latest"]}
     status = ("STALE" if book_stale else "INACTIVE" if book_inactive
               else "INCOMPLETE" if book_incomplete else "AVAILABLE")
-    return {"status": status, "unsupported_metadata_markets": unsupported, "families": result}
+    return {"status": status, "unsupported_metadata_markets": unsupported_markets,
+            "unsupported_metadata_outcomes": unsupported_outcomes, "families": result}
 
 
 def execute(*, state: Path, authorization_path: Path, metadata_path: Path,

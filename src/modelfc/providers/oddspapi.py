@@ -509,11 +509,7 @@ class OddsPapiTournamentResearchClient:
                 raise OddsPapiTournamentResearchError(
                     "RESPONSE_TOO_LARGE", http_status=status,
                 )
-            try:
-                raw_text = raw.decode("utf-8")
-            except UnicodeDecodeError:
-                raw_text = raw.decode("latin-1")
-            if self._credential_in_text(raw_text):
+            if self._credential_in_raw(raw):
                 raise OddsPapiTournamentResearchError(
                     "CREDENTIAL_BOUNDARY", http_status=status,
                 )
@@ -539,6 +535,17 @@ class OddsPapiTournamentResearchClient:
         if isinstance(value, dict):
             return any(self._credential_in_json(key) or self._credential_in_json(item)
                        for key, item in value.items())
+        return False
+
+    def _credential_in_raw(self, value):
+        # JSON permits UTF-8, UTF-16, and UTF-32. Decode both byte orders so a
+        # truncated body without a usable BOM cannot hide a reflected secret.
+        for encoding in (
+                "utf-8-sig", "utf-16-le", "utf-16-be",
+                "utf-32-le", "utf-32-be", "latin-1"):
+            decoded = value.decode(encoding, errors="ignore")
+            if self._credential_in_text(decoded):
+                return True
         return False
 
     def _credential_in_text(self, value):
