@@ -286,15 +286,32 @@ class PrivateResearchMcpTests(unittest.IsolatedAsyncioTestCase):
     async def test_utf8_request_id_boundary_and_correlation(self):
         environment = {'PATH': os.environ.get('PATH', ''),
                        'PYTHONPATH': str(Path(__file__).resolve().parents[1] / 'src')}
-        for identity in ('a' * adapter.MAX_REQUEST_ID_BYTES, 'é' * 100):
+        for identity in ('a' * adapter.MAX_REQUEST_ID_BYTES, 'é' * 100, 'é' * 128):
             with self.subTest(identity=identity[:10]):
                 request = json.dumps({'jsonrpc': '2.0', 'id': identity,
                                       'method': 'tools/list', 'params': {}}) + '\n'
-                completed = subprocess.run([sys.executable, '-m', 'modelfc.private_research_mcp'],
-                                           input=request, env=environment, text=True,
-                                           capture_output=True, timeout=10)
-                self.assertEqual(completed.returncode, 0, completed.stderr)
-                self.assertEqual(json.loads(completed.stdout)['id'], identity)
+                child = await asyncio.create_subprocess_exec(
+                    sys.executable, '-m', 'modelfc.private_research_mcp', env=environment,
+                    stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE)
+                try:
+                    async with asyncio.timeout(10):
+                        child.stdin.write(request.encode('utf-8'))
+                        await child.stdin.drain()
+                        # EOF disconnects the MCP client and cancels pending handlers.
+                        # Keep the connection open until its correlated response arrives.
+                        response = await child.stdout.readline()
+                        child.stdin.close()
+                        stdout, stderr = await child.communicate()
+                    self.assertEqual(child.returncode, 0, stderr.decode('utf-8'))
+                    self.assertTrue(response, 'MCP worker closed stdout before responding')
+                    self.assertEqual(stdout, b'')
+                    self.assertEqual(json.loads(response)['id'], identity)
+                finally:
+                    child.stdin.close()
+                    if child.returncode is None:
+                        child.kill()
+                    await child.wait()
         self.assertTrue(adapter._id_is_oversized('é' * 129))
         self.assertFalse(adapter._id_is_oversized('é' * 128))
 
