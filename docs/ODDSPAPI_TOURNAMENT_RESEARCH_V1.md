@@ -112,7 +112,6 @@ explicit host change:
 6. Create `/etc/modelfc/oddspapi-tournament-research.json` as root, mode `0600`.
    The reviewed unit maps it read-only to the service as the distinct
    `tournament-authorization.json` systemd credential. Its content is exactly:
-   with exactly:
 
    ```json
    {
