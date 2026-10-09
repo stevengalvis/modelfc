@@ -14,7 +14,8 @@ from pathlib import Path
 
 from modelfc.acquisition_planner import LEAGUES, Fixture, plan_acquisition, utc
 from modelfc.btts_model import HistorySource
-from modelfc.offline_forecasts import load_history_bytes
+from modelfc.offline_forecasts import history_bytes_from_config
+from modelfc.corner_data import parse_data_config
 from modelfc.corner_forecasts import predict_corner_fixture
 from modelfc.matches import Venue
 from modelfc.providers.football_data import _read_corner_observations
@@ -164,8 +165,8 @@ def _audit_identities(payload: bytes, sources: tuple[tuple[str, bytes], ...], *,
             teams.append({"provider_team_id": pid, "provider_name": original, "historical_name": canonical,
                 "venue": venue.value, "team_observations": len(results), "venue_observations": len(venue_results),
                 "latest_history_date": None if latest is None else latest.isoformat(),
-                "history_age_days": None if latest is None else (cutoff - latest).days,
-                "stale_history_warning": latest is not None and (cutoff-latest).days > max_age_days,
+                "history_age_days": None if latest is None else (fixture.kickoff_utc.date() - latest).days,
+                "stale_history_warning": latest is not None and (fixture.kickoff_utc.date()-latest).days > max_age_days,
                 "promotion_status": "NOT_VERIFIED"})
         diagnostics.append({"competition": "E1", "fixture_id": fixture.fixture_id,
             "kickoff_utc": fixture.kickoff_utc.isoformat(), "teams": teams,
@@ -204,9 +205,9 @@ def main(argv=None):
         raw = _read_regular(args.response, MAX_RESPONSE_BYTES, "IDENTITY_AUDIT_REJECTED")
         if hashlib.sha256(raw).hexdigest() != args.response_sha256:
             _reject()
-        from modelfc.corner_data import load_data_config
-        config = load_data_config(args.data_config)
-        report = audit_identities(raw, load_history_bytes(args.data_config, "E1"),
+        config_raw = _read_regular(args.data_config, 16_384, "IDENTITY_AUDIT_REJECTED")
+        config = parse_data_config(_json(config_raw), args.data_config, resolve_directory=False)
+        report = audit_identities(raw, history_bytes_from_config(config, "E1"),
             as_of=datetime.fromisoformat(args.as_of.replace("Z", "+00:00")), cutoff=date.fromisoformat(args.cutoff),
             max_age_days=config.max_age_days)
         print(json.dumps(report, sort_keys=True, allow_nan=False))

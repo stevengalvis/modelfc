@@ -132,7 +132,8 @@ Use the original planner timestamp, not today's date. The supplied file must
 contain a reviewed configured-league subset (retain and hash the original);
 unknown tournaments are rejected. No credentials, network, model calculation,
 budget reservation or evidence write is needed. The tool reads only existing
-bounded regular files and the existing coherent history reader/shared refresh
+bounded regular files (including a 16 KiB, no-follow data config parsed once)
+and the existing coherent history reader/shared refresh
 lock; it creates neither a lock nor a directory. Save stdout privately through
 an explicitly approved operator export if desired. Rejections return only
 `IDENTITY_AUDIT_REJECTED`, without source text or paths.
@@ -152,7 +153,7 @@ new mapping or prove a prospective freeze; do not use its output as a forecast.
 | `MISSING_PRE_CUTOFF_HISTORICAL_RECORDS` | Name exists in supplied history but has no eligible earlier result. This does not prove promotion. |
 | `INSUFFICIENT_LEAGUE_OBSERVATIONS` | Fewer than the existing default 100 team-observations before cutoff. |
 | `INSUFFICIENT_TEAM_VENUE_OBSERVATIONS` | Fewer than the existing default five home/away observations in the required venue. |
-| `stale_history_warning` | Team's latest eligible result exceeds configured `max_age_days`; warning only, not a new model gate. |
+| `stale_history_warning` | Age from the fixture kickoff date to the team's latest eligible result exceeds configured `max_age_days`; warning only, not a new model gate. |
 
 Minimum counts are taken from the existing corner function defaults. A
 `COUNT_GATES_SATISFIED` result confirms these counts only, not full model

@@ -11,7 +11,7 @@ from modelfc.acquisition_planner import Fixture, Plan, utc
 from modelfc.btts_market_data import BttsFixture
 from modelfc.btts_model import BttsForecast, HistorySource, freeze_btts_forecast, history_from_bytes
 from modelfc.btts_research import comparisons_from_snapshot, digest
-from modelfc.corner_data import load_data_config, configured_history_paths
+from modelfc.corner_data import CornerDataConfig, load_data_config, configured_history_paths
 from modelfc.corner_forecasts import CornerFixturePrediction, predict_corner_fixture, corner_line_probabilities
 from modelfc.corner_opportunities import PREDICTION_RULE_VERSION
 from modelfc.ledger_storage import existing_read_lock
@@ -53,7 +53,13 @@ def load_history_bytes(config_path: Path, competition: str) -> tuple[tuple[str, 
     """Coherent configured E1 history and fingerprints; existing lock only, no creation."""
     if competition != "E1":
         raise ValueError("UNSUPPORTED_MODEL_COMPETITION")
-    config = load_data_config(config_path)
+    return history_bytes_from_config(load_data_config(config_path), competition)
+
+
+def history_bytes_from_config(config: CornerDataConfig, competition: str) -> tuple[tuple[str, bytes], ...]:
+    """Use a validated in-memory config under the unchanged existing read lock."""
+    if competition != "E1":
+        raise ValueError("UNSUPPORTED_MODEL_COMPETITION")
     with existing_read_lock(config.directory / "data" / "corner-refresh" / "refresh.lock"):
         paths = configured_history_paths(config, competition)
         if len(paths) > 32:

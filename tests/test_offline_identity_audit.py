@@ -114,6 +114,20 @@ class OfflineIdentityAuditTests(TestCase):
         self.assertTrue(all(t['stale_history_warning'] for t in result['teams']))
         self.assertTrue(all(t['promotion_status'] == 'NOT_VERIFIED' for t in result['teams']))
 
+    def test_staleness_matches_existing_fixture_date_warning(self):
+        latest = NOW.date()-timedelta(days=14)
+        name, raw = sources()[0]
+        extra = f'E1,{latest:%d/%m/%Y},Home,Away,2,1,4,3\n'
+        result = audit(data=((name,raw+extra.encode()),))['eligible_fixtures'][0]
+        self.assertEqual(result['teams'][0]['history_age_days'], 15)
+        self.assertTrue(result['teams'][0]['stale_history_warning'])
+        self.assertEqual(result['failures'], [])
+        from modelfc.corner_analysis import _team_freshness_warnings
+        prepared = prepare_forecast(known(), ((name,raw+extra.encode()),), frozen_at=NOW,
+                                    cutoff=NOW.date(), models=('corner',))
+        self.assertIn('TEAM_HISTORY_AGE', {w.code for w in _team_freshness_warnings(
+            known().identity.kickoff_utc.date(), prepared.corner.home, 14)})
+
     def test_exact_source_identity_without_prior_records_reported_separately(self):
         extra = 'E1,08/10/2026,New,Away,1,1,4,3\n'
         result = audit([fixture('New')], sources(extra))['eligible_fixtures'][0]
@@ -169,9 +183,10 @@ class OfflineIdentityAuditTests(TestCase):
             digest = hashlib.sha256(path.read_bytes()).hexdigest()
             args = ['--response',str(path),'--response-sha256',digest,'--data-config',str(Path(tmp)/'config.json'),
                     '--as-of',NOW.isoformat(),'--cutoff',NOW.date().isoformat()]
-            with patch('modelfc.offline_identity_audit.load_history_bytes', return_value=sources()), \
-                 patch('modelfc.corner_data.load_data_config') as config, redirect_stdout(StringIO()) as out:
-                config.return_value.max_age_days = 14
+            config_path = Path(tmp)/'config.json'
+            config_path.write_text(json.dumps({'data_directory': '.', 'leagues': ['E1'], 'max_age_days': 14}))
+            with patch('modelfc.offline_identity_audit.history_bytes_from_config', return_value=sources()), \
+                 redirect_stdout(StringIO()) as out:
                 before = path.read_bytes()
                 self.assertEqual(main(args), 0)
                 self.assertEqual(json.loads(out.getvalue())['provider_requests'], 0)
@@ -187,3 +202,36 @@ class OfflineIdentityAuditTests(TestCase):
                 with redirect_stdout(StringIO()) as out:
                     self.assertEqual(main(bad), 1)
                     self.assertEqual(json.loads(out.getvalue()), {'status':'IDENTITY_AUDIT_REJECTED'})
+
+    def test_cli_config_is_bounded_regular_nofollow_no_reread(self):
+        import os
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            response = root/'response.json'; response.write_text(json.dumps([fixture()]))
+            config = root/'config.json'
+            config.write_text(json.dumps({'data_directory': '.', 'leagues': ['E1'], 'max_age_days': 14}))
+            args = ['--response',str(response),'--response-sha256',hashlib.sha256(response.read_bytes()).hexdigest(),
+                    '--data-config',str(config),'--as-of',NOW.isoformat(),'--cutoff',NOW.date().isoformat()]
+            for variant in ('fifo','symlink','hardlink','oversize','malformed','duplicate','missing','directory'):
+                path = root/variant
+                if variant == 'fifo': os.mkfifo(path)
+                elif variant == 'symlink': path.symlink_to(config)
+                elif variant == 'hardlink': path.hardlink_to(config)
+                elif variant == 'oversize': path.write_bytes(b' '*16_385)
+                elif variant == 'malformed': path.write_text('PRIVATE-MARKER')
+                elif variant == 'duplicate': path.write_text('{"leagues":[],"leagues":["E1"]}')
+                elif variant == 'directory': path.mkdir()
+                bad = args.copy(); bad[5] = str(path)
+                with patch('modelfc.offline_identity_audit.history_bytes_from_config', side_effect=AssertionError('history')), \
+                     patch('modelfc.corner_prospective._RequestBudgetGuard.reserve', side_effect=AssertionError('budget')), \
+                     patch('socket.socket', side_effect=AssertionError('HTTP')), redirect_stdout(StringIO()) as out:
+                    self.assertEqual(main(bad), 1)
+                    self.assertEqual(json.loads(out.getvalue()), {'status':'IDENTITY_AUDIT_REJECTED'})
+            (root/'hardlink').unlink()
+            # Validate once and pass that same object to the protected history reader.
+            with patch('modelfc.corner_data.load_data_config', side_effect=AssertionError('unbounded reread')), \
+                 patch('modelfc.offline_identity_audit.history_bytes_from_config', return_value=sources()) as reader, \
+                 redirect_stdout(StringIO()):
+                self.assertEqual(main(args), 0)
+                self.assertEqual(reader.call_args.args[0].directory, root)
+                self.assertEqual(reader.call_args.args[0].max_age_days, 14)

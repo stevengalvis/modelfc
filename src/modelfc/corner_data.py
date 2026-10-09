@@ -46,6 +46,11 @@ def load_data_config(path: Path, *, resolve_directory: bool = True) -> CornerDat
         value = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError) as error:
         raise ValueError(f"could not read corner data config: {error}") from error
+    return parse_data_config(value, path, resolve_directory=resolve_directory)
+
+
+def parse_data_config(value: object, path: Path, *, resolve_directory: bool = True) -> CornerDataConfig:
+    """Validate supplied config data without reading a path a second time."""
     fields = {"data_directory", "leagues", "max_age_days"}
     if not isinstance(value, dict) or set(value) != fields:
         raise ValueError("config requires exactly data_directory, leagues, max_age_days")
