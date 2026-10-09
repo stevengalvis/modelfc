@@ -1,7 +1,8 @@
 """Pure OFFLINE BTTS adapter. Never fetches, captures, or imports an OddsPapi client.
 
 The reviewed v4 /markets documentation identifies fulltime 'Both Teams To Score'
-as marketType 'totals', handicap 0, sport 10, non-player, Yes/No outcomes.
+as marketType 'bothteamsscore' (including 104), sport 10, non-player,
+Yes/No outcomes. The legacy 'totals', handicap 0 shape remains supported.
 IDs are resolved from that supplied dictionary, never guessed downstream.
 """
 
@@ -40,9 +41,11 @@ def normalize_btts(payload, metadata, fixture, *, competition, historical_names,
             dictionary[str(mid)] = item
         candidates = {}
         for mid, item in dictionary.items():
-            if (item.get("marketName") != "Both Teams To Score" or item.get("marketType") != "totals"
+            legacy = (item.get("marketType") == "totals" and item.get("marketName") == "Both Teams To Score"
+                      and type(item.get("handicap")) in (int, float) and item["handicap"] == 0)
+            if (not (legacy or item.get("marketType") == "bothteamsscore")
                     or item.get("period") != "fulltime" or item.get("sportId") != 10
-                    or item.get("playerProp") is not False or item.get("handicap") != 0):
+                    or item.get("playerProp") is not False):
                 continue
             directions = {}
             for outcome in _array(item.get("outcomes")):
