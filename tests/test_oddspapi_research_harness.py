@@ -4,9 +4,11 @@ from copy import deepcopy
 from datetime import date, timedelta
 from io import BytesIO, StringIO
 import fcntl
+import ctypes
 import hashlib
 import json
 import os
+import stat
 from pathlib import Path
 import tempfile
 import unittest
@@ -93,6 +95,58 @@ class PlanTests(unittest.TestCase):
                 harness._json(raw, "PLAN_INVALID")
         item = plan(); item["provider_quota"]["budget_period_start"] = "2026-99-01"
         with self.assertRaises(harness.ResearchHarnessError): harness.validate_plan(item, now=NOW)
+
+
+class DirectoryTests(unittest.TestCase):
+    def test_real_traverse_only_parent_without_permission_bypass(self):
+        # A fork inherits imports, avoiding unrelated repository traversal needs.
+        # Ordinary CI users need no privilege change; root drops all capabilities.
+        class Header(ctypes.Structure):
+            _fields_ = [("version", ctypes.c_uint32), ("pid", ctypes.c_int)]
+        class Data(ctypes.Structure):
+            _fields_ = [("effective", ctypes.c_uint32), ("permitted", ctypes.c_uint32),
+                        ("inheritable", ctypes.c_uint32)]
+        libc = ctypes.CDLL(None, use_errno=True)
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            parent = root / "traverse"; parent.mkdir(mode=0o700)
+            leaf = parent / "state"; leaf.mkdir(mode=0o700)
+            (leaf / "record").write_bytes(b"immutable")
+            parent.chmod(0o111)
+            read_fd, write_fd = os.pipe()
+            pid = os.fork()
+            if pid == 0:
+                os.close(read_fd)
+                try:
+                    if os.getuid() == 0:
+                        if libc.capset(ctypes.byref(Header(0x20080522, 0)), (Data * 2)()) != 0:
+                            raise AssertionError("capability drop failed")
+                    with self.assertRaises(PermissionError):
+                        os.open(parent, os.O_RDONLY | os.O_DIRECTORY)
+                    with self.assertRaises(PermissionError):
+                        os.listdir(parent)
+                    with patch.object(harness, "PATH_ANCHOR", root):
+                        with harness._directory(leaf) as directory:
+                            descriptor = os.open("record", os.O_RDONLY | os.O_NOFOLLOW, dir_fd=directory)
+                            with os.fdopen(descriptor, "rb") as source:
+                                self.assertEqual(source.read(), b"immutable")
+                            os.fsync(directory)
+                    self.assertEqual(stat.S_IMODE(parent.stat().st_mode), 0o111)
+                    os.write(write_fd, b"PASS")
+                except BaseException as error:
+                    os.write(write_fd, type(error).__name__.encode())
+                finally:
+                    os.close(write_fd)
+                    os._exit(0)
+            os.close(write_fd)
+            try:
+                result = os.read(read_fd, 256)
+                _, status = os.waitpid(pid, 0)
+                self.assertEqual(os.waitstatus_to_exitcode(status), 0)
+                self.assertEqual(result, b"PASS")
+            finally:
+                os.close(read_fd)
+                parent.chmod(0o700)
 
 
 class SessionTests(unittest.TestCase):
@@ -325,6 +379,52 @@ class SessionTests(unittest.TestCase):
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             with self.assertRaisesRegex(harness.ResearchHarnessError, "BUSY"): self.execute([])
         self.assertEqual(self.reserved(), 0)
+
+    def test_invalid_directories_fail_preflight_without_http_or_reservation(self):
+        def rejected():
+            with patch("urllib.request.OpenerDirector.open") as opened:
+                with self.assertRaisesRegex(harness.ResearchHarnessError, "PATH_INVALID"):
+                    harness.execute(clock=lambda: NOW)
+                opened.assert_not_called()
+            self.assertEqual(self.reserved(), 0)
+            self.assertFalse(self.directory.exists())
+
+        self.credentials.chmod(0o722)
+        rejected()
+        self.credentials.chmod(0o700)
+        moved = self.root / "moved-credentials"
+        self.credentials.rename(moved)
+        rejected()  # Missing ancestor.
+        self.credentials.write_bytes(b"not a directory")
+        rejected()  # Unexpected regular file.
+        self.credentials.unlink(); self.credentials.symlink_to(moved)
+        rejected()  # O_PATH must not accept symlinks as directories.
+        self.credentials.unlink(); moved.rename(self.credentials)
+
+        def wrong_directory_owner(descriptor):
+            info = self.real_fstat(descriptor)
+            source = self.credentials.stat()
+            if (info.st_dev, info.st_ino) == (source.st_dev, source.st_ino):
+                fields = list(info); fields[4] = 12345
+                return os.stat_result(fields)
+            return info
+        with patch.object(harness.os, "fstat", side_effect=wrong_directory_owner):
+            rejected()
+
+    def test_leaf_reopen_rejects_different_inode_before_preflight(self):
+        other = self.root / "other-directory"; other.mkdir(mode=0o700)
+        original = os.open
+        def substitute(path, flags, *args, **kwargs):
+            if path == ".":
+                return original(other, flags)
+            return original(path, flags, *args, **kwargs)
+        with patch.object(harness.os, "open", side_effect=substitute), \
+                patch("urllib.request.OpenerDirector.open") as opened:
+            with self.assertRaisesRegex(harness.ResearchHarnessError, "PATH_INVALID"):
+                harness.execute(clock=lambda: NOW)
+            opened.assert_not_called()
+        self.assertEqual(self.reserved(), 0)
+        self.assertFalse(self.directory.exists())
 
     def test_paths_symlinks_hardlinks_and_unsafe_modes_fail_closed(self):
         original = self.auth.read_bytes(); self.auth.unlink(); self.auth.symlink_to(self.meta)
