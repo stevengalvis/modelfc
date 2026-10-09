@@ -194,17 +194,27 @@ def _directory(path):
     if ".." in relative.parts:
         fail("PATH_INVALID")
     try:
-        fd = os.open(PATH_ANCHOR, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+        # Ancestors require traversal, not listing. O_PATH still pins their
+        # identity and permits fstat/openat without requesting directory reads.
+        flags = os.O_PATH | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+        fd = os.open(PATH_ANCHOR, flags)
         descriptors.append(fd)
         info = os.fstat(fd)
-        if info.st_uid not in (0, os.getuid()) or info.st_mode & 0o022:
+        if not stat.S_ISDIR(info.st_mode) or info.st_uid not in (0, os.getuid()) or info.st_mode & 0o022:
             fail("PATH_INVALID")
         for part in relative.parts:
-            fd = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=fd)
+            fd = os.open(part, flags, dir_fd=fd)
             descriptors.append(fd)
             info = os.fstat(fd)
-            if info.st_uid not in (0, os.getuid()) or info.st_mode & 0o022:
+            if not stat.S_ISDIR(info.st_mode) or info.st_uid not in (0, os.getuid()) or info.st_mode & 0o022:
                 fail("PATH_INVALID")
+        # Only the leaf needs a readable descriptor (including directory fsync).
+        # Reopen through the pinned inode, never through the original path.
+        fd = os.open(".", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=fd)
+        descriptors.append(fd)
+        leaf = os.fstat(fd)
+        if (leaf.st_dev, leaf.st_ino, leaf.st_uid, leaf.st_mode) != (info.st_dev, info.st_ino, info.st_uid, info.st_mode):
+            fail("PATH_INVALID")
         yield fd
     except OSError:
         fail("PATH_INVALID")
