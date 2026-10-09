@@ -87,5 +87,29 @@ Acceptance must compare source fixture counts/identities and every retained
 market/outcome/line/price/timestamp against the saved captures, review all missing
 and excluded mappings, confirm deterministic repeat output and unchanged source
 hashes, and specifically replay Italy and MLS when saved data is available.
-Real provider compatibility and complete calendar coverage remain unproven until
-that replay. This milestone does not enable collection or any additional model.
+Italy and MLS real odds coverage and complete calendar coverage remain unverified.
+This milestone does not enable collection or any additional model.
+
+## FanDuel acceptance results
+
+Read-only VPS acceptance of reviewed implementation
+`75d834f369ce154ea383f3f12378408727f105b0` passed for the supported
+FanDuel captures:
+
+| Saved capture | Fixtures | Complete markets |
+| --- | ---: | ---: |
+| Championship FanDuel | 12 | 784 |
+| Supported multi-league FanDuel subset | 52 | 2,327 |
+
+Both inventories matched the saved OddsPapi Lab inventories exactly.
+Deterministic replay and planner validation passed, including MLS UTC-boundary
+tests. No provider requests were made during acceptance. These results validate
+the supported saved captures, not live acquisition or complete five-league odds
+coverage; Italy and MLS real odds coverage remains unverified.
+
+DraftKings replay is intentionally unsupported in V1. The full five-tournament
+Lab capture includes Brazil, which is outside the configured target leagues.
+Supported replay therefore requires a separately prepared subset containing only
+configured target leagues and FanDuel. Independently record and pin the subset's
+hash while preserving the original capture and its provenance; the processor
+continues to reject unsupported identities rather than silently filtering them.
