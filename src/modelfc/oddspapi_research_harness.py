@@ -4,13 +4,16 @@ from contextlib import contextmanager
 from dataclasses import asdict
 from datetime import date, datetime, timedelta, timezone
 import fcntl
+import errno
 import gzip
 import hashlib
 import json
 import os
+import pwd
 from pathlib import Path
 import re
 import stat
+import struct
 import sys
 
 from modelfc.corner_prospective import RunnerError, _RequestBudgetGuard, _load, _now, _save
@@ -223,7 +226,45 @@ def _directory(path):
             os.close(fd)
 
 
-def _read(path, maximum, *, private=False, root_owned=False):
+def _access_acl(descriptor):
+    """Read the Linux access ACL from the pinned inode, never a pathname."""
+    try:
+        return os.getxattr(descriptor, "system.posix_acl_access")
+    except OSError as error:
+        if error.errno == errno.ENODATA:
+            return None
+        fail("PATH_INVALID")
+
+
+def _runtime_uid():
+    try:
+        uid = pwd.getpwnam("modelfc-runtime").pw_uid
+    except KeyError:
+        fail("PATH_INVALID")
+    if uid <= 0 or uid != os.getuid():
+        fail("PATH_INVALID")
+    return uid
+
+
+def _credential_snapshot(descriptor, info):
+    # 0440 represents the ACL mask, not a grant to the root owning group.
+    if info.st_uid != 0 or info.st_gid != 0 or stat.S_IMODE(info.st_mode) != 0o440:
+        fail("PATH_INVALID")
+    uid = _runtime_uid()
+    raw = _access_acl(descriptor)
+    if raw is None or len(raw) != 44 or struct.unpack_from("<I", raw)[0] != 2:
+        fail("PATH_INVALID")
+    # Linux POSIX ACL xattr: header version 2; entries (tag, permissions, ID).
+    # Exact owner read, intended runtime read, empty group/other, read-only mask.
+    entries = [struct.unpack_from("<HHI", raw, offset) for offset in range(4, 44, 8)]
+    if entries != [(1, 4, 0xffffffff), (2, 4, uid), (4, 0, 0xffffffff),
+                   (16, 4, 0xffffffff), (32, 0, 0xffffffff)]:
+        fail("PATH_INVALID")
+
+
+def _read(path, maximum, *, private=False, root_owned=False, snapshot=False, authorization_source=False):
+    if snapshot and (path != CREDENTIAL_DIRECTORY / PLAN_CREDENTIAL or private or authorization_source):
+        fail("PATH_INVALID")
     with _directory(path.parent) as parent:
         try:
             fd = os.open(path.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC, dir_fd=parent)
@@ -233,7 +274,18 @@ def _read(path, maximum, *, private=False, root_owned=False):
                         or info.st_uid not in ((0,) if root_owned else (0, os.getuid()))
                         or info.st_mode & (0o077 if private else 0o022) or info.st_size > maximum):
                     fail("PATH_INVALID")
+                if snapshot:
+                    _credential_snapshot(source.fileno(), info)
+                if authorization_source and (info.st_uid != 0 or stat.S_IMODE(info.st_mode) != 0o600
+                                             or _access_acl(source.fileno()) is not None):
+                    fail("PATH_INVALID")
                 raw = source.read(maximum + 1)
+                after = os.fstat(source.fileno())
+                if (info.st_dev, info.st_ino, info.st_uid, info.st_gid, info.st_mode, info.st_nlink,
+                    info.st_size, info.st_mtime_ns, info.st_ctime_ns) != (
+                    after.st_dev, after.st_ino, after.st_uid, after.st_gid, after.st_mode, after.st_nlink,
+                    after.st_size, after.st_mtime_ns, after.st_ctime_ns):
+                    fail("PATH_INVALID")
         except OSError:
             fail("PATH_INVALID")
         if not raw or len(raw) > maximum:
@@ -242,7 +294,8 @@ def _read(path, maximum, *, private=False, root_owned=False):
 
 
 def load_plan(path, *, now, root_owned=False):
-    raw = _read(Path(path), MAX_PLAN_BYTES, private=True, root_owned=root_owned)
+    raw = _read(Path(path), MAX_PLAN_BYTES, private=True, root_owned=root_owned,
+                authorization_source=root_owned)
     return validate_plan(_json(raw, "PLAN_INVALID"), now=now), hashlib.sha256(raw).hexdigest()
 
 
@@ -324,7 +377,8 @@ def _control(state):
 def execute(*, clock=_now, client_type=OddsPapiPlannedResearchClient):
     """Fixed installed boundary; the caller supplies no endpoint, plan or state path."""
     now = clock().astimezone(timezone.utc)
-    plan, plan_hash = load_plan(CREDENTIAL_DIRECTORY / PLAN_CREDENTIAL, now=now)
+    raw_plan = _read(CREDENTIAL_DIRECTORY / PLAN_CREDENTIAL, MAX_PLAN_BYTES, root_owned=True, snapshot=True)
+    plan, plan_hash = validate_plan(_json(raw_plan, "PLAN_INVALID"), now=now), hashlib.sha256(raw_plan).hexdigest()
     raw_metadata = _read(METADATA_PATH, inventory.MAX_METADATA_BYTES, root_owned=True)
     if hashlib.sha256(raw_metadata).hexdigest() != plan["market_metadata_sha256"]:
         fail("MARKET_METADATA_INVALID")

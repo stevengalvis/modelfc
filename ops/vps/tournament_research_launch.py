@@ -1,6 +1,7 @@
 """Root-installed launcher for the one-shot OddsPapi tournament experiment."""
 
 import os
+import errno
 import json
 from pathlib import Path
 import pwd
@@ -26,8 +27,16 @@ def protected(path, owner, *, directory=False, private=False):
     info = path.lstat()
     kind = stat.S_ISDIR if directory else stat.S_ISREG
     if (not kind(info.st_mode) or info.st_uid != owner or info.st_mode & 0o022
-            or private and info.st_mode & 0o077):
+            or private and (stat.S_IMODE(info.st_mode) != 0o600 or info.st_nlink != 1)):
         raise ValueError("invalid tournament research path")
+    if private:
+        try:
+            os.getxattr(path, "system.posix_acl_access", follow_symlinks=False)
+        except OSError as error:
+            if error.errno != errno.ENODATA:
+                raise ValueError("invalid tournament research path") from None
+        else:
+            raise ValueError("invalid tournament research path")
 
 
 def credential(name=CREDENTIAL_NAME, *, json_document=False, expected_directory=None, limit=4096) -> str:
