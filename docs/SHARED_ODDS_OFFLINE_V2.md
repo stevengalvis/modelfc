@@ -103,3 +103,68 @@ inactive pairs, alternate goals/corners and incidental fixtures explicitly.
 Italy/MLS real odds coverage remains unverified. Unsupported league forecasts
 must remain absent. Run without credentials or network and do not publish any
 production evidence. This command is a later operator task, not host activation.
+
+## Real-data identity and history review (PR #120)
+
+The reported private replay could not normalize any of its 12 Championship
+pairings. The two supplied examples are `West Ham United` / `West Ham` and
+`Queens Park Rangers` / `QPR`. Neither the private response (including stable
+provider team IDs) nor the actual historical CSVs is available in this workspace.
+No new alias is authorized by those display-name examples alone. Corner and BTTS
+still use the single competition-scoped `oddspapi.normalize_team` resolver; its
+existing verified aliases are unchanged. The three reported planner-eligible
+history failures cannot yet be assigned evidence-supported causes.
+
+For the next **private, offline operator review**, export the complete distinct
+provider identities and the unchanged corner count gates with:
+
+```sh
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/path/to/reviewed-release/src \
+  /path/to/locked-python -B -m modelfc.offline_identity_audit \
+  --response /private/verified-championship-fanduel-response.json \
+  --response-sha256 <independently-verified-64-lowercase-hex-sha256> \
+  --data-config /path/to/reviewed-data-config.json \
+  --as-of <original-planner-UTC-timestamp> \
+  --cutoff <same-UTC-date-YYYY-MM-DD>
+```
+
+Use the original planner timestamp, not today's date. The supplied file must
+contain a reviewed configured-league subset (retain and hash the original);
+unknown tournaments are rejected. No credentials, network, model calculation,
+budget reservation or evidence write is needed. The tool reads only existing
+bounded regular files and the existing coherent history reader/shared refresh
+lock; it creates neither a lock nor a directory. Save stdout privately through
+an explicitly approved operator export if desired. Rejections return only
+`IDENTITY_AUDIT_REJECTED`, without source text or paths.
+
+The bounded JSON report includes source/history hashes, exact historical CSV
+names, every distinct E1 provider ID/name, existing canonical joins, unresolved
+or conflicting identities, and diagnostics for precisely the existing 21–27h
+planner window. All source names are exported for identity review, including
+names found only in excluded same-day/future rows. **Only pre-cutoff rows enter
+history counts and dates.** This retrospective diagnostic cannot authorize a
+new mapping or prove a prospective freeze; do not use its output as a forecast.
+
+| Diagnostic | Interpretation / required verification |
+| --- | --- |
+| `UNVERIFIED_IDENTITY` / `IDENTITY_UNVERIFIED` | No exact or existing verified alias join. Verify provider ID, E1 context and exact CSV name independently before adding an alias. |
+| `AMBIGUOUS_HISTORY_IDENTITY` / `AMBIGUOUS_PROVIDER_IDENTITY` | Alias/exact-name collision, inconsistent names for one ID, or multiple IDs for one canonical team. Resolve evidence manually; no automatic choice. |
+| `MISSING_PRE_CUTOFF_HISTORICAL_RECORDS` | Name exists in supplied history but has no eligible earlier result. This does not prove promotion. |
+| `INSUFFICIENT_LEAGUE_OBSERVATIONS` | Fewer than the existing default 100 team-observations before cutoff. |
+| `INSUFFICIENT_TEAM_VENUE_OBSERVATIONS` | Fewer than the existing default five home/away observations in the required venue. |
+| `stale_history_warning` | Team's latest eligible result exceeds configured `max_age_days`; warning only, not a new model gate. |
+
+Minimum counts are taken from the existing corner function defaults. A
+`COUNT_GATES_SATISFIED` result confirms these counts only, not full model
+eligibility. Missing identities must be corrected before low counts can be
+attributed to the team. Promotion remains `NOT_VERIFIED` without independent
+roster/history evidence. Other configured leagues retain their identities but
+are reported as unsupported models.
+
+Return the private export for all 12 pairings and the three eligible fixture IDs,
+including the exact source hashes and cutoff. Review each provider ID against
+independent cached identity records and CSV names; add only verified
+competition-scoped aliases through the existing resolver, then repeat corner
+and BTTS consumption and classify remaining history failures. Do not fetch odds,
+lower thresholds, fabricate rows, publish production evidence or claim real-data
+acceptance until that review and replay succeed.
