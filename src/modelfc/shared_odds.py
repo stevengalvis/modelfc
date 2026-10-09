@@ -39,11 +39,18 @@ class SnapshotQuote:
 
 
 @dataclass(frozen=True)
+class SnapshotMarket:
+    market_id: str
+    family: str
+
+
+@dataclass(frozen=True)
 class SnapshotFixture:
     identity: Fixture
     home_team: str
     away_team: str
     quotes: tuple[SnapshotQuote, ...]
+    present_markets: tuple[SnapshotMarket, ...]
     coverage_json: str
     diagnostics_json: str
     provenance_json: str
@@ -96,8 +103,9 @@ def _snapshot(normalized, payload_sha256, metadata_sha256):
             provenance_json=_canonical(price)) for price in row["prices"])
         fixtures.append(SnapshotFixture(Fixture(row["competition"], row["tournament_id"],
             row["fixture_id"], datetime.fromisoformat(row["kickoff_utc"])), row["home_team"], row["away_team"],
-            prices, _canonical(row["inventory"]), _canonical(row["metadata_diagnostics"]),
-            _canonical({k: v for k, v in row.items() if k not in {"prices", "inventory", "metadata_diagnostics"}})))
+            prices, tuple(SnapshotMarket(**m) for m in row["present_markets"]),
+            _canonical(row["inventory"]), _canonical(row["metadata_diagnostics"]),
+            _canonical({k: v for k, v in row.items() if k not in {"prices", "present_markets", "inventory", "metadata_diagnostics"}})))
     return OddsBatchSnapshot("oddspapi", "fanduel", observed, payload_sha256, metadata_sha256, tuple(fixtures))
 
 
@@ -138,12 +146,13 @@ def btts_observation(snapshot: OddsBatchSnapshot, fixture: SnapshotFixture, *, h
         provider_fixture_id=fixture.identity.fixture_id, home_team=home, away_team=away,
         kickoff_utc=fixture.identity.kickoff_utc.isoformat())
     inventory = json.loads(fixture.coverage_json)
+    present_ids = {m.market_id for m in fixture.present_markets if m.family == "BTTS"}
     quotes = [q for q in fixture.quotes if q.family == "BTTS" and q.player_id == "0"]
-    # Count recognized present markets, including empty/unmapped/non-player-0 ones.
-    if inventory["families"]["BTTS"]["market_count"] > 1:
+    # Preserve recognized identities independently of empty/unmapped/player quotes.
+    if len(present_ids) > 1:
         raise ValueError("AMBIGUOUS_BTTS_MARKET")
     diagnostics = json.loads(fixture.diagnostics_json)
-    if any(d.get("market_id") in {q.market_id for q in quotes} and d.get("status") == "MISSING_OUTCOME_METADATA" for d in diagnostics):
+    if any(d.get("market_id") in present_ids and d.get("status") == "MISSING_OUTCOME_METADATA" for d in diagnostics):
         raise ValueError("INVALID_BTTS_OUTCOME_MAPPING")
     unusable = any(q.status in {"INACTIVE", "STALE", "FUTURE_TIMESTAMP", "NOT_PREMATCH"} for q in quotes)
     selected = [] if unusable else [BttsSelection(competition=identity.competition,

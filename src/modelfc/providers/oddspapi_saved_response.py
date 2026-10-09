@@ -174,6 +174,8 @@ def process_saved_response(payload: object, metadata: object, *, retrieved_at: d
             "fixture_status_id": raw["statusId"], "has_odds": raw["hasOdds"],
             "fixture_updated_at": updated, "bookmaker_fixture_id": (book or {}).get("bookmakerFixtureId"),
             "inventory": inventory,
+            "present_markets": [{"market_id": mid, "family": dictionary[mid][1]}
+                                for mid in sorted((book or {}).get("markets", {})) if mid in dictionary],
             "metadata_diagnostics": diagnostics, "prices": prices})
     result.sort(key=lambda row: (row["kickoff_utc"], row["competition"], row["fixture_id"]))
     return {"schema_version": 1, "research_only": True, "saved_observation_only": True,

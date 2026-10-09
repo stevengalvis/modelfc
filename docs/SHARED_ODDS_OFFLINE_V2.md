@@ -11,7 +11,8 @@ and installed metadata dictionary are unchanged.
 once. `snapshot_from_files` uses its existing bounded, SHA-pinned regular-file
 reader instead. Both produce a frozen `OddsBatchSnapshot`: provider/bookmaker,
 UTC retrieval, raw payload/metadata SHA-256 and ordered immutable fixture/quote
-tuples. Nested inventory, metadata diagnostics and original quote provenance
+tuples, including recognized present-market identities even when no quote is
+retained. Nested inventory, metadata diagnostics and original quote provenance
 are canonical JSON strings, so consumers cannot mutate shared dictionaries.
 Source market/outcome/player identities, lines, main/alternate flags, prices,
 change timestamps and individual states are retained. Coverage remains separate

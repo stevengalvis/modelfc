@@ -260,3 +260,19 @@ class SharedOddsTests(TestCase):
             self.assertEqual(result.corner_status,'PASS');self.assertEqual(len(result.corner),4)
             raw=row|{'participant1Id':1,'participant2Id':2,'categorySlug':'england','tournamentSlug':'championship'}
             with self.assertRaises(ValueError):normalize_btts(raw,definitions,raw,competition='E1',historical_names={'Home','Away'},retrieved_at=NOW.isoformat(),as_of=NOW)
+
+    def test_zero_quote_unmapped_btts_is_review_without_poisoning_corners(self):
+        f=known();prepared=prepare_forecast(f,sources(),frozen_at=NOW-timedelta(seconds=1),cutoff=NOW.date())
+        row=saved_fixture();row['startTime']=f.identity.kickoff_utc.isoformat()
+        row['bookmakerOdds']['fanduel']['markets']['5']['outcomes']={'999':{'players':{'0':{'price':2,'active':True}}}}
+        snap=snapshot([row])
+        self.assertIn(('5','BTTS'),{(m.market_id,m.family) for m in snap.fixtures[0].present_markets})
+        self.assertEqual([q for q in snap.fixtures[0].quotes if q.family=='BTTS'],[])
+        result=consume_forecast(prepared,snap,snap.fixtures[0])
+        self.assertEqual((result.btts_status,result.btts,result.review_reasons),('REVIEW',(),('BTTS_CONSUMPTION_REVIEW',)))
+        self.assertEqual((result.corner_status,len(result.corner)),('PASS',4))
+        # A malformed corner mapping does not falsely cause BTTS review.
+        row=saved_fixture();row['startTime']=f.identity.kickoff_utc.isoformat()
+        row['bookmakerOdds']['fanduel']['markets']['2']['outcomes']={'999':{'players':{'0':{'price':2,'active':True}}}}
+        snap=snapshot([row]);result=consume_forecast(prepared,snap,snap.fixtures[0])
+        self.assertEqual((result.btts_status,len(result.btts)),('PASS',1))
