@@ -5,10 +5,13 @@ from datetime import date, timedelta
 from io import BytesIO, StringIO
 import fcntl
 import ctypes
+import ctypes.util
+import errno
 import hashlib
 import json
 import os
 import stat
+import struct
 from pathlib import Path
 import tempfile
 import unittest
@@ -39,6 +42,12 @@ def plan():
             variant("test-2a", "18,17", "bookmaker", [{"variant_id": "test-1", "result": "SUCCESS"}]),
             variant("test-2b", "18", "bookmakers", [{"variant_id": "test-1", "result": "HTTP_FAILURE"}]),
         ]}
+
+
+def snapshot_acl(uid=999):
+    return struct.pack("<I", 2) + b"".join(struct.pack("<HHI", *entry) for entry in
+        [(1, 4, 0xffffffff), (2, 4, uid), (4, 0, 0xffffffff),
+         (16, 4, 0xffffffff), (32, 0, 0xffffffff)])
 
 
 class PlanTests(unittest.TestCase):
@@ -98,6 +107,60 @@ class PlanTests(unittest.TestCase):
 
 
 class DirectoryTests(unittest.TestCase):
+    def test_real_linux_snapshot_acl_from_pinned_descriptor(self):
+        # Reproduce the observed LoadCredential inode ACL without systemd/network.
+        if not any(int(start) <= 999 < int(start) + int(length)
+                   for start, _, length in (line.split() for line in Path("/proc/self/uid_map").read_text().splitlines())):
+            self.skipTest("UID 999 is not mapped for real Linux named-user ACL acceptance")
+        library = ctypes.util.find_library("acl")
+        self.assertIsNotNone(library, "Linux credential ACL acceptance requires libacl")
+        acl = ctypes.CDLL(library, use_errno=True)
+        acl.acl_from_text.argtypes = [ctypes.c_char_p]; acl.acl_from_text.restype = ctypes.c_void_p
+        acl.acl_set_fd.argtypes = [ctypes.c_int, ctypes.c_void_p]; acl.acl_set_fd.restype = ctypes.c_int
+        acl.acl_free.argtypes = [ctypes.c_void_p]
+        with tempfile.TemporaryFile() as source:
+            source.write(b"authorization"); source.flush()
+            value = acl.acl_from_text(b"u::r--,u:999:r--,g::---,m::r--,o::---")
+            self.assertTrue(value)
+            try:
+                self.assertEqual(acl.acl_set_fd(source.fileno(), value), 0)
+            finally:
+                acl.acl_free(value)
+            info = os.fstat(source.fileno())
+            self.assertEqual(stat.S_IMODE(info.st_mode), 0o440)
+            # Ordinary CI cannot create a root-owned file; model only its owner.
+            fields = list(info); fields[4] = 0; fields[5] = 0
+            with patch.object(harness, "_runtime_uid", return_value=999):
+                harness._credential_snapshot(source.fileno(), os.stat_result(fields))
+            self.assertEqual(os.getxattr(source.fileno(), "system.posix_acl_access"), snapshot_acl())
+
+    def test_runtime_identity_must_be_exact_and_non_root(self):
+        for uid in (0, os.getuid() + 1):
+            with patch.object(harness.pwd, "getpwnam", return_value=type("User", (), {"pw_uid": uid})()):
+                with self.assertRaisesRegex(harness.ResearchHarnessError, "PATH_INVALID"):
+                    harness._runtime_uid()
+        with patch.object(harness.pwd, "getpwnam", side_effect=KeyError(SECRET)):
+            with self.assertRaisesRegex(harness.ResearchHarnessError, "PATH_INVALID") as error:
+                harness._runtime_uid()
+            self.assertNotIn(SECRET, str(error.exception))
+
+    def test_launcher_source_stays_root_private_without_acl_grants(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            source = Path(temporary) / "source.json"; source.write_bytes(b"authorization")
+            source.chmod(0o600)
+            launcher.protected(source, os.getuid(), private=True)
+            for mode in (0o400, 0o440, 0o640, 0o644):
+                source.chmod(mode)
+                with self.assertRaises(ValueError):
+                    launcher.protected(source, os.getuid(), private=True)
+            source.chmod(0o600)
+            with patch.object(launcher.os, "getxattr", return_value=snapshot_acl()):
+                with self.assertRaises(ValueError):
+                    launcher.protected(source, os.getuid(), private=True)
+            os.link(source, Path(temporary) / "hardlink")
+            with self.assertRaises(ValueError):
+                launcher.protected(source, os.getuid(), private=True)
+
     def test_real_traverse_only_parent_without_permission_bypass(self):
         # A fork inherits imports, avoiding unrelated repository traversal needs.
         # Ordinary CI users need no privilege change; root drops all capabilities.
@@ -160,6 +223,7 @@ class SessionTests(unittest.TestCase):
         self.value = plan(); self.value["market_metadata_sha256"] = hashlib.sha256(self.meta.read_bytes()).hexdigest()
         self.auth = self.credentials / harness.PLAN_CREDENTIAL
         self.install_plan()
+        self.snapshot = True
         # CI runs as an ordinary account. Model only the root-installed input
         # inodes, while retaining real writer ownership, modes and path checks.
         self.real_fstat = os.fstat
@@ -172,12 +236,24 @@ class SessionTests(unittest.TestCase):
                     continue
                 if (info.st_dev, info.st_ino) == (source.st_dev, source.st_ino):
                     fields = list(info); fields[4] = 0
+                    if path == self.auth:
+                        fields[5] = 0
+                        if self.snapshot and stat.S_IMODE(info.st_mode) == 0o600:
+                            fields[0] = stat.S_IFREG | 0o440
                     return os.stat_result(fields)
             return info
+        def installed_acl(descriptor, name):
+            info = self.real_fstat(descriptor)
+            source = self.auth.stat()
+            if self.snapshot and (info.st_dev, info.st_ino) == (source.st_dev, source.st_ino):
+                return snapshot_acl()
+            raise OSError(errno.ENODATA, "no access ACL")
         for item in (patch.object(harness, "PATH_ANCHOR", self.root), patch.object(harness, "STATE_PATH", self.state),
                      patch.object(harness, "CREDENTIAL_DIRECTORY", self.credentials), patch.object(harness, "METADATA_PATH", self.meta),
                      patch.object(prospective, "_now", return_value=NOW), patch.object(prospective.time, "sleep"),
                      patch.object(harness.os, "fstat", side_effect=installed_input_stat),
+                     patch.object(harness.os, "getxattr", side_effect=installed_acl),
+                     patch.object(harness, "_runtime_uid", return_value=999),
                      patch.dict(os.environ, {"ODDSPAPI_API_KEY": SECRET}),
                      patch("urllib.request.OpenerDirector.open", side_effect=AssertionError("live network forbidden"))):
             item.start(); self.addCleanup(item.stop)
@@ -454,6 +530,77 @@ class SessionTests(unittest.TestCase):
                 harness._read(self.meta, 16384, root_owned=True)
         self.assertEqual(self.reserved(), 0)
 
+    def test_snapshot_acl_rejections_make_no_http_or_reservation(self):
+        cases = [None, b"bad", snapshot_acl(998)]
+        entries = [struct.unpack_from("<HHI", snapshot_acl(), offset) for offset in range(4, 44, 8)]
+        for index, permissions in ((2, 4), (4, 4), (1, 6), (3, 6)):
+            altered = list(entries)
+            tag, _, identity = altered[index]; altered[index] = (tag, permissions, identity)
+            cases.append(struct.pack("<I", 2) + b"".join(struct.pack("<HHI", *e) for e in altered))
+        cases.extend([snapshot_acl() + struct.pack("<HHI", 2, 4, 998),
+                      snapshot_acl() + struct.pack("<HHI", 8, 4, 998)])
+        for acl in cases:
+            with self.subTest(acl=acl), patch.object(harness, "_access_acl", return_value=acl), \
+                    patch("urllib.request.OpenerDirector.open") as opened:
+                with self.assertRaisesRegex(harness.ResearchHarnessError, "PATH_INVALID"):
+                    harness.execute(clock=lambda: NOW)
+                opened.assert_not_called()
+            self.assertEqual(self.reserved(), 0)
+            self.assertFalse(self.directory.exists())
+
+    def test_snapshot_owner_group_and_mode_rejections(self):
+        for field, value in ((4, 12345), (5, 12345), (0, stat.S_IFREG | 0o640),
+                             (0, stat.S_IFREG | 0o444), (0, stat.S_IFREG | 0o400)):
+            def invalid_stat(descriptor):
+                info = self.real_fstat(descriptor)
+                if info.st_ino == self.auth.stat().st_ino:
+                    fields = list(info); fields[4] = 0; fields[5] = 0
+                    fields[0] = stat.S_IFREG | 0o440; fields[field] = value
+                    return os.stat_result(fields)
+                return info
+            with self.subTest(field=field, value=value), patch.object(harness.os, "fstat", side_effect=invalid_stat), \
+                    patch("urllib.request.OpenerDirector.open") as opened:
+                with self.assertRaisesRegex(harness.ResearchHarnessError, "PATH_INVALID"):
+                    harness.execute(clock=lambda: NOW)
+                opened.assert_not_called()
+            self.assertEqual(self.reserved(), 0)
+
+    def test_snapshot_inode_change_and_acl_read_failure_rejected(self):
+        original = harness._credential_snapshot
+        def changed_inode(descriptor, info):
+            original(descriptor, info)
+            self.auth.unlink(); self.auth.write_bytes(b"replacement")
+        with patch.object(harness, "_credential_snapshot", side_effect=changed_inode), \
+                patch("urllib.request.OpenerDirector.open") as opened:
+            with self.assertRaisesRegex(harness.ResearchHarnessError, "PATH_INVALID"):
+                harness.execute(clock=lambda: NOW)
+            opened.assert_not_called()
+        self.install_plan()
+        with patch.object(harness.os, "getxattr", side_effect=OSError(errno.EACCES, SECRET)), \
+                patch("urllib.request.OpenerDirector.open") as opened:
+            with self.assertRaisesRegex(harness.ResearchHarnessError, "PATH_INVALID") as error:
+                harness.execute(clock=lambda: NOW)
+            self.assertNotIn(SECRET, str(error.exception)); opened.assert_not_called()
+        self.assertEqual(self.reserved(), 0)
+
+    def test_source_context_stays_strict_and_snapshot_is_scoped(self):
+        self.snapshot = False
+        harness.load_plan(self.auth, now=NOW, root_owned=True)
+        with patch.object(harness, "_access_acl", return_value=snapshot_acl()):
+            with self.assertRaisesRegex(harness.ResearchHarnessError, "PATH_INVALID"):
+                harness.load_plan(self.auth, now=NOW, root_owned=True)
+        for mode in (0o400, 0o440, 0o640):
+            self.auth.chmod(mode)
+            with self.assertRaisesRegex(harness.ResearchHarnessError, "PATH_INVALID"):
+                harness.load_plan(self.auth, now=NOW, root_owned=True)
+        self.auth.chmod(0o600)
+        with self.assertRaisesRegex(harness.ResearchHarnessError, "PATH_INVALID"):
+            harness._read(self.meta, 16384, snapshot=True)
+        self.snapshot = True
+        with self.assertRaisesRegex(harness.ResearchHarnessError, "PATH_INVALID"):
+            harness._read(self.auth, 16384, private=True)
+        self.assertEqual(self.reserved(), 0)
+
     def test_lock_control_state_and_metadata_symlink_denial(self):
         for target in (self.state / "prospective/runner.lock", self.state / "prospective/control.json", self.meta):
             with self.subTest(target=target.name):
@@ -492,6 +639,7 @@ class SessionTests(unittest.TestCase):
         self.assertEqual(self.reserved(), 0)
 
     def test_offline_validation_never_reads_key_or_writes_state(self):
+        self.snapshot = False
         with patch.object(harness, "_now", return_value=NOW), patch.object(harness, "execute", side_effect=AssertionError), \
                 patch.dict(os.environ, {}, clear=True):
             self.assertEqual(harness.main(["--validate-plan", str(self.auth)]), 0)

@@ -31,6 +31,16 @@ mode `0600`, inside root-controlled non-writable directories. systemd snapshots
 it as `research-plan.json`; the running agent cannot change that snapshot.
 The executor reads it once, validates it, and records its SHA-256.
 
+Source authorization remains root-owned `0600`, single-link and without an
+extended access ACL. The delivered snapshot uses a separate validation path:
+root:root `0440`, single-link regular file, with exactly owner read, named
+`modelfc-runtime` read, owning-group none, read-only mask and other none.
+The executing UID must match that runtime account. The mask explains the
+snapshot's group mode bit; it does not grant the root group access. Missing,
+malformed, extra user/group or writable ACL entries fail closed. The ACL is
+read from the pinned file descriptor, and inode metadata is checked again after
+reading. Ordinary private-file validation does not accept `0440` snapshots.
+
 The initial approved **template** below is not active authorization. Replace
 timestamps, unique experiment ID, quota/budget attestations and metadata SHA
 only after the operator approves those exact bytes. Do not copy example quota
