@@ -1,9 +1,13 @@
-# Guarded OddsPapi research harness V1
+# Retired: Guarded OddsPapi research harness V1
 
-This private operator tool separates exact request authorization from execution.
-It does not change production acquisition, timers, models, recommendations or
-public APIs. Installation and every billable session require separate explicit
-host/operator authorization. This PR authorizes neither installation nor calls.
+**Archived historical reference.** Future provider experimentation occurs in the
+isolated OddsPapi Lab. The Zeno harness, launcher, research transport and service
+templates have been removed. Do not install or start the retired services or
+execute their authorization plans. The descriptions below preserve the historical
+security design; they are not current execution instructions. Preserve immutable
+attempt history, captures and budget reservations. No host changes are authorized.
+
+Reusable offline tools: [research metadata and inventory](ODDSPAPI_RESEARCH_METADATA.md).
 
 ## Trust and reuse
 
@@ -12,8 +16,8 @@ credential directories. The original one-shot service remains unchanged. The
 new manual `modelfc-oddspapi-research.service` uses the same launcher, secure
 key delivery and clean environment, selecting only the fixed harness module.
 No caller-selected executable, URL, filesystem path or environment is accepted.
-The shared launcher must be installed once from the reviewed merged SHA; future
-request variations change only a separately approved root-owned plan.
+Historically, request variants were approved through a root-owned plan.
+The launcher and execution services are now retired.
 
 The harness reuses the research HTTP transport (redirect denial, no retries,
 bounded responses and fixed-token rejection diagnostics), market dictionary
@@ -174,43 +178,7 @@ cleanup, not a new timer. Keep all session, intent and sanitized result records
 permanently. Removing expired raw files must never remove the session directory
 or release an experiment ID. No data enters corner, BTTS or public API ledgers.
 
-## Separately authorized host setup and session workflow
+## Host setup and execution retired
 
-After merge, independent review and separate host authorization:
-
-1. Verify exact deployed SHA/protected marker and hashes of the reviewed shared
-   launcher, harness, transport, inventory, service and pinned metadata. Review
-   the original service compatibility tests. Do not reinstall any validator.
-2. Install the reviewed shared launcher root-owned/non-writable at its existing
-   path. Install the new reviewed unit root-owned/non-writable; daemon-reload
-   only during the authorized activation. Do not enable it or create a timer.
-   Future experiments require no unit/launcher/code change within this scope.
-3. Prepare exact plan bytes in root-controlled private scratch. Verify source
-   metadata SHA/limits offline, production acquisition is idle, provider quota
-   via the dashboard, current budget month/reservations, and the unique session
-   ID is unused. Record the exact SHA and approval covering every variant.
-4. Run offline validation using the reviewed release's locked interpreter:
-   `PYTHONPATH=<reviewed-release>/src <locked-python> -m modelfc.oddspapi_research_harness --validate-plan <private-plan>`.
-   Run as root for the root-ownership check. This reads no key, takes no runner
-   lock, writes no state and performs no HTTP. A valid plan is not permission
-   to execute it. Independently check the metadata pin against installed bytes.
-5. Install the approved plan at the fixed source path as root `0600`, using a
-   root-controlled regular staging file and atomic replacement. Verify parent
-   ownership/modes, no symlinks/hardlinks, bytes/hash, expiry and full approved
-   decision graph. Preserve the approval separately. Never allow runtime writes
-   to the source plan. Stop if quota, budget or provenance has changed.
-6. Only after explicit billable-session approval, start
-   `modelfc-oddspapi-research.service` once. No restart on failure/BUSY/timeout.
-   systemd supplies the fixed plan/key snapshot; no request arguments are passed.
-7. Inspect the private sanitized summary and per-attempt receipts. Reconcile
-   actual provider usage with the internal reservation delta and reports.
-   HTTP errors still consume credit; do not refund, edit counters, remove an
-   attempt, or expand the plan during execution. Preserve partial/crashed runs.
-8. Remove expired source authorization as a separate operator action. Retain
-   immutable session history. Apply raw-only retention cleanup after 30 days.
-9. Any further experiment needs a new unique ID, new exact plan approval,
-   new quota/budget preflight and one new manual invocation. A changed endpoint,
-   unknown tournament or new parameter is outside V1 and requires code review.
-
-No provider calls, host changes or Trusted OFFLINE execution are part of the
-implementation/tests. Local synthetic tests are not VPS acceptance.
+The former installation and session procedure is withdrawn. Historical commands
+remain in Git history solely as experiment provenance, not for reuse.

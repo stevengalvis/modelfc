@@ -34,6 +34,36 @@ class ProspectiveBudgetTests(unittest.TestCase):
     def events(self):
         return sorted((self.path.parent / "budget-events").glob("*.json"))
 
+    def test_retired_research_profiles_rejected_without_accounting_changes(self):
+        before = self.path.read_bytes()
+        control = self.control()
+        summary = {"provider_requests": 0}
+        for kinds, limit in (({"TOURNAMENT_RESEARCH"}, 1),
+                             ({"TOURNAMENT_RESEARCH"}, 3),
+                             (runner._RequestBudgetGuard._PRODUCTION_KINDS | {"TOURNAMENT_RESEARCH"}, 8)):
+            with self.subTest(kinds=kinds, limit=limit):
+                with self.assertRaisesRegex(runner.RunnerError, "REQUEST_BUDGET"):
+                    runner._RequestBudgetGuard(self.path, control, summary,
+                                               allowed_kinds=kinds, invocation_limit=limit)
+                self.assertEqual(self.path.read_bytes(), before)
+                self.assertEqual(control, self.control())
+                self.assertEqual(summary["provider_requests"], 0)
+
+    def test_production_guard_rejects_research_without_consuming_reserved_token(self):
+        control = self.control()
+        summary = {"provider_requests": 0}
+        guard = runner._RequestBudgetGuard(self.path, control, summary)
+        guard.reserve(1)
+        before = self.path.read_bytes()
+        with self.assertRaisesRegex(runner.RunnerError, "REQUEST_BUDGET"):
+            guard.before_request("TOURNAMENT_RESEARCH")
+        self.assertEqual(self.path.read_bytes(), before)
+        self.assertEqual(guard.tokens, 1)
+        self.assertEqual(summary["provider_requests"], 0)
+        guard.before_request("FIXTURE_ODDS")
+        self.assertEqual(summary["provider_requests"], 1)
+        self.assertEqual(self.control()["period"]["reserved"], 1)
+
     def test_enrollment_40_to_180_preserves_reserved_and_records_evidence(self):
         self.enroll(1)
         value = self.control()

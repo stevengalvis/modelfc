@@ -181,9 +181,7 @@ class _RequestBudgetGuard:
         self.allowed_kinds = (self._PRODUCTION_KINDS if allowed_kinds is None
                               else frozenset(allowed_kinds))
         profile = (self.allowed_kinds, invocation_limit)
-        if profile not in ((self._PRODUCTION_KINDS, 8),
-                           (frozenset({"TOURNAMENT_RESEARCH"}), 1),
-                           (frozenset({"TOURNAMENT_RESEARCH"}), 3)):
+        if profile != (self._PRODUCTION_KINDS, 8):
             raise RunnerError("REQUEST_BUDGET")
         self.invocation_limit = invocation_limit
         self.reserved = self.tokens = 0

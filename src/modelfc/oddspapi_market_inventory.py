@@ -1,40 +1,21 @@
-"""One-shot, private OddsPapi tournament coverage research.
+"""Offline OddsPapi market inventory and bounded metadata artifact IO.
 
-The execution path is intentionally fixed.  It shares the prospective runner
-lock and calendar request accounting, but it cannot call production endpoints
-or alter production evidence.  Importing this module never performs network IO.
+Consumes supplied payloads only. No credentials, provider clients, budgets,
+production state, execution authorization or network access.
 """
-
 from __future__ import annotations
 
-from contextlib import contextmanager
-from dataclasses import asdict
-from datetime import datetime, timedelta, timezone
-import fcntl
-import gzip
-import hashlib
-import json
+from datetime import datetime, timezone
 import math
 import os
 from pathlib import Path
 import re
 import stat
-import sys
 from typing import Any
 
-from modelfc.corner_prospective import (
-    RunnerError, _RequestBudgetGuard, _load, _now, _save,
-)
-from modelfc.corner_prospective_budget import BudgetError, rollover_if_needed
-from modelfc.ledger_storage import LedgerError, write_new_record
-from modelfc.providers.oddspapi import (
-    BOOKMAKERS, OddsPapiTournamentResearchClient,
-    OddsPapiTournamentResearchError, RESEARCH_TOURNAMENT_IDS,
-)
+BOOKMAKERS = ("draftkings", "fanduel")
 
 
-EXPERIMENT = "ODDSPAPI_TOURNAMENT_BATCH_V1"
-SCHEMA_VERSION = 1
 TOURNAMENTS = (
     (27070, "Colombia Primera A", "primera-a-apertura", "CACHED_ID_SCOPE_UNCERTAIN"),
     (325, "Brazil Serie A", None, None),
@@ -48,36 +29,23 @@ TOURNAMENTS = (
     (238, "Primeira Liga", None, None),
 )
 TOURNAMENT_IDS = tuple(row[0] for row in TOURNAMENTS)
-if TOURNAMENT_IDS != RESEARCH_TOURNAMENT_IDS:
-    raise RuntimeError("reviewed tournament identities disagree")
 TOURNAMENT_BY_ID = {row[0]: row for row in TOURNAMENTS}
-MAX_RESPONSE_BYTES = 16 * 1024 * 1024
-MAX_COMPRESSED_BYTES = 8 * 1024 * 1024
 MAX_METADATA_BYTES = 8 * 1024 * 1024
 MAX_METADATA_ROWS = 25_000
 MAX_FIXTURES = 500
 MAX_MARKETS_PER_BOOK = 3_000
-RAW_RETENTION_DAYS = 30
-AUTHORIZATION_MAX_AGE = timedelta(hours=24)
-RESEARCH_KIND = "TOURNAMENT_RESEARCH"
 FAMILIES = (
     "MATCH_CORNER_TOTALS", "HOME_TEAM_CORNERS", "AWAY_TEAM_CORNERS",
     "FIRST_HALF_CORNERS", "BTTS", "MATCH_GOAL_TOTALS",
     "ALTERNATE_GOAL_TOTALS", "HOME_TEAM_GOAL_TOTALS", "AWAY_TEAM_GOAL_TOTALS",
 )
-STATE_PATH = Path("/var/lib/modelfc/state")
-AUTHORIZATION_CREDENTIAL = "tournament-authorization.json"
-SYSTEMD_CREDENTIAL_DIRECTORY = Path(
-    "/run/credentials/modelfc-oddspapi-tournament-research.service")
-METADATA_PATH = Path("/etc/modelfc/oddspapi-market-metadata.json")
 
-
-class TournamentResearchError(ValueError):
-    """Fixed-code research authorization, storage, or analysis failure."""
+class MarketInventoryError(ValueError):
+    """Fixed-code offline metadata, artifact IO, or inventory failure."""
 
 
 def _fail(code: str):
-    raise TournamentResearchError(code)
+    raise MarketInventoryError(code)
 
 
 def _utc(value: Any) -> datetime:
@@ -102,82 +70,6 @@ def _read_regular(path: Path, limit: int, code: str) -> bytes:
             or not raw or len(raw) > limit):
         _fail(code)
     return raw
-
-
-def load_authorization(path: Path, metadata_path: Path, *, now: datetime) -> tuple[dict, object]:
-    """Validate a root-installed authorization and its exact cached dictionary."""
-    try:
-        authorization = json.loads(_read_regular(path, 4096, "AUTHORIZATION_INVALID"))
-    except (ValueError, UnicodeError):
-        _fail("AUTHORIZATION_INVALID")
-    expected = {
-        "version", "experiment", "authorized_at_utc", "expires_at_utc",
-        "provider_requests_remaining", "market_metadata_sha256",
-    }
-    if (not isinstance(authorization, dict) or set(authorization) != expected
-            or authorization.get("version") != SCHEMA_VERSION
-            or authorization.get("experiment") != EXPERIMENT
-            or type(authorization.get("provider_requests_remaining")) is not int
-            or authorization["provider_requests_remaining"] < 1
-            or not re.fullmatch(r"[0-9a-f]{64}", str(authorization.get("market_metadata_sha256")))):
-        _fail("AUTHORIZATION_INVALID")
-    authorized = _utc(authorization["authorized_at_utc"])
-    expires = _utc(authorization["expires_at_utc"])
-    current = now.astimezone(timezone.utc)
-    if not authorized <= current < expires <= authorized + AUTHORIZATION_MAX_AGE:
-        _fail("AUTHORIZATION_EXPIRED")
-    metadata_raw = _read_regular(metadata_path, MAX_METADATA_BYTES, "MARKET_METADATA_INVALID")
-    if hashlib.sha256(metadata_raw).hexdigest() != authorization["market_metadata_sha256"]:
-        _fail("MARKET_METADATA_INVALID")
-    try:
-        metadata = json.loads(metadata_raw)
-    except (ValueError, UnicodeError):
-        _fail("MARKET_METADATA_INVALID")
-    _metadata_index(metadata)
-    return authorization, metadata
-
-
-@contextmanager
-def _existing_runner_lock(state: Path):
-    """Take the production runner lock without creating or replacing anything."""
-    prospective = state / "prospective"
-    try:
-        directory_fd = os.open(prospective, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
-        descriptor = os.open("runner.lock", os.O_RDWR | os.O_CLOEXEC | os.O_NOFOLLOW,
-                             dir_fd=directory_fd)
-        info = os.fstat(descriptor)
-        if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1
-                or info.st_size != 0):
-            _fail("RUNNER_LOCK_INVALID")
-        try:
-            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
-            _fail("BUSY")
-        yield prospective / "control.json"
-    except FileNotFoundError:
-        _fail("CONTROL_MISSING")
-    except OSError:
-        _fail("RUNNER_LOCK_INVALID")
-    finally:
-        if "descriptor" in locals():
-            os.close(descriptor)
-        if "directory_fd" in locals():
-            os.close(directory_fd)
-
-
-def _private_directory(state: Path) -> Path:
-    parent = state / "provider-research"
-    directory = parent / "oddspapi-tournament-v1"
-    for path in (parent, directory):
-        try:
-            path.mkdir(mode=0o700, exist_ok=True)
-            info = path.lstat()
-        except OSError:
-            _fail("RESEARCH_STORAGE_UNAVAILABLE")
-        if (not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid()
-                or stat.S_IMODE(info.st_mode) & 0o077):
-            _fail("RESEARCH_STORAGE_INVALID")
-    return directory
 
 
 def _write_bytes(path: Path, payload: bytes, *, directory_fd: int | None = None) -> None:
@@ -505,120 +397,3 @@ def _analyze_book(book: object, dictionary: dict, *, observed_at: datetime,
             "metadata_diagnostics": metadata_diagnostics, "families": result}
 
 
-def execute(*, state: Path, authorization_path: Path, metadata_path: Path,
-            clock=_now, client_type=OddsPapiTournamentResearchClient) -> dict:
-    """Consume the reviewed one-shot authorization and capture its result."""
-    state = Path(state)
-    authorization_path = Path(authorization_path)
-    metadata_path = Path(metadata_path)
-    expected_authorization = SYSTEMD_CREDENTIAL_DIRECTORY / AUTHORIZATION_CREDENTIAL
-    if (state != STATE_PATH or authorization_path != expected_authorization
-            or metadata_path != METADATA_PATH):
-        _fail("AUTHORIZATION_INVALID")
-    now = clock().astimezone(timezone.utc)
-    authorization, metadata = load_authorization(authorization_path, metadata_path, now=now)
-    with _existing_runner_lock(Path(state)) as control_path:
-        try:
-            control = _load(control_path)
-            if control["version"] != 2:
-                _fail("CONTROL_INVALID")
-            rollover_if_needed(control_path, control, now=now, save=_save)
-        except (BudgetError, RunnerError, ValueError):
-            _fail("CONTROL_INVALID")
-        directory = _private_directory(Path(state))
-        marker = directory / "attempt.json"
-        if marker.exists() or (directory / "report.json").exists() or (directory / "response.json.gz").exists():
-            _fail("EXPERIMENT_ALREADY_ATTEMPTED")
-        summary = {"provider_requests": 0}
-        guard = _RequestBudgetGuard(control_path, control, summary,
-            allowed_kinds={RESEARCH_KIND}, invocation_limit=1)
-        try:
-            guard.reserve(1)
-        except RunnerError:
-            _fail("REQUEST_BUDGET")
-        attempted_at = now.isoformat().replace("+00:00", "Z")
-        write_new_record(marker, {
-            "version": SCHEMA_VERSION, "experiment": EXPERIMENT,
-            "attempted_at_utc": attempted_at, "request_limit": 1,
-            "tournament_ids": list(TOURNAMENT_IDS), "bookmakers": list(BOOKMAKERS),
-            "market_metadata_sha256": authorization["market_metadata_sha256"],
-        })
-        client = client_type(request_guard=guard, max_response_bytes=MAX_RESPONSE_BYTES)
-        batch = None
-        failure = None
-        raw = b""
-        try:
-            batch = client.retrieve(tournament_ids=TOURNAMENT_IDS, bookmakers=BOOKMAKERS)
-            raw = batch.raw
-        except OddsPapiTournamentResearchError as error:
-            failure = {"code": error.code, "http_status": error.http_status}
-            if error.diagnostic is not None:
-                failure["diagnostic"] = asdict(error.diagnostic)
-            raw = error.raw
-        response_received_at = clock().astimezone(timezone.utc)
-        if response_received_at < now:
-            _fail("CLOCK_INVALID")
-        compressed = gzip.compress(raw, compresslevel=9, mtime=0) if raw else b""
-        if len(compressed) > MAX_COMPRESSED_BYTES:
-            failure, compressed = {"code": "COMPRESSED_RESPONSE_TOO_LARGE", "http_status": None}, b""
-        analysis = None
-        if batch is not None and failure is None:
-            try:
-                analysis = analyze_batch(batch.payload, metadata, observed_at=response_received_at)
-            except TournamentResearchError as error:
-                failure = {"code": str(error), "http_status": batch.http_status}
-        completed_at = clock().astimezone(timezone.utc)
-        if completed_at < response_received_at:
-            _fail("CLOCK_INVALID")
-        if compressed:
-            _write_bytes(directory / "response.json.gz", compressed)
-        report = {
-            "version": SCHEMA_VERSION, "experiment": EXPERIMENT,
-            "status": "COMPLETE" if failure is None else "FAILED",
-            "requested_at_utc": attempted_at,
-            "response_received_at_utc": response_received_at.isoformat().replace("+00:00", "Z"),
-            "completed_at_utc": completed_at.isoformat().replace("+00:00", "Z"),
-            "raw_retention_until_utc": (now + timedelta(days=RAW_RETENTION_DAYS)).isoformat().replace("+00:00", "Z"),
-            "request": {"endpoint": "/v4/odds-by-tournaments",
-                        "tournament_ids": list(TOURNAMENT_IDS),
-                        "bookmakers": list(BOOKMAKERS), "language": "en", "verbosity": 3},
-            "provider_accounting": {"reserved": 1, "requests_attempted": summary["provider_requests"],
-                                    "reservation_refunded": False,
-                                    "provider_quota_preflight_sufficient": True},
-            "http_result": failure if failure else {"code": "OK", "http_status": batch.http_status},
-            "response_size_bytes": len(raw), "compressed_size_bytes": len(compressed),
-            "raw_response_sha256": hashlib.sha256(raw).hexdigest() if raw else None,
-            "analysis": analysis,
-        }
-        write_new_record(directory / "report.json", report)
-        return report
-
-
-def main(argv=None) -> int:
-    """Fixed operator entrypoint.  No endpoint, request, path, or mode arguments."""
-    if list(sys.argv[1:] if argv is None else argv):
-        print("TOURNAMENT_RESEARCH_ARGUMENTS_REJECTED", file=sys.stderr)
-        return 2
-    try:
-        credential_directory = Path(os.environ.get("CREDENTIALS_DIRECTORY", ""))
-        if (credential_directory != SYSTEMD_CREDENTIAL_DIRECTORY
-                or credential_directory.is_symlink()
-                or not credential_directory.is_dir()):
-            _fail("AUTHORIZATION_INVALID")
-        report = execute(state=STATE_PATH,
-                         authorization_path=credential_directory / AUTHORIZATION_CREDENTIAL,
-                         metadata_path=METADATA_PATH)
-    except (TournamentResearchError, LedgerError, RunnerError) as error:
-        code = str(error)
-        if not re.fullmatch(r"[A-Z][A-Z0-9_]{2,63}", code):
-            code = "TOURNAMENT_RESEARCH_FAILED"
-        print(code, file=sys.stderr)
-        return 1
-    print(json.dumps({"experiment": EXPERIMENT, "status": report["status"],
-                      "provider_requests": report["provider_accounting"]["requests_attempted"]},
-                     sort_keys=True, separators=(",", ":")))
-    return 0 if report["status"] == "COMPLETE" else 1
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
