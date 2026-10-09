@@ -935,5 +935,18 @@ class PrematchCaptureTests(unittest.TestCase):
         self.assertEqual(self.saved()["response"], json.loads(output.getvalue())["analysis"])
 
 
+class RetiredResearchEndpointTests(unittest.TestCase):
+    def test_production_endpoint_guard_denies_tournament_before_http_or_accounting(self):
+        guard = Mock()
+        with patch.dict(os.environ, {"ODDSPAPI_API_KEY": "offline-test-key"}), \
+                patch.object(provider.OddsPapiClient, "_get") as http:
+            client = provider.OddsPapiMarketData(request_guard=guard)
+            with self.assertRaisesRegex(provider.MarketDataError, "REQUEST_BUDGET"):
+                client._get("odds-by-tournaments", tournamentIds="18")
+        http.assert_not_called()
+        guard.before_request.assert_not_called()
+        guard.after_request.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()

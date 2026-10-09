@@ -13,8 +13,8 @@ import json
 import math
 from pathlib import Path
 
-from modelfc.oddspapi_tournament_research import (
-    MAX_METADATA_BYTES, MAX_METADATA_ROWS, TournamentResearchError,
+from modelfc.oddspapi_market_inventory import (
+    MAX_METADATA_BYTES, MAX_METADATA_ROWS, MarketInventoryError,
     _classify_metadata, _metadata_index, _metadata_exclusion, _read_regular, _write_bytes,
     METADATA_FILTER_VERSION,
 )
@@ -25,7 +25,7 @@ MAX_SOURCE_ROWS = 100_000
 
 
 def _reject():
-    raise TournamentResearchError("MARKET_METADATA_INVALID")
+    raise MarketInventoryError("MARKET_METADATA_INVALID")
 
 
 def _float(value):
@@ -96,7 +96,7 @@ def filter_metadata(raw: bytes) -> tuple[bytes, dict]:
     except (ValueError, TypeError, OverflowError, UnicodeError, RecursionError):
         _reject()
     if len(output) > MAX_METADATA_BYTES or len(retained) > MAX_METADATA_ROWS:
-        raise TournamentResearchError("FILTERED_METADATA_LIMIT_EXCEEDED")
+        raise MarketInventoryError("FILTERED_METADATA_LIMIT_EXCEEDED")
     return output, {
         "filter_version": FILTER_VERSION,
         "source_sha256": hashlib.sha256(raw).hexdigest(),
@@ -118,13 +118,13 @@ def main() -> int:
     try:
         raw = _read_regular(args.source, MAX_SOURCE_BYTES, "MARKET_METADATA_INVALID")
         if hashlib.sha256(raw).hexdigest() != args.source_sha256:
-            raise TournamentResearchError("SOURCE_SHA256_MISMATCH")
+            raise MarketInventoryError("SOURCE_SHA256_MISMATCH")
         output, provenance = filter_metadata(raw)
         # Exclusive private files. Existing outputs are never overwritten.
         _write_bytes(args.output, output)
         _write_bytes(args.output.with_name(args.output.name + ".provenance.json"),
                      (json.dumps(provenance, sort_keys=True) + "\n").encode())
-    except TournamentResearchError as error:
+    except MarketInventoryError as error:
         print(str(error))  # Only fixed error codes from the reviewed helpers.
         return 1
     print(json.dumps(provenance, sort_keys=True))

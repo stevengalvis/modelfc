@@ -12,9 +12,7 @@ from copy import deepcopy
 from dataclasses import asdict, dataclass, replace
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
-from http.client import HTTPException
 import json
-import html
 import math
 import os
 from pathlib import Path
@@ -23,7 +21,7 @@ from types import MappingProxyType
 import time
 import uuid
 from urllib.error import HTTPError, URLError
-from urllib.parse import unquote, urlencode
+from urllib.parse import urlencode
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from modelfc.corner_analysis import (
@@ -45,7 +43,6 @@ from modelfc.matches import UpcomingFixture
 
 BASE_URL = "https://api.oddspapi.io/v4"
 BOOKMAKERS = ("draftkings", "fanduel")
-RESEARCH_TOURNAMENT_IDS = (27070, 325, 17, 18, 8, 35, 34, 52, 37, 238)
 MAX_QUOTE_AGE_SECONDS = 300
 USER_AGENT = "ModelFC/1.0 (OddsPapi integration)"
 FAMILIES = {
@@ -58,28 +55,6 @@ TEAM_ALIASES = MappingProxyType({
     "Wolverhampton Wanderers": "Wolves", "West Bromwich Albion": "West Brom",
     "Norwich City": "Norwich", "Bolton Wanderers": "Bolton",
 })
-
-
-def _reject_json_constant(_value):
-    raise ValueError
-
-
-def _finite_json_float(value):
-    parsed = float(value)
-    if not math.isfinite(parsed):
-        raise ValueError
-    return parsed
-
-
-def _finite_json_int(value):
-    parsed = int(value)
-    try:
-        finite = math.isfinite(float(parsed))
-    except OverflowError:
-        finite = False
-    if not finite:
-        raise ValueError
-    return parsed
 
 
 @dataclass(frozen=True)
@@ -103,58 +78,6 @@ COMPETITIONS = MappingProxyType({
 
 class OddsPapiError(ValueError):
     """An explicit provider/normalization failure; messages never include URLs."""
-
-
-MAX_RESEARCH_ERROR_BYTES = 8192
-RESEARCH_ERROR_BODY_STATES = frozenset({
-    "EMPTY", "TOO_LARGE", "READ_FAILED", "CREDENTIAL_BOUNDARY", "MALFORMED_JSON", "JSON",
-})
-# Exact codes documented by the provider; recognition does not imply that a code
-# applies to this endpoint. Never publish an arbitrary provider message or code.
-RESEARCH_REJECTION_CODES = frozenset({
-    "UNRECOGNIZED", "TOO_MANY_BOOKMAKERS", "REQUEST_LIMIT_EXCEEDED",
-})
-RESEARCH_REJECTION_PARAMETERS = frozenset({
-    "UNRECOGNIZED", "tournamentIds", "bookmaker", "bookmakers", "language", "verbosity",
-})
-
-
-@dataclass(frozen=True)
-class TournamentHttpDiagnostic:
-    body_state: str
-    rejection_code: str = "UNRECOGNIZED"
-    parameter: str = "UNRECOGNIZED"
-
-    def __post_init__(self):
-        if (any(type(value) is not str for value in
-                (self.body_state, self.rejection_code, self.parameter))
-                or self.body_state not in RESEARCH_ERROR_BODY_STATES
-                or self.rejection_code not in RESEARCH_REJECTION_CODES
-                or self.parameter not in RESEARCH_REJECTION_PARAMETERS
-                or (self.body_state != "JSON" and
-                    (self.rejection_code != "UNRECOGNIZED" or self.parameter != "UNRECOGNIZED"))):
-            raise ValueError("INVALID_HTTP_DIAGNOSTIC")
-
-
-class OddsPapiTournamentResearchError(OddsPapiError):
-    """Fixed-code failure from the one-shot tournament research transport."""
-
-    def __init__(self, code, *, http_status=None, raw=b"", diagnostic=None):
-        if diagnostic is not None and type(diagnostic) is not TournamentHttpDiagnostic:
-            raise ValueError("INVALID_HTTP_DIAGNOSTIC")
-        super().__init__(code)
-        self.code = code
-        self.http_status = http_status
-        self.raw = raw
-        self.diagnostic = diagnostic
-
-
-@dataclass(frozen=True)
-class OddsPapiTournamentBatch:
-    payload: object
-    raw: bytes
-    http_status: int
-    usage_headers: dict[str, str]
 
 
 def _object(value):
@@ -496,236 +419,6 @@ class _NoRedirect(HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         # Do not forward query credentials to a redirected destination.
         return None
-
-
-class OddsPapiTournamentResearchClient:
-    """Single-use, fixed-shape v4 tournament transport for private research.
-
-    This boundary deliberately does not inherit ``OddsPapiMarketData``.  That
-    keeps the production acquisition allowlist limited to fixtures, markets,
-    and odds while still reusing its credential and redirect safety model.
-    """
-
-    endpoint = "odds-by-tournaments"
-    request_kind = "TOURNAMENT_RESEARCH"
-
-    def __init__(self, *, request_guard, max_response_bytes):
-        self._key = os.environ.get("ODDSPAPI_API_KEY", "").strip()
-        try:
-            encoded_key = self._key.encode("ascii")
-        except UnicodeEncodeError:
-            encoded_key = b""
-        if (not encoded_key or any(character.isspace() or not character.isprintable()
-                                   for character in self._key)):
-            raise OddsPapiTournamentResearchError("PROVIDER_CONFIGURATION")
-        self._encoded_key = encoded_key
-        if (request_guard is None or type(max_response_bytes) is not int
-                or not 1 <= max_response_bytes <= 32 * 1024 * 1024):
-            raise OddsPapiTournamentResearchError("TRANSPORT_CONFIGURATION")
-        self.request_guard = request_guard
-        self.max_response_bytes = max_response_bytes
-        self._opener = build_opener(_NoRedirect())
-        self._used = False
-
-    def retrieve(self, *, tournament_ids, bookmakers):
-        if (self._used or tuple(tournament_ids) != RESEARCH_TOURNAMENT_IDS
-                or tuple(bookmakers) != BOOKMAKERS):
-            raise OddsPapiTournamentResearchError("REQUEST_NOT_AUTHORIZED")
-        self._used = True
-        params = {
-            "tournamentIds": ",".join(str(value) for value in tournament_ids),
-            "bookmakers": ",".join(bookmakers),
-            "language": "en",
-            "verbosity": 3,
-        }
-        return self._retrieve_parameters(params)
-
-    def _retrieve_parameters(self, params):
-        params = validated_research_parameters(params)
-        self.request_guard.before_request(self.request_kind)
-        params["apiKey"] = self._key
-        request = Request(
-            f"{BASE_URL}/{self.endpoint}?" + urlencode(params),
-            headers={"User-Agent": USER_AGENT, "Accept": "application/json"},
-        )
-        try:
-            try:
-                with self._opener.open(request, timeout=30) as response:
-                    raw = response.read(self.max_response_bytes + 1)
-                    status = response.getcode()
-                    usage = {k: v for k, v in response.headers.items()
-                             if k.lower().startswith(("x-ratelimit", "x-requests"))}
-            except HTTPError as error:
-                status = error.code
-                try:
-                    diagnostic = self._http_error_diagnostic(error)
-                finally:
-                    error.close()
-                raise OddsPapiTournamentResearchError(
-                    "HTTP_FAILURE", http_status=status, diagnostic=diagnostic,
-                ) from None
-            except (URLError, TimeoutError, OSError, HTTPException):
-                raise OddsPapiTournamentResearchError("NETWORK_FAILURE") from None
-            if len(raw) > self.max_response_bytes:
-                raise OddsPapiTournamentResearchError(
-                    "RESPONSE_TOO_LARGE", http_status=status,
-                )
-            if self._credential_in_raw(raw):
-                raise OddsPapiTournamentResearchError(
-                    "CREDENTIAL_BOUNDARY", http_status=status,
-                )
-            try:
-                payload = json.loads(raw, parse_constant=_reject_json_constant,
-                                     parse_float=_finite_json_float,
-                                     parse_int=_finite_json_int)
-            except (ValueError, UnicodeError, RecursionError):
-                raise OddsPapiTournamentResearchError(
-                    "MALFORMED_JSON", http_status=status, raw=raw,
-                ) from None
-            try:
-                credential_found = self._credential_in_json(payload)
-            except RecursionError:
-                raise OddsPapiTournamentResearchError("MALFORMED_JSON", http_status=status) from None
-            if credential_found:
-                raise OddsPapiTournamentResearchError(
-                    "CREDENTIAL_BOUNDARY", http_status=status,
-                )
-            return OddsPapiTournamentBatch(payload, raw, status, usage)
-        finally:
-            self.request_guard.after_request()
-
-    def _http_error_diagnostic(self, error):
-        """Read once, bounded; discard the body and expose only fixed tokens."""
-        try:
-            raw = error.read(MAX_RESEARCH_ERROR_BYTES + 1)
-        except (OSError, TimeoutError, ValueError, HTTPException):
-            return TournamentHttpDiagnostic("READ_FAILED")
-        if len(raw) > MAX_RESEARCH_ERROR_BYTES:
-            return TournamentHttpDiagnostic("TOO_LARGE")
-        if not raw:
-            return TournamentHttpDiagnostic("EMPTY")
-        if self._credential_in_raw(raw):
-            return TournamentHttpDiagnostic("CREDENTIAL_BOUNDARY")
-
-        def unique_object(pairs):
-            result = {}
-            for key, value in pairs:
-                if key in result:
-                    raise ValueError
-                result[key] = value
-            return result
-
-        try:
-            payload = json.loads(raw, object_pairs_hook=unique_object,
-                                 parse_constant=_reject_json_constant,
-                                 parse_float=_finite_json_float, parse_int=_finite_json_int)
-        except (ValueError, UnicodeError, RecursionError):
-            return TournamentHttpDiagnostic("MALFORMED_JSON")
-        try:
-            if self._credential_in_json(payload):
-                return TournamentHttpDiagnostic("CREDENTIAL_BOUNDARY")
-        except RecursionError:
-            return TournamentHttpDiagnostic("MALFORMED_JSON")
-        # Do not mine free text. Accept only explicit code/parameter fields in
-        # an object, optionally in its error object; conflicting tokens fail closed.
-        objects = [payload] if isinstance(payload, dict) else []
-        if objects and isinstance(payload.get("error"), dict):
-            objects.append(payload["error"])
-
-        def token(field, allowed):
-            values = [obj[field] for obj in objects if field in obj]
-            if (not values or any(type(value) is not str or value not in allowed
-                                  for value in values) or len(set(values)) != 1):
-                return "UNRECOGNIZED"
-            return values[0]
-
-        return TournamentHttpDiagnostic(
-            "JSON", token("code", RESEARCH_REJECTION_CODES),
-            token("parameter", RESEARCH_REJECTION_PARAMETERS),
-        )
-
-    def _credential_in_json(self, value):
-        if isinstance(value, str):
-            return self._credential_in_text(value)
-        if isinstance(value, list):
-            return any(self._credential_in_json(item) for item in value)
-        if isinstance(value, dict):
-            return any(self._credential_in_json(key) or self._credential_in_json(item)
-                       for key, item in value.items())
-        return False
-
-    def _credential_in_raw(self, value):
-        # JSON permits UTF-8, UTF-16, and UTF-32. Decode both byte orders so a
-        # truncated body without a usable BOM cannot hide a reflected secret.
-        for encoding in (
-                "utf-8-sig", "utf-16-le", "utf-16-be",
-                "utf-32-le", "utf-32-be", "latin-1"):
-            decoded = value.decode(encoding, errors="ignore")
-            if self._credential_in_text(decoded):
-                return True
-        return False
-
-    def _credential_in_text(self, value):
-        decoded = value
-        # Decoding may expose another escape marker, so use the bounded input
-        # length rather than only the markers visible in the first layer.
-        # Reject over-complex input if it has not stabilized at the cap.
-        maximum = min(len(value) + 1, 128)
-        for _ in range(maximum):
-            if self._key in decoded:
-                return True
-            candidate = re.sub(
-                r"\\u([0-9a-fA-F]{4})",
-                lambda match: chr(int(match.group(1), 16)), decoded,
-            )
-            candidate = re.sub(r"\\([\\/\"])", lambda match: match.group(1), candidate)
-            candidate = unquote(candidate)
-            candidate = html.unescape(candidate)
-            if candidate == decoded:
-                return False
-            decoded = candidate
-        # The representation did not reach a fixed point inside the safe work
-        # bound. Treat it as credential-bearing and fail closed.
-        return True
-
-
-def validated_research_parameters(value):
-    """Only reviewed tournament parameters, never URLs or credentials."""
-    if not isinstance(value, dict):
-        raise OddsPapiTournamentResearchError("REQUEST_NOT_AUTHORIZED")
-    book_key = "bookmaker" if "bookmaker" in value else "bookmakers"
-    if (set(value) != {"tournamentIds", book_key, "language", "verbosity"}
-            or value.get("language") != "en" or type(value.get("verbosity")) is not int
-            or value["verbosity"] != 3 or type(value.get("tournamentIds")) is not str
-            or not re.fullmatch(r"[1-9][0-9]*(?:,[1-9][0-9]*){0,9}", value["tournamentIds"])
-            or type(value.get(book_key)) is not str):
-        raise OddsPapiTournamentResearchError("REQUEST_NOT_AUTHORIZED")
-    ids = value["tournamentIds"].split(",")
-    books = value[book_key].split(",")
-    if (len(set(ids)) != len(ids) or any(item not in {str(value) for value in RESEARCH_TOURNAMENT_IDS} for item in ids)
-            or len(set(books)) != len(books) or any(book not in BOOKMAKERS for book in books)
-            or not 1 <= len(books) <= (1 if book_key == "bookmaker" else 2)):
-        raise OddsPapiTournamentResearchError("REQUEST_NOT_AUTHORIZED")
-    return dict(value)
-
-
-class OddsPapiPlannedResearchClient(OddsPapiTournamentResearchClient):
-    """One use per approved variant, at most three calls, fixed endpoint."""
-
-    def __init__(self, *, variants, max_requests, request_guard, max_response_bytes):
-        super().__init__(request_guard=request_guard, max_response_bytes=max_response_bytes)
-        if type(max_requests) is not int or not 1 <= max_requests <= 3:
-            raise OddsPapiTournamentResearchError("REQUEST_NOT_AUTHORIZED")
-        self._approved = {row["id"]: validated_research_parameters(row["parameters"]) for row in variants}
-        self._remaining = max_requests
-        self._attempted = set()
-
-    def retrieve(self, *, variant_id):
-        if (variant_id not in self._approved or variant_id in self._attempted or self._remaining <= 0):
-            raise OddsPapiTournamentResearchError("REQUEST_NOT_AUTHORIZED")
-        self._attempted.add(variant_id)
-        self._remaining -= 1
-        return self._retrieve_parameters(self._approved[variant_id])
 
 
 class OddsPapiClient:

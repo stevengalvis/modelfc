@@ -7,8 +7,8 @@ import unittest
 from unittest.mock import patch
 
 from modelfc.oddspapi_research_metadata import filter_metadata, main
-from modelfc.oddspapi_tournament_research import TournamentResearchError, analyze_batch, _metadata_index
-from tests.test_oddspapi_tournament_research import metadata, payload, market, NOW
+from modelfc.oddspapi_market_inventory import MarketInventoryError, analyze_batch, _metadata_index
+from tests.oddspapi_inventory_fixtures import metadata, payload, market, NOW
 
 
 class ResearchMetadataTests(unittest.TestCase):
@@ -65,10 +65,10 @@ class ResearchMetadataTests(unittest.TestCase):
         self.assertEqual(json.loads(output)['markets'], json.loads(reordered)['markets'])
         self.assertEqual(json.loads(output)['excluded_ids'], json.loads(reordered)['excluded_ids'])
         with patch('modelfc.oddspapi_research_metadata.MAX_METADATA_BYTES', len(output) - 1):
-            with self.assertRaisesRegex(TournamentResearchError, 'LIMIT_EXCEEDED'):
+            with self.assertRaisesRegex(MarketInventoryError, 'LIMIT_EXCEEDED'):
                 filter_metadata(self.encode(rows))
         with patch('modelfc.oddspapi_research_metadata.MAX_METADATA_ROWS', 1):
-            with self.assertRaises(TournamentResearchError):
+            with self.assertRaises(MarketInventoryError):
                 filter_metadata(self.encode(rows))
 
     def test_malformed_duplicate_and_missing_mappings_rejected_even_when_removed(self):
@@ -88,7 +88,7 @@ class ResearchMetadataTests(unittest.TestCase):
         changed[0]['outcomes'] = None
         cases.append(self.encode(changed))
         for raw in cases:
-            with self.subTest(raw=raw[:100]), self.assertRaises(TournamentResearchError):
+            with self.subTest(raw=raw[:100]), self.assertRaises(MarketInventoryError):
                 filter_metadata(raw)
 
     def test_oversized_all_sports_row_population_projects_within_loader_limits(self):
@@ -112,7 +112,7 @@ class ResearchMetadataTests(unittest.TestCase):
         for names in (('Over', 'Under'), ('Yes', 'Yes'), ('Yes',)):
             broken = copy.deepcopy(btts)
             broken['outcomes'] = [{'outcomeId': i + 1, 'outcomeName': name} for i, name in enumerate(names)]
-            with self.subTest(names=names), self.assertRaises(TournamentResearchError):
+            with self.subTest(names=names), self.assertRaises(MarketInventoryError):
                 filter_metadata(self.encode([broken]))
 
     def test_null_unknown_and_missing_period_excluded_without_normalizing(self):
@@ -188,7 +188,7 @@ class ResearchMetadataTests(unittest.TestCase):
             else:
                 artifact['excluded_ids']['UNSUPPORTED_FAMILY'] = [True]
                 artifact['source_entries'] += 1
-            with self.subTest(change=change), self.assertRaises(TournamentResearchError):
+            with self.subTest(change=change), self.assertRaises(MarketInventoryError):
                 _metadata_index(artifact)
 
     def test_cli_pins_source_writes_private_exclusive_artifacts_and_rejects_symlink(self):
