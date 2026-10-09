@@ -237,3 +237,26 @@ class SharedOddsTests(TestCase):
         self.assertIsNone(prepared.corner);self.assertIsNotNone(prepared.btts)
         with self.assertRaises(ValueError):prepare_plan(plan,(),{'E1':sources()},frozen_at=NOW,cutoff=NOW.date(),models=('btts',))
         with self.assertRaises(ValueError):prepare_plan(plan,(f,),{'E1':sources()},frozen_at=NOW,cutoff=NOW.date(),models=('unknown',))
+
+    def test_btts_ambiguity_includes_markets_without_retained_player_zero(self):
+        f=known();prepared=prepare_forecast(f,sources(),frozen_at=NOW-timedelta(seconds=1),cutoff=NOW.date())
+        for shape in ('empty','no_players','other_player','unknown_outcome','inactive'):
+            definitions=metadata();second=json.loads(json.dumps(definitions[4]));second.update(marketId=104,marketType='bothteamsscore')
+            second['outcomes']=[{'outcomeId':1040,'outcomeName':'Yes'},{'outcomeId':1041,'outcomeName':'No'}];definitions.append(second)
+            row=saved_fixture();row['startTime']=f.identity.kickoff_utc.isoformat();m=market(104)
+            if shape=='empty':m['outcomes']={}
+            if shape=='no_players':
+                for o in m['outcomes'].values():o['players']={}
+            if shape=='other_player':
+                for o in m['outcomes'].values():o['players']={'1':o['players']['0']}
+            if shape=='unknown_outcome':m['outcomes']={'999':{'players':{'0':{'price':2,'active':True}}}}
+            if shape=='inactive':m['marketActive']=False
+            row['bookmakerOdds']['fanduel']['markets']['104']=m
+            snap=snapshot([row],definitions)
+            with self.assertRaisesRegex(ValueError,'AMBIGUOUS_BTTS_MARKET'):
+                btts_observation(snap,snap.fixtures[0],historical_names={'Home','Away'})
+            result=consume_forecast(prepared,snap,snap.fixtures[0])
+            self.assertEqual(result.btts_status,'REVIEW');self.assertEqual(result.btts,())
+            self.assertEqual(result.corner_status,'PASS');self.assertEqual(len(result.corner),4)
+            raw=row|{'participant1Id':1,'participant2Id':2,'categorySlug':'england','tournamentSlug':'championship'}
+            with self.assertRaises(ValueError):normalize_btts(raw,definitions,raw,competition='E1',historical_names={'Home','Away'},retrieved_at=NOW.isoformat(),as_of=NOW)

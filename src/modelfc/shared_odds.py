@@ -137,8 +137,10 @@ def btts_observation(snapshot: OddsBatchSnapshot, fixture: SnapshotFixture, *, h
     identity = BttsFixture(competition=fixture.identity.competition, provider=snapshot.provider,
         provider_fixture_id=fixture.identity.fixture_id, home_team=home, away_team=away,
         kickoff_utc=fixture.identity.kickoff_utc.isoformat())
+    inventory = json.loads(fixture.coverage_json)
     quotes = [q for q in fixture.quotes if q.family == "BTTS" and q.player_id == "0"]
-    if len({q.market_id for q in quotes}) > 1:
+    # Count recognized present markets, including empty/unmapped/non-player-0 ones.
+    if inventory["families"]["BTTS"]["market_count"] > 1:
         raise ValueError("AMBIGUOUS_BTTS_MARKET")
     diagnostics = json.loads(fixture.diagnostics_json)
     if any(d.get("market_id") in {q.market_id for q in quotes} and d.get("status") == "MISSING_OUTCOME_METADATA" for d in diagnostics):
@@ -152,7 +154,6 @@ def btts_observation(snapshot: OddsBatchSnapshot, fixture: SnapshotFixture, *, h
         provider_quote_reference=digest((snapshot.observation_id, q.provenance_json)))
         for q in quotes if q.status == "AVAILABLE"]
     # Explicit market/book withdrawal is visible even when it retained no quote.
-    inventory = json.loads(fixture.coverage_json)
     state = inventory["families"]["BTTS"]["status"]
     unavailable = unusable or state in {"INACTIVE", "STALE"} or inventory["status"] in {"INACTIVE", "STALE"}
     if unavailable:
