@@ -395,5 +395,3 @@ def _analyze_book(book: object, dictionary: dict, *, observed_at: datetime,
     return {"status": status, "unsupported_metadata_markets": unsupported_markets,
             "unsupported_metadata_outcomes": unsupported_outcomes,
             "metadata_diagnostics": metadata_diagnostics, "families": result}
-
-

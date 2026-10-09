@@ -42,5 +42,3 @@ def payload():
                  "fanduel": {"bookmakerIsActive": True, "suspended": False,
                               "markets": {"5": market(5), "6": market(6, main=False)}},
              }}]
-
-

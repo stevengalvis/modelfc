@@ -137,5 +137,3 @@ class InventoryTests(unittest.TestCase):
         with self.assertRaisesRegex(research.MarketInventoryError, "BATCH_RESPONSE_INVALID"):
             research.analyze_batch(bad_payload, metadata(), observed_at=NOW)
         self.assertEqual(research.analyze_batch([], metadata(), observed_at=NOW)["fixture_count"], 0)
-
-
