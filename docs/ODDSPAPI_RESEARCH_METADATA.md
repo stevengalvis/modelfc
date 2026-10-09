@@ -83,7 +83,8 @@ remains stable. Keep both artifacts together; if either publication fails,
 rebuild into new unused filenames. Preserve the original source cache.
 
 The reusable inventory is `modelfc.oddspapi_market_inventory.analyze_batch`.
-It preserves supplied fixture order and independent DraftKings/FanDuel analysis.
+It sorts each competition's fixtures by `start_time_utc`, then `fixture_id`,
+and analyzes DraftKings and FanDuel independently.
 Before using an actual cache, reproduce the filter twice into unused private files,
 compare hashes, verify every retained definition/outcome against the source, and
 check included plus excluded counts and the unchanged limits. Synthetic tests do
