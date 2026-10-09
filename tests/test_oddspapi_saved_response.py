@@ -84,7 +84,7 @@ class SavedResponseTests(unittest.TestCase):
 
     def test_missing_inactive_stale_incomplete_and_future_quotes(self):
         for variant, expected in (("inactive", "INACTIVE"), ("stale", "STALE"),
-                                  ("incomplete", "INCOMPLETE"), ("future", "FUTURE_TIMESTAMP")):
+                                  ("incomplete", "AVAILABLE"), ("future", "FUTURE_TIMESTAMP")):
             row = saved_fixture()
             m = row["bookmakerOdds"]["fanduel"]["markets"]["5"]
             if variant == "inactive":
@@ -103,6 +103,30 @@ class SavedResponseTests(unittest.TestCase):
         row["startTime"] = (NOW - timedelta(seconds=1)).isoformat()
         row["bookmakerOdds"] = saved_fixture()["bookmakerOdds"]
         self.assertEqual({p["status"] for p in process([row])["fixtures"][0]["prices"]}, {"NOT_PREMATCH"})
+
+    def test_each_side_and_player_keeps_its_own_status(self):
+        for state in ("stale", "inactive", "future", "invalid_price"):
+            row = saved_fixture()
+            m = row["bookmakerOdds"]["fanduel"]["markets"]["5"]
+            yes = m["outcomes"]["50"]["players"]["0"]
+            expected = {"stale": "STALE", "inactive": "INACTIVE",
+                        "future": "FUTURE_TIMESTAMP", "invalid_price": "INCOMPLETE"}[state]
+            if state == "stale": yes["staleOdds"] = True
+            if state == "inactive": yes["active"] = False
+            if state == "future": yes["bookmakerChangedAt"] = (NOW + timedelta(seconds=1)).isoformat()
+            if state == "invalid_price": yes["price"] = 1
+            with self.subTest(state=state):
+                f = process([row])["fixtures"][0]
+                prices = {p["outcome"]: p for p in f["prices"] if p["market_id"] == "5"}
+                self.assertEqual(prices["Yes"]["status"], expected)
+                self.assertEqual(prices["No"]["status"], "AVAILABLE")
+                self.assertNotEqual(f["inventory"]["families"]["BTTS"]["status"], "AVAILABLE")
+        row = saved_fixture()
+        del row["bookmakerOdds"]["fanduel"]["markets"]["5"]["outcomes"]["51"]
+        f = process([row])["fixtures"][0]
+        self.assertEqual(f["inventory"]["families"]["BTTS"]["status"], "INCOMPLETE")
+        self.assertEqual(next(p for p in f["prices"] if p["market_id"] == "5")["status"], "AVAILABLE")
+        self.assertEqual(len([p for p in f["prices"] if p["market_id"] == "5"]), 1)
 
     def test_snapshot_eligibility_and_unusable_individual_players(self):
         row = saved_fixture()
@@ -187,8 +211,11 @@ class SavedResponseTests(unittest.TestCase):
                 return replay.replay_files(response, definitions, response_sha256=hashlib.sha256(response.read_bytes()).hexdigest(),
                     metadata_sha256=hashlib.sha256(definitions.read_bytes()).hexdigest(), retrieved_at=NOW)
             with self.assertRaises(replay.ReplayError): run()
-            response.write_bytes(b'[NaN]')
-            with self.assertRaises(replay.ReplayError): run()
+            exponent_overflow = json.dumps([saved_fixture()]).encode().replace(
+                b'"fanduel": {', b'"fanduel": {"bookmakerFixtureId": 1e309,')
+            for invalid in (b'[NaN]', exponent_overflow):
+                response.write_bytes(invalid)
+                with self.subTest(invalid=invalid), self.assertRaises(replay.ReplayError): run()
             with patch.object(replay, "MAX_RESPONSE_BYTES", 2), self.assertRaises(MarketInventoryError): run()
             target = root / "target"; target.write_bytes(b'[]')
             response.unlink(); response.symlink_to(target)

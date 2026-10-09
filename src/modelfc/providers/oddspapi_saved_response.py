@@ -15,7 +15,7 @@ from modelfc.acquisition_planner import LEAGUES, Fixture, PlanningError, utc
 from modelfc.corner_markets import american_odds_terms
 from modelfc.oddspapi_market_inventory import (
     MarketInventoryError, MAX_FIXTURES, MAX_METADATA_BYTES,
-    _analyze_book, _metadata_index, _metadata_parts, _metadata_exclusion, _read_regular, _utc,
+    _analyze_book, _metadata_index, _metadata_parts, _metadata_exclusion, _read_regular, _utc, _priced,
 )
 
 MAX_RESPONSE_BYTES = 16 * 1024 * 1024
@@ -42,9 +42,16 @@ def _constant(_value):
     _reject("INVALID_JSON_NUMBER")
 
 
+def _float(value):
+    parsed = float(value)
+    if not math.isfinite(parsed):
+        _reject("INVALID_JSON_NUMBER")
+    return parsed
+
+
 def _json(raw):
     try:
-        return json.loads(raw, object_pairs_hook=_pairs, parse_constant=_constant)
+        return json.loads(raw, object_pairs_hook=_pairs, parse_constant=_constant, parse_float=_float)
     except (ValueError, UnicodeError, RecursionError):
         _reject("INVALID_JSON")
 
@@ -54,6 +61,28 @@ def _number(value):
         return type(value) in (float, int) and math.isfinite(value)
     except OverflowError:
         return False
+
+
+def _quote_status(raw, fixture, book, market, player, family, observed, updated_future):
+    """Individual quote state, independent of the opposite side or other players."""
+    timestamps = tuple(_utc(player[key]) for key in ("changedAt", "bookmakerChangedAt")
+                       if player.get(key) is not None)
+    if raw["statusId"] != 0 or fixture.kickoff_utc <= observed:
+        return "NOT_PREMATCH"
+    if updated_future or any(value > observed for value in timestamps):
+        return "FUTURE_TIMESTAMP"
+    if (not raw["hasOdds"] or book.get("bookmakerIsActive") is False
+            or book.get("suspended") is True or market.get("marketActive") is False
+            or player.get("active") is False):
+        return "INACTIVE"
+    if any(source.get("staleOdds") is True for source in (raw, book, market, player)):
+        return "STALE"
+    usable, _, _ = _priced(player, observed_at=observed)
+    if (not usable or book.get("bookmakerIsActive") is not True
+            or book.get("suspended") is not False or market.get("marketActive") is not True
+            or family == "MATCH_GOAL_TOTALS" and type(player.get("mainLine")) is not bool):
+        return "INCOMPLETE"
+    return "AVAILABLE"
 
 
 def process_saved_response(payload: object, metadata: object, *, retrieved_at: datetime) -> dict:
@@ -104,9 +133,6 @@ def process_saved_response(payload: object, metadata: object, *, retrieved_at: d
             if mid not in dictionary:
                 continue
             definition, family = dictionary[mid]
-            one_book = {**book, "markets": {mid: market}}
-            one_inventory = _analyze_book(one_book, dictionary, observed_at=observed,
-                fixture_stale=raw.get("staleOdds") is True, known_market_ids=known, excluded_ids=excluded)
             outcomes = {str(item["outcomeId"]): item["outcomeName"] for item in definition["outcomes"]}
             for oid, outcome in sorted(market["outcomes"].items()):
                 if oid not in outcomes:
@@ -129,25 +155,8 @@ def process_saved_response(payload: object, metadata: object, *, retrieved_at: d
                             _reject("INVALID_PRICE")
                     actual_family = ("ALTERNATE_GOAL_TOTALS" if family == "MATCH_GOAL_TOTALS"
                                      and player.get("mainLine") is False else family)
-                    status = one_inventory["families"][actual_family]["status"]
+                    status = _quote_status(raw, fixture, book, market, player, family, observed, updated_future)
                     changed, bookmaker_changed = player.get("changedAt"), player.get("bookmakerChangedAt")
-                    if updated_future:
-                        status = "FUTURE_TIMESTAMP"
-                    for value in (changed, bookmaker_changed):
-                        if value is not None and _utc(value) > observed:
-                            status = "FUTURE_TIMESTAMP"
-                    if raw["statusId"] != 0 or fixture.kickoff_utc <= observed:
-                        status = "NOT_PREMATCH"
-                    if not raw["hasOdds"] and status == "AVAILABLE":
-                        status = "INCOMPLETE"
-                    # An unavailable individual outcome cannot inherit availability from another player.
-                    if status == "AVAILABLE":
-                        if player.get("active") is False:
-                            status = "INACTIVE"
-                        elif player.get("staleOdds") is True:
-                            status = "STALE"
-                        elif player.get("active") is not True or price is None or price <= 1:
-                            status = "INCOMPLETE"
                     prices.append({"bookmaker": "fanduel", "market_id": mid, "outcome_id": oid,
                         "bookmaker_market_id": market.get("bookmakerMarketId"),
                         "bookmaker_outcome_id": player.get("bookmakerOutcomeId"),

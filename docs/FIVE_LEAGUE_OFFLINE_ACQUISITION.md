@@ -48,7 +48,9 @@ The filtered 224-definition envelope/provenance and its limits remain unchanged.
 
 Statuses describe the **saved observation**, not present-day actionable prices.
 Inventory retains its existing missing/inactive/stale/incomplete diagnostics.
-Individual quotes additionally flag future timestamps and non-prematch fixtures.
+Individual status is independent of other outcomes/players; an available side
+can coexist with incomplete pair coverage. Quotes additionally flag future
+timestamps and non-prematch fixtures.
 No pairing across books, model probabilities, no-vig calculations, EV or
 recommendations are introduced. There is no production ledger publication.
 
