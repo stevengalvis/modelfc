@@ -202,3 +202,38 @@ class SharedOddsTests(TestCase):
         snap=snapshot([row])
         production=normalize_odds(row,metadata(),row,retrieved_at=NOW.isoformat(),now=NOW,competition='E1')
         self.assertEqual(corner_selections(snap,snap.fixtures[0]),production.selections)
+
+    def test_combined_consumption_isolates_btts_and_corner_failures(self):
+        f=known();prepared=prepare_forecast(f,sources(),frozen_at=NOW-timedelta(seconds=1),cutoff=NOW.date())
+        for broken in ('btts','corner','both'):
+            definitions=metadata();row=saved_fixture();row['startTime']=f.identity.kickoff_utc.isoformat()
+            if broken in ('btts','both'):
+                row['bookmakerOdds']['fanduel']['markets']['5']['outcomes']['999']={'players':{'0':{'price':2,'active':True}}}
+            if broken in ('corner','both'):definitions[1]['handicap']=4.25
+            snap=snapshot([row],definitions)
+            result=consume_forecast(prepared,snap,snap.fixtures[0])
+            self.assertEqual(result.corner_status,'REVIEW' if broken in ('corner','both') else 'PASS')
+            self.assertEqual(result.btts_status,'REVIEW' if broken in ('btts','both') else 'PASS')
+            self.assertEqual(len(result.corner),0 if broken in ('corner','both') else 4)
+            self.assertEqual(len(result.btts),0 if broken in ('btts','both') else 1)
+            self.assertEqual(set(result.review_reasons),({'CORNER_CONSUMPTION_REVIEW'} if broken=='corner' else
+                {'BTTS_CONSUMPTION_REVIEW'} if broken=='btts' else {'CORNER_CONSUMPTION_REVIEW','BTTS_CONSUMPTION_REVIEW'}))
+
+    def test_planned_single_model_preparation_preserves_eligibility(self):
+        f=known();plan=plan_acquisition({'E1':[f.identity]},as_of=NOW)
+        corner_only=sources()[0][1].decode().splitlines()
+        corner_only=[','.join(row.split(',')[:4]+row.split(',')[-2:]) for row in corner_only]
+        prepared=prepare_plan(plan,(f,),{'E1':(('E1_2627.csv', ('\n'.join(corner_only)+'\n').encode()),)},
+            frozen_at=NOW,cutoff=NOW.date(),models=('corner',))[0]
+        self.assertIsNotNone(prepared.corner);self.assertIsNone(prepared.btts)
+        # BTTS can freeze from 100 prior results while corner venue-history gates fail.
+        rows=sources()[0][1].decode().splitlines()
+        for i in range(1,len(rows)):
+            cols=rows[i].split(',')
+            if i%2 and i>7:cols[2]='Other home'
+            rows[i]=','.join(cols)
+        prepared=prepare_plan(plan,(f,),{'E1':(('E1_2627.csv', ('\n'.join(rows)+'\n').encode()),)},
+            frozen_at=NOW,cutoff=NOW.date(),models=('btts',))[0]
+        self.assertIsNone(prepared.corner);self.assertIsNotNone(prepared.btts)
+        with self.assertRaises(ValueError):prepare_plan(plan,(),{'E1':sources()},frozen_at=NOW,cutoff=NOW.date(),models=('btts',))
+        with self.assertRaises(ValueError):prepare_plan(plan,(f,),{'E1':sources()},frozen_at=NOW,cutoff=NOW.date(),models=('unknown',))

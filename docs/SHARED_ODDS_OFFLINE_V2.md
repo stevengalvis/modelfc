@@ -39,7 +39,7 @@ No provider ID is encoded in downstream research logic.
 Provide canonical, pre-known home/away identities in `KnownFixture` and use
 `prepare_plan` for the eligible planner obligations. Missing pre-retrieval
 identities fail; incidental batch fixtures never acquire forecasts during
-consumption. `prepare_forecast` also supports independent `models=("corner",)`
+consumption. Both `prepare_plan` and `prepare_forecast` support independent `models=("corner",)`
 or `models=("btts",)` preparation. Only E1 models are enabled; the other four
 registry identities return `UNSUPPORTED_MODEL` without reading history.
 
@@ -63,7 +63,10 @@ teams, and strictly `frozen_at < retrieved_at < kickoff`. It never loads history
 or refits either model. It returns team-total corner probabilities and existing
 research-only BTTS comparisons. Match-total prospective qualification and
 first-half models remain unsupported; no qualification or recommendations occur.
-Malformed evidence propagates to the offline caller, not a production ledger.
+Identity/time boundary failures reject the join. Family-specific normalization or
+pricing failures return a fixed per-consumer `REVIEW` reason, preserving the other
+consumer's valid output; unrequested models are `NOT_REQUESTED`. No partial output
+is retained for the failing consumer, and no production ledger is touched.
 
 Offline timestamps are caller-supplied provenance. This interface cannot prove
 that a saved capture was genuinely unseen at preparation time. A future live

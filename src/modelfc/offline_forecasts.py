@@ -3,6 +3,7 @@ from dataclasses import dataclass, asdict
 from datetime import date, datetime
 from io import StringIO
 from pathlib import Path
+from typing import Literal
 import json
 import hashlib
 
@@ -97,8 +98,11 @@ def prepare_forecast(fixture: KnownFixture, sources: tuple[tuple[str, bytes], ..
     return PreparedForecast(fixture, frozen, cutoff, provenance, prediction, btts, "PREPARED")
 
 
-def prepare_plan(plan: Plan, known: tuple[KnownFixture, ...], sources, *, frozen_at: datetime, cutoff: date):
+def prepare_plan(plan: Plan, known: tuple[KnownFixture, ...], sources, *, frozen_at: datetime, cutoff: date,
+                 models: tuple[str, ...] = ("corner", "btts")):
     """Only planned pre-known fixtures can be frozen; incidental response fixtures are excluded."""
+    if not models or len(set(models)) != len(models) or set(models) - {"corner", "btts"}:
+        raise ValueError("UNSUPPORTED_MODEL")
     lookup = {f.identity: f for f in known}
     if len(lookup) != len(known):
         raise ValueError("DUPLICATE_KNOWN_FIXTURE")
@@ -106,7 +110,7 @@ def prepare_plan(plan: Plan, known: tuple[KnownFixture, ...], sources, *, frozen
     if any(o.fixture not in lookup for o in obligations):
         raise ValueError("MISSING_PRE_RETRIEVAL_IDENTITY")
     return tuple(prepare_forecast(lookup[o.fixture], sources.get(o.fixture.competition, ()),
-        frozen_at=frozen_at, cutoff=cutoff) for o in obligations)
+        frozen_at=frozen_at, cutoff=cutoff, models=models) for o in obligations)
 
 
 @dataclass(frozen=True)
@@ -126,6 +130,9 @@ class ConsumedForecast:
     observation_id: str
     corner: tuple[CornerProbability, ...]
     btts: tuple
+    corner_status: Literal["PASS", "REVIEW", "NOT_REQUESTED"]
+    btts_status: Literal["PASS", "REVIEW", "NOT_REQUESTED"]
+    review_reasons: tuple[str, ...]
 
 
 def consume_forecast(forecast: PreparedForecast, snapshot: OddsBatchSnapshot,
@@ -140,14 +147,30 @@ def consume_forecast(forecast: PreparedForecast, snapshot: OddsBatchSnapshot,
     if (normalize_team(fixture.home_team, names, fixture.identity.competition) != forecast.fixture.home_team
             or normalize_team(fixture.away_team, names, fixture.identity.competition) != forecast.fixture.away_team):
         raise ValueError("FORECAST_FIXTURE_MISMATCH")
-    observation = None if forecast.btts is None else btts_observation(snapshot, fixture, historical_names=names)
-    probabilities = []
-    for s in (() if forecast.corner is None else corner_selections(snapshot, fixture)):
-        if s.request.market_type != "TEAM_TOTAL":
-            continue  # Match totals/first half remain unsupported prospective models.
-        team = forecast.corner.home if s.request.team_side == "HOME" else forecast.corner.away
-        p = corner_line_probabilities(team.expected_corners, s.request.line, forecast.corner.dispersion_size)
-        probabilities.append(CornerProbability(s.market_id, s.outcome_id, s.request.team_side, s.request.line,
-            s.request.side, p.over if s.request.side == "OVER" else p.under, p.equal))
-    return ConsumedForecast(forecast.forecast_id, snapshot.observation_id, tuple(probabilities),
-                            () if observation is None else comparisons_from_snapshot(forecast.btts, observation))
+    # Each model consumes independently. Fixed review codes preserve failure visibility
+    # without exception text or losing the other consumer's valid output.
+    probabilities, comparisons, reasons = [], (), []
+    corner_status = "NOT_REQUESTED" if forecast.corner is None else "PASS"
+    btts_status = "NOT_REQUESTED" if forecast.btts is None else "PASS"
+    if forecast.corner is not None:
+        try:
+            for s in corner_selections(snapshot, fixture):
+                if s.request.market_type != "TEAM_TOTAL":
+                    continue  # Match totals/first half remain unsupported prospective models.
+                team = forecast.corner.home if s.request.team_side == "HOME" else forecast.corner.away
+                p = corner_line_probabilities(team.expected_corners, s.request.line, forecast.corner.dispersion_size)
+                probabilities.append(CornerProbability(s.market_id, s.outcome_id, s.request.team_side, s.request.line,
+                    s.request.side, p.over if s.request.side == "OVER" else p.under, p.equal))
+        except (ValueError, TypeError, KeyError, OverflowError):
+            probabilities = []
+            corner_status = "REVIEW"
+            reasons.append("CORNER_CONSUMPTION_REVIEW")
+    if forecast.btts is not None:
+        try:
+            observation = btts_observation(snapshot, fixture, historical_names=names)
+            comparisons = comparisons_from_snapshot(forecast.btts, observation)
+        except (ValueError, TypeError, KeyError, OverflowError):
+            btts_status = "REVIEW"
+            reasons.append("BTTS_CONSUMPTION_REVIEW")
+    return ConsumedForecast(forecast.forecast_id, snapshot.observation_id, tuple(probabilities), comparisons,
+                            corner_status, btts_status, tuple(reasons))
