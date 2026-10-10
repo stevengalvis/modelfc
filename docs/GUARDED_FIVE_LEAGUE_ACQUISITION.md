@@ -44,8 +44,10 @@ can still leave BTTS available. If neither E1 model is available, the run stops 
 review before reservation. Forecasts preserve participant IDs, competition, kickoff,
 cutoff, source fingerprints and exact existing model outputs. They are read back from
 durable storage before request authorization. Retries after pre-request crashes reuse
-frozen forecasts, without recomputing them from later market prices. A different
-fixture or participant identity cannot replace an existing forecast.
+frozen forecasts, without recomputing them from later market prices. Forecast keys include competition, tournament ID, fixture ID, kickoff and model.
+A rescheduled fixture can receive a separate immutable forecast; its prior record
+remains intact. Conflicting participants for the same fixture/kickoff cannot replace
+an existing forecast.
 
 The coordinator retains the bounded private response, its retrieval timestamp and
 SHA-256, then creates one shared typed snapshot with metadata provenance. Every
@@ -83,8 +85,9 @@ Authorization has an exact version-1 schema:
 - `quota_remaining`, `quota_floor`: positive integers; one request must leave the floor intact.
 - `version`: exactly 1.
 
-An original authorization must be root-owned mode 0600. A systemd-delivered copy
-may be root-owned 0440 only with an exact ACL: owner read, named modelfc-runtime
+The original authorization is root-owned mode 0600 staging input for LoadCredential,
+never a path passed to the runtime coordinator. The runtime accepts only a
+root-owned mode-0440 systemd-delivered copy with an exact ACL: owner read, named modelfc-runtime
 read, owning group none, mask read, other none. No other user/group grants are
 accepted. This is separate from general file reading. The future launcher and
 credential snapshot permissions require cross-user acceptance before activation.

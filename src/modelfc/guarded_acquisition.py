@@ -167,7 +167,10 @@ def _prepare(store, entry, sources, frozen):
     records = []
     if entry.fixture.identity.competition != "E1": return records
     for model in ("corner", "btts"):
-        key = _name("forecast", {"fixture": entry.fixture.identity.fixture_id, "model": model})
+        key = _name("forecast", {"competition": entry.fixture.identity.competition,
+                 "tournament_id": entry.fixture.identity.tournament_id,
+                 "fixture_id": entry.fixture.identity.fixture_id,
+                 "kickoff_utc": entry.fixture.identity.kickoff_utc.isoformat(), "model": model})
         old = store.get(key)
         if old is not None:
             prepared = FORECAST_ADAPTER.validate_json(encoded(old["forecast"]))

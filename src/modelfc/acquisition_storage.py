@@ -99,7 +99,9 @@ def read_file(parent, name, limit=LIMIT, *, owner=None, mode=None, authorization
                 or owner is not None and before.st_uid != owner
                 or mode is not None and stat.S_IMODE(before.st_mode) != mode):
             raise AcquisitionRejected("FILE_REJECTED")
-        if authorization and stat.S_IMODE(before.st_mode) != 0o600:
+        if authorization:
+            if stat.S_IMODE(before.st_mode) != 0o440:
+                raise AcquisitionRejected("AUTHORIZATION_FILE_REJECTED")
             credential_snapshot(fd, before)
         chunks = []; remaining = limit + 1
         while remaining:

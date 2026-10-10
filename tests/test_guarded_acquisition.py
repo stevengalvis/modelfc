@@ -49,6 +49,10 @@ class CoordinatorTests(unittest.TestCase):
         self.root = Path(self.temp.name)
         runtime=patch.object(acquisition,'require_runtime')
         runtime.start();self.addCleanup(runtime.stop)
+        # Synthetic runtime copies use real 0440 mode; ownership/runtime ACLs
+        # are simulated here and verified separately against real Linux ACLs.
+        snapshot_acl=patch('modelfc.acquisition_storage.credential_snapshot')
+        snapshot_acl.start();self.addCleanup(snapshot_acl.stop)
         # CI is unprivileged. Model only root ownership for the synthetic plan;
         # the actual reader, mode/path/ACL validation and all writes stay real.
         original_reader = acquisition.read_file
@@ -89,8 +93,9 @@ class CoordinatorTests(unittest.TestCase):
             def retrieve(self, ids):
                 self.guard.before_request('TOURNAMENT_ODDS'); outer.calls.append(tuple(ids))
                 try:
-                    outer.instant = NOW+timedelta(seconds=2)
-                    return RetrievedBatch(json.dumps(outer.rows).encode(), NOW+timedelta(seconds=1),200)
+                    observed = outer.instant+timedelta(seconds=1)
+                    outer.instant = observed+timedelta(seconds=1)
+                    return RetrievedBatch(json.dumps(outer.rows).encode(), observed,200)
                 finally: self.guard.after_request()
         self.client_type = Client; self.rows = [provider_row()]
         self.runner_clock = patch('modelfc.corner_prospective._now', return_value=NOW)
@@ -100,7 +105,11 @@ class CoordinatorTests(unittest.TestCase):
         self.calendar_path.write_text(json.dumps(self.calendar))
         for name, path in [('calendar_sha256',self.calendar_path),('metadata_sha256',self.metadata_path)]:
             self.auth[name] = hashlib.sha256(path.read_bytes()).hexdigest()
-        self.auth_path.write_text(json.dumps(self.auth)); self.auth_path.chmod(0o600)
+        self.write_auth()
+
+    def write_auth(self):
+        if self.auth_path.exists():self.auth_path.chmod(0o600)
+        self.auth_path.write_text(json.dumps(self.auth));self.auth_path.chmod(0o440)
 
     def run_acquisition(self, **kwargs):
         args = dict(state_dir=self.state, private_dir=self.private, calendar_path=self.calendar_path,
@@ -207,7 +216,7 @@ class CoordinatorTests(unittest.TestCase):
     def test_invalid_authorization_and_input_hashes_fail_closed(self):
         for field,value in [('max_requests',2),('quota_remaining',20),('expires_at',NOW.isoformat()),('calendar_sha256','0'*64)]:
             original=self.auth[field]; self.auth[field]=value
-            self.auth_path.write_text(json.dumps(self.auth)); self.auth_path.chmod(0o600)
+            self.write_auth()
             self.assertEqual(self.run_acquisition()['status'],'REJECTED'); self.assertEqual(self.reserved(),0)
             self.auth[field]=original
 
@@ -257,7 +266,7 @@ class CoordinatorTests(unittest.TestCase):
     def test_read_permissions_symlinks_hardlinks_and_private_modes(self):
         self.auth_path.chmod(0o640)
         self.assertEqual(self.run_acquisition()['status'],'REJECTED'); self.assertEqual(self.reserved(),0)
-        self.auth_path.chmod(0o600)
+        self.auth_path.chmod(0o440)
         target=self.root/'copy'; self.auth_path.rename(target); self.auth_path.symlink_to(target)
         self.assertEqual(self.run_acquisition()['status'],'REJECTED'); self.assertEqual(self.reserved(),0)
         self.auth_path.unlink(); os.link(target,self.auth_path)
@@ -398,6 +407,42 @@ class CoordinatorTests(unittest.TestCase):
             store.put(acquisition._name('session','malformed'),{'experiment_id':'malformed','status':'CLAIMED','obligations':[]})
         result=self.run_acquisition();self.assertEqual(result['reason'],'SESSION_REJECTED')
         self.assertFalse(self.calls);self.assertEqual(self.reserved(),0)
+
+
+
+    def test_rescheduled_fixture_new_immutable_forecasts_preserve_old_evidence(self):
+        self.assertEqual(self.run_acquisition()['status'],'RECORDED')
+        old={p.name:p.read_bytes() for p in self.private.glob('forecast-*')}
+        kickoff=NOW+timedelta(hours=25)
+        self.calendar['competitions']['E1'][0]['kickoff_utc']=kickoff.isoformat()
+        self.rows[0]['startTime']=kickoff.isoformat()
+        self.auth['experiment_id']='rescheduled';self.sync()
+        result=self.run_acquisition()
+        self.assertEqual(result['status'],'RECORDED',result)
+        self.assertEqual(len(self.calls),2);self.assertEqual(self.reserved(),2)
+        self.assertEqual(len(list(self.private.glob('forecast-*'))),4)
+        for name,raw in old.items():self.assertEqual((self.private/name).read_bytes(),raw)
+
+    def test_same_kickoff_changed_participants_conflict(self):
+        from modelfc.acquisition_storage import Store
+        actual=Store.put
+        def interrupt_before_claim(store,name,record):
+            if name.startswith('session-'):raise KeyboardInterrupt
+            return actual(store,name,record)
+        with patch.object(Store,'put',new=interrupt_before_claim):
+            with self.assertRaises(KeyboardInterrupt):self.run_acquisition()
+        self.calendar['competitions']['E1'][0].update(away_team='Portsmouth FC',away_provider_id=2)
+        self.sync()
+        result=self.run_acquisition()
+        self.assertEqual(result['reason'],'FORECAST_CONFLICT')
+        self.assertFalse(self.calls);self.assertEqual(self.reserved(),0)
+
+    def test_original_0600_source_not_a_runtime_authorization_copy(self):
+        self.auth_path.chmod(0o600)
+        result=self.run_acquisition()
+        self.assertEqual(result['reason'],'AUTHORIZATION_FILE_REJECTED')
+        self.assertFalse(self.calls);self.assertEqual(self.reserved(),0)
+        self.assertFalse(list(self.private.iterdir()))
 
 
 class TransportTests(unittest.TestCase):
