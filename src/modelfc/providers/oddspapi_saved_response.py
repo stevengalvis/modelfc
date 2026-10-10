@@ -11,6 +11,7 @@ import math
 from pathlib import Path
 import re
 
+from modelfc.providers.oddspapi import OddsPapiError, validate_team_identity
 from modelfc.acquisition_planner import LEAGUES, Fixture, PlanningError, utc
 from modelfc.corner_markets import american_odds_terms
 from modelfc.oddspapi_market_inventory import (
@@ -118,6 +119,16 @@ def process_saved_response(payload: object, metadata: object, *, retrieved_at: d
         if any(not isinstance(raw.get(key), str) or not raw[key].strip()
                for key in ("participant1Name", "participant2Name")):
             _reject("INVALID_FIXTURE_IDENTITY")
+        try:
+            for side in (1, 2):
+                pid = raw.get(f"participant{side}Id")
+                if pid is not None and (type(pid) is not int or pid <= 0):
+                    _reject("INVALID_TEAM_IDENTITY")
+                validate_team_identity(raw[f"participant{side}Name"], pid, league.competition)
+            if raw.get("participant1Id") is not None and raw.get("participant1Id") == raw.get("participant2Id"):
+                _reject("INVALID_TEAM_IDENTITY")
+        except OddsPapiError:
+            _reject("INVALID_TEAM_IDENTITY")
         if type(raw.get("statusId")) is not int or type(raw.get("hasOdds")) is not bool:
             _reject()
         updated = raw.get("updatedAt")
@@ -170,10 +181,14 @@ def process_saved_response(payload: object, metadata: object, *, retrieved_at: d
                         "retrieved_at_utc": observed.isoformat()})
         result.append({"competition": league.competition, "tournament_id": league.tournament_id,
             "fixture_id": fixture.fixture_id, "home_team": raw["participant1Name"],
-            "away_team": raw["participant2Name"], "kickoff_utc": fixture.kickoff_utc.isoformat(),
+            "away_team": raw["participant2Name"],
+            "home_provider_team_id": raw.get("participant1Id"), "away_provider_team_id": raw.get("participant2Id"),
+            "kickoff_utc": fixture.kickoff_utc.isoformat(),
             "fixture_status_id": raw["statusId"], "has_odds": raw["hasOdds"],
             "fixture_updated_at": updated, "bookmaker_fixture_id": (book or {}).get("bookmakerFixtureId"),
             "inventory": inventory,
+            "present_markets": [{"market_id": mid, "family": dictionary[mid][1]}
+                                for mid in sorted((book or {}).get("markets", {})) if mid in dictionary],
             "metadata_diagnostics": diagnostics, "prices": prices})
     result.sort(key=lambda row: (row["kickoff_utc"], row["competition"], row["fixture_id"]))
     return {"schema_version": 1, "research_only": True, "saved_observation_only": True,

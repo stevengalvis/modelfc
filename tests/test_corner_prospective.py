@@ -655,7 +655,7 @@ class PilotTests(unittest.TestCase):
         self.assertEqual(self.control()["discovery"]["queries"], 2)
 
     def test_fixture_unknown_team_review_continue(self):
-        self.fixtures = [dict(self.fixtures[0], fixtureId="bad", participant1Name="Unknown"), self.fixtures[0]]
+        self.fixtures = [dict(self.fixtures[0], fixtureId="bad", participant1Name="Unknown", participant1Id=1000001), self.fixtures[0]]
         result = self.run_pilot()
         self.assertEqual(result["review_required"], 1)
         self.assertEqual(result["captures_created"], 1)

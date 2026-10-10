@@ -237,11 +237,13 @@ class OddsPapiTests(unittest.TestCase):
         del price["priceAmerican"]
         self.assertEqual(len(self.normalize().selections), 33)
 
-    def test_aliases_and_exact_identity_first(self):
-        names = {"Wolves", "West Brom", "Norwich", "Bolton"}
+    def test_aliases_exact_identity_and_ambiguous_history(self):
+        names = set(provider.TEAM_ALIASES.values())
         for source, target in provider.TEAM_ALIASES.items():
             self.assertEqual(provider.normalize_team(source, names), target)
-            self.assertEqual(provider.normalize_team(source, names | {source}), source)
+            self.assertEqual(provider.normalize_team(source, {source}), source)
+            with self.assertRaisesRegex(provider.OddsPapiError, "Ambiguous"):
+                provider.normalize_team(source, names | {source})
 
     def test_no_fuzzy_team_matching(self):
         for name in ("Wolverhampton", "wolves", "Unknown"):
