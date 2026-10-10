@@ -96,6 +96,9 @@ def _verified_e1_aliases(identities):
 
 
 TEAM_ALIASES = MappingProxyType(_verified_e1_aliases(E1_VERIFIED_TEAM_IDENTITIES))
+E1_TEAMS_BY_ID = MappingProxyType({pid: (source, canonical) for pid, source, canonical in E1_VERIFIED_TEAM_IDENTITIES})
+E1_TEAM_IDS_BY_NAME = MappingProxyType({name: pid for pid, source, canonical in E1_VERIFIED_TEAM_IDENTITIES
+                                      for name in (source, canonical)})
 
 
 @dataclass(frozen=True)
@@ -182,6 +185,20 @@ def _selection_american(price):
         return decimal_to_american(price.get("price"))
 
 
+def validate_team_identity(name, provider_team_id, competition="E1"):
+    """Reject contradictions to verified E1 IDs; unknown teams still need exact history."""
+    if competition != "E1":
+        return
+    expected = E1_TEAM_IDS_BY_NAME.get(name)
+    # Legacy unregistered names may omit an ID; verified E1 names may not.
+    if provider_team_id is None and expected is None:
+        return
+    if (type(provider_team_id) is not int or provider_team_id <= 0
+            or expected is not None and provider_team_id != expected
+            or provider_team_id in E1_TEAMS_BY_ID and name not in E1_TEAMS_BY_ID[provider_team_id]):
+        raise OddsPapiError("Provider team ID/name does not match verified identity")
+
+
 def normalize_team(name, historical_names, competition="E1"):
     config = COMPETITIONS[competition]
     names = set(historical_names)
@@ -211,6 +228,8 @@ def validate_fixture(fixture, now, competition="E1"):
     if (fixture["participant1Id"] == fixture["participant2Id"]
             or fixture["participant1Name"] == fixture["participant2Name"]):
         raise OddsPapiError("Ambiguous home/away participant identity")
+    for side in (1, 2):
+        validate_team_identity(fixture[f"participant{side}Name"], fixture[f"participant{side}Id"], competition)
     kickoff = _timestamp(fixture.get("startTime"))
     if type(fixture.get("statusId")) is not int or fixture["statusId"] != 0 or kickoff <= now:
         raise OddsPapiError("Fixture is not upcoming pre-match; live/historical odds are unsupported")

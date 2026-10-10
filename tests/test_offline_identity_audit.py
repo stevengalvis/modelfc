@@ -11,14 +11,16 @@ from unittest.mock import patch
 
 from modelfc.offline_identity_audit import audit_identities, main, IdentityAuditError
 from modelfc.offline_forecasts import KnownFixture, prepare_forecast, consume_forecast
-from modelfc.providers.oddspapi import normalize_team, OddsPapiError
+from modelfc.providers.oddspapi import normalize_team, OddsPapiError, E1_TEAM_IDS_BY_NAME
 from tests.test_shared_odds import sources, snapshot, known
 from tests.test_oddspapi_saved_response import saved_fixture
 from tests.oddspapi_inventory_fixtures import NOW
 
 
-def fixture(home='Home', away='Away', hid=1, aid=2, fid='fixture-1', tid=18):
+def fixture(home='Home', away='Away', hid=None, aid=None, fid='fixture-1', tid=18):
     row = saved_fixture(tid, fid)
+    hid = E1_TEAM_IDS_BY_NAME.get(home, 1000001) if hid is None else hid
+    aid = E1_TEAM_IDS_BY_NAME.get(away, 1000002) if aid is None else aid
     row.update(participant1Name=home, participant2Name=away, participant1Id=hid,
                participant2Id=aid, startTime=(NOW+timedelta(hours=24)).isoformat())
     return row
@@ -38,7 +40,7 @@ def audit(rows=None, data=None):
 class OfflineIdentityAuditTests(TestCase):
     def test_verified_aliases_join_unknown_identities_still_fail_closed(self):
         report = audit([fixture('West Ham United', 'Queens Park Rangers'),
-                        fixture('West Ham United', 'Unknown', 1, 3, 'other')],
+                        fixture('West Ham United', 'Unknown', 37, 1000003, 'other')],
                        history('West Ham', 'QPR'))
         self.assertEqual(len(report['identities']), 3)
         self.assertEqual(len(report['unmatched_identities']), 1)
@@ -54,14 +56,14 @@ class OfflineIdentityAuditTests(TestCase):
                                     ('Norwich City', 'Norwich'), ('Bolton Wanderers', 'Bolton')):
             report = audit([fixture(provider)], history(canonical))
             self.assertEqual(report['unmatched_identities'], [])
-            identity = next(i for i in report['identities'] if i['provider_team_id'] == 1)
+            identity = next(i for i in report['identities'] if i['provider_team_id'] == E1_TEAM_IDS_BY_NAME[provider])
             self.assertEqual(identity['historical_name'], canonical)
             self.assertEqual(identity['competition'], 'E1')
             self.assertEqual(report['eligible_fixtures'][0]['status'], 'COUNT_GATES_SATISFIED')
 
     def test_ambiguous_provider_id_or_multiple_ids_for_canonical_rejected(self):
-        for rows in ([fixture(), fixture('Unknown', 'Away', 1, 2, 'other')],
-                     [fixture(), fixture(hid=3, fid='other')]):
+        for rows in ([fixture(), fixture('Unknown', 'Away', 1000001, 1000002, 'other')],
+                     [fixture(), fixture(hid=1000003, fid='other')]):
             report = audit(rows)
             self.assertIn('AMBIGUOUS_PROVIDER_IDENTITY', {i['status'] for i in report['unmatched_identities']})
             self.assertTrue(all('AMBIGUOUS_PROVIDER_IDENTITY' in f['failures'] for f in report['eligible_fixtures']))
@@ -148,7 +150,7 @@ class OfflineIdentityAuditTests(TestCase):
         self.assertEqual(len(report['eligible_fixtures']), 1)
         with self.assertRaises(IdentityAuditError): audit([fixture(tid=325)])
         for key, value in (('participant1Id', True), ('participant1Id', 0),
-                           ('participant1Id', 2), ('tournamentSlug', 'wrong'),
+                           ('participant1Id', 1000002), ('tournamentSlug', 'wrong'),
                            ('categorySlug', 'brazil'), ('startTime', '2026-10-09T12:00:00')):
             row = fixture(); row[key] = value
             with self.assertRaisesRegex(IdentityAuditError, '^IDENTITY_AUDIT_REJECTED$'): audit([row])

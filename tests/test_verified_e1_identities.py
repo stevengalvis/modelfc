@@ -114,3 +114,36 @@ class VerifiedE1IdentityTests(TestCase):
             p = prepare_forecast(unsupported,(),frozen_at=NOW,cutoff=NOW.date())
             self.assertEqual(p.status,'UNSUPPORTED_MODEL')
             self.assertIsNone(p.corner); self.assertIsNone(p.btts)
+
+    def test_conflicting_missing_unknown_provider_id_pairs_reject_all_consumers(self):
+        from dataclasses import replace
+        from modelfc.providers.oddspapi import validate_team_identity
+        from modelfc.providers.oddspapi_saved_response import ReplayError
+        from tests.test_offline_identity_audit import audit
+        for _, source, canonical, _ in VERIFIED_IDENTITIES:
+            pid = next(i for i,s,c in E1_VERIFIED_TEAM_IDENTITIES if s == source)
+            validate_team_identity(source,pid,'E1')
+            validate_team_identity(canonical,pid,'E1')
+            for wrong in (None,9999999):
+                with self.assertRaises(OddsPapiError): validate_team_identity(source,wrong,'E1')
+        row = fixture('West Ham United','Queens Park Rangers',37,1)
+        snap = snapshot([row]); f = snap.fixtures[0]
+        self.assertEqual((f.home_provider_team_id,f.away_provider_team_id),(37,1))
+        with self.assertRaises(OddsPapiError): replace(f,home_provider_team_id=1)
+        for name, bad_id in (('West Ham United',1),('Queens Park Rangers',37),('Unknown',37)):
+            bad = row.copy(); bad['participant1Name']=name; bad['participant1Id']=bad_id
+            # Maintain distinct participant IDs so the mismatch test is independent.
+            bad['participant2Id']=2; bad['participant2Name']='Portsmouth FC'
+            with patch('socket.socket',side_effect=AssertionError('network')), \
+                 patch('modelfc.ledger_storage.write_new_record',side_effect=AssertionError('write')):
+                with self.assertRaisesRegex(ReplayError,'INVALID_TEAM_IDENTITY'): snapshot([bad])
+                raw=bad|{'categorySlug':'england','tournamentSlug':'championship'}
+                with self.assertRaises(ValueError):
+                    normalize_btts(raw,metadata(),raw,competition='E1',historical_names={'West Ham','QPR','Portsmouth'},
+                                   retrieved_at=NOW.isoformat(),as_of=NOW)
+                report=audit([bad],history('West Ham','Portsmouth'))
+                self.assertEqual(report['eligible_fixtures'][0]['status'],'REVIEW')
+                self.assertIn('PROVIDER_IDENTITY_MISMATCH',{i['status'] for i in report['unmatched_identities']})
+        for key in ('participant1Id','participant2Id'):
+            bad=row.copy(); del bad[key]
+            with self.assertRaisesRegex(ReplayError,'INVALID_TEAM_IDENTITY'): snapshot([bad])

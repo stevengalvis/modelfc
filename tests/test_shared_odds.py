@@ -106,7 +106,7 @@ class SharedOddsTests(TestCase):
             snap=snapshot([row],definitions)
             obs=btts_observation(snap,snap.fixtures[0],historical_names={'Home','Away'})
             self.assertEqual({s.side for s in obs.selections},{'YES','NO'})
-            raw=row|{'participant1Id':1,'participant2Id':2,'categorySlug':'england','tournamentSlug':'championship'}
+            raw=row|{'participant1Id':1000001,'participant2Id':1000002,'categorySlug':'england','tournamentSlug':'championship'}
             normal=normalize_btts(raw,definitions,raw,competition='E1',historical_names={'Home','Away'},retrieved_at=NOW.isoformat(),as_of=NOW)
             self.assertEqual(normal.selections[0].decimal_odds,obs.selections[0].decimal_odds)
             definitions[4]['period']=None
@@ -187,7 +187,7 @@ class SharedOddsTests(TestCase):
     def test_standalone_btts_104_rejects_ambiguous_or_malformed_mappings(self):
         definitions=metadata();definitions[4].update(marketType='bothteamsscore',marketId=104)
         row=saved_fixture();row['bookmakerOdds']['fanduel']['markets']={'104':market(104)}
-        row.update(participant1Id=1,participant2Id=2,categorySlug='england',tournamentSlug='championship')
+        row.update(participant1Id=1000001,participant2Id=1000002,categorySlug='england',tournamentSlug='championship')
         for variant in ('malformed','ambiguous'):
             bad=json.loads(json.dumps(definitions))
             if variant=='malformed':bad[4]['outcomes'][1]['outcomeName']='Maybe'
@@ -198,7 +198,7 @@ class SharedOddsTests(TestCase):
 
     def test_corner_normalization_parity_with_production(self):
         from modelfc.providers.oddspapi import normalize_odds
-        row=saved_fixture();row.update(participant1Id=1,participant2Id=2,categorySlug='england',tournamentSlug='championship')
+        row=saved_fixture();row.update(participant1Id=1000001,participant2Id=1000002,categorySlug='england',tournamentSlug='championship')
         snap=snapshot([row])
         production=normalize_odds(row,metadata(),row,retrieved_at=NOW.isoformat(),now=NOW,competition='E1')
         self.assertEqual(corner_selections(snap,snap.fixtures[0]),production.selections)
@@ -258,7 +258,7 @@ class SharedOddsTests(TestCase):
             result=consume_forecast(prepared,snap,snap.fixtures[0])
             self.assertEqual(result.btts_status,'REVIEW');self.assertEqual(result.btts,())
             self.assertEqual(result.corner_status,'PASS');self.assertEqual(len(result.corner),4)
-            raw=row|{'participant1Id':1,'participant2Id':2,'categorySlug':'england','tournamentSlug':'championship'}
+            raw=row|{'participant1Id':1000001,'participant2Id':1000002,'categorySlug':'england','tournamentSlug':'championship'}
             with self.assertRaises(ValueError):normalize_btts(raw,definitions,raw,competition='E1',historical_names={'Home','Away'},retrieved_at=NOW.isoformat(),as_of=NOW)
 
     def test_zero_quote_unmapped_btts_is_review_without_poisoning_corners(self):

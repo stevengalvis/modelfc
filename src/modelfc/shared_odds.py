@@ -10,7 +10,7 @@ from modelfc.btts_market_data import BttsFixture, BttsObservation, BttsSelection
 from modelfc.btts_research import digest
 from modelfc.corner_analysis import CornerMarketRequest
 from modelfc.corner_market_data import MarketSelection
-from modelfc.providers.oddspapi import _selection_american, normalize_team
+from modelfc.providers.oddspapi import _selection_american, normalize_team, validate_team_identity
 from modelfc.providers.oddspapi_saved_response import (
     MAX_RESPONSE_BYTES, ReplayError, _json, process_saved_response, replay_files,
 )
@@ -54,6 +54,14 @@ class SnapshotFixture:
     coverage_json: str
     diagnostics_json: str
     provenance_json: str
+    home_provider_team_id: int | None = None
+    away_provider_team_id: int | None = None
+
+    def __post_init__(self):
+        validate_team_identity(self.home_team, self.home_provider_team_id, self.identity.competition)
+        validate_team_identity(self.away_team, self.away_provider_team_id, self.identity.competition)
+        if self.home_provider_team_id is not None and self.home_provider_team_id == self.away_provider_team_id:
+            raise ValueError("AMBIGUOUS_PROVIDER_TEAM_IDENTITY")
 
 
 @dataclass(frozen=True)
@@ -105,11 +113,14 @@ def _snapshot(normalized, payload_sha256, metadata_sha256):
             row["fixture_id"], datetime.fromisoformat(row["kickoff_utc"])), row["home_team"], row["away_team"],
             prices, tuple(SnapshotMarket(**m) for m in row["present_markets"]),
             _canonical(row["inventory"]), _canonical(row["metadata_diagnostics"]),
-            _canonical({k: v for k, v in row.items() if k not in {"prices", "present_markets", "inventory", "metadata_diagnostics"}})))
+            _canonical({k: v for k, v in row.items() if k not in {"prices", "present_markets", "inventory", "metadata_diagnostics"}}),
+            home_provider_team_id=row.get("home_provider_team_id"), away_provider_team_id=row.get("away_provider_team_id")))
     return OddsBatchSnapshot("oddspapi", "fanduel", observed, payload_sha256, metadata_sha256, tuple(fixtures))
 
 
 def _names(fixture, historical_names):
+    validate_team_identity(fixture.home_team, fixture.home_provider_team_id, fixture.identity.competition)
+    validate_team_identity(fixture.away_team, fixture.away_provider_team_id, fixture.identity.competition)
     return (normalize_team(fixture.home_team, historical_names, fixture.identity.competition),
             normalize_team(fixture.away_team, historical_names, fixture.identity.competition))
 

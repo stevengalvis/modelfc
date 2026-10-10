@@ -19,7 +19,7 @@ from modelfc.corner_data import parse_data_config
 from modelfc.corner_forecasts import predict_corner_fixture
 from modelfc.matches import Venue
 from modelfc.providers.football_data import _read_corner_observations
-from modelfc.providers.oddspapi import COMPETITIONS, OddsPapiError, normalize_team
+from modelfc.providers.oddspapi import COMPETITIONS, OddsPapiError, normalize_team, validate_team_identity
 from modelfc.providers.oddspapi_saved_response import MAX_RESPONSE_BYTES, _json
 from modelfc.oddspapi_market_inventory import MAX_FIXTURES, _read_regular
 
@@ -39,11 +39,15 @@ def _text(value):
     return value
 
 
-def _join(name, names, competition):
+def _join(name, names, competition, provider_team_id):
     # Export ambiguities, do not silently choose exact identity over a colliding alias.
     config = COMPETITIONS.get(competition)
     if config is None:
         return None, "UNSUPPORTED_MODEL"
+    try:
+        validate_team_identity(name, provider_team_id, competition)
+    except OddsPapiError:
+        return None, "PROVIDER_IDENTITY_MISMATCH"
     alias = dict(config.aliases).get(name)
     if name in names and alias in names and alias != name:
         return None, "AMBIGUOUS_HISTORY_IDENTITY"
@@ -118,7 +122,7 @@ def _audit_identities(payload: bytes, sources: tuple[tuple[str, bytes], ...], *,
             _reject()
         joined = []
         for pid, name in zip(team_ids, team_names):
-            canonical, status = _join(name, names, "E1")
+            canonical, status = _join(name, names, "E1", pid)
             identities.setdefault(pid, {})[name] = (canonical, status)
             joined.append(canonical)
         known.append((identity, team_ids, team_names, joined, fixture["statusId"]))

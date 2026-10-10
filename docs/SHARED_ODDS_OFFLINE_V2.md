@@ -150,6 +150,7 @@ new mapping or prove a prospective freeze; do not use its output as a forecast.
 | Diagnostic | Interpretation / required verification |
 | --- | --- |
 | `UNVERIFIED_IDENTITY` / `IDENTITY_UNVERIFIED` | No exact or existing verified alias join. Verify provider ID, E1 context and exact CSV name independently before adding an alias. |
+| `PROVIDER_IDENTITY_MISMATCH` | Supplied ID/name contradicts the verified E1 registry. The diagnostic marks REVIEW; replay/consumers reject the pair. |
 | `AMBIGUOUS_HISTORY_IDENTITY` / `AMBIGUOUS_PROVIDER_IDENTITY` | Alias/exact-name collision, inconsistent names for one ID, or multiple IDs for one canonical team. Resolve evidence manually; no automatic choice. |
 | `MISSING_PRE_CUTOFF_HISTORICAL_RECORDS` | Name exists in supplied history but has no eligible earlier result. This does not prove promotion. |
 | `INSUFFICIENT_LEAGUE_OBSERVATIONS` | Fewer than the existing default 100 team-observations before cutoff. |
@@ -191,8 +192,10 @@ Both consumers already use the same competition-scoped resolver; no fuzzy or
 cross-league alias lookup, snapshot redesign or fixture-resolution API change is
 introduced. If an alias and its canonical target both appear as distinct
 historical identities, resolution rejects the ambiguous join. Unknown names
-remain rejected. IDs are the checked-in mapping's verification provenance;
-the existing fixture ID validation contract is unchanged.
+remain rejected. Provider IDs are retained as additive identity fields in the normalized replay
+and immutable shared fixture. A single E1 ID/name validator checks them before
+normalization, audit joins and consumption; known names with missing or wrong IDs
+and known IDs with different names reject. The fixture-resolution API is unchanged.
 
 The report classifies the three planner-eligible corner failures as **insufficient
 venue-specific E1 observations**, even after correct identity resolution:

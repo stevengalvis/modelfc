@@ -18,7 +18,7 @@ from modelfc.ledger_storage import existing_read_lock
 from modelfc.matches import UpcomingFixture
 from modelfc.oddspapi_market_inventory import _read_regular
 from modelfc.providers.football_data import _read_corner_observations
-from modelfc.shared_odds import OddsBatchSnapshot, SnapshotFixture, btts_observation, corner_selections
+from modelfc.shared_odds import OddsBatchSnapshot, SnapshotFixture, btts_observation, corner_selections, _names
 
 
 @dataclass(frozen=True)
@@ -148,10 +148,8 @@ def consume_forecast(forecast: PreparedForecast, snapshot: OddsBatchSnapshot,
             or fixture not in snapshot.fixtures
             or not forecast.frozen_at < snapshot.retrieved_at < fixture.identity.kickoff_utc):
         raise ValueError("FORECAST_OBSERVATION_BOUNDARY_REJECTED")
-    from modelfc.providers.oddspapi import normalize_team
     names = {forecast.fixture.home_team, forecast.fixture.away_team}
-    if (normalize_team(fixture.home_team, names, fixture.identity.competition) != forecast.fixture.home_team
-            or normalize_team(fixture.away_team, names, fixture.identity.competition) != forecast.fixture.away_team):
+    if _names(fixture, names) != (forecast.fixture.home_team, forecast.fixture.away_team):
         raise ValueError("FORECAST_FIXTURE_MISMATCH")
     # Each model consumes independently. Fixed review codes preserve failure visibility
     # without exception text or losing the other consumer's valid output.
