@@ -1,0 +1,45 @@
+name: Production deployment status
+on:
+  workflow_run:
+    workflows: [Tests]
+    branches: [main]
+    types: [completed]
+permissions: {}
+jobs:
+  report:
+    if: >-
+      github.repository == 'stevengalvis/modelfc' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.head_repository.full_name == 'stevengalvis/modelfc'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
+      issues: write
+    concurrency:
+      group: modelfc-deployment-status-reporting
+      cancel-in-progress: false
+    steps:
+      - name: Checkout trusted default-branch event commit
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          repository: stevengalvis/modelfc
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Download optional sanitized report from exact run attempt
+        continue-on-error: true
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: deployment-report-${{ github.event.workflow_run.run_attempt }}
+          path: ${{ runner.temp }}/deployment-status-artifact
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+      - name: Report deployment outcome without changing deployment result
+        if: always()
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          DEPLOYMENT_REPORT_FILE: ${{ runner.temp }}/deployment-status-artifact/modelfc-deployment-report.json
+        run: python3 -I ops/github/deployment_status.py

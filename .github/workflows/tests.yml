@@ -141,6 +141,8 @@ jobs:
             printf '%s\n' '{"status":"FAIL","reason":"SSH_TRANSPORT_FAILED"}'
             exit 1
           fi
+          # Best-effort copy of already sanitized output, preserving Python's exit code.
+          {
           python3 - "$report_file" "$EXPECTED_SHA" <<'PY'
           import json
           import sys
@@ -194,3 +196,14 @@ jobs:
               print('{"status":"FAIL","reason":"INVALID_DEPLOYMENT_REPORT"}')
               sys.exit(1)
           PY
+          } | { tee "$RUNNER_TEMP/modelfc-deployment-report.json" 2>/dev/null || true; }
+
+      - name: Publish sanitized deployment report
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: deployment-report-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/modelfc-deployment-report.json
+          if-no-files-found: ignore
+          retention-days: 7

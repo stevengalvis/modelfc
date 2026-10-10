@@ -12,6 +12,71 @@ a fresh `.venv` there, and runs offline tests. Only a passing release is pointed
 to by `/srv/modelfc/current`. The incoming release never supplies the controller
 or the systemd unit. This PR only provides source; it does not install anything.
 
+## Automatic merged-PR deployment report
+
+After each `Tests` workflow completes for a same-repository push to `main`,
+`Production deployment status` runs from trusted default-branch code, including
+when tests fail, deployment times out or the original run is cancelled. It never
+runs for ordinary PR checks, connects to the VPS, or changes deployment gating,
+promotion, rollback, SSH arguments or exit codes. It does not trigger Trusted
+OFFLINE or LIVE validation.
+
+The original deployment step best-effort copies its already sanitized JSON
+output to a seven-day artifact named by the workflow attempt. Failure to copy or
+upload it cannot change the deployment result. The reporter reads only that exact
+run/attempt artifact as bounded, strict JSON data in a separate temporary
+directory, never as executable code. Missing or rejected artifacts cannot establish
+success. It independently reads the original run and attempt-specific job results
+from GitHub; raw logs, stderr and credential material are never fetched or posted.
+
+The commit-to-PR API resolves the attempted push SHA. A comment is permitted only
+on one closed, merged PR whose exact merge commit matches that SHA and whose base
+is this repository's `main`. Direct pushes without that association produce no
+PR comment. An ambiguous association fails closed. No PR number comes from an
+artifact, commit message or untrusted text.
+
+One `github-actions[bot]` comment per PR uses the stable
+`zeno-production-deployment:v1` marker and records the attempted SHA, exact run and
+attempt link, backend/frontend outcomes, stage and deployed SHA evidence. Later
+attempts update it; human comments are never edited. Serialized reporting and
+run/attempt stamps prevent late older completions from overwriting newer results.
+
+Reporting policy:
+
+| Evidence | Comment result | Deployed SHA |
+| --- | --- | --- |
+| Successful original workflow/jobs plus strict controller `PASS / OK` | SUCCESS | Exact requested SHA, verified at deployment completion |
+| Backend or frontend failure | FAILED, BACKEND_TESTS or FRONTEND_TESTS | UNVERIFIED |
+| Cancellation | FAILED, CANCELLED | UNVERIFIED |
+| Host/transport failure or timeout | FAILED, VPS_ACTIVATION or fixed controller reason | UNVERIFIED |
+| Missing/malformed report or incomplete CI evidence | FAILED, fixed unverified stage | UNVERIFIED |
+| Controller SUPERSEDED | SUPERSEDED | UNVERIFIED |
+| Controller ALREADY_CURRENT | UNVERIFIED, ALREADY_CURRENT_NOT_REVERIFIED | UNVERIFIED |
+
+Only normal `PASS / OK` establishes the protected marker and physical release:
+the installed controller creates and verifies the read-only SHA marker, validates
+source/dependencies/tests and verifies the direct active release after promotion.
+`ALREADY_CURRENT` checks physical HEAD but returns before rechecking that marker;
+`SUPERSEDED` and failure reports can retain a SHA observed before later work.
+Those values are deliberately not advertised as verified final production state.
+No new SSH verification command is added. Even a successful comment is a record
+of that deployment's verification, not a live production health probe.
+
+The reporter uses only `GITHUB_TOKEN`: `contents: read` for trusted checkout,
+`actions: read` for the original run/jobs/artifact, `pull-requests: read` for merge
+association, and `issues: write` for comments. The deploy job keeps its existing
+read-only permissions. No PAT, secret, host installation or notification service
+is required. GitHub failures emit only a fixed sanitized warning; reporting is
+not a prerequisite for deployment and cannot change the original run's result.
+A missing report, failed reporting workflow, or cancelled reporter may require
+checking the linked Actions run. This does not infer a previous active SHA.
+
+References: GitHub's [workflow_run completion semantics](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#workflow_run),
+[commit-to-PR association](https://docs.github.com/en/rest/commits/commits#list-pull-requests-associated-with-a-commit),
+and [comment permissions](https://docs.github.com/en/rest/issues/comments#create-an-issue-comment).
+After merge the workflow becomes eligible automatically; first real deployment
+reporting acceptance is still required. No deployment is executed by this PR.
+
 ## One-time VPS installation after review and merge
 
 1. Inspect actual VPS ownership and permissions. Create `modelfc-deploy` with no
