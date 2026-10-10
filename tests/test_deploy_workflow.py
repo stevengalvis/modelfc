@@ -34,7 +34,8 @@ class DeployWorkflowTest(unittest.TestCase):
         cls.fingerprint = subprocess.run(["ssh-keygen", "-lf", str(key), "-E", "sha256"],
                                          capture_output=True, check=True).stdout.decode().split()[1]
         cls.workflow = (ROOT / ".github/workflows/tests.yml").read_text()
-        cls.script = textwrap.dedent(cls.workflow.split("        shell: bash\n        run: |\n", 1)[1])
+        cls.script = textwrap.dedent(cls.workflow.split("        shell: bash\n        run: |\n", 1)[1]
+                                    .split("\n      - name:", 1)[0])
 
     def report(self, reason="ALREADY_CURRENT"):
         value = dict(status="PASS", requested_sha=SHA, previous_sha=SHA, final_sha=SHA,
@@ -49,7 +50,8 @@ class DeployWorkflowTest(unittest.TestCase):
                          promotion_status="SUPERSEDED")
         return value
 
-    def exercise(self, encoded, *, accepted=False, report=None, ssh_status=0, fail_mktemp=0):
+    def exercise(self, encoded, *, accepted=False, report=None, ssh_status=0, fail_mktemp=0,
+                 fail_report_copy=False):
         with tempfile.TemporaryDirectory(prefix="deploy-workflow-run-") as directory:
             root = Path(directory)
             binary = root / "bin"
@@ -93,7 +95,11 @@ class DeployWorkflowTest(unittest.TestCase):
             script = root / "step.sh"
             script.write_text(source)
             event_file = root / "ssh-events.jsonl"
+            report_copy = root / "modelfc-deployment-report.json"
+            if fail_report_copy:
+                report_copy.mkdir()  # Copy failure must never change the deployment result.
             env = {"PATH": str(binary) + ":/usr/bin:/bin", "TMPDIR": str(files),
+                   "RUNNER_TEMP": str(root),
                    "DEPLOY_KEY_BASE64": encoded, "DEPLOY_HOST": "192.0.2.1",
                    "DEPLOY_HOST_KEY": "fixture-host-pin", "EXPECTED_SHA": SHA,
                    "TEST_KEY_DIGEST": hashlib.sha256(self.private).hexdigest(),
@@ -111,6 +117,7 @@ class DeployWorkflowTest(unittest.TestCase):
                 self.assertFalse(payload in output, "sensitive payload leaked")
             self.assertNotIn("PRIVATE KEY", output)
             self.assertNotIn("Traceback", output)
+            self.report_copy = json.loads(report_copy.read_text()) if report_copy.is_file() else None
             for event in events:
                 self.assertEqual(event["mode"], 0o600)
                 self.assertTrue(event["key_matches"])
@@ -203,6 +210,21 @@ class DeployWorkflowTest(unittest.TestCase):
         validator = textwrap.dedent(self.workflow.split("<<'PY'\n", 1)[1].split("\n          PY", 1)[0])
         self.assertEqual(hashlib.sha256(validator.encode()).hexdigest(),
                          "fadcf98154e70863f4a847ed0f798d9bbfa9392c9de4924bee5cc2310de46393")
+
+    def test_best_effort_report_copy_preserves_all_exit_codes_and_output(self):
+        failure = {**self.report("OK"), "status": "FAIL", "reason": "TESTS_FAILED",
+                   "tests_status": "FAIL", "promotion_status": "NOT_ATTEMPTED"}
+        for value, expected in ((self.report("OK"), 0), (self.report(), 0),
+                                (self.report("SUPERSEDED"), 0), (failure, 1)):
+            for copy_fails in (False, True):
+                with self.subTest(status=value["status"], reason=value["reason"], copy_fails=copy_fails):
+                    result, events = self.exercise(self.encoded, accepted=True, report=value,
+                                                   fail_report_copy=copy_fails)
+                    self.assertEqual(result.returncode, expected)
+                    self.assertEqual(json.loads(result.stdout), value)
+                    self.assertEqual(result.stderr, "")
+                    self.assertEqual(len(events), 1)
+                    self.assertEqual(self.report_copy, None if copy_fails else value)
 
     def test_deploy_requires_backend_and_frontend_on_main_push_only(self):
         deploy_header = self.workflow.split("\n  deploy:\n", 1)[1].split("    steps:\n", 1)[0]
