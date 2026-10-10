@@ -23,9 +23,10 @@ from modelfc.providers.oddspapi_saved_response import _json
 from modelfc.providers.oddspapi_tournaments import (OddsPapiTournamentClient,
     TournamentRejected, TOURNAMENT_KIND, MAX_RESPONSE_BYTES)
 from modelfc.shared_odds import snapshot_from_bytes
+from modelfc.history_completeness import (parse_calendar, assess_freshness,
+    MAX_CALENDAR_BYTES, MAX_HISTORY_AGE)
 
 MAX_CALENDAR_AGE = timedelta(hours=6)
-MAX_HISTORY_AGE = timedelta(days=14)
 FORECAST_ADAPTER = TypeAdapter(PreparedForecast)
 
 
@@ -56,7 +57,7 @@ def _local_bytes(path, limit, *, private=False):
 
 def _authorization(path, as_of):
     value = _json(_local_bytes(path, 8192, private=True))
-    if not isinstance(value, dict) or set(value) != {
+    if not isinstance(value, dict) or set(value) - {"history_calendar_sha256"} != {
         "version", "experiment_id", "issued_at", "expires_at", "calendar_sha256",
         "metadata_sha256", "enabled_competitions", "max_requests",
         "quota_observed_at", "quota_remaining", "quota_floor", "state_dir", "private_dir"}:
@@ -73,6 +74,9 @@ def _authorization(path, as_of):
             or value["quota_remaining"]-1 < value["quota_floor"]
             or any(not isinstance(value[n], str) or not re.fullmatch(r"[0-9a-f]{64}", value[n])
                    for n in ("calendar_sha256", "metadata_sha256"))):
+        raise AcquisitionRejected("AUTHORIZATION_REJECTED")
+    if "history_calendar_sha256" in value and (not isinstance(value["history_calendar_sha256"], str)
+            or not re.fullmatch(r"[0-9a-f]{64}", value["history_calendar_sha256"])):
         raise AcquisitionRejected("AUTHORIZATION_REJECTED")
     enabled = value["enabled_competitions"]
     if (not isinstance(enabled, list) or not enabled or any(not isinstance(c, str) for c in enabled)
@@ -162,7 +166,7 @@ def _claimed(store):
     return result
 
 
-def _prepare(store, entry, sources, frozen):
+def _prepare(store, entry, sources, frozen, history_calendar=None):
     """Freeze each model independently, with participant identity outside model math."""
     records = []
     if entry.fixture.identity.competition != "E1": return records
@@ -180,10 +184,20 @@ def _prepare(store, entry, sources, frozen):
                     or old["forecast_id"] != prepared.forecast_id
                     or prepared.frozen_at > frozen
                     or prepared.cutoff > frozen.date()
-                    or not timedelta(0) < frozen.date() - (prepared.corner.latest_history_date if prepared.corner
-                        else prepared.btts.inputs.latest_history_date) <= MAX_HISTORY_AGE
                     or not timedelta(0) <= frozen.date()-prepared.cutoff <= timedelta(days=1)):
                 raise AcquisitionRejected("FORECAST_CONFLICT")
+            latest = (prepared.corner.latest_history_date if prepared.corner
+                      else prepared.btts.inputs.latest_history_date)
+            # Completeness must prove the exact bytes used by the frozen model.
+            if history_calendar is not None and tuple(
+                    (s.filename, s.sha256) for s in prepared.sources) != tuple(
+                    (name, fingerprint(raw)) for name, raw in sorted(sources)):
+                raise AcquisitionRejected("FORECAST_CONFLICT")
+            assessment = assess_freshness(sources, latest=latest, cutoff=prepared.cutoff,
+                                         as_of=frozen, calendar=history_calendar)
+            if history_calendar is not None:
+                store.put(_name("freshness", {"forecast_id": prepared.forecast_id,
+                          "as_of": frozen.isoformat(), "assessment": assessment}), assessment)
             records.append(prepared)
             continue
         try:
@@ -191,8 +205,8 @@ def _prepare(store, entry, sources, frozen):
                                          cutoff=frozen.date(), models=(model,))
             latest = (prepared.corner.latest_history_date if model == "corner"
                       else prepared.btts.inputs.latest_history_date)
-            if not timedelta(0) < frozen.date()-latest <= MAX_HISTORY_AGE:
-                raise ValueError("STALE_HISTORY")
+            assessment = assess_freshness(sources, latest=latest, cutoff=prepared.cutoff,
+                                         as_of=frozen, calendar=history_calendar)
         except (ValueError, KeyError, TypeError):
             # Explicit private review evidence, never a lowered eligibility gate.
             store.put(_name("review", {"fixture": entry.fixture.identity.fixture_id,
@@ -204,6 +218,9 @@ def _prepare(store, entry, sources, frozen):
                   "forecast_id": prepared.forecast_id, "home_provider_id": entry.home_provider_id,
                   "away_provider_id": entry.away_provider_id}
         store.put(key, record)
+        if history_calendar is not None:
+            store.put(_name("freshness", {"forecast_id": prepared.forecast_id,
+                      "as_of": frozen.isoformat(), "assessment": assessment}), assessment)
         # Re-read durable bytes before any billable authorization.
         durable = store.get(key)
         if durable != record: raise AcquisitionRejected("FORECAST_PERSISTENCE_REJECTED")
@@ -212,7 +229,7 @@ def _prepare(store, entry, sources, frozen):
 
 
 def run_once(*, state_dir, private_dir, calendar_path, metadata_path, data_config_path,
-             authorization_path=None, clock=now, history_loader=load_history_bytes,
+             authorization_path=None, history_calendar_path=None, clock=now, history_loader=load_history_bytes,
              client_type=OddsPapiTournamentClient):
     """One authorization permits at most one attempt. No caller-selected endpoint/price policy."""
     result = {"status": "DISABLED", "provider_requests": 0, "forecasts": 0, "snapshots": 0,
@@ -228,6 +245,14 @@ def run_once(*, state_dir, private_dir, calendar_path, metadata_path, data_confi
         metadata = _local_bytes(metadata_path, 8 * 1024 * 1024)
         if fingerprint(calendar_raw) != auth["calendar_sha256"] or fingerprint(metadata) != auth["metadata_sha256"]:
             raise AcquisitionRejected("INPUT_HASH_REJECTED")
+        history_calendar, history_calendar_raw = None, None
+        if (history_calendar_path is None) != ("history_calendar_sha256" not in auth):
+            raise AcquisitionRejected("HISTORY_CALENDAR_AUTHORIZATION_REJECTED")
+        if history_calendar_path is not None:
+            history_calendar_raw = _local_bytes(history_calendar_path, MAX_CALENDAR_BYTES)
+            if fingerprint(history_calendar_raw) != auth["history_calendar_sha256"]:
+                raise AcquisitionRejected("INPUT_HASH_REJECTED")
+            history_calendar = parse_calendar(history_calendar_raw, as_of=as_of)
         calendar, entries = _calendar(calendar_raw, as_of, auth["enabled_competitions"])
         # Validate dictionary before credential construction, claim or reservation.
         snapshot_from_bytes(b"[]", metadata, retrieved_at=as_of)
@@ -255,7 +280,11 @@ def run_once(*, state_dir, private_dir, calendar_path, metadata_path, data_confi
             for obligation in batch.obligations:
                 entry = entries[obligation.fixture.fixture_id]
                 sources = history_loader(data_config_path, "E1") if obligation.fixture.competition == "E1" else ()
-                prepared[obligation.fixture.fixture_id] = _prepare(store, entry, sources, utc(clock()))
+                if history_calendar is None:
+                    prepared[obligation.fixture.fixture_id] = _prepare(store, entry, sources, utc(clock()))
+                else:
+                    prepared[obligation.fixture.fixture_id] = _prepare(
+                        store, entry, sources, utc(clock()), history_calendar)
                 if obligation.fixture.competition == "E1" and not prepared[obligation.fixture.fixture_id]:
                     raise AcquisitionRejected("FORECAST_PREPARATION_REVIEW")
             result["forecasts"] = sum(map(len, prepared.values()))
@@ -263,6 +292,8 @@ def run_once(*, state_dir, private_dir, calendar_path, metadata_path, data_confi
             if _authorization(authorization_path, dispatch_time) != auth:
                 raise AcquisitionRejected("AUTHORIZATION_CHANGED")
             _calendar(calendar_raw, dispatch_time, auth["enabled_competitions"])
+            if history_calendar_raw is not None:
+                parse_calendar(history_calendar_raw, as_of=dispatch_time)
             fresh_plan = plan_acquisition(calendar, as_of=dispatch_time, completed=completed,
                                          leagues=configured_leagues(auth["enabled_competitions"]))
             if fresh_plan.batches != plan.batches or dispatch_time-as_of > MAX_CALENDAR_AGE:

@@ -39,7 +39,8 @@ and conflicting publication fails closed. Storage requires Linux O_TMPFILE suppo
 Corner and BTTS forecasts are prepared independently from coherent locked history,
 using the existing methods, versions and minimum-history gates. Only E1 has validated
 models. Other leagues produce market inventory only. Cutoff excludes same-date and
-future results. The latest prior result must be within 14 days. A failed corner gate
+future results. The latest prior result must be within 14 days unless the separately
+authorized independent E1 calendar proves completeness (see below). A failed corner gate
 can still leave BTTS available. If neither E1 model is available, the run stops for
 review before reservation. Forecasts preserve participant IDs, competition, kickoff,
 cutoff, source fingerprints and exact existing model outputs. They are read back from
@@ -128,3 +129,107 @@ Before any installation or acquisition, separately review and authorize:
 5. A separately authorized bounded request, only after forecast persistence, immutable
    claims, shared locks, failure accounting and consumer isolation are independently
    verified. Production-path replacement and evidence promotion require later review.
+
+## Calendar-aware E1 history freshness
+
+The age-only fallback is unchanged: without an authorized completeness calendar,
+prior results must be within 14 days. A break in play can now permit older E1
+history **only** after an independent, complete results calendar proves that every
+finished match before the forecast cutoff is installed. This never lowers the
+five-observation venue minimum, BTTS/corner cohort rules or model parameters.
+Other leagues still have no supported models. The existing production collector,
+refresh health checks and history files are unchanged.
+
+The upcoming OddsPapi acquisition calendar is not completion evidence. The optional
+proof uses a saved, independently reviewed **football-data.org v4 ELC full-season
+matches response**; it does not replace Football-Data.co.uk historical model inputs.
+The [official competition contract](https://docs.football-data.org/general/v4/competition.html)
+describes the season filter, fixture IDs, result counts and finished matches.
+[Match statuses](https://docs.football-data.org/general/v4/match.html) distinguish
+finished, scheduled, postponed and cancelled fixtures. No API client or calendar
+acquisition is added, and no source request is made by this integration.
+
+The bounded bundle (maximum 2,000,000 bytes) has exactly:
+
+- `version`: integer 1.
+- `source`: `football-data.org`.
+- `retrieved_at`: independently verified UTC retrieval timestamp, at most six hours old.
+- `team_bindings`: the 24 season participants, each with `source_team_id`, exact
+  `source_name` and exact canonical `history_name` from the shared E1 registry.
+- `payload`: the original response text, retained verbatim rather than reconstructed
+  market or result objects. Its UTF-8 bytes receive their own SHA-256.
+
+The reviewing operator must verify the original response's independent source,
+season, country/competition and all source team IDs/names against historical
+identities. These IDs are **not** OddsPapi IDs. No fuzzy aliases or global mappings
+are accepted. The bundle fingerprint protects reviewed bytes; a label, timestamp
+or hash by itself does not authenticate a feed. Do not manufacture a calendar,
+remove matches, invent mappings, or relabel an OddsPapi schedule to authorize a run.
+
+The parser accepts only the current July-boundary ELC regular season with no
+status/date/matchday filtering. It checks count/played consistency, unique fixture
+IDs, consistent competition IDs and the full ordered-pair matrix for all 24
+verified participants (552 fixtures). Truncated calendars cannot establish
+completeness even if their advertised count is self-consistent. Playoffs, unknown
+statuses, incomplete schedules and past unresolved scheduled/in-play fixtures fail
+closed. An explicit postponed/cancelled fixture requires no historical result;
+an installed result for that fixture is a contradiction. A scheduled kickoff
+alone never establishes completion. This proof is unavailable beyond the last
+regular-season fixture date; no playoff completeness is inferred.
+
+Finished fixture IDs join one-to-one through exact ordered canonical teams and
+**Europe/London match date** to the CSV's competition/date/home/away identity.
+Final scores must agree. Missing, extra, ambiguous or un-covered current-season
+results reject the proof. The existing completed-corner cohort is preserved;
+missing corners are never fabricated. Same-date and future results are excluded
+from both completeness comparison and frozen model inputs.
+
+### Offline preparation and acceptance
+
+Use an already available, authentic independent response and verified bindings.
+If neither exists, the override remains unavailable; this PR does not authorize
+fetching a new calendar. Offline, wrap the original UTF-8 response text in the
+bundle above, preserving the text exactly, and use:
+
+```python
+from datetime import datetime
+from modelfc.history_completeness import parse_calendar, verify_completeness
+from modelfc.offline_forecasts import load_history_bytes
+
+# Explicit acceptance time, not a forged present-day observation timestamp.
+as_of = datetime.fromisoformat("2026-10-09T12:00:00+00:00")
+proof = parse_calendar(bundle_bytes, as_of=as_of)
+assessment = verify_completeness(proof, load_history_bytes(config_path, "E1"),
+                                 cutoff=as_of.date(), as_of=as_of)
+```
+
+Operator-reviewed authorization may add the single optional
+`history_calendar_sha256` field, pinning the complete bundle. Only then may the
+future reviewed caller pass `history_calendar_path` to `run_once`. Supplying just
+a path or just a hash is rejected before credential construction/reservation.
+Existing descriptor-relative ownership, no-follow, single-link and read-stability
+checks apply; there is no new permission grant, launcher, timer or host installation.
+Invalid/stale supplied proof rejects execution even when result ages are recent.
+Omitting proof preserves the original age gate; omission cannot accept old history.
+
+Freshness evidence is atomically published in the **existing private acquisition
+store**, alongside each forecast, with rule version, cutoff, bundle/source hashes,
+matched completed fixture IDs and installed history fingerprints. Forecast model
+records and probabilities are unchanged. Reuse requires proof of the exact frozen
+history bytes; changed sources cannot silently certify an older forecast. Proof
+freshness is checked again immediately before the irrevocable claim/reservation.
+No history, production evidence, account controls or services are migrated.
+
+### October 9 acceptance remains conditional
+
+PR #124's authentic VPS report establishes history through September 20 and an
+age-gate rejection on October 9. It supplies **no independent completed-results
+calendar** establishing that the intervening period contains no missing matches.
+The unchanged upstream CSV is not independent completeness evidence. Authentic
+calendar evidence sufficient to unblock that replay has therefore **not yet been
+verified**. The full-season tests here are explicitly synthetic, not a claim about
+actual September/October results. A fresh, authentic, reviewed calendar captured
+for the replay time must pass the exact history join on the VPS; a later capture
+must not be backdated. If unavailable, stale or contradictory, acceptance remains
+blocked. Insufficient venue samples continue to reject corners independently of
+BTTS. No live acquisition is authorized by this document or by merging the PR.
