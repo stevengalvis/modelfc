@@ -14,6 +14,7 @@ MARKER = "<!-- zeno-production-deployment:v1"
 STAMP = re.compile(re.escape(MARKER) + r" run=(\d+) attempt=(\d+) sha=([0-9a-f]{40}) -->")
 MAX_REPORT = 4096
 MAX_API = 2 * 1024 * 1024
+MAX_ERROR = 16 * 1024
 REASONS = frozenset({"OK", "ALREADY_CURRENT", "SUPERSEDED", "INVALID_REQUEST",
     "DEPLOYMENT_BUSY", "STATE_BOUNDARY_FAILED", "SOURCE_INVALID", "FETCH_FAILED",
     "SHA_NOT_ON_MAIN", "ACTIVE_SHA_NOT_ON_MAIN", "DEPENDENCY_SYNC_FAILED", "TESTS_FAILED",
@@ -26,7 +27,8 @@ CONCLUSIONS = frozenset({"success", "failure", "cancelled", "skipped", "timed_ou
 STAGES = frozenset({"INPUT_VALIDATION", "EVENT_VALIDATION", "RUN_LOOKUP", "RUN_VALIDATION",
                    "PR_ASSOCIATION", "JOBS_LOOKUP", "JOBS_VALIDATION", "COMMENT_LOOKUP", "COMMENT_WRITE"})
 CAUSES = frozenset({"REJECTED", "API_ACCESS_DENIED", "API_NOT_FOUND", "API_RATE_LIMITED",
-                   "API_HTTP_FAILED", "API_RESPONSE_INVALID", "API_TRANSPORT_FAILED"})
+                   "API_HTTP_FAILED", "API_RESPONSE_INVALID", "API_TRANSPORT_FAILED",
+                   "API_VALIDATION_OR_SPAM", "API_INTEGRATION_ACCESS_DENIED"})
 NOTIFY_LOGIN = "stevengalvis"
 NOTIFY_ID = 16994883
 
@@ -35,19 +37,27 @@ class Rejected(Exception):
     pass
 
 
+def validated_http_status(value):
+    if value is not None and (type(value) is not int or not 100 <= value <= 599):
+        raise ValueError
+    return value
+
+
 class ApiFailure(Rejected):
-    def __init__(self, cause):
+    def __init__(self, cause, http_status=None):
         if cause not in CAUSES:
             raise ValueError
         self.cause = cause
+        self.http_status = validated_http_status(http_status)
         super().__init__(cause)
 
 
 class ReportingFailed(Rejected):
-    def __init__(self, stage, cause="REJECTED"):
+    def __init__(self, stage, cause="REJECTED", http_status=None):
         if stage not in STAGES or cause not in CAUSES:
             raise ValueError
         self.stage, self.cause = stage, cause
+        self.http_status = validated_http_status(http_status)
         super().__init__(stage)
 
 
@@ -57,7 +67,7 @@ def checked(stage, operation, *args, **kwargs):
     except ReportingFailed:
         raise
     except ApiFailure as error:
-        raise ReportingFailed(stage, error.cause) from None
+        raise ReportingFailed(stage, error.cause, error.http_status) from None
     except Exception:
         raise ReportingFailed(stage) from None
 
@@ -76,6 +86,28 @@ def strict_json(raw):
 class NoRedirect(HTTPRedirectHandler):
     def redirect_request(self, *args, **kwargs):
         return None
+
+
+def http_failure(error):
+    """Keep only a numeric status and fixed categories, never provider/API text."""
+    status = validated_http_status(error.code)
+    cause = {401: "API_ACCESS_DENIED", 404: "API_NOT_FOUND",
+             422: "API_VALIDATION_OR_SPAM", 429: "API_RATE_LIMITED"}.get(status, "API_HTTP_FAILED")
+    # An ambiguous 403 does not prove a permission failure. Exact public GitHub
+    # messages may refine it, but arbitrary message/error/header values never leave here.
+    if status == 403:
+        try:
+            raw = error.read(MAX_ERROR + 1)
+            value = strict_json(raw) if len(raw) <= MAX_ERROR else None
+            if type(value) is dict:
+                message = value.get("message")
+                if message == "Resource not accessible by integration":
+                    cause = "API_INTEGRATION_ACCESS_DENIED"
+                elif message == "You have exceeded a secondary rate limit. Please wait a few minutes before you try again.":
+                    cause = "API_RATE_LIMITED"
+        except Exception:
+            pass  # Diagnostic decoding cannot change the original HTTP failure.
+    return ApiFailure(cause, status)
 
 
 class GitHub:
@@ -97,10 +129,11 @@ class GitHub:
                     raise Rejected
                 return strict_json(raw)
         except HTTPError as error:
-            cause = {401: "API_ACCESS_DENIED",
-                     404: "API_NOT_FOUND", 429: "API_RATE_LIMITED"}.get(error.code, "API_HTTP_FAILED")
-            error.close()  # No response body, URL, headers or exception text is surfaced.
-            raise ApiFailure(cause) from None
+            try:
+                failure = http_failure(error)
+            finally:
+                error.close()
+            raise failure from None
         except (ValueError, Rejected):
             raise ApiFailure("API_RESPONSE_INVALID") from None
         except OSError:
@@ -339,7 +372,8 @@ def main():
                           os.environ["DEPLOYMENT_REPORT_FILE"])
         print("::notice::Deployment status reporting: " + outcome)
     except ReportingFailed as error:
-        print("::warning::Deployment status reporting failed: " + error.stage + "/" + error.cause +
+        status = "" if error.http_status is None else " HTTP_STATUS=" + str(error.http_status)
+        print("::warning::Deployment status reporting failed: " + error.stage + "/" + error.cause + status +
               "; original deployment result unchanged.")
         return 1
     except Exception:
