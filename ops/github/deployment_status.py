@@ -97,7 +97,7 @@ class GitHub:
                     raise Rejected
                 return strict_json(raw)
         except HTTPError as error:
-            cause = {401: "API_ACCESS_DENIED", 403: "API_ACCESS_DENIED",
+            cause = {401: "API_ACCESS_DENIED",
                      404: "API_NOT_FOUND", 429: "API_RATE_LIMITED"}.get(error.code, "API_HTTP_FAILED")
             error.close()  # No response body, URL, headers or exception text is surfaced.
             raise ApiFailure(cause) from None
@@ -259,17 +259,26 @@ def render(run, number, jobs, report):
     return body
 
 
-def publish(api, number, body, run_id, attempt, author=None):
+def comment_records(api, number):
     existing = []
-    for comment in checked("COMMENT_LOOKUP", lambda: list(api.pages("/issues/" + str(number) + "/comments"))):
+    for comment in api.pages("/issues/" + str(number) + "/comments"):
+        if type(comment) is not dict or type(comment.get("user", {})) is not dict:
+            raise ApiFailure("API_RESPONSE_INVALID")
         if (comment.get("user", {}).get("login") != "github-actions[bot]"
                 or comment.get("user", {}).get("type") != "Bot"):
             continue
-        match = STAMP.match(comment.get("body", ""))
+        if type(comment.get("body")) is not str:
+            raise ApiFailure("API_RESPONSE_INVALID")
+        match = STAMP.match(comment["body"])
         if match:
             if type(comment.get("id")) is not int or comment["id"] < 1:
-                raise Rejected
+                raise ApiFailure("API_RESPONSE_INVALID")
             existing.append((int(match[1]), int(match[2]), comment["id"], comment["body"]))
+    return existing
+
+
+def publish(api, number, body, run_id, attempt, author=None):
+    existing = checked("COMMENT_LOOKUP", comment_records, api, number)
     if existing:
         latest = max(existing)
         if latest[:2] > (run_id, attempt):

@@ -321,7 +321,7 @@ class DeploymentStatusTests(unittest.TestCase):
         class Opener:
             def open(inner, request, timeout):
                 self.assertEqual(request.get_header("Content-type"), "application/json")
-                raise HTTPError(SECRET, 403, SECRET, {}, io.BytesIO(SECRET.encode()))
+                raise HTTPError(SECRET, 401, SECRET, {}, io.BytesIO(SECRET.encode()))
         with patch.object(reporting, "build_opener", return_value=Opener()):
             with self.assertRaises(reporting.ApiFailure) as caught:
                 reporting.GitHub(SECRET).call("/issues/121/comments", {"body":"safe"})
@@ -330,6 +330,31 @@ class DeploymentStatusTests(unittest.TestCase):
         with self.assertRaises(reporting.ReportingFailed) as caught:
             reporting.checked("COMMENT_WRITE", lambda: (_ for _ in ()).throw(reporting.ApiFailure("API_ACCESS_DENIED")))
         self.assertEqual((caught.exception.stage,caught.exception.cause),("COMMENT_WRITE","API_ACCESS_DENIED"))
+
+    def test_ambiguous_403_is_not_reported_as_permission_failure(self):
+        class Opener:
+            def open(inner, request, timeout):
+                raise HTTPError(SECRET, 403, SECRET, {}, io.BytesIO(SECRET.encode()))
+        with patch.object(reporting, "build_opener", return_value=Opener()):
+            with self.assertRaises(reporting.ApiFailure) as caught:
+                reporting.GitHub(SECRET).call("/issues/121/comments", {"body":"safe"})
+        self.assertEqual(caught.exception.cause, "API_HTTP_FAILED")
+        self.assertNotIn(SECRET, str(caught.exception))
+
+    def test_malformed_comment_evidence_has_comment_lookup_stage(self):
+        self.observe()
+        body = self.body()
+        for malformed in (None, {}, "invalid", 0, True):
+            with self.subTest(malformed=malformed):
+                self.api.comments = [dict(id=malformed, body=body,
+                    user={"login":"github-actions[bot]", "type":"Bot"})]
+                self.api.writes.clear()
+                with self.assertRaises(reporting.ReportingFailed) as caught:
+                    self.observe()
+                self.assertEqual((caught.exception.stage, caught.exception.cause),
+                                 ("COMMENT_LOOKUP", "API_RESPONSE_INVALID"))
+                self.assertNotIn(SECRET, str(caught.exception))
+                self.assertEqual(self.api.writes, [])
 
     def test_unknown_stage_or_cause_cannot_leak(self):
         for ctor, args in ((reporting.ReportingFailed,(SECRET,)),
