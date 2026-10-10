@@ -47,6 +47,8 @@ class CoordinatorTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(); self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
+        runtime=patch.object(acquisition,'require_runtime')
+        runtime.start();self.addCleanup(runtime.stop)
         # CI is unprivileged. Model only root ownership for the synthetic plan;
         # the actual reader, mode/path/ACL validation and all writes stay real.
         original_reader = acquisition.read_file
@@ -351,6 +353,51 @@ class CoordinatorTests(unittest.TestCase):
         try:
             with self.assertRaises(AcquisitionRejected):read_file(fd,self.auth_path.name,owner=os.geteuid()+1)
         finally:os.close(fd)
+
+
+
+    def test_known_provider_id_wrong_name_rejected_before_claim_or_credit(self):
+        self.calendar['competitions']['E1'][0]['home_provider_id']=37
+        self.calendar['competitions']['E1'][0]['home_team']='Portsmouth FC'
+        self.sync()
+        result=self.run_acquisition()
+        self.assertEqual(result['status'],'REJECTED');self.assertFalse(self.calls);self.assertEqual(self.reserved(),0)
+        self.assertFalse(list(self.private.glob('session-*')))
+        self.assertFalse(list(self.private.glob('forecast-*')))
+
+    def test_atomic_batch_claim_blocks_every_fixture_after_crash_and_new_authorization(self):
+        from modelfc.acquisition_storage import Store
+        self.calendar['competitions']['E1'].append(self.calendar['competitions']['E1'][0]|{'fixture_id':'fixture-2'})
+        self.sync();actual=Store.put
+        def crash_after_session(store,name,record):
+            result=actual(store,name,record)
+            if name.startswith('session-'):raise KeyboardInterrupt
+            return result
+        with patch.object(Store,'put',new=crash_after_session):
+            with self.assertRaises(KeyboardInterrupt):self.run_acquisition()
+        self.assertFalse(self.calls);self.assertEqual(self.reserved(),0)
+        self.auth['experiment_id']='new-authorization';self.sync()
+        self.assertEqual(self.run_acquisition()['status'],'NO_ELIGIBLE_FIXTURES')
+        self.assertFalse(self.calls);self.assertEqual(self.reserved(),0)
+        with private_store(self.private) as store:self.assertEqual(len(acquisition._claimed(store)),2)
+
+    def test_root_or_wrong_runtime_identity_rejected_before_preflight(self):
+        from types import SimpleNamespace
+        from modelfc import acquisition_storage as storage
+        for actual,expected in ((0,65534),(65533,65534),(0,0)):
+            with patch.object(acquisition,'require_runtime',side_effect=storage.require_runtime),patch.object(storage.os,'geteuid',return_value=actual),patch.object(storage.pwd,'getpwnam',return_value=SimpleNamespace(pw_uid=expected)):
+                result=self.run_acquisition()
+            self.assertEqual(result['reason'],'RUNTIME_IDENTITY_REJECTED')
+            self.assertFalse(self.calls);self.assertEqual(self.reserved(),0)
+            self.assertFalse(list(self.private.iterdir()))
+        with patch.object(storage.os,'geteuid',return_value=65534),patch.object(storage.pwd,'getpwnam',return_value=SimpleNamespace(pw_uid=65534)):
+            storage.require_runtime()
+
+    def test_malformed_batch_claim_rejected(self):
+        with private_store(self.private) as store:
+            store.put(acquisition._name('session','malformed'),{'experiment_id':'malformed','status':'CLAIMED','obligations':[]})
+        result=self.run_acquisition();self.assertEqual(result['reason'],'SESSION_REJECTED')
+        self.assertFalse(self.calls);self.assertEqual(self.reserved(),0)
 
 
 class TransportTests(unittest.TestCase):

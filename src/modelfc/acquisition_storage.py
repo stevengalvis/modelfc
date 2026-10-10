@@ -49,6 +49,13 @@ def directory(path):
         raise
 
 
+def require_runtime():
+    """The acquisition coordinator must never execute as root or an API account."""
+    uid = pwd.getpwnam("modelfc-runtime").pw_uid
+    if type(uid) is not int or uid <= 0 or os.geteuid() != uid:
+        raise AcquisitionRejected("RUNTIME_IDENTITY_REJECTED")
+
+
 def credential_snapshot(fd, info):
     """Accept only root's systemd copy with read ACL solely for runtime, not all 0440."""
     identity = pwd.getpwnam("modelfc-runtime")
@@ -139,6 +146,22 @@ class Store:
                 value["sha256"] != fingerprint(encoded(value["record"]))):
             raise AcquisitionRejected("RECORD_INTEGRITY_REJECTED")
         return value["record"]
+
+    def sessions(self):
+        """Read only our private namespace, bounded and deterministic, never state root."""
+        names = []
+        with os.scandir(self.fd) as entries:
+            for entry in entries:
+                if len(names) >= 20_000:
+                    raise AcquisitionRejected("PRIVATE_INVENTORY_REJECTED")
+                names.append(entry.name)
+        result = []
+        for name in sorted(names):
+            if name.startswith("session-"):
+                if not re.fullmatch(r"session-[0-9a-f]{64}\.json", name):
+                    raise AcquisitionRejected("SESSION_REJECTED")
+                result.append((name, self.get(name)))
+        return result
 
     def put(self, name, record):
         if not re.fullmatch(r"[a-z]+-[0-9a-f]{64}\.json", name):

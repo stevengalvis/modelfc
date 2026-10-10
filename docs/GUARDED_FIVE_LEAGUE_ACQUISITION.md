@@ -97,7 +97,11 @@ Only the narrowly reviewed TOURNAMENT_ODDS/one-request guard profile is added.
 Reservation is durably saved before HTTP, and pacing/last-request accounting use
 the same guard as the production collector. Failed calls are charged and never refunded.
 
-A durable session claim and per-fixture/FanDuel/EARLY_24H claims precede reservation.
+The coordinator enforces the non-root modelfc-runtime UID before any authorized preflight.
+A single atomic session claim covering every fixture/FanDuel/EARLY_24H obligation
+precedes reservation. Recovery derives all completed obligations from those complete
+session records, including interrupted runs and later authorizations. Private namespace
+inventory is bounded to 20,000 records; exceeding that bound requires operator review.
 Once claimed, an obligation cannot trigger a second request, even with a new plan.
 A crash between claim and reservation may sacrifice coverage without consuming a
 credit. A crash after reservation conservatively consumes a credit even if dispatch

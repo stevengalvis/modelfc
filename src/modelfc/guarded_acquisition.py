@@ -11,9 +11,9 @@ import re
 
 from pydantic import TypeAdapter
 
-from modelfc.acquisition_planner import Fixture, Obligation, configured_leagues, plan_acquisition, utc
+from modelfc.acquisition_planner import Fixture, Obligation, LEAGUES, configured_leagues, plan_acquisition, utc
 from modelfc.acquisition_storage import (AcquisitionRejected, directory, read_file,
-    private_store, shared_runner, encoded, fingerprint)
+    private_store, shared_runner, encoded, fingerprint, require_runtime)
 from modelfc.corner_prospective import _load, _save, _RequestBudgetGuard
 from modelfc.corner_prospective_budget import rollover_if_needed, validate_calendar_control
 from modelfc.offline_forecasts import (KnownFixture, PreparedForecast, load_history_bytes,
@@ -116,7 +116,7 @@ def _calendar(raw, as_of, enabled):
                 pid, name = row[side+"_provider_id"], row[side+"_team"]
                 if type(pid) is not int or pid <= 0:
                     raise AcquisitionRejected("PARTICIPANT_REJECTED")
-                validate_team_identity(competition, name, pid)
+                validate_team_identity(name, pid, competition)
                 if competition == "E1" and pid not in E1_TEAMS_BY_ID:
                     raise AcquisitionRejected("PARTICIPANT_REJECTED")
             if row["home_provider_id"] == row["away_provider_id"] or identity.fixture_id in entries:
@@ -136,6 +136,30 @@ def _name(kind, identity): return kind + "-" + fingerprint(encoded(identity)) + 
 def _obligation(fixture):
     return {"competition": fixture.competition, "fixture_id": fixture.fixture_id,
             "kickoff_utc": fixture.kickoff_utc.isoformat(), "bookmaker": "fanduel", "window": "EARLY_24H"}
+
+
+def _claimed(store):
+    """An atomically published session claims its whole batch, including after a crash."""
+    result, seen = [], set()
+    registry = {league.competition: league.tournament_id for league in LEAGUES}
+    for name, record in store.sessions():
+        if (not isinstance(record, dict) or set(record) != {"experiment_id", "status", "obligations"}
+                or not isinstance(record["experiment_id"], str)
+                or not re.fullmatch(r"[a-z0-9-]{1,64}", record["experiment_id"])
+                or name != _name("session", record["experiment_id"])
+                or record["status"] != "CLAIMED"
+                or not isinstance(record["obligations"], list)
+                or not 1 <= len(record["obligations"]) <= 2500):
+            raise AcquisitionRejected("SESSION_REJECTED")
+        for obligation in record["obligations"]:
+            fixture = Fixture(obligation["competition"], registry[obligation["competition"]],
+                              obligation["fixture_id"], _timestamp(obligation["kickoff_utc"]))
+            key = encoded(_obligation(fixture))
+            if obligation != _obligation(fixture) or key in seen:
+                raise AcquisitionRejected("SESSION_REJECTED")
+            seen.add(key)
+            result.append(Obligation(fixture))
+    return result
 
 
 def _prepare(store, entry, sources, frozen):
@@ -192,6 +216,7 @@ def run_once(*, state_dir, private_dir, calendar_path, metadata_path, data_confi
               "consumers": 0, "reason": None}
     if authorization_path is None: return result
     try:
+        require_runtime()
         as_of = utc(clock())
         auth = _authorization(authorization_path, as_of)
         if str(Path(state_dir)) != auth["state_dir"] or str(Path(private_dir)) != auth["private_dir"]:
@@ -206,8 +231,7 @@ def run_once(*, state_dir, private_dir, calendar_path, metadata_path, data_confi
         with shared_runner(state_dir) as control_path, private_store(private_dir) as store:
             control = _load(control_path)
             validate_calendar_control(control)
-            completed = [Obligation(f) for fixtures in calendar.values() for f in fixtures
-                         if store.get(_name("claim", _obligation(f))) is not None]
+            completed = _claimed(store)
             plan = plan_acquisition(calendar, as_of=as_of, completed=completed,
                                      leagues=configured_leagues(auth["enabled_competitions"]))
             if not plan.batches:
@@ -244,9 +268,6 @@ def run_once(*, state_dir, private_dir, calendar_path, metadata_path, data_confi
             # never automatic repetition of uncertain requests, even under new authorization.
             store.put(session_key, {"experiment_id": auth["experiment_id"], "status": "CLAIMED",
                       "obligations": [_obligation(o.fixture) for o in batch.obligations]})
-            for obligation in batch.obligations:
-                store.put(_name("claim", _obligation(obligation.fixture)),
-                          {"experiment_id": auth["experiment_id"], "obligation": _obligation(obligation.fixture)})
             guard.reserve(1)
             store.put(_name("reservation", auth["experiment_id"]), {"credits_reserved": 1,
                        "experiment_id": auth["experiment_id"]})
