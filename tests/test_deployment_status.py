@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import tempfile
 import unittest
+from urllib.error import HTTPError
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -43,7 +44,8 @@ class FakeGitHub:
     def __init__(self):
         self.run = run()
         self.pr = dict(number=120, merged=True, state="closed", merge_commit_sha=SHA,
-                       base={"ref": "main", "repo": {"full_name": reporting.REPOSITORY}})
+                       base={"ref": "main", "repo": {"full_name": reporting.REPOSITORY}},
+                       user={"login": "stevengalvis", "id": 16994883, "type": "User"})
         self.associated = [dict(number=120, merge_commit_sha=SHA)]
         self.jobs = [dict(name=name, status="completed", conclusion="success")
                      for name in ("test", "frontend", "deploy")]
@@ -56,7 +58,7 @@ class FakeGitHub:
             raise RuntimeError(SECRET)
         if data is not None:
             self.writes.append((path, copy.deepcopy(data), method))
-            return {}
+            return {"id": 99, "body": data["body"]}
         if path == "/actions/runs/100/attempts/2":
             return copy.deepcopy(self.run)
         if path == "/actions/runs/100/attempts/2/jobs?per_page=100":
@@ -87,6 +89,35 @@ class DeploymentStatusTests(unittest.TestCase):
 
     def observe(self):
         return reporting.observe(self.event, self.api, self.file)
+
+    def test_pr121_real_exact_merge_association_and_artifact_replay(self):
+        evidence=json.loads((ROOT/'tests/fixtures/deployment-status-pr121.json').read_text())
+        actual=evidence['run']; actual_sha=actual['head_sha']
+        api=FakeGitHub()
+        reads=[]
+        writes=[]
+        def call(path,data=None,method=None):
+            reads.append(path)
+            if data is not None:
+                writes.append((path,data)); return {'id':1000,'body':data['body']}
+            if path.endswith('/jobs?per_page=100'): return {'total_count':3,'jobs':api.jobs}
+            if path=='/pulls/121': return evidence['pr']
+            if path=='/actions/runs/38015226038/attempts/1': return actual
+            raise AssertionError(path)
+        def pages(path):
+            if path=='/commits/'+actual_sha+'/pulls':
+                return iter([{'number':121,'merge_commit_sha':actual_sha}])
+            if path=='/issues/121/comments': return iter([])
+            raise AssertionError(path)
+        api.call=call;api.pages=pages
+        self.file.write_text(json.dumps(evidence['report']))
+        self.assertEqual(reporting.observe({'action':'completed','repository':actual['repository'],
+                                           'workflow_run':actual},api,self.file),'REPORTED')
+        self.assertEqual(writes[0][0],'/issues/121/comments')
+        self.assertIn('Production deployment: SUCCESS',writes[0][1]['body'])
+        self.assertIn('Actual deployed SHA: `'+actual_sha+'`',writes[0][1]['body'])
+        self.assertIn('@stevengalvis',writes[0][1]['body'])
+        self.assertIn('/actions/runs/38015226038/attempts/1',writes[0][1]['body'])
 
     def body(self):
         self.assertEqual(len(self.api.writes), 1)
@@ -223,8 +254,12 @@ class DeploymentStatusTests(unittest.TestCase):
         self.api.comments = [dict(id=99, body=body, user={"login": "github-actions[bot]", "type": "Bot"})]
         self.api.writes.clear()
         self.observe()
+        self.assertEqual(self.api.writes, [])  # Identical delivery does not edit or remention.
+        self.api.comments[0]["body"] = body.replace("attempt=2", "attempt=1")
+        self.observe()
         self.assertEqual(self.api.writes[0][0], "/issues/comments/99")
         self.assertEqual(self.api.writes[0][2], "PATCH")
+        self.assertNotIn("@stevengalvis", self.api.writes[0][1]["body"])
         self.api.comments[0]["body"] = body.replace("attempt=2", "attempt=3")
         self.api.writes.clear()
         self.observe()
@@ -236,10 +271,11 @@ class DeploymentStatusTests(unittest.TestCase):
         self.observe()
         self.assertEqual(self.api.writes[0][0], "/issues/120/comments")
 
-    def test_commenting_api_failures_emit_only_fixed_warning_and_exit_zero(self):
+    def test_commenting_api_failures_are_visible_without_changing_deployment(self):
         event_file = Path(self.directory.name) / "event.json"
         event_file.write_text(json.dumps(self.event))
-        for failure in ("/actions/", "/pulls/", "/issues/120/comments"):
+        for failure, stage in (("/actions/", "RUN_LOOKUP"), ("/pulls/", "PR_ASSOCIATION"),
+                               ("/issues/120/comments", "COMMENT_LOOKUP")):
             with self.subTest(failure=failure):
                 api = FakeGitHub()
                 api.fail = failure
@@ -247,9 +283,117 @@ class DeploymentStatusTests(unittest.TestCase):
                                               "DEPLOYMENT_REPORT_FILE": str(self.file)}), \
                      patch.object(reporting, "GitHub", return_value=api), \
                      patch("sys.stdout", new_callable=io.StringIO) as output:
-                    self.assertEqual(reporting.main(), 0)
-                self.assertEqual(output.getvalue(), "::warning::Deployment status reporting unavailable; original deployment result unchanged.\n")
+                    self.assertEqual(reporting.main(), 1)
+                self.assertEqual(output.getvalue(), "::warning::Deployment status reporting failed: " +
+                                 stage + "/REJECTED; original deployment result unchanged.\n")
                 self.assertNotIn(SECRET, output.getvalue())
+
+    def test_verified_author_mention_only_on_creation(self):
+        for user, mention in ((dict(login="stevengalvis", id=16994883, type="User"), True),
+                              (dict(login="other", id=16994883, type="User"), False),
+                              (dict(login="stevengalvis", id=1, type="User"), False),
+                              (dict(login="stevengalvis", id=16994883, type="Bot"), False),
+                              (dict(login="bad\n@someone", id=1, type="User"), False), ({}, False)):
+            with self.subTest(user=user):
+                self.api = FakeGitHub(); self.api.pr["user"] = user
+                self.observe()
+                body = self.body()
+                self.assertEqual("@stevengalvis" in body, mention)
+                self.assertNotIn("@someone", body)
+                self.api.comments = [dict(id=99, body=body,
+                    user={"login":"github-actions[bot]", "type":"Bot"})]
+                self.api.writes.clear()
+                self.assertEqual(self.observe(), "COMMENT_UNCHANGED")
+                self.assertEqual(self.api.writes, [])
+
+    def test_comment_write_acknowledgement_required(self):
+        original = self.api.call
+        def no_ack(path, data=None, **kwargs):
+            if data is not None: return {}
+            return original(path, data, **kwargs)
+        self.api.call = no_ack
+        with self.assertRaises(reporting.ReportingFailed) as caught:
+            self.observe()
+        self.assertEqual((caught.exception.stage,caught.exception.cause),
+                         ("COMMENT_WRITE", "API_RESPONSE_INVALID"))
+
+    def test_json_request_header_and_sanitized_permission_failure(self):
+        class Opener:
+            def open(inner, request, timeout):
+                self.assertEqual(request.get_header("Content-type"), "application/json")
+                raise HTTPError(SECRET, 401, SECRET, {}, io.BytesIO(SECRET.encode()))
+        with patch.object(reporting, "build_opener", return_value=Opener()):
+            with self.assertRaises(reporting.ApiFailure) as caught:
+                reporting.GitHub(SECRET).call("/issues/121/comments", {"body":"safe"})
+        self.assertEqual(caught.exception.cause, "API_ACCESS_DENIED")
+        self.assertNotIn(SECRET, str(caught.exception))
+        with self.assertRaises(reporting.ReportingFailed) as caught:
+            reporting.checked("COMMENT_WRITE", lambda: (_ for _ in ()).throw(reporting.ApiFailure("API_ACCESS_DENIED")))
+        self.assertEqual((caught.exception.stage,caught.exception.cause),("COMMENT_WRITE","API_ACCESS_DENIED"))
+
+    def test_ambiguous_403_is_not_reported_as_permission_failure(self):
+        class Opener:
+            def open(inner, request, timeout):
+                raise HTTPError(SECRET, 403, SECRET, {}, io.BytesIO(SECRET.encode()))
+        with patch.object(reporting, "build_opener", return_value=Opener()):
+            with self.assertRaises(reporting.ApiFailure) as caught:
+                reporting.GitHub(SECRET).call("/issues/121/comments", {"body":"safe"})
+        self.assertEqual(caught.exception.cause, "API_HTTP_FAILED")
+        self.assertNotIn(SECRET, str(caught.exception))
+
+    def test_malformed_comment_evidence_has_comment_lookup_stage(self):
+        self.observe()
+        body = self.body()
+        for malformed in (None, {}, "invalid", 0, True):
+            with self.subTest(malformed=malformed):
+                self.api.comments = [dict(id=malformed, body=body,
+                    user={"login":"github-actions[bot]", "type":"Bot"})]
+                self.api.writes.clear()
+                with self.assertRaises(reporting.ReportingFailed) as caught:
+                    self.observe()
+                self.assertEqual((caught.exception.stage, caught.exception.cause),
+                                 ("COMMENT_LOOKUP", "API_RESPONSE_INVALID"))
+                self.assertNotIn(SECRET, str(caught.exception))
+                self.assertEqual(self.api.writes, [])
+
+    def test_malformed_jobs_envelope_has_jobs_validation_stage(self):
+        for envelope in (None, [], {}, {"total_count":0}, {"jobs":[]},
+                         {"total_count":True,"jobs":[]}, {"total_count":1,"jobs":[]}):
+            with self.subTest(envelope=envelope):
+                original = self.api.call
+                def malformed(path, data=None, **kwargs):
+                    if "/jobs?" in path: return envelope
+                    return original(path, data, **kwargs)
+                with patch.object(self.api, "call", side_effect=malformed):
+                    with self.assertRaises(reporting.ReportingFailed) as caught:
+                        self.observe()
+                self.assertEqual((caught.exception.stage, caught.exception.cause),
+                                 ("JOBS_VALIDATION", "API_RESPONSE_INVALID"))
+                self.assertEqual(self.api.writes, [])
+
+    def test_unknown_stage_or_cause_cannot_leak(self):
+        for ctor, args in ((reporting.ReportingFailed,(SECRET,)),
+                           (reporting.ReportingFailed,("COMMENT_WRITE",SECRET)),
+                           (reporting.ApiFailure,(SECRET,))):
+            with self.assertRaises(ValueError): ctor(*args)
+
+    def test_main_reports_explicit_success_or_intentional_no_pr(self):
+        event_file = Path(self.directory.name) / "event.json"
+        event_file.write_text(json.dumps(self.event))
+        for associated, outcome in ((self.api.associated,"REPORTED"),([],"NO_MERGED_PR")):
+            self.api = FakeGitHub(); self.api.associated = associated
+            with patch.dict(os.environ, {"GITHUB_EVENT_PATH":str(event_file), "GITHUB_TOKEN":SECRET,
+                                         "DEPLOYMENT_REPORT_FILE":str(self.file)}), \
+                 patch.object(reporting,"GitHub",return_value=self.api), \
+                 patch("sys.stdout",new_callable=io.StringIO) as output:
+                self.assertEqual(reporting.main(),0)
+            self.assertEqual(output.getvalue(),"::notice::Deployment status reporting: " + outcome + "\n")
+
+    def test_reporting_failure_does_not_change_original_workflow_contract(self):
+        source = (ROOT / ".github/workflows/deployment-status.yml").read_text()
+        self.assertIn("workflow_run:",source)
+        self.assertNotIn("needs: [report]",(ROOT / ".github/workflows/tests.yml").read_text())
+        self.assertNotIn("deploy_main",Path(reporting.__file__).read_text())
 
     def test_bounded_paginated_api_and_no_redirect_or_error_body_leak(self):
         api = reporting.GitHub(SECRET)

@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 import re
 import stat
+from urllib.error import HTTPError
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 REPOSITORY = "stevengalvis/modelfc"
@@ -22,10 +23,43 @@ FIELDS = frozenset({"status", "requested_sha", "previous_sha", "final_sha", "fet
     "state_boundary_enforced", "reason"})
 CONCLUSIONS = frozenset({"success", "failure", "cancelled", "skipped", "timed_out",
                         "neutral", "action_required", "startup_failure", "stale"})
+STAGES = frozenset({"INPUT_VALIDATION", "EVENT_VALIDATION", "RUN_LOOKUP", "RUN_VALIDATION",
+                   "PR_ASSOCIATION", "JOBS_LOOKUP", "JOBS_VALIDATION", "COMMENT_LOOKUP", "COMMENT_WRITE"})
+CAUSES = frozenset({"REJECTED", "API_ACCESS_DENIED", "API_NOT_FOUND", "API_RATE_LIMITED",
+                   "API_HTTP_FAILED", "API_RESPONSE_INVALID", "API_TRANSPORT_FAILED"})
+NOTIFY_LOGIN = "stevengalvis"
+NOTIFY_ID = 16994883
 
 
 class Rejected(Exception):
     pass
+
+
+class ApiFailure(Rejected):
+    def __init__(self, cause):
+        if cause not in CAUSES:
+            raise ValueError
+        self.cause = cause
+        super().__init__(cause)
+
+
+class ReportingFailed(Rejected):
+    def __init__(self, stage, cause="REJECTED"):
+        if stage not in STAGES or cause not in CAUSES:
+            raise ValueError
+        self.stage, self.cause = stage, cause
+        super().__init__(stage)
+
+
+def checked(stage, operation, *args, **kwargs):
+    try:
+        return operation(*args, **kwargs)
+    except ReportingFailed:
+        raise
+    except ApiFailure as error:
+        raise ReportingFailed(stage, error.cause) from None
+    except Exception:
+        raise ReportingFailed(stage) from None
 
 
 def strict_json(raw):
@@ -54,12 +88,23 @@ class GitHub:
             headers={"Authorization": "Bearer " + self.token,
                      "Accept": "application/vnd.github+json",
                      "X-GitHub-Api-Version": "2022-11-28",
+                     "Content-Type": "application/json",
                      "User-Agent": "Zeno-deployment-status"})
-        with build_opener(NoRedirect()).open(request, timeout=20) as response:
-            raw = response.read(MAX_API + 1)
-            if len(raw) > MAX_API:
-                raise Rejected
-            return strict_json(raw)
+        try:
+            with build_opener(NoRedirect()).open(request, timeout=20) as response:
+                raw = response.read(MAX_API + 1)
+                if len(raw) > MAX_API:
+                    raise Rejected
+                return strict_json(raw)
+        except HTTPError as error:
+            cause = {401: "API_ACCESS_DENIED",
+                     404: "API_NOT_FOUND", 429: "API_RATE_LIMITED"}.get(error.code, "API_HTTP_FAILED")
+            error.close()  # No response body, URL, headers or exception text is surfaced.
+            raise ApiFailure(cause) from None
+        except (ValueError, Rejected):
+            raise ApiFailure("API_RESPONSE_INVALID") from None
+        except OSError:
+            raise ApiFailure("API_TRANSPORT_FAILED") from None
 
     def pages(self, path):
         """Bound pagination; never create a duplicate after a truncated comment list."""
@@ -101,8 +146,12 @@ def merged_pr(api, sha):
                 and detail.get("state") == "closed" and detail.get("merge_commit_sha") == sha
                 and detail.get("base", {}).get("ref") == "main"
                 and detail.get("base", {}).get("repo", {}).get("full_name") == REPOSITORY):
-            matches.append(number)
-    matches = sorted(set(matches))
+            author = detail.get("user", {})
+            notify = NOTIFY_LOGIN if (author.get("login") == NOTIFY_LOGIN
+                and type(author.get("id")) is int and author["id"] == NOTIFY_ID
+                and author.get("type") == "User") else None
+            matches.append((number, notify))
+    matches = sorted(set(matches), key=lambda match: match[0])
     if len(matches) > 1:
         raise Rejected
     return matches[0] if matches else None
@@ -210,58 +259,94 @@ def render(run, number, jobs, report):
     return body
 
 
-def publish(api, number, body, run_id, attempt):
+def comment_records(api, number):
     existing = []
     for comment in api.pages("/issues/" + str(number) + "/comments"):
+        if type(comment) is not dict or type(comment.get("user", {})) is not dict:
+            raise ApiFailure("API_RESPONSE_INVALID")
         if (comment.get("user", {}).get("login") != "github-actions[bot]"
                 or comment.get("user", {}).get("type") != "Bot"):
             continue
-        match = STAMP.match(comment.get("body", ""))
+        if type(comment.get("body")) is not str:
+            raise ApiFailure("API_RESPONSE_INVALID")
+        match = STAMP.match(comment["body"])
         if match:
             if type(comment.get("id")) is not int or comment["id"] < 1:
-                raise Rejected
-            existing.append((int(match[1]), int(match[2]), comment["id"]))
+                raise ApiFailure("API_RESPONSE_INVALID")
+            existing.append((int(match[1]), int(match[2]), comment["id"], comment["body"]))
+    return existing
+
+
+def publish(api, number, body, run_id, attempt, author=None):
+    existing = checked("COMMENT_LOOKUP", comment_records, api, number)
     if existing:
         latest = max(existing)
         if latest[:2] > (run_id, attempt):
-            return  # Late delivery cannot replace a newer result.
-        api.call("/issues/comments/" + str(latest[2]), {"body": body}, method="PATCH")
+            return "OLDER_RESULT_KEPT"  # Late delivery cannot replace a newer result.
+        if latest[3].removesuffix("\n@" + NOTIFY_LOGIN + "\n") == body:
+            return "COMMENT_UNCHANGED"
+        response = checked("COMMENT_WRITE", api.call, "/issues/comments/" + str(latest[2]),
+                           {"body": body}, method="PATCH")
+        expected_id = latest[2]
     else:
-        api.call("/issues/" + str(number) + "/comments", {"body": body})
+        if author == NOTIFY_LOGIN:
+            body += "\n@" + NOTIFY_LOGIN + "\n"  # Fixed identity verified against authoritative PR detail.
+        response = checked("COMMENT_WRITE", api.call, "/issues/" + str(number) + "/comments", {"body": body})
+        expected_id = None
+    if (type(response) is not dict or type(response.get("id")) is not int or response["id"] < 1
+            or response.get("body") != body or (expected_id is not None and response["id"] != expected_id)):
+        raise ReportingFailed("COMMENT_WRITE", "API_RESPONSE_INVALID")
+    return "REPORTED"
+
+
+def validated_jobs(value):
+    if (type(value) is not dict or type(value.get("jobs")) is not list
+            or type(value.get("total_count")) is not int
+            or value["total_count"] != len(value["jobs"])):
+        raise ApiFailure("API_RESPONSE_INVALID")
+    return value["jobs"]
 
 
 def observe(event, api, report_file):
     if (event.get("action") != "completed"
             or event.get("repository", {}).get("full_name") != REPOSITORY):
         raise Rejected
-    run_id, attempt, sha = run_identity(event["workflow_run"])
+    run_id, attempt, sha = checked("EVENT_VALIDATION", run_identity, event["workflow_run"])
     prefix = f"/actions/runs/{run_id}/attempts/{attempt}"
-    run = api.call(prefix)
-    if run_identity(run) != (run_id, attempt, sha):
-        raise Rejected
-    number = merged_pr(api, sha)
-    if number is None:
+    run = checked("RUN_LOOKUP", api.call, prefix)
+    if checked("RUN_VALIDATION", run_identity, run) != (run_id, attempt, sha):
+        raise ReportingFailed("RUN_VALIDATION")
+    pr = checked("PR_ASSOCIATION", merged_pr, api, sha)
+    if pr is None:
         return "NO_MERGED_PR"
+    number, author = pr
     # The attempt endpoint avoids mixing jobs/artifacts from a later rerun.
-    jobs = api.call(prefix + "/jobs?per_page=100")
-    if type(jobs.get("total_count")) is not int or jobs["total_count"] != len(jobs["jobs"]):
-        raise Rejected
-    body = render(run, number, jobs["jobs"], read_report(report_file, sha))
-    publish(api, number, body, run_id, attempt)
-    return "REPORTED"
+    jobs = checked("JOBS_LOOKUP", api.call, prefix + "/jobs?per_page=100")
+    jobs = checked("JOBS_VALIDATION", validated_jobs, jobs)
+    body = checked("JOBS_VALIDATION", render, run, number, jobs, read_report(report_file, sha))
+    return publish(api, number, body, run_id, attempt, author)
 
 
 def main():
+    stage = "INPUT_VALIDATION"
     try:
         event_path = Path(os.environ["GITHUB_EVENT_PATH"])
         raw = event_path.read_bytes()
         if len(raw) > MAX_API:
             raise Rejected
-        observe(strict_json(raw), GitHub(os.environ["GITHUB_TOKEN"]),
-                os.environ["DEPLOYMENT_REPORT_FILE"])
+        stage = "EVENT_VALIDATION"
+        outcome = observe(strict_json(raw), GitHub(os.environ["GITHUB_TOKEN"]),
+                          os.environ["DEPLOYMENT_REPORT_FILE"])
+        print("::notice::Deployment status reporting: " + outcome)
+    except ReportingFailed as error:
+        print("::warning::Deployment status reporting failed: " + error.stage + "/" + error.cause +
+              "; original deployment result unchanged.")
+        return 1
     except Exception:
         # Never print exception text, API bodies, artifacts, paths or secrets.
-        print("::warning::Deployment status reporting unavailable; original deployment result unchanged.")
+        print("::warning::Deployment status reporting failed: " + stage +
+              "/REJECTED; original deployment result unchanged.")
+        return 1
     return 0
 
 

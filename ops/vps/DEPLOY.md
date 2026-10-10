@@ -41,6 +41,37 @@ attempt link, backend/frontend outcomes, stage and deployed SHA evidence. Later
 attempts update it; human comments are never edited. Serialized reporting and
 run/attempt stamps prevent late older completions from overwriting newer results.
 
+The first attempt on PR #121 (merge `11a4adf8765d5883e10c39ff9d474cdc182abb6a`,
+[deployment run 38015226038](https://github.com/stevengalvis/modelfc/actions/runs/38015226038),
+[reporting run 38015731206](https://github.com/stevengalvis/modelfc/actions/runs/38015731206))
+deployed successfully and downloaded the matching `PASS / OK` artifact, but
+posted no comment. The reporter caught an exception and returned zero, making
+its own run green without delivery. The original generic warning discarded the
+failure stage and HTTP error category, so it cannot establish which original API
+operation failed or whether a permission error occurred. Current read-only API
+replay verifies the exact PR association and reaches the comment-write boundary;
+this is not proof that the historical write succeeded. No permission increase
+or PR-association relaxation is justified by that evidence.
+
+The corrected reporter sends explicit JSON request headers and requires a valid
+comment-write acknowledgement. It logs fixed outcomes (`REPORTED`,
+`COMMENT_UNCHANGED`, `OLDER_RESULT_KEPT`, `NO_MERGED_PR`). Errors use only fixed
+input/event/run/PR/jobs/comment stages and allowlisted API categories, never raw
+exception text, URLs, payloads or credentials. An error now fails **only the
+separate reporting workflow**, making missing delivery visible on Actions; it
+cannot change the original deployment run, gating, exit codes or rollback.
+There are no automatic retries or additional deployment calls.
+
+The first comment includes `@stevengalvis` only when the authoritative matched PR
+detail identifies the human author as that exact login and immutable account ID
+16994883. No mention is derived from a commit message, comment or artifact. Other
+authors receive the status comment without this mention. Identical delivery is
+a no-op; later attempts update the same bot comment without rementioning the
+author. Reruns therefore do not deliberately generate duplicate mention
+notifications. Email and GitHub mobile delivery still depend on the account's
+[notification settings](https://docs.github.com/en/subscriptions-and-notifications/get-started/configuring-notifications).
+An edited comment is not a guaranteed new notification.
+
 Reporting policy:
 
 | Evidence | Comment result | Deployed SHA |
@@ -66,9 +97,9 @@ The reporter uses only `GITHUB_TOKEN`: `contents: read` for trusted checkout,
 `actions: read` for the original run/jobs/artifact, `pull-requests: read` for merge
 association, and `issues: write` for comments. The deploy job keeps its existing
 read-only permissions. No PAT, secret, host installation or notification service
-is required. GitHub failures emit only a fixed sanitized warning; reporting is
+is required. GitHub failures emit only a fixed sanitized stage/category; reporting is
 not a prerequisite for deployment and cannot change the original run's result.
-A missing report, failed reporting workflow, or cancelled reporter may require
+A failed reporting workflow or cancelled reporter may require
 checking the linked Actions run. This does not infer a previous active SHA.
 
 References: GitHub's [workflow_run completion semantics](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#workflow_run),
