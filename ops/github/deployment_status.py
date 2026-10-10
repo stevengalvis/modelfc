@@ -299,6 +299,14 @@ def publish(api, number, body, run_id, attempt, author=None):
     return "REPORTED"
 
 
+def validated_jobs(value):
+    if (type(value) is not dict or type(value.get("jobs")) is not list
+            or type(value.get("total_count")) is not int
+            or value["total_count"] != len(value["jobs"])):
+        raise ApiFailure("API_RESPONSE_INVALID")
+    return value["jobs"]
+
+
 def observe(event, api, report_file):
     if (event.get("action") != "completed"
             or event.get("repository", {}).get("full_name") != REPOSITORY):
@@ -314,9 +322,8 @@ def observe(event, api, report_file):
     number, author = pr
     # The attempt endpoint avoids mixing jobs/artifacts from a later rerun.
     jobs = checked("JOBS_LOOKUP", api.call, prefix + "/jobs?per_page=100")
-    if type(jobs.get("total_count")) is not int or jobs["total_count"] != len(jobs["jobs"]):
-        raise ReportingFailed("JOBS_VALIDATION")
-    body = checked("JOBS_VALIDATION", render, run, number, jobs["jobs"], read_report(report_file, sha))
+    jobs = checked("JOBS_VALIDATION", validated_jobs, jobs)
+    body = checked("JOBS_VALIDATION", render, run, number, jobs, read_report(report_file, sha))
     return publish(api, number, body, run_id, attempt, author)
 
 

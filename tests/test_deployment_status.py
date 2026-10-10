@@ -356,6 +356,21 @@ class DeploymentStatusTests(unittest.TestCase):
                 self.assertNotIn(SECRET, str(caught.exception))
                 self.assertEqual(self.api.writes, [])
 
+    def test_malformed_jobs_envelope_has_jobs_validation_stage(self):
+        for envelope in (None, [], {}, {"total_count":0}, {"jobs":[]},
+                         {"total_count":True,"jobs":[]}, {"total_count":1,"jobs":[]}):
+            with self.subTest(envelope=envelope):
+                original = self.api.call
+                def malformed(path, data=None, **kwargs):
+                    if "/jobs?" in path: return envelope
+                    return original(path, data, **kwargs)
+                with patch.object(self.api, "call", side_effect=malformed):
+                    with self.assertRaises(reporting.ReportingFailed) as caught:
+                        self.observe()
+                self.assertEqual((caught.exception.stage, caught.exception.cause),
+                                 ("JOBS_VALIDATION", "API_RESPONSE_INVALID"))
+                self.assertEqual(self.api.writes, [])
+
     def test_unknown_stage_or_cause_cannot_leak(self):
         for ctor, args in ((reporting.ReportingFailed,(SECRET,)),
                            (reporting.ReportingFailed,("COMMENT_WRITE",SECRET)),
