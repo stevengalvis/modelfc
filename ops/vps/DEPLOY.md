@@ -72,6 +72,29 @@ notifications. Email and GitHub mobile delivery still depend on the account's
 [notification settings](https://docs.github.com/en/subscriptions-and-notifications/get-started/configuring-notifications).
 An edited comment is not a guaranteed new notification.
 
+The subsequent PR #122 reporter ([run 38020167430](https://github.com/stevengalvis/modelfc/actions/runs/38020167430))
+failed at `COMMENT_WRITE/API_HTTP_FAILED` after its matching artifact download.
+Its runner log confirms `Issues: write`; merge
+`71a4249debbdb36f45159859f84da333c4067c50` associates with PR #122.
+The client constructs the documented POST `/repos/stevengalvis/modelfc/issues/122/comments`
+with a JSON string `body`, or PATCH `/repos/stevengalvis/modelfc/issues/comments/<id>`
+for an existing bot-owned marker comment. The original HTTP status and response
+were discarded. That evidence cannot distinguish a 403 permission/policy rejection,
+422 validation/spam rejection, or another HTTP failure. No permission increase or
+historical root-cause claim is justified.
+
+HTTP failures now preserve only `HTTP_STATUS=<integer>` and a fixed category.
+401 is `API_ACCESS_DENIED`, 404 is `API_NOT_FOUND`, 422 is
+`API_VALIDATION_OR_SPAM`, and 429 is `API_RATE_LIMITED`. A 403 remains
+`API_HTTP_FAILED` unless a bounded response matches the exact known GitHub
+integration-access or secondary-rate-limit message. At most 16 KiB plus one
+sentinel byte is inspected; malformed/oversized/unknown responses cannot alter
+failure handling. Raw API messages, error arrays, headers, URLs, tokens and
+payloads are never printed. No retries are added. The next independently
+authorized reporting attempt must establish the actual rejection category or
+successful comment delivery; offline tests cannot establish Actions-token
+policy or live API acceptance.
+
 Reporting policy:
 
 | Evidence | Comment result | Deployed SHA |

@@ -371,6 +371,79 @@ class DeploymentStatusTests(unittest.TestCase):
                                  ("JOBS_VALIDATION", "API_RESPONSE_INVALID"))
                 self.assertEqual(self.api.writes, [])
 
+    def test_real_comment_requests_use_documented_method_endpoint_and_json(self):
+        requests = []
+        class Opener:
+            def open(inner, request, timeout):
+                requests.append(request)
+                payload = json.loads(request.data)
+                self.assertEqual(set(payload), {"body"})
+                self.assertIsInstance(payload["body"], str)
+                self.assertEqual(request.get_header("Content-type"), "application/json")
+                return io.BytesIO(json.dumps({"id":99, "body":payload["body"]}).encode())
+        api = reporting.GitHub(SECRET)
+        with patch.object(reporting, "build_opener", return_value=Opener()), \
+             patch.object(api, "pages", return_value=iter([])):
+            self.assertEqual(reporting.publish(api, 122, "safe", 38019716719, 1), "REPORTED")
+        self.assertEqual(requests[-1].get_method(), "POST")
+        self.assertEqual(requests[-1].full_url,
+                         "https://api.github.com/repos/stevengalvis/modelfc/issues/122/comments")
+        existing = dict(id=99, body=reporting.MARKER + " run=1 attempt=1 sha=" + SHA + " -->old",
+                        user={"login":"github-actions[bot]", "type":"Bot"})
+        with patch.object(reporting, "build_opener", return_value=Opener()), \
+             patch.object(api, "pages", return_value=iter([existing])):
+            self.assertEqual(reporting.publish(api, 122, "updated", 38019716719, 1), "REPORTED")
+        self.assertEqual(requests[-1].get_method(), "PATCH")
+        self.assertEqual(requests[-1].full_url,
+                         "https://api.github.com/repos/stevengalvis/modelfc/issues/comments/99")
+
+    def test_http_status_and_category_survive_failure_without_raw_details(self):
+        event_file = Path(self.directory.name) / "event.json"
+        event_file.write_text(json.dumps(self.event))
+        cases = ((401, SECRET, "API_ACCESS_DENIED"),
+                 (403, "Resource not accessible by integration", "API_INTEGRATION_ACCESS_DENIED"),
+                 (403, SECRET, "API_HTTP_FAILED"),
+                 (403, "You have exceeded a secondary rate limit. Please wait a few minutes before you try again.", "API_RATE_LIMITED"),
+                 (404, SECRET, "API_NOT_FOUND"), (422, "Validation Failed", "API_VALIDATION_OR_SPAM"),
+                 (429, SECRET, "API_RATE_LIMITED"), (500, SECRET, "API_HTTP_FAILED"))
+        for code, message, cause in cases:
+            with self.subTest(code=code, message=message):
+                error = HTTPError(SECRET, code, SECRET, {"secret":SECRET},
+                    io.BytesIO(json.dumps({"message":message,"errors":[SECRET]}).encode()))
+                class Opener:
+                    def open(inner, request, timeout): raise error
+                api = FakeGitHub(); original = api.call
+                real_client = reporting.GitHub
+                def write(path, data=None, **kwargs):
+                    if data is not None: return real_client(SECRET).call(path,data,**kwargs)
+                    return original(path,data,**kwargs)
+                api.call = write
+                with patch.dict(os.environ, {"GITHUB_EVENT_PATH":str(event_file), "GITHUB_TOKEN":SECRET,
+                                             "DEPLOYMENT_REPORT_FILE":str(self.file)}), \
+                     patch.object(reporting, "GitHub", return_value=api), \
+                     patch.object(reporting, "build_opener", return_value=Opener()), \
+                     patch("sys.stdout", new_callable=io.StringIO) as output:
+                    self.assertEqual(reporting.main(), 1)
+                self.assertEqual(output.getvalue(), "::warning::Deployment status reporting failed: " +
+                    "COMMENT_WRITE/" + cause + " HTTP_STATUS=" + str(code) +
+                    "; original deployment result unchanged.\n")
+                self.assertNotIn(SECRET, output.getvalue())
+                self.assertTrue(error.closed)
+
+    def test_error_response_decoding_is_bounded_and_not_authoritative(self):
+        for raw in (b"invalid-json", b"[]", b'{"message":null}', b'{"message":{}}',
+                    SECRET.encode() * reporting.MAX_ERROR):
+            class Body(io.BytesIO):
+                def read(inner, size=-1):
+                    self.assertEqual(size, reporting.MAX_ERROR + 1)
+                    return super().read(size)
+            failure = reporting.http_failure(HTTPError(SECRET,403,SECRET,{},Body(raw)))
+            self.assertEqual((failure.cause,failure.http_status),("API_HTTP_FAILED",403))
+            self.assertNotIn(SECRET,str(failure))
+        for status in (True, "403", 99, 600, SECRET):
+            with self.assertRaises(ValueError): reporting.ApiFailure("API_HTTP_FAILED",status)
+            with self.assertRaises(ValueError): reporting.ReportingFailed("COMMENT_WRITE","API_HTTP_FAILED",status)
+
     def test_unknown_stage_or_cause_cannot_leak(self):
         for ctor, args in ((reporting.ReportingFailed,(SECRET,)),
                            (reporting.ReportingFailed,("COMMENT_WRITE",SECRET)),
