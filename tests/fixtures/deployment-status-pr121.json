@@ -1,0 +1,49 @@
+{
+  "run": {
+    "id": 38015226038,
+    "run_attempt": 1,
+    "head_sha": "11a4adf8765d5883e10c39ff9d474cdc182abb6a",
+    "event": "push",
+    "head_branch": "main",
+    "path": ".github/workflows/tests.yml",
+    "status": "completed",
+    "conclusion": "success",
+    "repository": {
+      "full_name": "stevengalvis/modelfc"
+    },
+    "head_repository": {
+      "full_name": "stevengalvis/modelfc"
+    }
+  },
+  "pr": {
+    "number": 121,
+    "merged": true,
+    "state": "closed",
+    "merge_commit_sha": "11a4adf8765d5883e10c39ff9d474cdc182abb6a",
+    "base": {
+      "ref": "main",
+      "repo": {
+        "full_name": "stevengalvis/modelfc"
+      }
+    },
+    "user": {
+      "login": "stevengalvis",
+      "id": 16994883,
+      "type": "User"
+    }
+  },
+  "report": {
+    "dependency_sync": "INSTALLED",
+    "fetch_verified": true,
+    "final_sha": "11a4adf8765d5883e10c39ff9d474cdc182abb6a",
+    "previous_sha": "cc283801864a89f40e3baad6a0ccfdf2f38ba9b9",
+    "promotion_status": "PROMOTED",
+    "reason": "OK",
+    "release_created": true,
+    "requested_sha": "11a4adf8765d5883e10c39ff9d474cdc182abb6a",
+    "state_boundary_enforced": true,
+    "status": "PASS",
+    "tests_run": 1327,
+    "tests_status": "PASS"
+  }
+}
