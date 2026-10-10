@@ -104,16 +104,17 @@ Italy/MLS real odds coverage remains unverified. Unsupported league forecasts
 must remain absent. Run without credentials or network and do not publish any
 production evidence. This command is a later operator task, not host activation.
 
-## Real-data identity and history review (PR #120)
+## Initial identity/history diagnostic (head 0426dc7)
 
-The reported private replay could not normalize any of its 12 Championship
+Before the posted acceptance evidence was available, the private replay could
+not normalize any of its 12 Championship
 pairings. The two supplied examples are `West Ham United` / `West Ham` and
 `Queens Park Rangers` / `QPR`. Neither the private response (including stable
-provider team IDs) nor the actual historical CSVs is available in this workspace.
-No new alias is authorized by those display-name examples alone. Corner and BTTS
+provider team IDs) nor the actual historical CSVs was available in this workspace.
+Those display-name examples alone did not authorize new aliases. Corner and BTTS
 still use the single competition-scoped `oddspapi.normalize_team` resolver; its
 existing verified aliases are unchanged. The three reported planner-eligible
-history failures cannot yet be assigned evidence-supported causes.
+history failures could not yet be assigned evidence-supported causes at that head.
 
 For the next **private, offline operator review**, export the complete distinct
 provider identities and the unchanged corner count gates with:
@@ -169,3 +170,52 @@ competition-scoped aliases through the existing resolver, then repeat corner
 and BTTS consumption and classify remaining history failures. Do not fetch odds,
 lower thresholds, fabricate rows, publish production evidence or claim real-data
 acceptance until that review and replay succeed.
+
+## Verified E1 identity correction (October 9 acceptance evidence)
+
+The [posted VPS report](https://github.com/stevengalvis/modelfc/pull/120#issuecomment-6091241691)
+now supplies the previously missing private-data verification. It checked all
+24 provider IDs/full names/short names across test1, testC and testD against the
+five hashed E1 CSV sources (2223 through 2627). Eleven independent cached E1
+fixtures corroborate 22 teams. Watford's mapping is supported by explicit ID 24,
+full/short-name fields in all three captures and the exact CSV name, without an
+independent older fixture witness. The original captures/CSVs were not accessed
+in the repository workspace; these mappings use the operator's posted evidence.
+
+`oddspapi.E1_VERIFIED_TEAM_IDENTITIES` preserves those 24 ID/name/history triples
+and validates unique positive provider IDs, source names and canonical names,
+with no alias/canonical collision. The single E1 alias map is derived from it.
+It adds the 18 differences reported there and preserves Wolves, West Brom,
+Norwich and Bolton. Bristol City and Sheffield United remain exact matches.
+Both consumers already use the same competition-scoped resolver; no fuzzy or
+cross-league alias lookup, snapshot redesign or fixture-resolution API change is
+introduced. If an alias and its canonical target both appear as distinct
+historical identities, resolution rejects the ambiguous join. Unknown names
+remain rejected. IDs are the checked-in mapping's verification provenance;
+the existing fixture ID validation contract is unchanged.
+
+The report classifies the three planner-eligible corner failures as **insufficient
+venue-specific E1 observations**, even after correct identity resolution:
+
+| Fixture | Insufficient sample | Required |
+| --- | --- | --- |
+| Bolton vs Stoke | Bolton home: 4 | 5 |
+| Middlesbrough vs Wolves | Wolves away: 4 | 5 |
+| Sheffield United vs Lincoln | Lincoln away: 4 | 5 |
+
+The league gate passed at 4,606 team observations versus 100 required. History
+age warnings (19–21 days at the captured kickoffs) are separate from the
+rejecting sample gate; promotion/relegation remains unverified. The report also
+identifies West Ham's four home observations outside the planner window.
+No history rows, thresholds, methodologies or refresh behavior are changed.
+When corner eligibility fails, callers can continue to request `models=("btts",)`
+through `prepare_plan`; BTTS uses its own unchanged eligibility requirements.
+
+Repeat the private, hash-pinned acceptance on the new reviewed head. Verify all
+12 canonical joins, preserve the three planner corner rejections, and confirm
+independent BTTS joins for all 12 and corner joins for only the eight fixtures
+with sufficient history. Validate source hashes, exact ID/name/kickoff identity,
+deterministic outputs and unchanged inventory parity. No genuinely pre-retrieval
+forecast/calendar evidence was found, so this replay remains retrospective and
+must not publish prospective evidence. This repository change does not claim
+that the new real-data replay has passed or authorize a refresh/provider call.

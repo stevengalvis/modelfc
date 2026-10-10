@@ -50,11 +50,52 @@ FAMILIES = {
     "teamtotals-corners-team1": ("TEAM_TOTAL", "HOME"),
     "teamtotals-corners-team2": ("TEAM_TOTAL", "AWAY"),
 }
-# Only differences verified against the two captured fixtures and E1 history.
-TEAM_ALIASES = MappingProxyType({
-    "Wolverhampton Wanderers": "Wolves", "West Bromwich Albion": "West Brom",
-    "Norwich City": "Norwich", "Bolton Wanderers": "Bolton",
-})
+# E1-only identities verified in the Oct 9 VPS acceptance report, PR #120:
+# https://github.com/stevengalvis/modelfc/pull/120#issuecomment-6091241691
+# (stable provider ID, exact provider name, exact historical CSV name).
+E1_VERIFIED_TEAM_IDENTITIES = (
+    (1, "Queens Park Rangers", "QPR"),
+    (2, "Portsmouth FC", "Portsmouth"),
+    (3, "Wolverhampton Wanderers", "Wolves"),
+    (5, "Bolton Wanderers", "Bolton"),
+    (6, "Burnley FC", "Burnley"),
+    (8, "West Bromwich Albion", "West Brom"),
+    (9, "Birmingham City", "Birmingham"),
+    (15, "Sheffield United", "Sheffield United"),
+    (21, "Preston North End", "Preston"),
+    (24, "Watford FC", "Watford"),
+    (25, "Millwall FC", "Millwall"),
+    (27, "Derby County", "Derby"),
+    (29, "Stoke City", "Stoke"),
+    (36, "Middlesbrough FC", "Middlesbrough"),
+    (37, "West Ham United", "West Ham"),
+    (45, "Southampton FC", "Southampton"),
+    (46, "Blackburn Rovers", "Blackburn"),
+    (47, "Charlton Athletic", "Charlton"),
+    (58, "Bristol City", "Bristol City"),
+    (61, "Cardiff City", "Cardiff"),
+    (64, "Wrexham AFC", "Wrexham"),
+    (74, "Swansea City", "Swansea"),
+    (92, "Lincoln City", "Lincoln"),
+    (263, "Norwich City", "Norwich"),
+)
+
+
+def _verified_e1_aliases(identities):
+    """Fail closed on conflicting ID/name/canonical declarations, not fuzzy matching."""
+    ids, source_names, canonical_names = set(), set(), set()
+    for pid, source, canonical in identities:
+        if (type(pid) is not int or pid <= 0 or pid in ids
+                or not all(isinstance(n, str) and n and n == n.strip() for n in (source, canonical))
+                or source in source_names or canonical in canonical_names):
+            raise ValueError("INVALID_VERIFIED_TEAM_REGISTRY")
+        ids.add(pid); source_names.add(source); canonical_names.add(canonical)
+    if any(source != canonical and source in canonical_names for _, source, canonical in identities):
+        raise ValueError("INVALID_VERIFIED_TEAM_REGISTRY")
+    return {source: canonical for _, source, canonical in identities if source != canonical}
+
+
+TEAM_ALIASES = MappingProxyType(_verified_e1_aliases(E1_VERIFIED_TEAM_IDENTITIES))
 
 
 @dataclass(frozen=True)
@@ -144,9 +185,11 @@ def _selection_american(price):
 def normalize_team(name, historical_names, competition="E1"):
     config = COMPETITIONS[competition]
     names = set(historical_names)
+    alias = dict(config.aliases).get(name)
+    if name in names and alias in names and alias != name:
+        raise OddsPapiError("Ambiguous verified historical identity")
     if name in names:
         return name
-    alias = dict(config.aliases).get(name)
     if alias in names:
         return alias
     raise OddsPapiError(f"No exact or verified {config.code} historical identity for {name!r}")

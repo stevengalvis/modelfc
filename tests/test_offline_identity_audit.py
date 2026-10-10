@@ -36,16 +36,16 @@ def audit(rows=None, data=None):
 
 
 class OfflineIdentityAuditTests(TestCase):
-    def test_all_distinct_unmatched_identities_no_guessed_aliases(self):
+    def test_verified_aliases_join_unknown_identities_still_fail_closed(self):
         report = audit([fixture('West Ham United', 'Queens Park Rangers'),
                         fixture('West Ham United', 'Unknown', 1, 3, 'other')],
                        history('West Ham', 'QPR'))
         self.assertEqual(len(report['identities']), 3)
-        self.assertEqual(len(report['unmatched_identities']), 3)
-        self.assertTrue(all(i['historical_name'] is None for i in report['identities']))
+        self.assertEqual(len(report['unmatched_identities']), 1)
+        self.assertEqual(report['unmatched_identities'][0]['provider_name'], 'Unknown')
         self.assertEqual(report['historical_names'], ['QPR', 'West Ham'])
-        self.assertTrue(all('IDENTITY_UNVERIFIED' in f['failures'] for f in report['eligible_fixtures']))
-        for name in ('West Ham United', 'Queens Park Rangers', 'Unknown'):
+        self.assertIn('IDENTITY_UNVERIFIED', report['eligible_fixtures'][1]['failures'])
+        for name in ('Unknown', 'West Ham united', 'Queens Park Rangers FC'):
             with self.assertRaises(OddsPapiError): normalize_team(name, {'West Ham', 'QPR'}, 'E1')
 
     def test_existing_verified_aliases_and_provider_history_join(self):
