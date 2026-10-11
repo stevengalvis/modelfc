@@ -48,6 +48,9 @@ unverified display name proves a final result.
 
 1. Verify the deployed release and protected SHA marker match the reviewed SHA.
    Use the locked release environment and restricted `modelfc-runtime` identity.
+   Verify the existing reviewed `MODELFC_EVIDENCE_ACL_USER=modelfc-api` publication
+   opt-in and fixed API account are available; do not fall back to private-only
+   outcome publication or broaden ACLs.
    Record hashes of the eight original captures, predictions, current outcomes
    and CSV archive. Do not stop/change the forecast-only timer.
 2. Inventory the seven saved final results and the eighth unresolved fixture.
@@ -63,7 +66,7 @@ unverified display name proves a final result.
 4. With separate production-write approval, execute once per verified capture:
 
    ```sh
-   <locked-python> -m modelfc.sportmonks_outcome_evidence \
+   MODELFC_EVIDENCE_ACL_USER=modelfc-api <locked-python> -m modelfc.sportmonks_outcome_evidence \
      --manifest <private-reviewed-manifest> --manifest-sha256 <approved-manifest-sha256> \
      --response-file <existing-saved-response> --calendar-file <existing-saved-calendar> \
      --state-dir <existing-state-root> --analysis-id <original-analysis-id> \
