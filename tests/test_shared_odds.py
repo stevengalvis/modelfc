@@ -73,7 +73,13 @@ class SharedOddsTests(TestCase):
         self.assertEqual(base.corner, future.corner)
         self.assertEqual(base.btts.yes_probability, future.btts.yes_probability)
         self.assertNotEqual(base.sources, future.sources)
-        with self.assertRaises(ValueError): prepare_forecast(f, sources(), frozen_at=NOW, cutoff=NOW.date()-timedelta(days=1))
+        prior = prepare_forecast(f, sources(), frozen_at=NOW,
+                                 cutoff=NOW.date()-timedelta(days=1))
+        self.assertEqual(prior.cutoff, NOW.date()-timedelta(days=1))
+        self.assertLess(prior.btts.inputs.latest_history_date, prior.cutoff)
+        with self.assertRaises(ValueError):
+            prepare_forecast(f, sources(), frozen_at=NOW,
+                             cutoff=f.identity.kickoff_utc.date()+timedelta(days=1))
         with self.assertRaises(ValueError): prepare_forecast(f, sources(), frozen_at=f.identity.kickoff_utc, cutoff=f.identity.kickoff_utc.date())
 
     def test_incidental_fixture_and_temporal_boundary_rejected(self):

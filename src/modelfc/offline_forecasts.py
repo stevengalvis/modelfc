@@ -9,7 +9,7 @@ import hashlib
 
 from modelfc.acquisition_planner import Fixture, Plan, utc
 from modelfc.btts_market_data import BttsFixture
-from modelfc.btts_model import BttsForecast, HistorySource, freeze_btts_forecast, history_from_bytes
+from modelfc.btts_model import BttsForecast, HistorySource, freeze_btts_forecast, history_from_bytes, e1_result_date
 from modelfc.btts_research import comparisons_from_snapshot, digest
 from modelfc.corner_data import CornerDataConfig, load_data_config, configured_history_paths
 from modelfc.corner_forecasts import CornerFixturePrediction, predict_corner_fixture, corner_line_probabilities
@@ -68,12 +68,14 @@ def history_bytes_from_config(config: CornerDataConfig, competition: str) -> tup
 
 
 def prepare_forecast(fixture: KnownFixture, sources: tuple[tuple[str, bytes], ...], *,
-                     frozen_at: datetime, cutoff: date, models: tuple[str, ...] = ("corner", "btts")) -> PreparedForecast:
+                     frozen_at: datetime, cutoff: date, models: tuple[str, ...] = ("corner", "btts"),
+                     history_calendar=None) -> PreparedForecast:
     """Call before supplying any odds bytes. Both models retain their frozen methodology."""
     if not models or len(set(models)) != len(models) or set(models) - {"corner", "btts"}:
         raise ValueError("UNSUPPORTED_MODEL")
     frozen = utc(frozen_at)
-    if type(cutoff) is not date or cutoff != frozen.date() or frozen >= fixture.identity.kickoff_utc:
+    if (type(cutoff) is not date or cutoff > e1_result_date(fixture.identity.kickoff_utc)
+            or frozen >= fixture.identity.kickoff_utc):
         raise ValueError("INVALID_FORECAST_CUTOFF")
     if fixture.identity.competition != "E1":
         return PreparedForecast(fixture, frozen, cutoff, (), None, None, "UNSUPPORTED_MODEL")
@@ -84,23 +86,33 @@ def prepare_forecast(fixture: KnownFixture, sources: tuple[tuple[str, bytes], ..
         sha256=hashlib.sha256(raw).hexdigest()) for name, raw in sorted(sources))
     if len({s.filename for s in provenance}) != len(provenance):
         raise ValueError("DUPLICATE_HISTORY_SOURCE")
+    if history_calendar is not None:
+        from modelfc.history_completeness import matchweek_cutoff, verify_completeness
+        if matchweek_cutoff(history_calendar, fixture) != cutoff:
+            raise ValueError("FORECAST_CALENDAR_CUTOFF_MISMATCH")
+        verify_completeness(history_calendar, sources, cutoff=cutoff, as_of=frozen)
+    elif cutoff > frozen.date():
+        raise ValueError("FORECAST_FUTURE_CUTOFF_REQUIRES_CALENDAR")
     prediction = None
     if "corner" in models:
         corners = [r for _, raw in sources for r in _read_corner_observations(
-            StringIO(raw.decode("utf-8-sig")), "E1") if r.match_date < cutoff]
+            StringIO(raw.decode("utf-8-sig")), "E1") if r.match_date < cutoff
+            and r.match_date <= e1_result_date(frozen)]
         if not {fixture.home_team, fixture.away_team} <= {r.team for r in corners}:
             raise ValueError("FORECAST_TEAM_IDENTITY_REVIEW")
-        prediction = predict_corner_fixture(corners, UpcomingFixture(fixture.identity.kickoff_utc.date(),
+        prediction = predict_corner_fixture(corners, UpcomingFixture(e1_result_date(fixture.identity.kickoff_utc),
             fixture.home_team, fixture.away_team))
     btts = None
     if "btts" in models:
         history = history_from_bytes("E1", sources)
         if not {fixture.home_team, fixture.away_team} <= {n for r in history.results if r.match_date < cutoff
+                                                       and r.match_date <= e1_result_date(frozen)
                                                        for n in (r.home_team, r.away_team)}:
             raise ValueError("FORECAST_TEAM_IDENTITY_REVIEW")
         btts = freeze_btts_forecast(BttsFixture(competition="E1", provider="oddspapi",
             provider_fixture_id=fixture.identity.fixture_id, home_team=fixture.home_team,
-            away_team=fixture.away_team, kickoff_utc=fixture.identity.kickoff_utc.isoformat()), history, frozen_at=frozen)
+            away_team=fixture.away_team, kickoff_utc=fixture.identity.kickoff_utc.isoformat()),
+            history, frozen_at=frozen, cutoff=cutoff, history_calendar=history_calendar)
     return PreparedForecast(fixture, frozen, cutoff, provenance, prediction, btts, "PREPARED")
 
 
