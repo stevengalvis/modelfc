@@ -217,12 +217,12 @@ class ForecastOnlyRunnerTests(unittest.TestCase):
         self.assertEqual(len(records), 1)
         self.assertNotIn("results-token", records[0].read_text())
 
-    def test_missing_recent_calendar_result_is_filled_before_forecasting(self):
+    def test_missing_fixture_on_csv_tip_date_is_filled_before_forecasting(self):
         value = bundle(); response = json.loads(value["payload"])
         missing = next(row for row in response["matches"] if row["status"] == "FINISHED")
         installed = next(row for row in response["matches"]
                          if row["status"] == "TIMED" and row["matchday"] != 9)
-        installed.update(status="FINISHED", utcDate="2026-09-19T14:00:00Z")
+        installed.update(status="FINISHED", utcDate="2026-09-20T12:00:00Z")
         installed["score"]["fullTime"] = {"home": 2, "away": 1}
         response["resultSet"]["played"] = 2
         value["payload"] = json.dumps(response)
@@ -231,7 +231,7 @@ class ForecastOnlyRunnerTests(unittest.TestCase):
         away = installed["awayTeam"]["name"].removeprefix("Source ")
         archive = (histories()[0], ("E1_2627.csv",
                     ("Div,Date,HomeTeam,AwayTeam,FTHG,FTAG,HC,AC\n"
-                     f"E1,19/09/2026,{home},{away},2,1,5,4\n").encode()))
+                     f"E1,20/09/2026,{home},{away},2,1,5,4\n").encode()))
         missing_home = missing["homeTeam"]["name"].removeprefix("Source ")
         missing_away = missing["awayTeam"]["name"].removeprefix("Source ")
         sport_bindings = {row["history_name"]: row
@@ -247,8 +247,8 @@ class ForecastOnlyRunnerTests(unittest.TestCase):
             retrieved_at_utc=NOW.isoformat(), response_sha256="9" * 64)
         superseded = make_result(competition="E1", provider="sportmonks",
             provider_fixture_id=200_000 + installed["id"], provider_league_id=9,
-            provider_season_id=999, kickoff_utc="2026-09-19T14:00:00+00:00",
-            match_date=date(2026, 9, 19),
+            provider_season_id=999, kickoff_utc="2026-09-20T12:00:00+00:00",
+            match_date=date(2026, 9, 20),
             home_provider_team_id=sport_bindings[home]["provider_team_id"],
             away_provider_team_id=sport_bindings[away]["provider_team_id"],
             home_team=home, away_team=away, home_goals=2, away_goals=1,

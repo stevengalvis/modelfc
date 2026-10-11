@@ -59,21 +59,25 @@ def _config(value):
     return value
 
 
-def _latest_current_result(sources):
+def _current_result_keys(sources):
     current = max(sources, key=lambda item: item[0])
     reader = csv.DictReader(StringIO(current[1].decode("utf-8-sig")), strict=True)
-    dates = []
+    keys = set()
     for row in reader:
         try:
             if row["Div"] != "E1" or not all(row[name].strip() for name in
                     ("FTHG", "FTAG", "HC", "AC")):
                 continue
-            dates.append(datetime.strptime(row["Date"].strip(), "%d/%m/%Y").date())
+            day = datetime.strptime(row["Date"].strip(), "%d/%m/%Y").date()
+            key = day, row["HomeTeam"].strip(), row["AwayTeam"].strip()
+            if not key[1] or not key[2] or key in keys:
+                raise ValueError
+            keys.add(key)
         except (KeyError, ValueError, AttributeError):
             raise ForecastRunRejected("HISTORY_REJECTED") from None
-    if not dates:
+    if not keys:
         raise ForecastRunRejected("HISTORY_REJECTED")
-    return max(dates)
+    return frozenset(keys)
 
 
 def _calendar_fixtures(calendar):
@@ -190,7 +194,8 @@ def run_once(*, state_dir, data_config_path, configuration, sportmonks_token,
                 return receipt
             entries = _entries(calendar, eligible)
             base_sources = history_loader(Path(data_config_path), "E1")
-            current_latest = _latest_current_result(base_sources)
+            base_keys = _current_result_keys(base_sources)
+            current_latest = max(key[0] for key in base_keys)
             stored_supplement = load_results(state)
             supplement = tuple(record for record in stored_supplement
                                if record.provider_season_id == config["sportmonks_season_id"])
@@ -209,14 +214,15 @@ def run_once(*, state_dir, data_config_path, configuration, sportmonks_token,
             end = max(required_days)
             required_recent = {match.key for match in calendar.matches
                                if (match.status == "FINISHED"
-                                   and current_latest < match.day < cutoff)}
+                                   and current_latest <= match.day < cutoff
+                                   and match.key not in base_keys)}
             covered_recent = {record.key for record in supplement}
             if required_recent - covered_recent:
                 # Re-fetch the whole bounded post-CSV interval after a partial
                 # publication crash. Existing immutable records replay exactly;
                 # omitted records can then be completed without advancing a
                 # date watermark past a missing fixture.
-                start = current_latest + timedelta(days=1)
+                start = min(key[0] for key in required_recent - covered_recent)
                 if (end-start).days + 1 > 31:
                     raise ForecastRunRejected("SPORTMONKS_RANGE_REJECTED")
                 _claim_results_request(state, start=start, end=end,
@@ -233,10 +239,17 @@ def run_once(*, state_dir, data_config_path, configuration, sportmonks_token,
                                or record.retrieved_at_utc != fetched.retrieved_at.isoformat()
                                for record in fetched.records)):
                     raise ForecastRunRejected("SPORTMONKS_PROVENANCE_REJECTED")
+                expected_range = {match.key for match in calendar.matches
+                                  if (match.status == "FINISHED"
+                                      and start <= match.day <= end)}
+                # Validate every supplied row, including exact CSV duplicates,
+                # before retaining only the fixtures absent from the archive.
+                augment_sources(base_sources, fetched.records, calendar)
                 for record in fetched.records:
-                    if not start <= record.match_date <= end or record.match_date <= current_latest:
+                    if not start <= record.match_date <= end or record.key not in expected_range:
                         raise ForecastRunRejected("SPORTMONKS_RANGE_REJECTED")
-                    publish_result(state, record)
+                    if record.key not in base_keys:
+                        publish_result(state, record)
                 stored_supplement = load_results(state)
                 supplement = tuple(record for record in stored_supplement
                                    if record.provider_season_id == config["sportmonks_season_id"])
@@ -269,7 +282,7 @@ def run_once(*, state_dir, data_config_path, configuration, sportmonks_token,
                 raise ForecastRunRejected("FORECAST_PREPARATION_BLOCKED")
             # No odds lookup exists in this process. Publish each validated model independently.
             relevant = tuple(record for record in supplement
-                             if current_latest < record.match_date < cutoff)
+                             if record.key not in base_keys and record.match_date < cutoff)
             for prepared, model, created in prepared_for_run:
                 if not created:
                     continue
