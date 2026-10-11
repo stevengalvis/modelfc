@@ -231,6 +231,8 @@ class RestrictedCapabilityTests(unittest.TestCase):
     def test_real_readonly_identity_gets_functional_content_without_private_access(self):
         import multiprocessing
         import os
+        import ctypes
+        import ctypes.util
         from datetime import date
         from modelfc.corner_capabilities import public_api_capabilities
         # Import before dropping UID: the code checkout is not an API data grant.
@@ -245,6 +247,19 @@ class RestrictedCapabilityTests(unittest.TestCase):
             lock=private/'refresh.lock';lock.touch();lock.chmod(0o444)
             status=private/'status.json';status.write_text('private-secret');status.chmod(0o600)
             older=root/'E1_2526.csv';older.write_text('private-history');older.chmod(0o600)
+            # Match the production named-user ACL, with no group/world grants.
+            acl=ctypes.CDLL(ctypes.util.find_library('acl'),use_errno=True)
+            acl.acl_from_text.argtypes=[ctypes.c_char_p];acl.acl_from_text.restype=ctypes.c_void_p
+            acl.acl_set_fd.argtypes=[ctypes.c_int,ctypes.c_void_p];acl.acl_set_fd.restype=ctypes.c_int
+            acl.acl_free.argtypes=[ctypes.c_void_p]
+            def restrict(path,owner,reader):
+                value=acl.acl_from_text(f'u::{owner},u:65534:{reader},g::---,m::{reader},o::---'.encode())
+                self.assertTrue(value)
+                fd=os.open(path,os.O_RDONLY|os.O_NOFOLLOW)
+                try:self.assertEqual(acl.acl_set_fd(fd,value),0)
+                finally:os.close(fd);acl.acl_free(value)
+            for path in (root,root/'data',private):restrict(path,'rwx','--x')
+            for path in (config,history,lock):restrict(path,'rw-','r--')
             before={p:p.read_bytes() for p in (history,lock,status,older,config)}
             receiving,sending=multiprocessing.get_context('fork').Pipe(False)
             def child():
