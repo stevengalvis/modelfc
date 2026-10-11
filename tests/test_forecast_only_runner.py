@@ -217,6 +217,22 @@ class ForecastOnlyRunnerTests(unittest.TestCase):
         self.assertEqual(len(records), 1)
         self.assertNotIn("results-token", records[0].read_text())
 
+    def test_overlapping_result_request_claim_is_not_retried(self):
+        with patch("modelfc.forecast_only_runner.git_commit_sha", return_value="f" * 40):
+            _claim_results_request(self.state, start=date(2026, 10, 9),
+                end=date(2026, 10, 10), season_id=999, requested_at=NOW,
+                deployed_sha="f" * 40)
+            with self.assertRaisesRegex(ForecastRunRejected,
+                                         "SPORTMONKS_ATTEMPT_ALREADY_RECORDED"):
+                _claim_results_request(self.state, start=date(2026, 10, 10),
+                    end=date(2026, 10, 11), season_id=999,
+                    requested_at=NOW + timedelta(hours=1), deployed_sha="f" * 40)
+            _claim_results_request(self.state, start=date(2026, 10, 11),
+                end=date(2026, 10, 12), season_id=999,
+                requested_at=NOW + timedelta(hours=2), deployed_sha="f" * 40)
+        self.assertEqual(len(list((self.state / "supplemental-history-attempts").glob(
+            "*.json"))), 2)
+
     def test_missing_fixture_before_csv_tip_is_filled_before_forecasting(self):
         value = bundle(); response = json.loads(value["payload"])
         missing = next(row for row in response["matches"] if row["status"] == "FINISHED")

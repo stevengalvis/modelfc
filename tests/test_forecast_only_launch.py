@@ -32,7 +32,9 @@ class ForecastOnlyLaunchTests(unittest.TestCase):
                      "research_predictions.py"):
             (self.release / "src/modelfc" / name).touch()
         (self.release / ".venv/pyvenv.cfg").touch()
-        (self.release / ".venv/bin/python").symlink_to(sys.executable)
+        interpreter = self.release / ".venv/bin/python"
+        interpreter.write_bytes(Path(sys.executable).read_bytes())
+        interpreter.chmod(0o755)
         self.history = root / "history"; self.history.mkdir()
         self.state = root / "state"; self.state.mkdir()
         self.config = root / "etc/modelfc/corner_data.json"; self.config.parent.mkdir(parents=True)
@@ -80,6 +82,20 @@ class ForecastOnlyLaunchTests(unittest.TestCase):
                 patch.dict(os.environ, {"CREDENTIALS_DIRECTORY": "/run/credentials/unit"},
                            clear=True):
             with self.assertRaisesRegex(ValueError, "path"):
+                LAUNCHER.launch()
+            execute.assert_not_called()
+
+    def test_rejects_symlink_to_writable_interpreter(self):
+        python = self.release / ".venv/bin/python"
+        python.unlink()
+        target = self.release.parent / "runtime-python"
+        target.write_bytes(Path(sys.executable).read_bytes()); target.chmod(0o777)
+        python.symlink_to(target)
+        with patch.object(Path, "cwd", return_value=self.release), \
+                patch.object(os, "execve") as execute, \
+                patch.dict(os.environ, {"CREDENTIALS_DIRECTORY": "/run/credentials/unit"},
+                           clear=True):
+            with self.assertRaisesRegex(ValueError, "interpreter"):
                 LAUNCHER.launch()
             execute.assert_not_called()
 

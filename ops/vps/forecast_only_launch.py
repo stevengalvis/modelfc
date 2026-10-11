@@ -35,6 +35,26 @@ def protected_tree(root, owner):
             protected(parent/name, owner)
 
 
+def protected_interpreter(path, deploy):
+    info = path.lstat()
+    if stat.S_ISREG(info.st_mode):
+        if info.st_uid != deploy or info.st_mode & 0o022 or not os.access(path, os.X_OK):
+            raise ValueError("invalid forecast-only interpreter")
+        return
+    if not stat.S_ISLNK(info.st_mode) or info.st_uid != deploy:
+        raise ValueError("invalid forecast-only interpreter")
+    target = path.resolve(strict=True)
+    target_info = target.lstat()
+    if (not stat.S_ISREG(target_info.st_mode) or target_info.st_uid != 0
+            or target_info.st_mode & 0o022 or not os.access(target, os.X_OK)):
+        raise ValueError("invalid forecast-only interpreter")
+    for ancestor in (target.parent, *target.parents):
+        ancestor_info = ancestor.lstat()
+        if (not stat.S_ISDIR(ancestor_info.st_mode) or ancestor_info.st_uid != 0
+                or ancestor_info.st_mode & 0o022):
+            raise ValueError("invalid forecast-only interpreter")
+
+
 def launch():
     release = Path.cwd()
     match = re.fullmatch(r"([0-9a-f]{40})-[0-9a-f]{12}", release.name)
@@ -63,8 +83,7 @@ def launch():
     protected_tree(release/"src/modelfc", deploy)
     protected_tree(release/".venv/lib", deploy)
     python = release/".venv/bin/python"
-    if python.lstat().st_uid != deploy or not python.is_file() or not os.access(python, os.X_OK):
-        raise ValueError("invalid forecast-only interpreter")
+    protected_interpreter(python, deploy)
     for path in (CONFIG.parent.parent, CONFIG.parent):
         protected(path, 0, directory=True)
     protected(CONFIG, 0)

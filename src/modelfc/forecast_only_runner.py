@@ -133,9 +133,39 @@ def _claim_results_request(state, *, start, end, season_id, requested_at, deploy
              "requested_at_utc": requested_at.isoformat(), "deployed_sha": deployed_sha}
     ensure_directory(path.parent, "supplemental history attempt directory")
     with ledger_lock(state):
-        if path.exists():
-            _sync_directories(path.parent, state)
-            raise ForecastRunRejected("SPORTMONKS_ATTEMPT_ALREADY_RECORDED")
+        required = {"schema_version", "record_type", "provider", "competition",
+                    "season_id", "start_date", "end_date", "requested_at_utc",
+                    "deployed_sha"}
+        for old_path in sorted(path.parent.glob("*.json")):
+            try:
+                old = read_json_record(old_path, "supplemental history attempt",
+                                       "UNKNOWN_SUPPLEMENTAL_HISTORY_ATTEMPT")
+                if (re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", old["start_date"]) is None
+                        or re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}",
+                                        old["end_date"]) is None):
+                    raise ValueError
+                old_start = datetime.fromisoformat(old["start_date"]).date()
+                old_end = datetime.fromisoformat(old["end_date"]).date()
+                observed = datetime.fromisoformat(old["requested_at_utc"].replace("Z", "+00:00"))
+                old_identity = hashlib.sha256(json.dumps({"competition": "E1",
+                    "provider": "sportmonks", "season_id": old["season_id"],
+                    "start": old["start_date"], "end": old["end_date"]},
+                    sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+                if (old_path.is_symlink() or not old_path.is_file() or set(old) != required
+                        or old["schema_version"] != 1
+                        or old["record_type"] != "supplemental_history_attempt"
+                        or old["provider"] != "sportmonks" or old["competition"] != "E1"
+                        or type(old["season_id"]) is not int or old["season_id"] <= 0
+                        or old_start > old_end or observed.tzinfo is None
+                        or re.fullmatch(r"[0-9a-f]{40}", old["deployed_sha"]) is None
+                        or old_path.name != f"{old_identity}.json"):
+                    raise ValueError
+            except (KeyError, TypeError, ValueError, AttributeError, LedgerError):
+                raise ForecastRunRejected("SPORTMONKS_ATTEMPT_REJECTED") from None
+            if (old["season_id"] == season_id
+                    and not (end < old_start or start > old_end)):
+                _sync_directories(path.parent, state)
+                raise ForecastRunRejected("SPORTMONKS_ATTEMPT_ALREADY_RECORDED")
         write_new_record(path, claim)
         _sync_directories(path.parent, state)
 
