@@ -128,7 +128,7 @@ class ForecastOnlyLaunchTests(unittest.TestCase):
             LAUNCHER.launch()
         executable, arguments, _environment = execute.call_args.args
         self.assertEqual(executable, str(canonical))
-        self.assertEqual(arguments[0], str(canonical))
+        self.assertEqual(arguments[0], str(self.release / ".venv/bin/python"))
 
     def test_bad_release_or_marker_fails_before_exec(self):
         for change in ("cwd", "marker"):

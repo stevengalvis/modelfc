@@ -84,7 +84,7 @@ def launch():
     protected_tree(release/"src/modelfc", deploy)
     protected_tree(release/".venv/lib", deploy)
     python = release/".venv/bin/python"
-    python = protected_interpreter(python, deploy)
+    executable = protected_interpreter(python, deploy)
     for path in (CONFIG.parent.parent, CONFIG.parent):
         protected(path, 0, directory=True)
     protected(CONFIG, 0)
@@ -99,7 +99,7 @@ def launch():
     print(json.dumps({"event": "modelfc_forecast_only_start", "sha": match[1],
         "uid": os.getuid(), "gid": os.getgid()}, sort_keys=True, separators=(",", ":")),
         file=sys.stderr, flush=True)
-    os.execve(str(python), [str(python), "-B", "-P", "-s", "-m",
+    os.execve(str(executable), [str(python), "-B", "-P", "-s", "-m",
         "modelfc.forecast_only_runner", "--data-config", str(CONFIG),
         "--state-dir", str(STATE)], env)
 
