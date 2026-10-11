@@ -351,7 +351,7 @@ class ResearchPredictionResponse(StrictModel):
     calendar_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     calendar_source_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     calendar_retrieved_at_utc: str
-    supplemental_result_count: int = Field(ge=0, le=64)
+    supplemental_result_count: int = Field(ge=0, le=552)
     model_name: str
     model_version: str
     expected_home_corners: float | None

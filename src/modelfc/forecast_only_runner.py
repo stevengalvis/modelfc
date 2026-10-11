@@ -191,7 +191,9 @@ def run_once(*, state_dir, data_config_path, configuration, sportmonks_token,
             entries = _entries(calendar, eligible)
             base_sources = history_loader(Path(data_config_path), "E1")
             current_latest = _latest_current_result(base_sources)
-            supplement = load_results(state)
+            stored_supplement = load_results(state)
+            supplement = tuple(record for record in stored_supplement
+                               if record.provider_season_id == config["sportmonks_season_id"])
             sources = augment_sources(base_sources, supplement, calendar)
             cutoffs = {matchweek_cutoff(calendar, entries[fixture.fixture_id])
                        for fixture in eligible}
@@ -235,7 +237,9 @@ def run_once(*, state_dir, data_config_path, configuration, sportmonks_token,
                     if not start <= record.match_date <= end or record.match_date <= current_latest:
                         raise ForecastRunRejected("SPORTMONKS_RANGE_REJECTED")
                     publish_result(state, record)
-                supplement = load_results(state)
+                stored_supplement = load_results(state)
+                supplement = tuple(record for record in stored_supplement
+                                   if record.provider_season_id == config["sportmonks_season_id"])
                 sources = augment_sources(base_sources, supplement, calendar)
             verification_at = utc(clock())
             if verification_at < calendar.retrieved_at:
@@ -264,7 +268,8 @@ def run_once(*, state_dir, data_config_path, configuration, sportmonks_token,
             if not prepared_for_run:
                 raise ForecastRunRejected("FORECAST_PREPARATION_BLOCKED")
             # No odds lookup exists in this process. Publish each validated model independently.
-            relevant = tuple(record for record in supplement if record.match_date < cutoff)
+            relevant = tuple(record for record in supplement
+                             if current_latest < record.match_date < cutoff)
             for prepared, model, created in prepared_for_run:
                 published = publish_prediction(state, prepared, model,
                                                supplemental_sources=relevant,

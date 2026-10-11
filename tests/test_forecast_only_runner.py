@@ -14,7 +14,7 @@ from modelfc.corner_api import create_app
 from modelfc.forecast_only_runner import ForecastRunRejected, _claim_results_request, run_once
 from modelfc.providers.football_data_calendar import CalendarFetch
 from modelfc.providers.sportmonks_results import FetchResult
-from modelfc.supplemental_history import make_result
+from modelfc.supplemental_history import make_result, publish_result
 from tests.test_history_completeness import NOW, bundle, histories, raw
 
 
@@ -205,6 +205,16 @@ class ForecastOnlyRunnerTests(unittest.TestCase):
             home_team=missing_home, away_team=missing_away, home_goals=2,
             away_goals=1, home_corners=5, away_corners=4,
             retrieved_at_utc=NOW.isoformat(), response_sha256="9" * 64)
+        superseded = make_result(competition="E1", provider="sportmonks",
+            provider_fixture_id=200_000 + installed["id"], provider_league_id=9,
+            provider_season_id=999, kickoff_utc="2026-09-19T14:00:00+00:00",
+            match_date=date(2026, 9, 19),
+            home_provider_team_id=sport_bindings[home]["provider_team_id"],
+            away_provider_team_id=sport_bindings[away]["provider_team_id"],
+            home_team=home, away_team=away, home_goals=2, away_goals=1,
+            home_corners=5, away_corners=4, retrieved_at_utc=NOW.isoformat(),
+            response_sha256="8" * 64)
+        publish_result(self.state, superseded)
 
         class Calendar:
             def __init__(self, *_args, on_request, **_kwargs): self.on_request = on_request
@@ -231,7 +241,33 @@ class ForecastOnlyRunnerTests(unittest.TestCase):
         self.assertEqual(receipt["provider_requests"], {
             "football_data_org": 1, "sportmonks": 1, "oddspapi": 0,
         })
-        self.assertEqual(len(list((self.state / "supplemental-history/E1").glob("*.json"))), 1)
+        self.assertEqual(len(list((self.state / "supplemental-history/E1").glob("*.json"))), 2)
+        for path in (self.state / "research-predictions").glob("*.json"):
+            sources = json.loads(path.read_text())["supplemental_sources"]
+            self.assertEqual([row["provider_fixture_id"] for row in sources],
+                             [str(supplement.provider_fixture_id)])
+
+    def test_other_season_supplement_is_validated_but_not_applied(self):
+        value = bundle()
+        home = value["team_bindings"][0]["history_name"]
+        away = value["team_bindings"][1]["history_name"]
+        bindings = {row["history_name"]: row
+                    for row in self.configuration["sportmonks_team_bindings"]}
+        old = make_result(competition="E1", provider="sportmonks",
+            provider_fixture_id=777001, provider_league_id=9,
+            provider_season_id=998, kickoff_utc="2025-09-20T14:00:00+00:00",
+            match_date=date(2025, 9, 20),
+            home_provider_team_id=bindings[home]["provider_team_id"],
+            away_provider_team_id=bindings[away]["provider_team_id"],
+            home_team=home, away_team=away, home_goals=1, away_goals=0,
+            home_corners=5, away_corners=3, retrieved_at_utc=NOW.isoformat(),
+            response_sha256="7" * 64)
+        publish_result(self.state, old)
+        with patch("modelfc.forecast_only_runner.git_commit_sha", return_value="f" * 40):
+            receipt = self.execute()
+        self.assertEqual(receipt["status"], "RECORDED", receipt)
+        for path in (self.state / "research-predictions").glob("*.json"):
+            self.assertEqual(json.loads(path.read_text())["supplemental_sources"], [])
 
     def test_systemd_schedule_identity_credentials_and_no_oddspapi(self):
         service = (ROOT / "deploy/modelfc-forecast-only.service").read_text()

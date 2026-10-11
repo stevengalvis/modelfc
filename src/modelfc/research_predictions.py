@@ -16,6 +16,7 @@ from modelfc.offline_forecasts import PreparedForecast
 
 
 SCHEMA_VERSION = 1
+MAX_SUPPLEMENTAL_SOURCES = 552
 ADAPTER = TypeAdapter(PreparedForecast)
 
 
@@ -123,7 +124,7 @@ def _validate(record: dict, path: Path) -> tuple[PreparedForecast, str]:
         sources = record["supplemental_sources"]
         required = {"provider", "provider_fixture_id", "retrieved_at_utc",
                     "response_sha256", "normalized_sha256"}
-        if (not isinstance(sources, list) or len(sources) > 64
+        if (not isinstance(sources, list) or len(sources) > MAX_SUPPLEMENTAL_SOURCES
                 or any(not isinstance(row, dict) or set(row) != required
                        or row["provider"] != "sportmonks"
                        or not str(row["provider_fixture_id"]).isdigit()

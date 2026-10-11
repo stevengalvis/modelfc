@@ -28,7 +28,8 @@ def launch():
         raise ValueError("invalid forecast-only release")
     deploy = pwd.getpwnam("modelfc-deploy").pw_uid
     runtime = pwd.getpwnam("modelfc-runtime").pw_uid
-    if os.getuid() != runtime:
+    api = pwd.getpwnam("modelfc-api").pw_uid
+    if len({deploy, runtime, api}) != 3 or os.getuid() != runtime:
         raise ValueError("invalid forecast-only identity")
     for path in (RELEASES.parent, RELEASES, release, release/".git", release/"src",
                  release/"src/modelfc", release/".venv", release/".venv/bin"):
@@ -55,7 +56,6 @@ def launch():
         raise ValueError("invalid forecast-only history configuration")
     protected(HISTORY, runtime, directory=True)
     protected(STATE, runtime, directory=True)
-    pwd.getpwnam("modelfc-api")
     env = {"PATH": "/usr/bin:/bin", "HOME": "/nonexistent", "LANG": "C.UTF-8",
            "PYTHONPATH": str(release/"src"), "PYTHONNOUSERSITE": "1",
            "PYTHONDONTWRITEBYTECODE": "1", "MODELFC_EVIDENCE_ACL_USER": "modelfc-api",

@@ -40,16 +40,32 @@ class ForecastOnlyLaunchTests(unittest.TestCase):
         for name, value in (("RELEASES", self.releases), ("CONFIG", self.config),
                             ("HISTORY", self.history), ("STATE", self.state)):
             mocked = patch.object(LAUNCHER, name, value); mocked.start(); self.addCleanup(mocked.stop)
-        identity = type("Identity", (), {"pw_uid": os.getuid()})()
-        mocked = patch.object(LAUNCHER.pwd, "getpwnam", return_value=identity)
+        self.fixture_uid = os.getuid()
+        self.uids = {"modelfc-deploy": self.fixture_uid,
+                     "modelfc-runtime": self.fixture_uid + 10001,
+                     "modelfc-api": self.fixture_uid + 10002}
+        mocked = patch.object(LAUNCHER.pwd, "getpwnam", side_effect=lambda name: type(
+            "Identity", (), {"pw_uid": self.uids[name]})())
         mocked.start(); self.addCleanup(mocked.stop)
-        # CI runs unprivileged, so its synthetic /etc ancestors cannot be
-        # root-owned. Preserve every real path/type/mode check while mapping
-        # the fixture's expected owner to the current test identity.
+        mocked = patch.object(LAUNCHER.os, "getuid",
+                              return_value=self.uids["modelfc-runtime"])
+        mocked.start(); self.addCleanup(mocked.stop)
         original = LAUNCHER.protected
-        mocked = patch.object(LAUNCHER, "protected",
-            side_effect=lambda path, _owner, **kwargs: original(
-                path, os.getuid(), **kwargs))
+        release_paths = {self.releases.parent, self.releases, self.release,
+            self.release/".git", self.release/"src", self.release/"src/modelfc",
+            self.release/".venv", self.release/".venv/bin",
+            self.release/".venv/pyvenv.cfg", self.release/"src/modelfc/forecast_only_runner.py",
+            self.release/"src/modelfc/supplemental_history.py",
+            self.release/"src/modelfc/research_predictions.py"}
+        root_paths = {self.config.parent.parent, self.config.parent, self.config}
+        runtime_paths = {self.history, self.state}
+        def checked(path, owner, **kwargs):
+            expected = (self.uids["modelfc-deploy"] if path in release_paths else
+                        0 if path in root_paths else self.uids["modelfc-runtime"]
+                        if path in runtime_paths else None)
+            self.assertEqual(owner, expected)
+            return original(path, self.fixture_uid, **kwargs)
+        mocked = patch.object(LAUNCHER, "protected", side_effect=checked)
         mocked.start(); self.addCleanup(mocked.stop)
 
     def test_executes_only_pinned_runner_and_scrubs_provider_environment(self):
@@ -83,6 +99,19 @@ class ForecastOnlyLaunchTests(unittest.TestCase):
                     patch.object(os, "execve") as execute, \
                     patch.dict(os.environ, {"CREDENTIALS_DIRECTORY": "/run/credentials/unit"}, clear=True):
                 with self.assertRaises(ValueError): LAUNCHER.launch()
+                execute.assert_not_called()
+
+    def test_deploy_runtime_and_api_identities_must_be_distinct(self):
+        for alias in ("modelfc-deploy", "modelfc-api"):
+            identities = dict(self.uids, **{alias: self.uids["modelfc-runtime"]})
+            with self.subTest(alias=alias), patch.object(Path, "cwd", return_value=self.release), \
+                    patch.object(LAUNCHER.pwd, "getpwnam", side_effect=lambda name: type(
+                        "Identity", (), {"pw_uid": identities[name]})()), \
+                    patch.object(os, "execve") as execute, \
+                    patch.dict(os.environ, {"CREDENTIALS_DIRECTORY": "/run/credentials/unit"},
+                               clear=True):
+                with self.assertRaisesRegex(ValueError, "identity"):
+                    LAUNCHER.launch()
                 execute.assert_not_called()
 
 
