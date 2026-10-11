@@ -58,7 +58,7 @@
         },
         {
           "code": "MATCH_TOTAL_NOT_VALIDATED",
-          "message": "Match-total probabilities require historical evaluation."
+          "message": "Match-total probabilities require a recorded leakage-safe historical evaluation at lines 8.5, 9.5, 10.5, and 11.5."
         }
       ]
     },
@@ -92,11 +92,11 @@
         },
         {
           "code": "UNVERIFIED_CORNER_COVERAGE",
-          "message": "La Liga 2 corner coverage is unverified."
+          "message": "La Liga 2 corner history and its refresh path have not been verified."
         },
         {
           "code": "MATCH_TOTAL_NOT_VALIDATED",
-          "message": "Match-total probabilities require historical evaluation."
+          "message": "Match-total probabilities require a recorded leakage-safe historical evaluation at lines 8.5, 9.5, 10.5, and 11.5."
         }
       ]
     }

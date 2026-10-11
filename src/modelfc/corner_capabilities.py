@@ -246,7 +246,7 @@ def public_api_capabilities(data_config_path: str | Path, *, today: date | None 
                 "This competition is not configured."))
             if code == "SP2":
                 result["warnings"].append(_warning("UNVERIFIED_CORNER_COVERAGE",
-                    "La Liga 2 corner coverage is unverified."))
+                    "La Liga 2 corner history and its refresh path have not been verified."))
         elif code != "E1":
             result["warnings"].append(_warning("PUBLIC_HISTORY_NOT_AUTHORIZED",
                 "This public reader is authorized only for current Championship history; "
@@ -283,7 +283,8 @@ def public_api_capabilities(data_config_path: str | Path, *, today: date | None 
                 result["warnings"].append(_warning("DATA_SOURCE_UNAVAILABLE",
                     "Authorized current Championship history is unavailable or invalid."))
         result["warnings"].append(_warning("MATCH_TOTAL_NOT_VALIDATED",
-            "Match-total probabilities require historical evaluation."))
+            "Match-total probabilities require a recorded leakage-safe historical "
+            "evaluation at lines 8.5, 9.5, 10.5, and 11.5."))
         competitions.append(result)
     return {"api_version": "v1", "stake": 1.0, "models": list(CORNER_FIXTURE_MODELS),
             "markets": list(PRODUCTION_MARKETS), "market_capabilities": [
