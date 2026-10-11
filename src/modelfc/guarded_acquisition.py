@@ -24,7 +24,7 @@ from modelfc.providers.oddspapi_tournaments import (OddsPapiTournamentClient,
     TournamentRejected, TOURNAMENT_KIND, MAX_RESPONSE_BYTES)
 from modelfc.shared_odds import snapshot_from_bytes
 from modelfc.history_completeness import (parse_calendar, assess_freshness,
-    MAX_CALENDAR_BYTES, MAX_HISTORY_AGE)
+    matchweek_cutoff, MAX_CALENDAR_BYTES, MAX_HISTORY_AGE)
 
 MAX_CALENDAR_AGE = timedelta(hours=6)
 FORECAST_ADAPTER = TypeAdapter(PreparedForecast)
@@ -167,9 +167,11 @@ def _claimed(store):
 
 
 def _prepare(store, entry, sources, frozen, history_calendar=None):
-    """Freeze each model independently, with participant identity outside model math."""
+    """Freeze each model independently against one verified matchweek boundary."""
     records = []
     if entry.fixture.identity.competition != "E1": return records
+    cutoff = (matchweek_cutoff(history_calendar, entry.fixture)
+              if history_calendar is not None else frozen.date())
     for model in ("corner", "btts"):
         key = _name("forecast", {"competition": entry.fixture.identity.competition,
                  "tournament_id": entry.fixture.identity.tournament_id,
@@ -183,8 +185,7 @@ def _prepare(store, entry, sources, frozen, history_calendar=None):
                     or old["away_provider_id"] != entry.away_provider_id
                     or old["forecast_id"] != prepared.forecast_id
                     or prepared.frozen_at > frozen
-                    or prepared.cutoff > frozen.date()
-                    or not timedelta(0) <= frozen.date()-prepared.cutoff <= timedelta(days=1)):
+                    or prepared.cutoff != cutoff):
                 raise AcquisitionRejected("FORECAST_CONFLICT")
             latest = (prepared.corner.latest_history_date if prepared.corner
                       else prepared.btts.inputs.latest_history_date)
@@ -202,7 +203,7 @@ def _prepare(store, entry, sources, frozen, history_calendar=None):
             continue
         try:
             prepared = prepare_forecast(entry.fixture, sources, frozen_at=frozen,
-                                         cutoff=frozen.date(), models=(model,))
+                                         cutoff=cutoff, models=(model,))
             latest = (prepared.corner.latest_history_date if model == "corner"
                       else prepared.btts.inputs.latest_history_date)
             assessment = assess_freshness(sources, latest=latest, cutoff=prepared.cutoff,

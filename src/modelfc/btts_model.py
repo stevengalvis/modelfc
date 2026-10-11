@@ -218,7 +218,8 @@ class BttsForecast(ResearchContract):
         if self.competition != self.fixture.competition or self.competition != self.inputs.competition:
             raise ValueError("BTTS forecast competition mismatch")
         frozen = timestamp(self.frozen_at_utc)
-        if frozen >= timestamp(self.fixture.kickoff_utc) or self.inputs.cutoff_date != frozen.date():
+        kickoff = timestamp(self.fixture.kickoff_utc)
+        if frozen >= kickoff or self.inputs.cutoff_date > kickoff.date():
             raise ValueError("BTTS forecast cutoff mismatch")
         expected = (*arithmetic_rates(self.inputs),)
         probabilities = btts_probabilities(*expected)
@@ -229,11 +230,14 @@ class BttsForecast(ResearchContract):
         return self
 
 
-def freeze_btts_forecast(fixture: BttsFixture, history: GoalHistory, *, frozen_at: datetime) -> BttsForecast:
+def freeze_btts_forecast(fixture: BttsFixture, history: GoalHistory, *, frozen_at: datetime,
+                         cutoff: date | None = None) -> BttsForecast:
     if fixture.competition != history.competition:
         raise ValueError("BTTS history competition mismatch")
     frozen_at_utc = utc(frozen_at)
-    cutoff = timestamp(frozen_at_utc).date()
+    cutoff = timestamp(frozen_at_utc).date() if cutoff is None else cutoff
+    if type(cutoff) is not date or cutoff > timestamp(fixture.kickoff_utc).date():
+        raise ValueError("BTTS forecast cutoff mismatch")
     prior = [r for r in history.results if r.match_date < cutoff]
     if len(prior) < MIN_HISTORY:
         raise ValueError("INSUFFICIENT_BTTS_HISTORY")

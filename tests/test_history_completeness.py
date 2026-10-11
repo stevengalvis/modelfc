@@ -6,7 +6,9 @@ import unittest
 from unittest.mock import patch
 
 from modelfc.history_completeness import (parse_calendar, assess_freshness,
-    verify_completeness, CompletenessRejected, MAX_CALENDAR_BYTES)
+    verify_completeness, matchweek_cutoff, CompletenessRejected, MAX_CALENDAR_BYTES)
+from modelfc.acquisition_planner import Fixture
+from modelfc.offline_forecasts import KnownFixture
 from modelfc.providers.oddspapi import E1_TEAMS_BY_ID
 from tests import test_guarded_acquisition as coordinator_tests
 from tests.oddspapi_inventory_fixtures import NOW
@@ -21,9 +23,13 @@ def bundle():
     for home in bindings:
         for away in bindings:
             if home == away: continue
-            finished = (home['history_name'], away['history_name']) == ('West Ham', 'QPR')
-            rows.append({'id': len(rows)+2000, 'utcDate': ('2026-09-20T14:00:00Z' if finished
-                else '2027-05-01T14:00:00Z'), 'status': 'FINISHED' if finished else 'TIMED',
+            pair = (home['history_name'], away['history_name'])
+            forecast = pair == ('West Ham', 'QPR')
+            finished = pair == ('Birmingham', 'Blackburn')
+            rows.append({'id': len(rows)+2000, 'utcDate': ('2026-10-09T12:00:00Z' if forecast
+                else '2026-09-20T14:00:00Z' if finished else '2027-05-01T14:00:00Z'),
+                'status': 'FINISHED' if finished else 'TIMED',
+                'matchday': 9 if forecast else 8 if finished else len(rows) % 46 + 1,
                 'stage':'REGULAR_SEASON', 'competition':{'id':2016,'code':'ELC'},
                 'season': {'startDate':'2026-08-01','endDate':'2027-05-31'},
                 'homeTeam':{'id':home['source_team_id'],'name':home['source_name']},
@@ -47,7 +53,7 @@ def histories(extra=''):
         home, away = ('West Ham','QPR') if i%2 else ('QPR','West Ham')
         rows.append(f'E1,{day:%d/%m/%Y},{home},{away},2,1,5,4\n')
     return (('E1_2526.csv',(header+''.join(rows)).encode()),
-            ('E1_2627.csv',(header+'E1,20/09/2026,West Ham,QPR,2,1,5,4\n'+extra).encode()))
+            ('E1_2627.csv',(header+'E1,20/09/2026,Birmingham,Blackburn,2,1,5,4\n'+extra).encode()))
 
 
 class CompletenessTests(unittest.TestCase):
@@ -91,7 +97,7 @@ class CompletenessTests(unittest.TestCase):
             assess_freshness(absent,latest=date(2026,10,7),cutoff=NOW.date(),as_of=NOW,calendar=self.calendar())
 
     def test_scores_conflict(self):
-        sources = tuple((n,b.replace(b'West Ham,QPR,2,1,5,4',b'West Ham,QPR,1,1,5,4')) for n,b in histories())
+        sources = tuple((n,b.replace(b'Birmingham,Blackburn,2,1,5,4',b'Birmingham,Blackburn,1,1,5,4')) for n,b in histories())
         with self.assertRaisesRegex(CompletenessRejected,'HISTORY_RESULTS_CONFLICTING'):
             verify_completeness(self.calendar(),sources,cutoff=NOW.date(),as_of=NOW)
 
@@ -144,6 +150,7 @@ class CompletenessTests(unittest.TestCase):
             lambda v:v['resultSet'].update(played=2),
             lambda v:v['matches'][0].update(status='AWARDED'),
             lambda v:v['matches'][0].update(stage='PLAYOFFS'),
+            lambda v:v['matches'][0].update(matchday=0),
         ]
         for mutation in mutations:
             self.value=bundle();self.mutate_response(mutation)
@@ -156,8 +163,22 @@ class CompletenessTests(unittest.TestCase):
         extra='E1,08/10/2026,QPR,West Ham,8,8,9,9\nE1,09/10/2026,Birmingham,QPR,8,8,9,9\n'
         self.assertEqual(verify_completeness(self.calendar(),histories(),cutoff=NOW.date(),as_of=NOW)['completed_fixture_ids'],
             verify_completeness(self.calendar(),histories(extra),cutoff=NOW.date(),as_of=NOW)['completed_fixture_ids'])
+        self.assertEqual(verify_completeness(self.calendar(), histories(),
+            cutoff=NOW.date()+timedelta(days=1), as_of=NOW)['cutoff'], '2026-10-09')
         with self.assertRaises(CompletenessRejected):
-            verify_completeness(self.calendar(),histories(),cutoff=NOW.date()+timedelta(days=1),as_of=NOW)
+            verify_completeness(self.calendar(),histories(),cutoff=NOW.date()+timedelta(days=2),as_of=NOW)
+
+    def test_matchweek_cutoff_is_shared_before_first_kickoff(self):
+        fixture = KnownFixture(Fixture('E1', 18, 'fixture-1', NOW+timedelta(hours=24)),
+                               'West Ham', 'QPR')
+        self.assertEqual(matchweek_cutoff(self.calendar(), fixture), date(2026, 10, 9))
+
+    def test_current_matchweek_result_is_not_required_or_ingested(self):
+        cutoff = date(2026, 10, 9)
+        base = verify_completeness(self.calendar(), histories(), cutoff=cutoff, as_of=NOW)
+        same_week = histories('E1,09/10/2026,West Ham,QPR,9,9,9,9\n')
+        observed = verify_completeness(self.calendar(), same_week, cutoff=cutoff, as_of=NOW)
+        self.assertEqual(base['completed_fixture_ids'], observed['completed_fixture_ids'])
 
     def test_london_date_join_at_utc_boundary(self):
         def update(v): next(r for r in v['matches'] if r['status']=='FINISHED')['utcDate']='2026-09-19T23:30:00Z'
@@ -196,10 +217,17 @@ class CalendarCoordinatorTests(unittest.TestCase):
         return path
 
     def test_old_complete_history_unblocks_offline_mock_sequence(self):
+        from modelfc import guarded_acquisition as a
+        from modelfc.acquisition_storage import private_store
         path=self.proof_path()
         result=self.run_acquisition(history_loader=lambda *_:histories(),history_calendar_path=path)
         self.assertEqual(result['status'],'RECORDED',result)
         self.assertEqual(result['forecasts'],2)
+        with private_store(self.private) as store:
+            forecasts = [a.FORECAST_ADAPTER.validate_json(json.dumps(
+                store.get(p.name)['forecast'])) for p in self.private.glob('forecast-*')]
+        self.assertEqual({f.cutoff for f in forecasts}, {date(2026, 10, 9)})
+        self.assertTrue(all(f.frozen_at.date() == date(2026, 10, 8) for f in forecasts))
         self.assertEqual(self.reserved(),1);self.assertEqual(self.calls,[(18,)])
         proofs=[json.loads(p.read_text())['record'] for p in self.private.glob('freshness-*')]
         self.assertEqual(len(proofs),2)

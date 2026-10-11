@@ -38,9 +38,14 @@ and conflicting publication fails closed. Storage requires Linux O_TMPFILE suppo
 
 Corner and BTTS forecasts are prepared independently from coherent locked history,
 using the existing methods, versions and minimum-history gates. Only E1 has validated
-models. Other leagues produce market inventory only. Cutoff excludes same-date and
-future results. The latest prior result must be within 14 days unless the separately
-authorized independent E1 calendar proves completeness (see below). A failed corner gate
+models. Other leagues produce market inventory only. With the separately authorized
+independent E1 calendar, every fixture in a football-data.org matchday receives the
+same exclusive history cutoff: the Europe/London date of that matchday's first
+kickoff. Forecast records retain their truthful preparation time; they are never
+backdated. Therefore Friday, Saturday and Sunday forecasts cannot require or ingest
+results from their own matchweek. Without that calendar, the legacy per-run date
+cutoff and 14-day age gate remain fail-closed. The latest prior result must be within
+14 days unless the independent E1 calendar proves completeness (see below). A failed corner gate
 can still leave BTTS available. If neither E1 model is available, the run stops for
 review before reservation. Forecasts preserve participant IDs, competition, kickoff,
 cutoff, source fingerprints and exact existing model outputs. They are read back from
@@ -181,8 +186,9 @@ Finished fixture IDs join one-to-one through exact ordered canonical teams and
 **Europe/London match date** to the CSV's competition/date/home/away identity.
 Final scores must agree. Missing, extra, ambiguous or un-covered current-season
 results reject the proof. The existing completed-corner cohort is preserved;
-missing corners are never fabricated. Same-date and future results are excluded
-from both completeness comparison and frozen model inputs.
+missing corners are never fabricated. Results on or after the shared matchday cutoff are excluded from both completeness
+comparison and frozen model inputs. The source matchday must map uniquely to the
+pre-known fixture by Europe/London date and exact ordered canonical teams.
 
 ### Offline preparation and acceptance
 
@@ -193,14 +199,15 @@ bundle above, preserving the text exactly, and use:
 
 ```python
 from datetime import datetime
-from modelfc.history_completeness import parse_calendar, verify_completeness
+from modelfc.history_completeness import parse_calendar, verify_completeness, matchweek_cutoff
 from modelfc.offline_forecasts import load_history_bytes
 
 # Explicit acceptance time, not a forged present-day observation timestamp.
 as_of = datetime.fromisoformat("2026-10-09T12:00:00+00:00")
 proof = parse_calendar(bundle_bytes, as_of=as_of)
 assessment = verify_completeness(proof, load_history_bytes(config_path, "E1"),
-                                 cutoff=as_of.date(), as_of=as_of)
+                                 cutoff=matchweek_cutoff(proof, known_fixture),
+                                 as_of=as_of)
 ```
 
 Operator-reviewed authorization may add the single optional
@@ -214,8 +221,8 @@ Omitting proof preserves the original age gate; omission cannot accept old histo
 
 Freshness evidence is atomically published in the **existing private acquisition
 store**, alongside each forecast, with rule version, cutoff, bundle/source hashes,
-matched completed fixture IDs and installed history fingerprints. Forecast model
-records and probabilities are unchanged. Reuse requires proof of the exact frozen
+matched completed fixture IDs and installed history fingerprints. Forecast model methodology is unchanged. Corner and BTTS inputs now use the same
+explicit matchweek cutoff rather than the individual preparation date. Reuse requires proof of the exact frozen
 history bytes; changed sources cannot silently certify an older forecast. Proof
 freshness is checked again immediately before the irrevocable claim/reservation.
 No history, production evidence, account controls or services are migrated.

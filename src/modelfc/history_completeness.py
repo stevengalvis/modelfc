@@ -16,7 +16,7 @@ from modelfc.providers.oddspapi_saved_response import _json
 MAX_CALENDAR_BYTES = 2_000_000
 MAX_CALENDAR_AGE = timedelta(hours=6)
 MAX_HISTORY_AGE = timedelta(days=14)
-RULE_VERSION = "e1-calendar-completeness-v1"
+RULE_VERSION = "e1-calendar-completeness-v2"
 _NAMES = frozenset(canonical for _, canonical in E1_TEAMS_BY_ID.values())
 _TERMINAL = {"FINISHED", "POSTPONED", "CANCELLED"}
 _STATUSES = _TERMINAL | {"SCHEDULED", "TIMED", "IN_PLAY", "PAUSED", "SUSPENDED"}
@@ -40,7 +40,9 @@ def _time(value):
 @dataclass(frozen=True)
 class CalendarMatch:
     fixture_id: int
+    kickoff: datetime
     day: date
+    matchday: int
     home: str
     away: str
     status: str
@@ -123,6 +125,8 @@ def parse_calendar(raw: bytes, *, as_of: datetime) -> HistoryCalendar:
                 sides.append(teams[team["id"]][1])
             pair = tuple(sides)
             _require(pair[0] != pair[1] and pair not in pairs)
+            matchday = row["matchday"]
+            _require(type(matchday) is int and 1 <= matchday <= 46)
             status = row["status"]
             _require(status in _STATUSES)
             score = row["score"]["fullTime"]
@@ -133,7 +137,7 @@ def parse_calendar(raw: bytes, *, as_of: datetime) -> HistoryCalendar:
                 _require(goals == (None, None))
                 goals = None
             ids.add(identity); pairs.add(pair)
-            matches.append(CalendarMatch(identity, day, *sides, status, goals))
+            matches.append(CalendarMatch(identity, kickoff, day, matchday, *sides, status, goals))
         _require(type(value["resultSet"]["played"]) is int and
                  value["resultSet"]["played"] == sum(m.status == "FINISHED" for m in matches))
         return HistoryCalendar(hashlib.sha256(raw).hexdigest(), hashlib.sha256(source).hexdigest(),
@@ -144,6 +148,19 @@ def parse_calendar(raw: bytes, *, as_of: datetime) -> HistoryCalendar:
         raise CompletenessRejected("HISTORY_CALENDAR_REJECTED") from None
 
 
+def matchweek_cutoff(calendar: HistoryCalendar, fixture) -> date:
+    """Exclusive history cutoff shared by every fixture in a verified matchday."""
+    _require(getattr(fixture.identity, "competition", None) == "E1",
+             "HISTORY_CALENDAR_FIXTURE_MISSING")
+    kickoff = fixture.identity.kickoff_utc.astimezone(_LONDON)
+    matches = [m for m in calendar.matches if
+               (m.day, m.home, m.away) == (kickoff.date(), fixture.home_team, fixture.away_team)]
+    _require(len(matches) == 1, "HISTORY_CALENDAR_FIXTURE_MISSING")
+    first = min(m.kickoff for m in calendar.matches if m.matchday == matches[0].matchday)
+    _require(first <= matches[0].kickoff, "HISTORY_CALENDAR_MATCHDAY_REJECTED")
+    return first.astimezone(_LONDON).date()
+
+
 def verify_completeness(calendar: HistoryCalendar, sources, *, cutoff: date, as_of: datetime):
     """One-to-one ID -> local-date/ordered-teams -> installed completed result join.
 
@@ -151,12 +168,12 @@ def verify_completeness(calendar: HistoryCalendar, sources, *, cutoff: date, as_
     exact and bidirectional; scores are checked too. Both models retain their
     existing covered-corner cohort. No scheduled kickoff implies a result.
     """
-    _require(type(cutoff) is date and cutoff <= utc(as_of).date()
+    as_of_day = utc(as_of).astimezone(_LONDON).date()
+    _require(type(cutoff) is date and cutoff <= as_of_day + timedelta(days=1)
              and timedelta(0) <= utc(as_of)-calendar.retrieved_at <= MAX_CALENDAR_AGE,
              "HISTORY_CALENDAR_STALE")
     start = date(calendar.season_year, 7, 1)
-    _require(start < cutoff <= calendar.retrieved_at.date()
-             and cutoff <= max(m.day for m in calendar.matches), "HISTORY_CALENDAR_INCOMPLETE")
+    _require(start < cutoff <= max(m.day for m in calendar.matches), "HISTORY_CALENDAR_INCOMPLETE")
     prior = [m for m in calendar.matches if m.day < cutoff]
     _require(all(m.status in _TERMINAL for m in prior), "HISTORY_CALENDAR_UNRESOLVED")
     completed = {m.key: m for m in prior if m.status == "FINISHED"}

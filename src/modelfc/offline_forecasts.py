@@ -73,7 +73,8 @@ def prepare_forecast(fixture: KnownFixture, sources: tuple[tuple[str, bytes], ..
     if not models or len(set(models)) != len(models) or set(models) - {"corner", "btts"}:
         raise ValueError("UNSUPPORTED_MODEL")
     frozen = utc(frozen_at)
-    if type(cutoff) is not date or cutoff != frozen.date() or frozen >= fixture.identity.kickoff_utc:
+    if (type(cutoff) is not date or cutoff > fixture.identity.kickoff_utc.date()
+            or frozen >= fixture.identity.kickoff_utc):
         raise ValueError("INVALID_FORECAST_CUTOFF")
     if fixture.identity.competition != "E1":
         return PreparedForecast(fixture, frozen, cutoff, (), None, None, "UNSUPPORTED_MODEL")
@@ -100,7 +101,8 @@ def prepare_forecast(fixture: KnownFixture, sources: tuple[tuple[str, bytes], ..
             raise ValueError("FORECAST_TEAM_IDENTITY_REVIEW")
         btts = freeze_btts_forecast(BttsFixture(competition="E1", provider="oddspapi",
             provider_fixture_id=fixture.identity.fixture_id, home_team=fixture.home_team,
-            away_team=fixture.away_team, kickoff_utc=fixture.identity.kickoff_utc.isoformat()), history, frozen_at=frozen)
+            away_team=fixture.away_team, kickoff_utc=fixture.identity.kickoff_utc.isoformat()),
+            history, frozen_at=frozen, cutoff=cutoff)
     return PreparedForecast(fixture, frozen, cutoff, provenance, prediction, btts, "PREPARED")
 
 
