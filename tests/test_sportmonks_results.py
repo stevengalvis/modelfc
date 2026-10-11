@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import json
 import unittest
 from unittest.mock import Mock
@@ -91,6 +91,18 @@ class SportmonksResultTests(unittest.TestCase):
         self.assertTrue(all(request.method == "GET" and "secret" not in request.full_url
                             for request in requests))
         self.assertIn("page=2", requests[1].full_url)
+
+    def test_retrieval_time_is_captured_after_response(self):
+        opener = Mock(); opener.open.return_value = Response(raw())
+        result = SportmonksRecentResultsClient("secret", opener=opener,
+            clock=lambda: NOW + timedelta(minutes=opener.open.call_count)).fetch(
+            __import__("datetime").date(2026,10,9),
+            __import__("datetime").date(2026,10,10), bindings=BINDINGS,
+            season_id=27903)
+        expected = NOW + timedelta(minutes=1)
+        self.assertEqual(result.retrieved_at, expected)
+        self.assertEqual({record.retrieved_at_utc for record in result.records},
+                         {expected.isoformat()})
 
     def test_cursor_skipped_and_nonsequential_pages_are_rejected_without_following(self):
         for query in ("cursor=abc", "page=3", "page=two"):

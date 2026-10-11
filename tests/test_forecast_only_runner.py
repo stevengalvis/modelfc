@@ -217,21 +217,29 @@ class ForecastOnlyRunnerTests(unittest.TestCase):
         self.assertEqual(len(records), 1)
         self.assertNotIn("results-token", records[0].read_text())
 
-    def test_missing_fixture_on_csv_tip_date_is_filled_before_forecasting(self):
+    def test_missing_fixture_before_csv_tip_is_filled_before_forecasting(self):
         value = bundle(); response = json.loads(value["payload"])
         missing = next(row for row in response["matches"] if row["status"] == "FINISHED")
         installed = next(row for row in response["matches"]
                          if row["status"] == "TIMED" and row["matchday"] != 9)
+        newest = next(row for row in response["matches"]
+                      if row["status"] == "TIMED" and row["matchday"] != 9
+                      and row["id"] != installed["id"])
         installed.update(status="FINISHED", utcDate="2026-09-20T12:00:00Z")
         installed["score"]["fullTime"] = {"home": 2, "away": 1}
-        response["resultSet"]["played"] = 2
+        newest.update(status="FINISHED", utcDate="2026-09-21T12:00:00Z")
+        newest["score"]["fullTime"] = {"home": 2, "away": 1}
+        response["resultSet"]["played"] = 3
         value["payload"] = json.dumps(response)
         calendar_raw = raw(value)
         home = installed["homeTeam"]["name"].removeprefix("Source ")
         away = installed["awayTeam"]["name"].removeprefix("Source ")
+        newest_home = newest["homeTeam"]["name"].removeprefix("Source ")
+        newest_away = newest["awayTeam"]["name"].removeprefix("Source ")
         archive = (histories()[0], ("E1_2627.csv",
                     ("Div,Date,HomeTeam,AwayTeam,FTHG,FTAG,HC,AC\n"
-                     f"E1,20/09/2026,{home},{away},2,1,5,4\n").encode()))
+                     f"E1,20/09/2026,{home},{away},2,1,5,4\n"
+                     f"E1,21/09/2026,{newest_home},{newest_away},2,1,5,4\n").encode()))
         missing_home = missing["homeTeam"]["name"].removeprefix("Source ")
         missing_away = missing["awayTeam"]["name"].removeprefix("Source ")
         sport_bindings = {row["history_name"]: row
@@ -267,7 +275,7 @@ class ForecastOnlyRunnerTests(unittest.TestCase):
             def __init__(self, *_args, on_request, **_kwargs): self.on_request = on_request
             def fetch(self, start, end, **_kwargs):
                 self.on_request()
-                if (start, end) != (date(2026, 9, 20), date(2026, 9, 20)):
+                if (start, end) != (date(2026, 9, 20), date(2026, 9, 21)):
                     raise AssertionError((start, end))
                 return FetchResult((supplement,), 1, ("9" * 64,), NOW)
 

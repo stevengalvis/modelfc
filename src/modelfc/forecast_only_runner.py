@@ -195,7 +195,6 @@ def run_once(*, state_dir, data_config_path, configuration, sportmonks_token,
             entries = _entries(calendar, eligible)
             base_sources = history_loader(Path(data_config_path), "E1")
             base_keys = _current_result_keys(base_sources)
-            current_latest = max(key[0] for key in base_keys)
             stored_supplement = load_results(state)
             supplement = tuple(record for record in stored_supplement
                                if record.provider_season_id == config["sportmonks_season_id"])
@@ -212,17 +211,17 @@ def run_once(*, state_dir, data_config_path, configuration, sportmonks_token,
             if not required_days:
                 raise ForecastRunRejected("HISTORY_CALENDAR_INCOMPLETE")
             end = max(required_days)
-            required_recent = {match.key for match in calendar.matches
-                               if (match.status == "FINISHED"
-                                   and current_latest <= match.day < cutoff
+            missing_results = {match.key for match in calendar.matches
+                               if (match.status == "FINISHED" and match.day < cutoff
                                    and match.key not in base_keys)}
             covered_recent = {record.key for record in supplement}
-            if required_recent - covered_recent:
-                # Re-fetch the whole bounded post-CSV interval after a partial
+            missing_results -= covered_recent
+            if missing_results:
+                # Re-fetch the whole bounded recent gap interval after a partial
                 # publication crash. Existing immutable records replay exactly;
                 # omitted records can then be completed without advancing a
                 # date watermark past a missing fixture.
-                start = min(key[0] for key in required_recent - covered_recent)
+                start = min(key[0] for key in missing_results)
                 if (end-start).days + 1 > 31:
                     raise ForecastRunRejected("SPORTMONKS_RANGE_REJECTED")
                 _claim_results_request(state, start=start, end=end,

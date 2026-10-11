@@ -21,6 +21,20 @@ def protected(path, owner, *, directory=False):
         raise ValueError("invalid forecast-only path")
 
 
+def protected_tree(root, owner):
+    """Validate every importable release inode without following links."""
+    def failed(error):
+        raise error
+    for directory, names, files in os.walk(root, topdown=True, followlinks=False,
+                                            onerror=failed):
+        parent = Path(directory)
+        protected(parent, owner, directory=True)
+        for name in sorted(names):
+            protected(parent/name, owner, directory=True)
+        for name in sorted(files):
+            protected(parent/name, owner)
+
+
 def launch():
     release = Path.cwd()
     match = re.fullmatch(r"([0-9a-f]{40})-[0-9a-f]{12}", release.name)
@@ -46,6 +60,8 @@ def launch():
                  release/"src/modelfc/supplemental_history.py",
                  release/"src/modelfc/research_predictions.py"):
         protected(path, deploy)
+    protected_tree(release/"src/modelfc", deploy)
+    protected_tree(release/".venv/lib", deploy)
     python = release/".venv/bin/python"
     if python.lstat().st_uid != deploy or not python.is_file() or not os.access(python, os.X_OK):
         raise ValueError("invalid forecast-only interpreter")

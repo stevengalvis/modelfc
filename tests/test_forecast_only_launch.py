@@ -24,7 +24,7 @@ class ForecastOnlyLaunchTests(unittest.TestCase):
         root = Path(temporary.name)
         self.releases = root / "srv/modelfc/releases"; self.releases.mkdir(parents=True)
         self.release = self.releases / ("a" * 40 + "-123456abcdef")
-        for name in (".git", "src/modelfc", ".venv/bin"):
+        for name in (".git", "src/modelfc", ".venv/bin", ".venv/lib"):
             (self.release / name).mkdir(parents=True)
         marker = self.release / ".git/modelfc-deployed-sha"
         marker.write_text("a" * 40, encoding="ascii"); marker.chmod(0o444)
@@ -60,13 +60,28 @@ class ForecastOnlyLaunchTests(unittest.TestCase):
         root_paths = {self.config.parent.parent, self.config.parent, self.config}
         runtime_paths = {self.history, self.state}
         def checked(path, owner, **kwargs):
-            expected = (self.uids["modelfc-deploy"] if path in release_paths else
+            release_tree = (path.is_relative_to(self.release/"src/modelfc")
+                            or path.is_relative_to(self.release/".venv/lib"))
+            expected = (self.uids["modelfc-deploy"] if path in release_paths or release_tree else
                         0 if path in root_paths else self.uids["modelfc-runtime"]
                         if path in runtime_paths else None)
             self.assertEqual(owner, expected)
             return original(path, self.fixture_uid, **kwargs)
         mocked = patch.object(LAUNCHER, "protected", side_effect=checked)
         mocked.start(); self.addCleanup(mocked.stop)
+
+    def test_rejects_writable_imported_provider_module(self):
+        provider = self.release / "src/modelfc/providers"
+        provider.mkdir()
+        module = provider / "sportmonks_results.py"
+        module.touch(); module.chmod(0o666)
+        with patch.object(Path, "cwd", return_value=self.release), \
+                patch.object(os, "execve") as execute, \
+                patch.dict(os.environ, {"CREDENTIALS_DIRECTORY": "/run/credentials/unit"},
+                           clear=True):
+            with self.assertRaisesRegex(ValueError, "path"):
+                LAUNCHER.launch()
+            execute.assert_not_called()
 
     def test_executes_only_pinned_runner_and_scrubs_provider_environment(self):
         output = StringIO()

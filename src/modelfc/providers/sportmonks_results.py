@@ -221,8 +221,7 @@ class SportmonksRecentResultsClient:
                 or (end-start).days + 1 > MAX_DAYS or type(season_id) is not int or season_id <= 0):
             raise SportmonksRejected("SPORTMONKS_RANGE_REJECTED")
         page_number = 1
-        records, hashes, requests, total = [], [], 0, 0
-        retrieved = self._clock().astimezone(timezone.utc)
+        pages, hashes, requests, total = [], [], 0, 0
         while True:
             if requests >= MAX_REQUESTS:
                 raise SportmonksRejected("SPORTMONKS_PAGINATION_REJECTED")
@@ -254,8 +253,7 @@ class SportmonksRecentResultsClient:
                 has_more = page["has_more"]
             except (ValueError, KeyError, TypeError):
                 raise SportmonksRejected("SPORTMONKS_RESPONSE_REJECTED") from None
-            records.extend(normalize_page(raw, retrieved_at=retrieved,
-                                          bindings=bindings, expected_season_id=season_id))
+            pages.append(raw)
             hashes.append(hashlib.sha256(raw).hexdigest())
             if has_more is False:
                 break
@@ -271,6 +269,10 @@ class SportmonksRecentResultsClient:
                     or int(values[0]) != page_number + 1):
                 raise SportmonksRejected("SPORTMONKS_PAGINATION_REJECTED")
             page_number += 1
+        retrieved = self._clock().astimezone(timezone.utc)
+        records = [record for raw in pages for record in normalize_page(
+            raw, retrieved_at=retrieved, bindings=bindings,
+            expected_season_id=season_id)]
         ids = [record.provider_fixture_id for record in records]
         keys = [record.key for record in records]
         if len(ids) != len(set(ids)) or len(keys) != len(set(keys)):
