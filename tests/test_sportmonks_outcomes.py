@@ -167,6 +167,13 @@ class SportmonksOutcomeTests(unittest.TestCase):
                 code,receipt=self.invoke_cli(folder,manifest)
                 self.assertEqual(code,0);self.assertEqual(receipt['status'],status)
                 self.assertEqual(receipt['provider_requests'],0)
+            original=(self.setup.outdir/next(self.setup.outdir.glob('*.json')).name).read_bytes()
+            self.saved.row['statistics'][0]['data']['value']=7
+            _,_,conflicting=self.cli_files(folder)
+            code,receipt=self.invoke_cli(folder,conflicting)
+            self.assertEqual(code,1)
+            self.assertEqual(receipt,{'status':'CONFLICT','reason':'IDEMPOTENCY_CONFLICT','provider_requests':0})
+            self.assertEqual(next(self.setup.outdir.glob('*.json')).read_bytes(),original)
         self.assertEqual(self.setup.capture_path.read_bytes(),self.setup.original)
 
     def test_cli_malformed_manifest_timestamp_is_sanitized_before_writes(self):

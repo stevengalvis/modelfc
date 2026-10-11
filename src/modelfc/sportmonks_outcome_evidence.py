@@ -207,6 +207,13 @@ def main(argv=None):
         print(json.dumps({"status": "RECORDED" if created else "REUSED",
                           "outcome_id": record["outcome_id"], "provider_requests": 0}))
         return 0
+    except OutcomeError as error:
+        # Surface only fixed conflict identifiers, never arbitrary exception text.
+        conflicts = {"RESULT_CONFLICT", "IDEMPOTENCY_CONFLICT", "SAVED_RESULT_IDENTITY_CONFLICT"}
+        reason = error.args[0] if error.args and isinstance(error.args[0], str) and error.args[0] in conflicts else "SAVED_RESULT_SETTLEMENT_REJECTED"
+        print(json.dumps({"status": "CONFLICT" if reason in conflicts else "REJECTED",
+                          "reason": reason, "provider_requests": 0}))
+        return 1
     except (ValueError, OSError):
         print(json.dumps({"status": "REJECTED", "reason": "SAVED_RESULT_SETTLEMENT_REJECTED",
                           "provider_requests": 0}))
