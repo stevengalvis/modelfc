@@ -40,7 +40,7 @@ def protected_interpreter(path, deploy):
     if stat.S_ISREG(info.st_mode):
         if info.st_uid != deploy or info.st_mode & 0o022 or not os.access(path, os.X_OK):
             raise ValueError("invalid forecast-only interpreter")
-        return
+        return path
     if not stat.S_ISLNK(info.st_mode) or info.st_uid != deploy:
         raise ValueError("invalid forecast-only interpreter")
     target = path.resolve(strict=True)
@@ -53,6 +53,7 @@ def protected_interpreter(path, deploy):
         if (not stat.S_ISDIR(ancestor_info.st_mode) or ancestor_info.st_uid != 0
                 or ancestor_info.st_mode & 0o022):
             raise ValueError("invalid forecast-only interpreter")
+    return target
 
 
 def launch():
@@ -83,7 +84,7 @@ def launch():
     protected_tree(release/"src/modelfc", deploy)
     protected_tree(release/".venv/lib", deploy)
     python = release/".venv/bin/python"
-    protected_interpreter(python, deploy)
+    python = protected_interpreter(python, deploy)
     for path in (CONFIG.parent.parent, CONFIG.parent):
         protected(path, 0, directory=True)
     protected(CONFIG, 0)

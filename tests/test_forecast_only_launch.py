@@ -118,6 +118,18 @@ class ForecastOnlyLaunchTests(unittest.TestCase):
         self.assertNotIn("must-not-pass", repr(env) + output.getvalue())
         self.assertEqual(json.loads(output.getvalue())["sha"], "a" * 40)
 
+    def test_executes_the_validated_canonical_interpreter_target(self):
+        canonical = Path("/usr/bin/python3.11")
+        with patch.object(Path, "cwd", return_value=self.release), \
+                patch.object(LAUNCHER, "protected_interpreter", return_value=canonical), \
+                patch.object(os, "execve") as execute, \
+                patch.dict(os.environ, {"CREDENTIALS_DIRECTORY": "/run/credentials/unit"},
+                           clear=True):
+            LAUNCHER.launch()
+        executable, arguments, _environment = execute.call_args.args
+        self.assertEqual(executable, str(canonical))
+        self.assertEqual(arguments[0], str(canonical))
+
     def test_bad_release_or_marker_fails_before_exec(self):
         for change in ("cwd", "marker"):
             marker = self.release / ".git/modelfc-deployed-sha"
