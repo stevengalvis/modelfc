@@ -55,7 +55,8 @@ class ApiLaunchTests(unittest.TestCase):
         marker = path / ".git/modelfc-deployed-sha"
         marker.write_text(letter * 40)
         marker.chmod(0o444)
-        for name in ("corner_api.py", "corner_prospective_read.py", "team_intelligence.py"):
+        for name in ("corner_api.py", "corner_prospective_read.py",
+                     "research_predictions.py", "team_intelligence.py"):
             (path / "src/modelfc" / name).touch()
         (path / ".venv/pyvenv.cfg").touch()
         (path / ".venv/bin/python").symlink_to(sys.executable)
@@ -127,9 +128,9 @@ class ApiLaunchTests(unittest.TestCase):
         match = re.search(r"^\s*path (.+)$", caddy, re.MULTILINE)
         self.assertIsNotNone(match)
         allowed = set(match.group(1).split())
-        self.assertEqual(allowed, {"/api/v1/predictions", "/api/v1/opportunities",
+        self.assertEqual(allowed, {"/api/v1/capabilities", "/api/v1/predictions", "/api/v1/opportunities",
                                    "/api/v1/prospective/performance", "/api/v1/recommendations"})
-        for blocked in ("/api/v1/capabilities", "/api/v1/opportunities/id", "/docs",
+        for blocked in ("/api/v1/capabilities/", "/api/v1/opportunities/id", "/docs",
                         "/redoc", "/openapi.json", "/api/v1/analyses", "/anything"):
             self.assertNotIn(blocked, allowed)
         detail = re.search(r"@opportunity_detail\s*\{\s*path_regexp (.+)$", caddy, re.MULTILINE)
@@ -160,7 +161,7 @@ class ApiLaunchTests(unittest.TestCase):
             if name == "btts_research":
                 self.assertEqual(lines[2],
                                  'expression `{http.request.uri.query} == "competition=E1"`')
-        self.assertEqual(routes["public_read"], ("path", "/api/v1/predictions /api/v1/opportunities "
+        self.assertEqual(routes["public_read"], ("path", "/api/v1/capabilities /api/v1/predictions /api/v1/opportunities "
                          "/api/v1/prospective/performance /api/v1/recommendations"))
         self.assertEqual(routes["opportunity_detail"],
                          ("path_regexp", "^/api/v1/opportunities/[0-9a-f]{32}$"))
@@ -185,13 +186,13 @@ class ApiLaunchTests(unittest.TestCase):
                        and (name != "btts_research" or raw_query == "competition=E1")
                        for name, (rule, value) in routes.items())
 
-        permitted = ("/api/v1/recommendations", "/api/v1/predictions", "/api/v1/opportunities",
+        permitted = ("/api/v1/capabilities", "/api/v1/recommendations", "/api/v1/predictions", "/api/v1/opportunities",
                      "/api/v1/prospective/performance", "/api/v1/opportunities/" + "a" * 32)
         denied = ("/api/v1/recommendations/", "/api/v1/recommendations/anything",
                   "/api/v1/predictions/", "/api/v1/opportunities/", "/api/v1/prospective/performance/",
                   "/api/v1/opportunities/" + "A" * 32, "/api/v1/opportunities/" + "a" * 32 + "/",
                   "/api/v1/analyses", "/api/v1/analyses/" + "a" * 32,
-                  "/api/v1/capabilities", "/docs", "/redoc", "/openapi.json", "/api/v1/unknown")
+                  "/api/v1/capabilities/", "/docs", "/redoc", "/openapi.json", "/api/v1/unknown")
         for path in permitted:
             self.assertTrue(allowed("GET", path), path)
         self.assertTrue(allowed("GET", "/api/v1/research/btts", "competition=E1"))

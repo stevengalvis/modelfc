@@ -334,6 +334,44 @@ class PredictionResponse(StrictModel):
     actual_away_corners: int | None
 
 
+class ResearchPredictionResponse(StrictModel):
+    prediction_id: str
+    source_observation_id: None
+    created_at_utc: str
+    competition: Literal["E1"]
+    provider: Literal["football-data.org"]
+    provider_fixture_id: str
+    kickoff_utc: str
+    home_team: str
+    away_team: str
+    prediction_type: Literal["CORNER", "BTTS"]
+    research_status: Literal["RESEARCH_ONLY"]
+    qualified_recommendation: Literal[False]
+    cutoff_date: date
+    calendar_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    calendar_source_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    calendar_retrieved_at_utc: str
+    supplemental_result_count: int = Field(ge=0, le=64)
+    model_name: str
+    model_version: str
+    expected_home_corners: float | None
+    expected_away_corners: float | None
+    expected_match_corners: float | None
+    dispersion_size: float | None
+    home_expected_goals: float | None
+    away_expected_goals: float | None
+    btts_yes_probability: float | None = Field(default=None, ge=0, le=1)
+    btts_no_probability: float | None = Field(default=None, ge=0, le=1)
+    latest_history_date: date
+    source_data_hashes: list[SourceHashResponse]
+    expected_value: None
+    target_count: Literal[0]
+    opportunity_count: Literal[0]
+    settlement_status: Literal["UPCOMING", "EXPIRED_UNSETTLED"]
+    actual_home_corners: None
+    actual_away_corners: None
+
+
 class ModelVersionPerformanceResponse(StrictModel):
     model_name: str
     model_version: str
@@ -566,7 +604,8 @@ def create_app(
                 return _error("OPPORTUNITY_NOT_FOUND", "Opportunity was not found.", 404)
             return _public_read_error(error)
 
-    @app.get("/api/v1/predictions", response_model=list[PredictionResponse])
+    @app.get("/api/v1/predictions",
+             response_model=list[PredictionResponse | ResearchPredictionResponse])
     def get_predictions() -> list[dict[str, Any]]:
         try:
             return read_predictions(state)

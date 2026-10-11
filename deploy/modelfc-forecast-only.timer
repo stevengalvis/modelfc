@@ -1,0 +1,11 @@
+[Unit]
+Description=Check hourly for the Championship T-24h research forecast window
+
+[Timer]
+OnCalendar=*-*-* *:35:00 UTC
+Persistent=true
+RandomizedDelaySec=0
+Unit=modelfc-forecast-only.service
+
+[Install]
+WantedBy=timers.target

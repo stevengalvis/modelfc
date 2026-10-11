@@ -59,12 +59,10 @@ export function decodePredictions(value: unknown): ProspectivePrediction[] {
   if (!Array.isArray(value) || !value.every((item: unknown) => {
     if (!record(item)) return false;
     const settled = item.settlement_status === "SETTLED";
-    return fixture(item) && id(item.prediction_id) && id(item.source_observation_id)
+    const research = item.research_status === "RESEARCH_ONLY";
+    const common = fixture(item) && id(item.prediction_id)
       && timestamp(item.created_at_utc) && Date.parse(item.created_at_utc as string) < Date.parse(item.kickoff_utc as string)
       && nonempty(item.model_name) && nonempty(item.model_version)
-      && nonnegative(item.expected_home_corners) && nonnegative(item.expected_away_corners)
-      && nonnegative(item.expected_match_corners)
-      && Math.abs((item.expected_home_corners as number) + (item.expected_away_corners as number) - (item.expected_match_corners as number)) < 1e-8
       && (item.dispersion_size === null || (finite(item.dispersion_size) && item.dispersion_size > 0))
       && date(item.latest_history_date) && (item.latest_history_date as string) < new Date(item.kickoff_utc as string).toISOString().slice(0, 10)
       && Array.isArray(item.source_data_hashes) && item.source_data_hashes.every((hash: unknown) => record(hash) && nonempty(hash.filename) && typeof hash.sha256 === "string" && /^[a-f0-9]{64}$/.test(hash.sha256))
@@ -73,6 +71,29 @@ export function decodePredictions(value: unknown): ProspectivePrediction[] {
       && status(item.settlement_status)
       && (settled ? count(item.actual_home_corners) && count(item.actual_away_corners)
         : item.actual_home_corners === null && item.actual_away_corners === null);
+    if (!common) return false;
+    if (!research) return id(item.source_observation_id)
+      && nonnegative(item.expected_home_corners) && nonnegative(item.expected_away_corners)
+      && nonnegative(item.expected_match_corners)
+      && Math.abs((item.expected_home_corners as number) + (item.expected_away_corners as number) - (item.expected_match_corners as number)) < 1e-8;
+    if (item.source_observation_id !== null || item.qualified_recommendation !== false
+        || item.provider !== "football-data.org" || !date(item.cutoff_date)
+        || typeof item.calendar_sha256 !== "string" || !/^[a-f0-9]{64}$/.test(item.calendar_sha256)
+        || typeof item.calendar_source_sha256 !== "string" || !/^[a-f0-9]{64}$/.test(item.calendar_source_sha256)
+        || !timestamp(item.calendar_retrieved_at_utc) || !count(item.supplemental_result_count)
+        || item.target_count !== 0 || item.opportunity_count !== 0 || item.expected_value !== null
+        || (item.prediction_type !== "CORNER" && item.prediction_type !== "BTTS")) return false;
+    return item.prediction_type === "CORNER"
+      ? nonnegative(item.expected_home_corners) && nonnegative(item.expected_away_corners)
+        && nonnegative(item.expected_match_corners)
+        && Math.abs((item.expected_home_corners as number) + (item.expected_away_corners as number) - (item.expected_match_corners as number)) < 1e-8
+        && item.home_expected_goals === null && item.away_expected_goals === null
+        && item.btts_yes_probability === null && item.btts_no_probability === null
+      : item.expected_home_corners === null && item.expected_away_corners === null
+        && item.expected_match_corners === null && item.dispersion_size === null
+        && nonnegative(item.home_expected_goals) && nonnegative(item.away_expected_goals)
+        && probability(item.btts_yes_probability) && probability(item.btts_no_probability)
+        && Math.abs((item.btts_yes_probability as number) + (item.btts_no_probability as number) - 1) < 1e-10;
   }) || !uniqueIds(value, "prediction_id")) mismatch("predictions");
   return value as ProspectivePrediction[];
 }

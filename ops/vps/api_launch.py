@@ -47,6 +47,7 @@ def launch():
             raise ValueError("invalid API provenance")
     for path in (release / ".venv/pyvenv.cfg", release / "src/modelfc/corner_api.py",
                  release / "src/modelfc/corner_prospective_read.py",
+                 release / "src/modelfc/research_predictions.py",
                  release / "src/modelfc/team_intelligence.py"):
         protected(path, deploy_owner)
     python = release / ".venv/bin/python"

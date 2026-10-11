@@ -1,12 +1,13 @@
 # Read-only prospective API ingress
 
 This is a staged installation plan, not authorization to install or activate
-anything. The reviewed public routes are exact `GET /api/v1/predictions`,
+anything. The reviewed public routes are exact `GET /api/v1/capabilities`,
+`GET /api/v1/predictions`,
 `GET /api/v1/opportunities`, `GET /api/v1/prospective/performance`,
 `GET /api/v1/recommendations`, and
 `GET /api/v1/research/btts?competition=E1`, plus
 `GET /api/v1/opportunities/<32 lowercase hexadecimal characters>`.
-All other methods and paths, including analysis writes, capabilities, malformed
+All other methods and paths, including analysis writes, malformed
 detail IDs, trailing slashes and FastAPI's documentation, return 404 at Caddy. CORS is a browser
 policy, not the access-control boundary.
 
@@ -161,7 +162,7 @@ and test a real-format detail ID through TLS. Verify valid GET reaches the API
 (returning detail or sanitized `OPPORTUNITY_NOT_FOUND`), malformed/uppercase IDs,
 trailing slash and POST/PUT/PATCH/DELETE return Caddy 404, all four prospective
 list/performance GET routes and the exact BTTS research GET still work, and
-analyses, capabilities, other research paths and docs remain blocked.
+analyses, other research paths and docs remain blocked. Capabilities is an exact GET-only route.
 Inspect no-store response headers and that the upstream remains loopback-only.
 For rollback, restore the previously verified Caddyfile and reload Caddy only
 under separate host authorization. The detail page will then receive a 404;
@@ -190,7 +191,7 @@ Separately authorize a DNS A record for the selected name. From outside the
 VPS, verify a trusted certificate and each of the four prospective
 list/performance JSON GETs, the exact E1 BTTS research GET, plus a valid-format
 opportunity detail GET (a nonexistent ID returns sanitized 404). Verify
-`POST /api/v1/analyses`, capabilities, malformed opportunity details, docs, OpenAPI,
+`POST /api/v1/analyses`, malformed opportunity details, docs, OpenAPI,
 unknown paths, trailing slashes, and non-GET methods fail at Caddy. Test exact
 origin CORS from the production frontend; `OPTIONS` should not be required for
 the simple browser GETs after their unnecessary Content-Type header is removed.

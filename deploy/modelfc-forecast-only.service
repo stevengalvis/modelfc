@@ -1,0 +1,40 @@
+[Unit]
+Description=Prepare Model FC Championship research forecasts without sportsbook requests
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=modelfc-runtime
+Group=modelfc-runtime
+WorkingDirectory=/srv/modelfc/current
+ExecStart=/usr/bin/python3 -I -B /usr/local/libexec/modelfc-forecast-only-launch.py
+LoadCredential=forecast-only.json:/etc/modelfc/credentials/forecast-only.json
+LoadCredential=sportmonks.key:/etc/modelfc/credentials/sportmonks.key
+LoadCredential=football-data.key:/etc/modelfc/credentials/football-data.key
+UMask=0077
+StandardInput=null
+UnsetEnvironment=ODDSPAPI_API_KEY SPORTMONKS_API_TOKEN FOOTBALL_DATA_API_KEY GITHUB_TOKEN GH_TOKEN SSH_AUTH_SOCK PYTHONPATH PYTHONHOME LD_PRELOAD LD_LIBRARY_PATH LD_AUDIT
+TimeoutStartSec=10min
+TimeoutStopSec=30
+KillMode=control-group
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ReadOnlyPaths=/srv/modelfc /etc/modelfc /var/lib/modelfc/history
+ReadWritePaths=/var/lib/modelfc/state
+InaccessiblePaths=-/var/lib/modelfc-deploy -/run/modelfc-acquisition
+InaccessiblePaths=-/etc/modelfc-validator -/var/lib/modelfc-validator
+InaccessiblePaths=-/opt/modelfc-deploy -/opt/modelfc-validator
+InaccessiblePaths=-/etc/modelfc/credentials
+InaccessiblePaths=-/root/modelfc-state -/root
+InaccessiblePaths=-/var/lib/modelfc/history/data/corner-refresh/backups
+InaccessiblePaths=-/var/lib/modelfc/history/data/corner-refresh/status.json
+InaccessiblePaths=-/var/lib/modelfc/history/data/corner-refresh/refresh-run.lock
+CapabilityBoundingSet=
+RestrictSUIDSGID=yes
+
+[Install]
+# Installation and activation require a separate reviewed host operation.
