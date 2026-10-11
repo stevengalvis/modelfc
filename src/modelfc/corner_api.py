@@ -18,7 +18,7 @@ from pydantic import BaseModel, Field
 
 from modelfc.corner_analysis import MAX_MARKETS_PER_ANALYSIS, CornerMarketRequest
 from modelfc.corner_analysis_store import analyze_and_store, load_analysis
-from modelfc.corner_capabilities import api_capabilities
+from modelfc.corner_capabilities import public_api_capabilities
 from modelfc.corner_prospective_read import (
     read_opportunities, read_opportunity, read_performance, read_predictions, read_recommendations,
 )
@@ -551,7 +551,7 @@ def create_app(
     @app.get("/api/v1/capabilities", response_model=CapabilitiesResponse)
     def get_capabilities() -> dict[str, Any]:
         try:
-            return api_capabilities(
+            return public_api_capabilities(
                 config, min_history=min_history,
                 min_venue_history=min_venue_history,
             )

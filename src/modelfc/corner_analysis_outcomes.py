@@ -1,4 +1,4 @@
-"""Immutable Football-Data outcome companions. Never rerun a captured prediction.
+"""Immutable provider-aware outcome companions. Never rerun a captured prediction.
 
 Settle: python -m modelfc.corner_analysis_outcomes settle --state-dir STATE
   --analysis-id ID --data-config corner_data.json --key OBSERVATION_KEY
@@ -202,6 +202,10 @@ def load_outcome(state_dir, analysis_id, outcome_id):
     try:
         payload = {k: v for k, v in record.items() if k != "record_hash"}
         _require(record["record_hash"] == _canonical_hash(payload), "INVALID_OUTCOME")
+        _require(record["source"]["provider"] in ("football-data.co.uk", "sportmonks"), "INVALID_OUTCOME")
+        if record["source"]["provider"] == "sportmonks":
+            from modelfc.sportmonks_outcome_evidence import validate_outcome_source
+            validate_outcome_source(record)
         _require(record["schema_version"] == 1 and record["outcome_id"] == _id(outcome_id)
                  and record["capture"]["analysis_id"] == _id(analysis_id), "INVALID_OUTCOME")
     except (KeyError, TypeError, ValueError):
@@ -255,6 +259,23 @@ def load_outcome_chain_readonly(state_dir, analysis_id):
 
 def record_outcome(*, state_dir, analysis_id, data_config_path, idempotency_key,
                    supersedes_outcome_id=None, correction_reason=None):
+    """Existing CSV settlement contract, including explicit append corrections."""
+    return _record_outcome(state_dir=state_dir, analysis_id=analysis_id,
+        evidence=lambda fixture, kickoff: _evidence(data_config_path, fixture, kickoff),
+        idempotency_key=idempotency_key, supersedes_outcome_id=supersedes_outcome_id,
+        correction_reason=correction_reason)
+
+
+def record_sportmonks_outcome(*, state_dir, analysis_id, evidence, idempotency_key):
+    """Explicit offline saved-evidence settlement; never retrieves provider data."""
+    from modelfc.sportmonks_outcome_evidence import SavedResultEvidence
+    _require(isinstance(evidence, SavedResultEvidence), "SAVED_RESULT_REJECTED")
+    return _record_outcome(state_dir=state_dir, analysis_id=analysis_id,
+        evidence=evidence.for_fixture, idempotency_key=idempotency_key)
+
+
+def _record_outcome(*, state_dir, analysis_id, evidence, idempotency_key,
+                    supersedes_outcome_id=None, correction_reason=None):
     """Record all saved supported team selections atomically; corrections append."""
     _require(isinstance(idempotency_key, str) and bool(idempotency_key.strip()), "INVALID_KEY")
     key = idempotency_key.strip()
@@ -267,14 +288,16 @@ def record_outcome(*, state_dir, analysis_id, data_config_path, idempotency_key,
     with ledger_lock(state):
         capture, original, capture_path, kickoff, selections = _capture(state, analysis_id)
     fixture = capture["response"]["fixture"]
-    season, source, result = _evidence(data_config_path, fixture, kickoff)
+    season, source, result = evidence(fixture, kickoff)
     settlements = _settlements(capture, selections, result)
     raw = capture["request"]["prematch"]["fixture"]
     reference = {"analysis_id": _id(analysis_id), "file_sha256": _digest(original),
                  "request_hash": capture["request_hash"], "response_hash": capture["response_hash"]}
     # File-wide changes, row order and a later observation time are not corrections.
-    evidence_hash = _canonical_hash({"capture": reference, "row": source["row"],
-                                    "matching": MATCHING_VERSION, "settlement": SETTLEMENT_VERSION})
+    matching = MATCHING_VERSION if source["provider"] == "football-data.co.uk" else "sportmonks-exact-calendar-v1"
+    evidence_hash = _canonical_hash({"capture": reference,
+                                    "row": source["row"] if matching == MATCHING_VERSION else source,
+                                    "matching": matching, "settlement": SETTLEMENT_VERSION})
     outcome_id = uuid.uuid5(uuid.NAMESPACE_URL, f"modelfc:outcome:{_id(analysis_id)}:{key}").hex
     directory = _directory(state, analysis_id)
     with ledger_lock(state) as lock_fd:
@@ -300,7 +323,7 @@ def record_outcome(*, state_dir, analysis_id, data_config_path, idempotency_key,
                   "fixture": {**fixture, "source_season": season, "provider": "oddspapi",
                               "provider_fixture_id": raw["fixtureId"], "provider_provenance": raw},
                   "source": source, "result": result, "status": "COMPLETED",
-                  "matching_rule_version": MATCHING_VERSION, "settlement_rule_version": SETTLEMENT_VERSION,
+                  "matching_rule_version": matching, "settlement_rule_version": SETTLEMENT_VERSION,
                   "settlements": settlements, "evidence_hash": evidence_hash,
                   "supersedes_outcome_id": supersedes_outcome_id, "correction_reason": correction_reason}
         record["record_hash"] = _canonical_hash(record)

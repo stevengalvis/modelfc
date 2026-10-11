@@ -188,7 +188,7 @@ def api_capabilities(
     min_history: int = 100, min_venue_history: int = 5,
 ) -> dict[str, Any]:
     """Build capabilities without treating deploy-time files as code constants."""
-    config = load_data_config(Path(data_config_path))
+    config = load_data_config(Path(data_config_path), resolve_directory=False)
     today = today or datetime.now(timezone.utc).date()
     report = _refresh_report(config)
     codes = [*config.leagues]
@@ -221,3 +221,72 @@ def api_capabilities(
         ],
         "competitions": competitions,
     }
+
+
+def public_api_capabilities(data_config_path: str | Path, *, today: date | None = None,
+                            min_history: int = 100, min_venue_history: int = 5) -> dict[str, Any]:
+    """Public projection from the sole authorized current E1 CSV and read lock.
+
+    No history enumeration, prior-season reads, private refresh status, or writes.
+    Configured leagues are not proof of a deployed prospective forecast pipeline.
+    """
+    from modelfc.team_intelligence import BY_ID, TeamIntelligenceError, read_source, parse_source
+    config = load_data_config(Path(data_config_path), resolve_directory=False)
+    today = today or datetime.now(timezone.utc).date()
+    codes = list(config.leagues)
+    codes.extend(code for code in PRIORITY_UNCONFIGURED_COMPETITIONS if code not in codes)
+    competitions = []
+    for code in codes:
+        result = _base_competition(code, False)
+        result["warnings"].append(_warning(
+            "OPERATIONAL_STATUS_UNVERIFIED",
+            "This read-only projection does not inspect private refresh or scheduler state."))
+        if code not in config.leagues:
+            result["warnings"].append(_warning("UNCONFIGURED_COMPETITION",
+                "This competition is not configured."))
+            if code == "SP2":
+                result["warnings"].append(_warning("UNVERIFIED_CORNER_COVERAGE",
+                    "La Liga 2 corner coverage is unverified."))
+        elif code != "E1":
+            result["warnings"].append(_warning("PUBLIC_HISTORY_NOT_AUTHORIZED",
+                "This public reader is authorized only for current Championship history; "
+                "an odds planner does not establish a production forecast pipeline."))
+        else:
+            try:
+                raw, _revision = read_source(config.directory, today)
+                population = parse_source(raw, today)
+                covered = {team: [m for m in matches if m.won is not None and m.day < today]
+                           for team, matches in population.items()}
+                all_matches = [m for matches in covered.values() for m in matches]
+                if not all_matches:
+                    raise TeamIntelligenceError("HISTORY_INVALID")
+                latest = max(m.day for m in all_matches)
+                home = sorted(BY_ID[team].source_name for team, matches in covered.items()
+                              if sum(m.venue == "HOME" for m in matches) >= min_venue_history)
+                away = sorted(BY_ID[team].source_name for team, matches in covered.items()
+                              if sum(m.venue == "AWAY" for m in matches) >= min_venue_history)
+                stale = (today - latest).days > config.max_age_days
+                ready = (not stale and len(all_matches) >= min_history
+                         and any(h != a for h in home for a in away))
+                result.update(latest_result_date=latest.isoformat(), stale=stale,
+                    analysis=ready, markets=list(PRODUCTION_MARKETS) if ready else [],
+                    teams=sorted(set(home) & set(away)) if ready else [],
+                    teams_by_side={"HOME": home if ready else [], "AWAY": away if ready else []})
+                if stale:
+                    result["warnings"].append(_warning("STALE_DATA",
+                        "Current CSV history exceeds the configured age gate. "
+                        "Private calendar and supplemental-history readiness is not inferred."))
+                if len(all_matches) < min_history or not any(h != a for h in home for a in away):
+                    result["warnings"].append(_warning("INSUFFICIENT_HISTORY",
+                        "Current history does not meet the existing model sample requirements."))
+            except TeamIntelligenceError:
+                result["warnings"].append(_warning("DATA_SOURCE_UNAVAILABLE",
+                    "Authorized current Championship history is unavailable or invalid."))
+        result["warnings"].append(_warning("MATCH_TOTAL_NOT_VALIDATED",
+            "Match-total probabilities require historical evaluation."))
+        competitions.append(result)
+    return {"api_version": "v1", "stake": 1.0, "models": list(CORNER_FIXTURE_MODELS),
+            "markets": list(PRODUCTION_MARKETS), "market_capabilities": [
+                {"market_type": "TEAM_TOTAL", "status": "SUPPORTED", "reason": None},
+                {"market_type": "MATCH_TOTAL", "status": "UNAVAILABLE",
+                 "reason": "HISTORICAL_EVALUATION_REQUIRED"}], "competitions": competitions}
