@@ -132,6 +132,46 @@ class ForecastOnlyRunnerTests(unittest.TestCase):
         self.assertEqual(len(list((self.state / "research-predictions").glob("*.json"))),
                          first["forecasts_prepared"])
 
+    def test_replay_keeps_original_calendar_provenance(self):
+        class FreshCalendar:
+            def __init__(self, token, *, clock, on_request):
+                if token != "calendar-token":
+                    raise AssertionError("wrong credential")
+                self.clock = clock
+                self.on_request = on_request
+            def fetch(self, year, *, team_bindings):
+                self.on_request()
+                value = bundle()
+                if team_bindings != value["team_bindings"] or year != 2026:
+                    raise AssertionError("wrong calendar request")
+                retrieved = self.clock()
+                value["retrieved_at"] = retrieved.isoformat()
+                content = raw(value)
+                return CalendarFetch(content,
+                    hashlib.sha256(value["payload"].encode()).hexdigest(),
+                    retrieved, 1)
+
+        def execute(when):
+            return run_once(state_dir=self.state, data_config_path=self.config_path,
+                configuration=self.configuration, sportmonks_token="results-token",
+                football_data_token="calendar-token", clock=lambda: when,
+                calendar_client_type=FreshCalendar, results_client_type=_NoResultsClient,
+                history_loader=lambda *_: histories())
+
+        with patch("modelfc.forecast_only_runner.git_commit_sha", return_value="f" * 40):
+            first = execute(NOW)
+            before = self.state_bytes()
+            second = execute(NOW + timedelta(minutes=1))
+        self.assertEqual(first["status"], "RECORDED")
+        self.assertEqual(second["status"], "RECORDED", second)
+        self.assertEqual(second["forecasts_prepared"], 0)
+        self.assertEqual(second["forecasts_reused"], first["forecasts_prepared"])
+        prediction_paths = [path for path in before if path.parts[0] == "research-predictions"]
+        self.assertTrue(prediction_paths)
+        after = self.state_bytes()
+        for path in prediction_paths:
+            self.assertEqual(after[path], before[path])
+
     def test_disabled_configuration_fails_visibly_before_network(self):
         self.configuration["enabled"] = False
         with patch.object(socket, "socket", side_effect=AssertionError("network")), \

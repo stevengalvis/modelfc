@@ -271,12 +271,14 @@ def run_once(*, state_dir, data_config_path, configuration, sportmonks_token,
             relevant = tuple(record for record in supplement
                              if current_latest < record.match_date < cutoff)
             for prepared, model, created in prepared_for_run:
+                if not created:
+                    continue
                 published = publish_prediction(state, prepared, model,
                                                supplemental_sources=relevant,
                                                calendar=calendar)
-                if created and published:
+                if published:
                     receipt["forecasts_prepared"] += 1
-                elif created:
+                else:
                     receipt["forecasts_reused"] += 1
             receipt["status"] = "RECORDED"
             _publish_receipt(state, receipt)
