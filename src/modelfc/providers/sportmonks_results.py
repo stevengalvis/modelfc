@@ -220,7 +220,7 @@ class SportmonksRecentResultsClient:
         if (type(start) is not date or type(end) is not date or start > end
                 or (end-start).days + 1 > MAX_DAYS or type(season_id) is not int or season_id <= 0):
             raise SportmonksRejected("SPORTMONKS_RANGE_REJECTED")
-        cursor = None
+        page_number = 1
         records, hashes, requests, total = [], [], 0, 0
         retrieved = self._clock().astimezone(timezone.utc)
         while True:
@@ -228,8 +228,8 @@ class SportmonksRecentResultsClient:
                 raise SportmonksRejected("SPORTMONKS_PAGINATION_REJECTED")
             params = {"include": "participants;scores;state;statistics.type;metadata",
                       "filters": f"fixtureLeagues:{LEAGUE_ID}", "timezone": "UTC", "per_page": "50"}
-            if cursor is not None:
-                params["cursor"] = cursor
+            if page_number > 1:
+                params["page"] = str(page_number)
             endpoint = f"{BASE}/fixtures/between/{start.isoformat()}/{end.isoformat()}?{urlencode(params)}"
             request = Request(endpoint, headers={"Authorization": self._token,
                                                   "User-Agent": USER_AGENT}, method="GET")
@@ -261,15 +261,16 @@ class SportmonksRecentResultsClient:
                 break
             if has_more is not True or requests >= MAX_PAGES:
                 raise SportmonksRejected("SPORTMONKS_PAGINATION_REJECTED")
-            next_url = page.get("next_page") or page.get("next_cursor")
+            next_url = page.get("next_page")
             parsed = urlsplit(next_url) if isinstance(next_url, str) else None
             query = parse_qs(parsed.query) if parsed else {}
-            values = query.get("cursor", [])
+            values = query.get("page", [])
             if (parsed.scheme != "https" or parsed.hostname != HOST
                     or parsed.path != f"/v3/football/fixtures/between/{start.isoformat()}/{end.isoformat()}"
-                    or len(values) != 1 or not values[0] or len(values[0]) > 2048):
+                    or len(values) != 1 or not values[0].isdigit()
+                    or int(values[0]) != page_number + 1):
                 raise SportmonksRejected("SPORTMONKS_PAGINATION_REJECTED")
-            cursor = values[0]
+            page_number += 1
         ids = [record.provider_fixture_id for record in records]
         keys = [record.key for record in records]
         if len(ids) != len(set(ids)) or len(keys) != len(set(keys)):

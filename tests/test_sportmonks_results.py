@@ -78,8 +78,8 @@ class SportmonksResultTests(unittest.TestCase):
         self.assertEqual(normalize_page(raw([row]), retrieved_at=NOW, bindings=BINDINGS,
                                        expected_season_id=27903), ())
 
-    def test_pagination_is_bounded_no_retry_and_cursor_url_is_not_followed(self):
-        next_url = "https://api.sportmonks.com/v3/football/fixtures/between/2026-10-09/2026-10-10?cursor=abc"
+    def test_page_pagination_is_bounded_and_provider_url_is_not_followed(self):
+        next_url = "https://api.sportmonks.com/v3/football/fixtures/between/2026-10-09/2026-10-10?page=2"
         first = raw([], True, next_url); second = raw([], False, None)
         opener = Mock(); opener.open.side_effect = [Response(first), Response(second)]
         result = SportmonksRecentResultsClient("secret", opener=opener, clock=lambda:NOW).fetch(
@@ -90,7 +90,20 @@ class SportmonksResultTests(unittest.TestCase):
         requests = [call.args[0] for call in opener.open.call_args_list]
         self.assertTrue(all(request.method == "GET" and "secret" not in request.full_url
                             for request in requests))
-        self.assertIn("cursor=abc", requests[1].full_url)
+        self.assertIn("page=2", requests[1].full_url)
+
+    def test_cursor_skipped_and_nonsequential_pages_are_rejected_without_following(self):
+        for query in ("cursor=abc", "page=3", "page=two"):
+            opener = Mock()
+            opener.open.return_value = Response(raw([], True,
+                "https://api.sportmonks.com/v3/football/fixtures/between/2026-10-09/2026-10-10?" + query))
+            with self.subTest(query=query), self.assertRaisesRegex(
+                    SportmonksRejected, "SPORTMONKS_PAGINATION_REJECTED"):
+                SportmonksRecentResultsClient("secret", opener=opener,
+                    clock=lambda: NOW).fetch(__import__("datetime").date(2026,10,9),
+                    __import__("datetime").date(2026,10,10), bindings=BINDINGS,
+                    season_id=27903)
+            self.assertEqual(opener.open.call_count, 1)
 
     def test_http_failure_is_sanitized_and_not_retried(self):
         opener=Mock(); opener.open.side_effect=HTTPError("https://secret.invalid",400,"bad",{},None)

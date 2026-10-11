@@ -237,8 +237,11 @@ def run_once(*, state_dir, data_config_path, configuration, sportmonks_token,
                     publish_result(state, record)
                 supplement = load_results(state)
                 sources = augment_sources(base_sources, supplement, calendar)
+            verification_at = utc(clock())
+            if verification_at < calendar.retrieved_at:
+                raise ForecastRunRejected("CALENDAR_PROVENANCE_REJECTED")
             try:
-                verify_completeness(calendar, sources, cutoff=cutoff, as_of=started)
+                verify_completeness(calendar, sources, cutoff=cutoff, as_of=verification_at)
             except CompletenessRejected as error:
                 raise ForecastRunRejected(str(error)) from None
             prepared_for_run = []

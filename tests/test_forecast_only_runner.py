@@ -101,6 +101,23 @@ class ForecastOnlyRunnerTests(unittest.TestCase):
         self.assertTrue(all(row["source_observation_id"] is None and row["expected_value"] is None
                             for row in body))
 
+    def test_completeness_uses_truthful_post_calendar_retrieval_time(self):
+        calls = 0
+        def advancing_clock():
+            nonlocal calls
+            value = NOW - timedelta(seconds=1) if calls == 0 else NOW + timedelta(seconds=calls-1)
+            calls += 1
+            return value
+
+        with patch("modelfc.forecast_only_runner.git_commit_sha", return_value="f" * 40):
+            receipt = run_once(state_dir=self.state, data_config_path=self.config_path,
+                configuration=self.configuration, sportmonks_token="results-token",
+                football_data_token="calendar-token", clock=advancing_clock,
+                calendar_client_type=_CalendarClient, results_client_type=_NoResultsClient,
+                history_loader=lambda *_: histories())
+        self.assertEqual(receipt["status"], "RECORDED", receipt)
+        self.assertEqual(receipt["run_at_utc"], (NOW - timedelta(seconds=1)).isoformat())
+
     def test_replay_reuses_immutable_records_and_get_is_read_only(self):
         with patch("modelfc.forecast_only_runner.git_commit_sha", return_value="f" * 40):
             first = self.execute()
