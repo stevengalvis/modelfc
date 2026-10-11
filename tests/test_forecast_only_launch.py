@@ -43,6 +43,14 @@ class ForecastOnlyLaunchTests(unittest.TestCase):
         identity = type("Identity", (), {"pw_uid": os.getuid()})()
         mocked = patch.object(LAUNCHER.pwd, "getpwnam", return_value=identity)
         mocked.start(); self.addCleanup(mocked.stop)
+        # CI runs unprivileged, so its synthetic /etc ancestors cannot be
+        # root-owned. Preserve every real path/type/mode check while mapping
+        # the fixture's expected owner to the current test identity.
+        original = LAUNCHER.protected
+        mocked = patch.object(LAUNCHER, "protected",
+            side_effect=lambda path, _owner, **kwargs: original(
+                path, os.getuid(), **kwargs))
+        mocked.start(); self.addCleanup(mocked.stop)
 
     def test_executes_only_pinned_runner_and_scrubs_provider_environment(self):
         output = StringIO()
