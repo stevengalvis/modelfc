@@ -43,18 +43,22 @@
           "Millwall"
         ]
       },
-      "automatic_refresh": true,
+      "automatic_refresh": false,
       "refresh_job_status": "UNVERIFIED",
-      "last_refresh_status": "SUCCEEDED",
+      "last_refresh_status": null,
       "automatic_settlement": "MANUAL_ONLY",
       "trusted_kickoff_source": null,
       "latest_result_date": "2026-09-14",
-      "last_refresh_at": "2026-09-16T03:17:39+00:00",
+      "last_refresh_at": null,
       "stale": false,
       "warnings": [
         {
+          "code": "OPERATIONAL_STATUS_UNVERIFIED",
+          "message": "This read-only projection does not inspect private refresh or scheduler state."
+        },
+        {
           "code": "MATCH_TOTAL_NOT_VALIDATED",
-          "message": "Match-total probabilities require a recorded leakage-safe historical evaluation at lines 8.5, 9.5, 10.5, and 11.5."
+          "message": "Match-total probabilities require historical evaluation."
         }
       ]
     },
@@ -79,12 +83,20 @@
       "stale": true,
       "warnings": [
         {
+          "code": "OPERATIONAL_STATUS_UNVERIFIED",
+          "message": "This read-only projection does not inspect private refresh or scheduler state."
+        },
+        {
           "code": "UNCONFIGURED_COMPETITION",
-          "message": "SP2 is not enabled in the corner data configuration."
+          "message": "This competition is not configured."
         },
         {
           "code": "UNVERIFIED_CORNER_COVERAGE",
-          "message": "La Liga 2 corner history and its refresh path have not been verified."
+          "message": "La Liga 2 corner coverage is unverified."
+        },
+        {
+          "code": "MATCH_TOTAL_NOT_VALIDATED",
+          "message": "Match-total probabilities require historical evaluation."
         }
       ]
     }
