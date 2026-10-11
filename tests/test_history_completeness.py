@@ -19,19 +19,31 @@ def bundle():
     # Independent provider IDs are synthetic, explicitly bound, not OddsPapi IDs.
     bindings = [{"source_team_id": i+1000, "source_name": "Source "+name,
                  "history_name": name} for i, name in enumerate(names)]
+    # Valid double round-robin: all 46 matchdays contain each participant once.
+    ring = list(bindings)
+    rounds = []
+    for _ in range(len(ring)-1):
+        rounds.append([(ring[i],ring[-1-i]) for i in range(len(ring)//2)])
+        ring = [ring[0],ring[-1],*ring[1:-1]]
+    rounds += [[(away,home) for home,away in round_] for round_ in rounds]
+    target_round = next(i for i,r in enumerate(rounds) if any(
+        (h['history_name'],a['history_name']) == ('West Ham','QPR') for h,a in r))
+    prior_round = next(i for i,r in enumerate(rounds) if any(
+        (h['history_name'],a['history_name']) == ('Birmingham','Blackburn') for h,a in r))
+    labels = list(range(1,47))
+    other = labels.index(9);labels[target_round],labels[other]=labels[other],labels[target_round]
+    other = labels.index(8);labels[prior_round],labels[other]=labels[other],labels[prior_round]
     rows = []
-    for home in bindings:
-        for away in bindings:
-            if home == away: continue
-            pair = (home['history_name'], away['history_name'])
-            forecast = pair == ('West Ham', 'QPR')
-            finished = pair == ('Birmingham', 'Blackburn')
-            rows.append({'id': len(rows)+2000, 'utcDate': ('2026-10-09T12:00:00Z' if forecast
+    for index, round_ in enumerate(rounds):
+        for home, away in round_:
+            pair = (home['history_name'],away['history_name'])
+            forecast = pair == ('West Ham','QPR')
+            finished = pair == ('Birmingham','Blackburn')
+            rows.append({'id':len(rows)+2000,'utcDate':('2026-10-09T12:00:00Z' if forecast
                 else '2026-09-20T14:00:00Z' if finished else '2027-05-01T14:00:00Z'),
-                'status': 'FINISHED' if finished else 'TIMED',
-                'matchday': 9 if forecast else 8 if finished else len(rows) % 46 + 1,
-                'stage':'REGULAR_SEASON', 'competition':{'id':2016,'code':'ELC'},
-                'season': {'startDate':'2026-08-01','endDate':'2027-05-31'},
+                'status':'FINISHED' if finished else 'TIMED','matchday':labels[index],
+                'stage':'REGULAR_SEASON','competition':{'id':2016,'code':'ELC'},
+                'season':{'startDate':'2026-08-01','endDate':'2027-05-31'},
                 'homeTeam':{'id':home['source_team_id'],'name':home['source_name']},
                 'awayTeam':{'id':away['source_team_id'],'name':away['source_name']},
                 'score':{'fullTime':{'home':2 if finished else None,'away':1 if finished else None}}})
@@ -202,6 +214,230 @@ class CompletenessTests(unittest.TestCase):
         self.mutate_response(lambda v:v['matches'].reverse())
         self.assertEqual(original.matches,self.calendar().matches)
         self.assertNotEqual(original.bundle_sha256,self.calendar().bundle_sha256)
+
+
+class MatchweekAuditTests(unittest.TestCase):
+    def setUp(self):
+        self.value = bundle()
+
+    def response(self): return json.loads(self.value['payload'])
+
+    def update(self, response): self.value['payload']=json.dumps(response)
+
+    def calendar(self, as_of=NOW):
+        self.value['retrieved_at']=as_of.isoformat()
+        return parse_calendar(raw(self.value),as_of=as_of)
+
+    def known(self, row):
+        from datetime import datetime
+        return KnownFixture(Fixture('E1',18,'provider-'+str(row['id']),
+            datetime.fromisoformat(row['utcDate'].replace('Z','+00:00'))),
+            row['homeTeam']['name'].removeprefix('Source '),
+            row['awayTeam']['name'].removeprefix('Source '))
+
+    def weekend(self):
+        response=self.response()
+        rows=[r for r in response['matches'] if r['matchday']==9]
+        for index,row in enumerate(rows):
+            row['utcDate']=f'2026-10-{9+index%3:02d}T12:00:00Z'
+        self.update(response)
+        return rows
+
+    def broad_history(self, extra=''):
+        names=sorted(canonical for _,canonical in E1_TEAMS_BY_ID.values())
+        rows=['Div,Date,HomeTeam,AwayTeam,FTHG,FTAG,HC,AC']
+        for i in range(200):
+            day=date(2025,8,1)+timedelta(days=i)
+            home,away=names[i%24],names[(i+1)%24]
+            rows.append(f'E1,{day:%d/%m/%Y},{home},{away},2,1,5,4')
+        return (('E1_2526.csv', ('\n'.join(rows)+'\n').encode()),histories(extra)[1])
+
+    def test_matchday_partition_and_type_rejections(self):
+        for value in (True,1.5,'9',0,47,None):
+            self.value=bundle();response=self.response();response['matches'][0]['matchday']=value
+            self.update(response)
+            with self.assertRaises(CompletenessRejected): self.calendar()
+        # Valid integer labels still cannot move one fixture between rounds.
+        self.value=bundle();response=self.response()
+        response['matches'][0]['matchday']=46 if response['matches'][0]['matchday']!=46 else 45
+        self.update(response)
+        with self.assertRaisesRegex(CompletenessRejected,'MATCHDAY_REJECTED'):self.calendar()
+        # Keep round counts equal but repeat a participant within a round.
+        self.value=bundle();response=self.response();first=response['matches'][0]
+        other=next(r for r in response['matches'] if r['matchday']!=first['matchday']
+                   and r['homeTeam']['id']==first['homeTeam']['id'])
+        first['matchday'],other['matchday']=other['matchday'],first['matchday']
+        self.update(response)
+        with self.assertRaises(CompletenessRejected):self.calendar()
+
+    def test_fixture_exact_kickoff_teams_competition(self):
+        calendar=self.calendar();response=self.response()
+        row=next(r for r in response['matches'] if r['homeTeam']['name']=='Source West Ham'
+                 and r['awayTeam']['name']=='Source QPR')
+        known=self.known(row)
+        self.assertEqual(matchweek_cutoff(calendar,known),date(2026,10,9))
+        variants=[KnownFixture(Fixture('E1',18,'other',known.identity.kickoff_utc+timedelta(minutes=1)),known.home_team,known.away_team),
+            KnownFixture(known.identity,known.away_team,known.home_team),
+            KnownFixture(known.identity,'Unknown',known.away_team),
+            KnownFixture(Fixture('E0',17,'other',known.identity.kickoff_utc),known.home_team,known.away_team)]
+        for invalid in variants:
+            with self.assertRaises(CompletenessRejected):matchweek_cutoff(calendar,invalid)
+
+    def test_postponed_cancelled_non_kickoff_not_round_start(self):
+        for status in ('POSTPONED','CANCELLED'):
+            self.value=bundle();rows=self.weekend();response=self.response()
+            first=next(r for r in response['matches'] if r['id']==rows[0]['id'])
+            first['status']=status;first['utcDate']='2026-10-01T12:00:00Z'
+            self.update(response);calendar=self.calendar()
+            self.assertEqual(matchweek_cutoff(calendar,self.known(rows[1])),date(2026,10,9))
+            with self.assertRaisesRegex(CompletenessRejected,'FIXTURE_UNAVAILABLE'):
+                matchweek_cutoff(calendar,self.known(first))
+
+    def test_rescheduled_fixture_retains_verified_round_cutoff(self):
+        rows=self.weekend();response=self.response()
+        row=next(r for r in response['matches'] if r['id']==rows[-1]['id'])
+        row['utcDate']='2026-11-01T12:00:00Z';self.update(response)
+        self.assertEqual(matchweek_cutoff(self.calendar(),self.known(row)),date(2026,10,9))
+        with self.assertRaises(CompletenessRejected):matchweek_cutoff(self.calendar(),self.known(rows[-1]))
+
+    def test_first_kickoff_london_date_and_dst(self):
+        from datetime import datetime,timezone
+        for instant,day in [('2026-10-08T23:30:00Z',date(2026,10,9)),
+                            ('2026-10-28T23:30:00Z',date(2026,10,28))]:
+            self.value=bundle();rows=self.weekend();response=self.response()
+            for row in response['matches']:
+                if row['matchday']==9:row['utcDate']=instant
+            self.update(response)
+            as_of=datetime.fromisoformat(instant.replace('Z','+00:00'))-timedelta(hours=24)
+            calendar=self.calendar(as_of)
+            self.assertEqual(matchweek_cutoff(calendar,self.known(
+                next(r for r in response['matches'] if r['matchday']==9))),day)
+
+    def test_friday_saturday_sunday_durable_preparation_no_own_week_results(self):
+        from datetime import datetime,timezone
+        import tempfile
+        from pathlib import Path
+        from modelfc import guarded_acquisition as a
+        from modelfc.acquisition_storage import private_store
+        rows=self.weekend();sources=self.broad_history()
+        with tempfile.TemporaryDirectory() as temp:
+            path=Path(temp)/'private';path.mkdir(mode=0o700)
+            with private_store(path) as store:
+                for day in (9,10,11):
+                    row=next(r for r in rows if r['utcDate']==f'2026-10-{day:02d}T12:00:00Z')
+                    frozen=datetime(2026,10,day-1,12,tzinfo=timezone.utc)
+                    response=self.response()
+                    for earlier in response['matches']:
+                        if earlier['matchday']==9 and datetime.fromisoformat(
+                                earlier['utcDate'].replace('Z','+00:00')) < frozen:
+                            earlier['status']='FINISHED';earlier['score']['fullTime']={'home':2,'away':1}
+                    response['resultSet']['played']=sum(r['status']=='FINISHED' for r in response['matches'])
+                    self.update(response);calendar=self.calendar(frozen)
+                    known=self.known(row)
+                    identities={canonical:(pid,name) for pid,(name,canonical) in E1_TEAMS_BY_ID.items()}
+                    home,away=identities[known.home_team],identities[known.away_team]
+                    entry=a.CalendarEntry(known,home[0],away[0],home[1],away[1])
+                    prepared=a._prepare(store,entry,sources,frozen,calendar)
+                    self.assertEqual(len(prepared),2)
+                    self.assertTrue(all(f.cutoff==date(2026,10,9) and f.frozen_at==frozen for f in prepared))
+                    btts=next(f.btts for f in prepared if f.btts)
+                    self.assertEqual(btts.inputs.cutoff_date,date(2026,10,9))
+                    self.assertEqual(btts.inputs.latest_history_date,date(2026,9,20))
+                    self.assertEqual(prepared,a._prepare(store,entry,sources,frozen,calendar))
+                    if day==11:
+                        # A revised first kickoff conflicts with an existing frozen cutoff.
+                        changed=self.response()
+                        for other in changed['matches']:
+                            if other['matchday']==9 and other['utcDate'].startswith('2026-10-09'):
+                                other['utcDate']='2026-10-10T11:00:00Z'
+                                other['status']='TIMED';other['score']['fullTime']={'home':None,'away':None}
+                        changed['resultSet']['played']=sum(r['status']=='FINISHED' for r in changed['matches'])
+                        self.update(changed)
+                        with self.assertRaisesRegex(ValueError,'FORECAST_CONFLICT'):
+                            a._prepare(store,entry,sources,frozen,self.calendar(frozen))
+
+    def test_missing_prior_week_result_still_rejected(self):
+        rows=self.weekend();calendar=self.calendar()
+        cutoff=matchweek_cutoff(calendar,self.known(rows[-1]))
+        missing=self.broad_history()[:1]+(('E1_2627.csv',b'Div,Date,HomeTeam,AwayTeam,FTHG,FTAG,HC,AC\n'),)
+        with self.assertRaisesRegex(CompletenessRejected,'HISTORY_RESULTS_MISSING'):
+            verify_completeness(calendar,missing,cutoff=cutoff,as_of=NOW)
+
+    def test_post_freeze_cutoff_requires_proof_in_both_offline_entrypoints(self):
+        from modelfc.offline_forecasts import prepare_forecast,prepare_plan
+        from modelfc.btts_model import freeze_btts_forecast,history_from_bytes
+        from modelfc.acquisition_planner import plan_acquisition
+        known=KnownFixture(Fixture('E1',18,'future',NOW+timedelta(hours=24)),'West Ham','QPR')
+        # A Thursday-evening result must not enter a Thursday-noon frozen forecast.
+        sources=histories('E1,08/10/2026,West Ham,QPR,9,9,99,99\n')
+        cutoff=date(2026,10,9)
+        with self.assertRaisesRegex(ValueError,'REQUIRES_CALENDAR'):
+            prepare_forecast(known,sources,frozen_at=NOW,cutoff=cutoff)
+        plan=plan_acquisition({'E1':[known.identity]},as_of=NOW)
+        with self.assertRaisesRegex(ValueError,'REQUIRES_CALENDAR'):
+            prepare_plan(plan,(known,),{'E1':sources},frozen_at=NOW,cutoff=cutoff)
+        from modelfc.btts_market_data import BttsFixture
+        btts=BttsFixture(competition='E1',provider='oddspapi',provider_fixture_id='future',
+                         home_team='West Ham',away_team='QPR',kickoff_utc=known.identity.kickoff_utc.isoformat())
+        with self.assertRaisesRegex(ValueError,'requires verified calendar'):
+            freeze_btts_forecast(btts,history_from_bytes('E1',sources),frozen_at=NOW,cutoff=cutoff)
+        with self.assertRaises(CompletenessRejected):
+            prepare_forecast(known,sources,frozen_at=NOW,cutoff=cutoff,history_calendar=self.calendar())
+
+    def test_verified_cutoff_excludes_current_week_and_proof_tampering(self):
+        from modelfc.offline_forecasts import prepare_forecast
+        from modelfc.btts_model import BttsForecast
+        from pydantic import ValidationError
+        known=KnownFixture(Fixture('E1',18,'future',NOW+timedelta(hours=24)),'West Ham','QPR')
+        cutoff=date(2026,10,9)
+        first=prepare_forecast(known,histories(),frozen_at=NOW,cutoff=cutoff,history_calendar=self.calendar())
+        later=prepare_forecast(known,histories('E1,09/10/2026,West Ham,QPR,9,9,99,99\n'),
+            frozen_at=NOW,cutoff=cutoff,history_calendar=self.calendar())
+        self.assertEqual(first.corner,later.corner)
+        self.assertEqual(first.btts.yes_probability,later.btts.yes_probability)
+        self.assertEqual(first.btts.inputs.latest_history_date,later.btts.inputs.latest_history_date)
+        for kind in ('missing','future_retrieval','first_kickoff','future_result'):
+            modified=first.btts.model_dump(mode='json')
+            if kind=='missing':modified.pop('history_calendar_proof')
+            if kind=='future_retrieval':modified['history_calendar_proof']['retrieved_at_utc']=(NOW+timedelta(seconds=1)).isoformat()
+            if kind=='first_kickoff':modified['history_calendar_proof']['first_kickoff_utc']='2026-10-10T12:00:00Z'
+            if kind=='future_result':modified['inputs']['latest_history_date']='2026-10-09'
+            with self.assertRaises(ValidationError):BttsForecast.model_validate_json(json.dumps(modified))
+        legacy=prepare_forecast(known,histories(),frozen_at=NOW,cutoff=NOW.date()).btts
+        self.assertNotIn('history_calendar_proof',legacy.model_dump(mode='json'))
+        BttsForecast.model_validate_json(legacy.model_dump_json())
+
+    def test_t24_midnight_window_can_cross_two_london_dates(self):
+        from datetime import datetime,timezone
+        from modelfc.offline_forecasts import prepare_forecast
+        # 25 hours ahead, but Wednesday and Friday on the London calendar.
+        frozen=datetime(2026,10,7,22,30,tzinfo=timezone.utc)
+        kickoff=datetime(2026,10,8,23,30,tzinfo=timezone.utc)
+        response=self.response()
+        row=next(r for r in response['matches'] if r['homeTeam']['name']=='Source West Ham'
+                 and r['awayTeam']['name']=='Source QPR')
+        row['utcDate']=kickoff.isoformat();self.update(response)
+        known=KnownFixture(Fixture('E1',18,'midnight',kickoff),'West Ham','QPR')
+        calendar=self.calendar(frozen)
+        cutoff=matchweek_cutoff(calendar,known)
+        self.assertEqual(cutoff,date(2026,10,9))
+        prepared=prepare_forecast(known,histories(),frozen_at=frozen,cutoff=cutoff,history_calendar=calendar)
+        self.assertEqual(prepared.cutoff,cutoff)
+        self.assertEqual(prepared.btts.inputs.cutoff_date,cutoff)
+        self.assertEqual(prepared.corner.fixture.match_date,cutoff)
+
+    def test_london_midnight_cutoff_shared_by_corner_and_btts(self):
+        from datetime import datetime,timezone
+        from modelfc.offline_forecasts import prepare_forecast
+        known=KnownFixture(Fixture('E1',18,'late',datetime(2026,10,8,23,30,tzinfo=timezone.utc)),'West Ham','QPR')
+        response=self.response()
+        next(r for r in response['matches'] if r['homeTeam']['name']=='Source West Ham'
+             and r['awayTeam']['name']=='Source QPR')['utcDate']=known.identity.kickoff_utc.isoformat()
+        self.update(response)
+        prepared=prepare_forecast(known,histories(),frozen_at=NOW,cutoff=date(2026,10,9),
+                                  history_calendar=self.calendar())
+        self.assertEqual(prepared.corner.fixture.match_date,date(2026,10,9))
+        self.assertEqual(prepared.btts.inputs.cutoff_date,date(2026,10,9))
 
 
 class CalendarCoordinatorTests(unittest.TestCase):

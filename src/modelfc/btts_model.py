@@ -1,7 +1,7 @@
 """Frozen DeepFC arithmetic Poisson BTTS research reference, with no network I/O."""
 
 import csv
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 import hashlib
 from io import StringIO
 import math
@@ -9,9 +9,10 @@ import os
 from pathlib import Path
 import re
 import stat
+from zoneinfo import ZoneInfo
 from typing import Annotated, Literal
 
-from pydantic import Field, model_validator
+from pydantic import Field, model_validator, model_serializer
 
 from modelfc.btts_market_data import (
     BttsFixture, Digest, ResearchContract, Text, require_competition, timestamp, utc,
@@ -25,6 +26,13 @@ MODEL_VERSION = "deepfc-arithmetic-btts-v1"
 PRIOR_MATCHES = 5
 MIN_HISTORY = 100
 Count = Annotated[int, Field(ge=0)]
+
+
+def e1_result_date(value: datetime) -> date:
+    """E1 CSV dates and verified matchweek boundaries use Europe/London."""
+    if value.tzinfo is None:
+        raise ValueError("BTTS timestamp must be timezone-aware")
+    return value.astimezone(ZoneInfo("Europe/London")).date()
 
 
 class GoalResult(ResearchContract):
@@ -199,6 +207,14 @@ def btts_probabilities(home_rate: float, away_rate: float) -> tuple[float, float
     return yes, 1 - yes
 
 
+class HistoryCalendarProof(ResearchContract):
+    calendar_sha256: Digest
+    source_sha256: Digest
+    retrieved_at_utc: Text
+    matchday: Annotated[int, Field(ge=1, le=46)]
+    first_kickoff_utc: Text
+
+
 class BttsForecast(ResearchContract):
     competition: Text
     fixture: BttsFixture
@@ -208,6 +224,7 @@ class BttsForecast(ResearchContract):
     deepfc_source_commit: Literal["ecbae64d0684fceaad63d843e0b74ca54d21c0fc"] = DEEPFC_SOURCE_COMMIT
     smoothing_matches: Literal[5] = PRIOR_MATCHES
     inputs: FrozenInputs
+    history_calendar_proof: HistoryCalendarProof | None = None
     home_expected_goals: Annotated[float, Field(ge=0)]
     away_expected_goals: Annotated[float, Field(ge=0)]
     yes_probability: Annotated[float, Field(ge=0, le=1)]
@@ -219,8 +236,21 @@ class BttsForecast(ResearchContract):
             raise ValueError("BTTS forecast competition mismatch")
         frozen = timestamp(self.frozen_at_utc)
         kickoff = timestamp(self.fixture.kickoff_utc)
-        if frozen >= kickoff or self.inputs.cutoff_date > kickoff.date():
+        if (frozen >= kickoff or self.inputs.cutoff_date > e1_result_date(kickoff)
+                or self.inputs.latest_history_date > e1_result_date(frozen)):
             raise ValueError("BTTS forecast cutoff mismatch")
+        proof = self.history_calendar_proof
+        if proof is None:
+            if self.inputs.cutoff_date > frozen.date():
+                raise ValueError("BTTS future cutoff requires verified calendar")
+        else:
+            observed = timestamp(proof.retrieved_at_utc)
+            first = timestamp(proof.first_kickoff_utc)
+            if (not timedelta(0) <= frozen-observed <= timedelta(hours=6)
+                    or first > kickoff or first > frozen+timedelta(hours=27)
+                    or e1_result_date(first) != self.inputs.cutoff_date
+                    or self.inputs.latest_history_date > e1_result_date(observed)):
+                raise ValueError("BTTS calendar proof mismatch")
         expected = (*arithmetic_rates(self.inputs),)
         probabilities = btts_probabilities(*expected)
         if any(not math.isclose(a, b, rel_tol=0, abs_tol=1e-12) for a, b in zip(
@@ -229,16 +259,38 @@ class BttsForecast(ResearchContract):
             raise ValueError("BTTS forecast disagrees with frozen model")
         return self
 
+    @model_serializer(mode="wrap")
+    def preserve_legacy_serialization(self, handler):
+        value = handler(self)
+        if self.history_calendar_proof is None:
+            value.pop("history_calendar_proof", None)
+        return value
+
 
 def freeze_btts_forecast(fixture: BttsFixture, history: GoalHistory, *, frozen_at: datetime,
-                         cutoff: date | None = None) -> BttsForecast:
+                         cutoff: date | None = None, history_calendar=None) -> BttsForecast:
     if fixture.competition != history.competition:
         raise ValueError("BTTS history competition mismatch")
     frozen_at_utc = utc(frozen_at)
     cutoff = timestamp(frozen_at_utc).date() if cutoff is None else cutoff
-    if type(cutoff) is not date or cutoff > timestamp(fixture.kickoff_utc).date():
+    if type(cutoff) is not date or cutoff > e1_result_date(timestamp(fixture.kickoff_utc)):
         raise ValueError("BTTS forecast cutoff mismatch")
-    prior = [r for r in history.results if r.match_date < cutoff]
+    proof = None
+    if history_calendar is not None:
+        from modelfc.history_completeness import matchweek_start, verify_goal_history
+        matchday, first = matchweek_start(history_calendar, competition=fixture.competition,
+            kickoff=timestamp(fixture.kickoff_utc), home=fixture.home_team, away=fixture.away_team)
+        if e1_result_date(first) != cutoff:
+            raise ValueError("BTTS calendar cutoff mismatch")
+        verify_goal_history(history_calendar, history, cutoff=cutoff, as_of=frozen_at)
+        proof = HistoryCalendarProof(calendar_sha256=history_calendar.bundle_sha256,
+            source_sha256=history_calendar.source_sha256,
+            retrieved_at_utc=utc(history_calendar.retrieved_at), matchday=matchday,
+            first_kickoff_utc=utc(first))
+    elif cutoff > timestamp(frozen_at_utc).date():
+        raise ValueError("BTTS future cutoff requires verified calendar")
+    prior = [r for r in history.results if r.match_date < cutoff
+             and r.match_date <= e1_result_date(frozen_at)]
     if len(prior) < MIN_HISTORY:
         raise ValueError("INSUFFICIENT_BTTS_HISTORY")
     home = [r for r in prior if r.home_team == fixture.home_team]
@@ -253,5 +305,5 @@ def freeze_btts_forecast(fixture: BttsFixture, history: GoalHistory, *, frozen_a
     rates = arithmetic_rates(inputs)
     yes, no = btts_probabilities(*rates)
     return BttsForecast(competition=fixture.competition, fixture=fixture, frozen_at_utc=frozen_at_utc,
-        inputs=inputs, home_expected_goals=rates[0], away_expected_goals=rates[1],
+        inputs=inputs, history_calendar_proof=proof, home_expected_goals=rates[0], away_expected_goals=rates[1],
         yes_probability=yes, no_probability=no)

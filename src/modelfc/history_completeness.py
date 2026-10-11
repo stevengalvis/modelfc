@@ -138,6 +138,14 @@ def parse_calendar(raw: bytes, *, as_of: datetime) -> HistoryCalendar:
                 goals = None
             ids.add(identity); pairs.add(pair)
             matches.append(CalendarMatch(identity, kickoff, day, matchday, *sides, status, goals))
+        # Each round is a complete partition of the verified season roster.
+        # Range checks alone allow arbitrary relabelling to hide prior results.
+        for matchday in range(1, 47):
+            members = [m for m in matches if m.matchday == matchday]
+            participants = [team for m in members for team in (m.home, m.away)]
+            _require(len(members) == len(_NAMES)//2 and set(participants) == _NAMES
+                     and len(participants) == len(set(participants)),
+                     "HISTORY_CALENDAR_MATCHDAY_REJECTED")
         _require(type(value["resultSet"]["played"]) is int and
                  value["resultSet"]["played"] == sum(m.status == "FINISHED" for m in matches))
         return HistoryCalendar(hashlib.sha256(raw).hexdigest(), hashlib.sha256(source).hexdigest(),
@@ -148,16 +156,23 @@ def parse_calendar(raw: bytes, *, as_of: datetime) -> HistoryCalendar:
         raise CompletenessRejected("HISTORY_CALENDAR_REJECTED") from None
 
 
+def matchweek_start(calendar: HistoryCalendar, *, competition, kickoff, home, away):
+    """Exact cross-provider binding; inactive non-kickoffs cannot start a round."""
+    _require(competition == "E1", "HISTORY_CALENDAR_FIXTURE_MISSING")
+    matches = [m for m in calendar.matches if
+               (m.kickoff, m.home, m.away) == (kickoff, home, away)]
+    _require(len(matches) == 1, "HISTORY_CALENDAR_FIXTURE_MISSING")
+    _require(matches[0].status in {"SCHEDULED", "TIMED"},
+             "HISTORY_CALENDAR_FIXTURE_UNAVAILABLE")
+    first = min(m.kickoff for m in calendar.matches if m.matchday == matches[0].matchday
+                and m.status not in {"POSTPONED", "CANCELLED"})
+    return matches[0].matchday, first
+
+
 def matchweek_cutoff(calendar: HistoryCalendar, fixture) -> date:
     """Exclusive history cutoff shared by every fixture in a verified matchday."""
-    _require(getattr(fixture.identity, "competition", None) == "E1",
-             "HISTORY_CALENDAR_FIXTURE_MISSING")
-    kickoff = fixture.identity.kickoff_utc.astimezone(_LONDON)
-    matches = [m for m in calendar.matches if
-               (m.day, m.home, m.away) == (kickoff.date(), fixture.home_team, fixture.away_team)]
-    _require(len(matches) == 1, "HISTORY_CALENDAR_FIXTURE_MISSING")
-    first = min(m.kickoff for m in calendar.matches if m.matchday == matches[0].matchday)
-    _require(first <= matches[0].kickoff, "HISTORY_CALENDAR_MATCHDAY_REJECTED")
+    _, first = matchweek_start(calendar, competition=fixture.identity.competition,
+        kickoff=fixture.identity.kickoff_utc, home=fixture.home_team, away=fixture.away_team)
     return first.astimezone(_LONDON).date()
 
 
@@ -168,20 +183,32 @@ def verify_completeness(calendar: HistoryCalendar, sources, *, cutoff: date, as_
     exact and bidirectional; scores are checked too. Both models retain their
     existing covered-corner cohort. No scheduled kickoff implies a result.
     """
+    try:
+        history = history_from_bytes("E1", sources)
+    except (ValueError, TypeError, KeyError, UnicodeError):
+        raise CompletenessRejected("HISTORY_RESULTS_REJECTED") from None
+    return verify_goal_history(calendar, history, cutoff=cutoff, as_of=as_of)
+
+
+def verify_goal_history(calendar: HistoryCalendar, history, *, cutoff: date, as_of: datetime):
+    """The same completeness checks for already-validated BTTS history."""
+    _require(history.competition == "E1", "HISTORY_RESULTS_REJECTED")
     as_of_day = utc(as_of).astimezone(_LONDON).date()
-    _require(type(cutoff) is date and cutoff <= as_of_day + timedelta(days=1)
+    _require(type(cutoff) is date
              and timedelta(0) <= utc(as_of)-calendar.retrieved_at <= MAX_CALENDAR_AGE,
              "HISTORY_CALENDAR_STALE")
+    # A 27-hour T-24 window can cross two London dates near midnight.
+    # Bind a future date to an actual active kickoff inside that same horizon.
+    if cutoff > as_of_day:
+        _require(any(m.day == cutoff and m.kickoff <= utc(as_of)+timedelta(hours=27)
+                     and m.status not in {"POSTPONED", "CANCELLED"}
+                     for m in calendar.matches), "HISTORY_CALENDAR_STALE")
     start = date(calendar.season_year, 7, 1)
     _require(start < cutoff <= max(m.day for m in calendar.matches), "HISTORY_CALENDAR_INCOMPLETE")
     prior = [m for m in calendar.matches if m.day < cutoff]
     _require(all(m.status in _TERMINAL for m in prior), "HISTORY_CALENDAR_UNRESOLVED")
     completed = {m.key: m for m in prior if m.status == "FINISHED"}
     _require(completed, "HISTORY_CALENDAR_INCOMPLETE")
-    try:
-        history = history_from_bytes("E1", sources)
-    except (ValueError, TypeError, KeyError, UnicodeError):
-        raise CompletenessRejected("HISTORY_RESULTS_REJECTED") from None
     installed = { (r.match_date, r.home_team, r.away_team): r for r in history.results
                   if start <= r.match_date < cutoff }
     _require(set(completed) == set(installed), "HISTORY_RESULTS_MISSING_OR_CONFLICTING")

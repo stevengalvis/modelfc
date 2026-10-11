@@ -203,7 +203,7 @@ def _prepare(store, entry, sources, frozen, history_calendar=None):
             continue
         try:
             prepared = prepare_forecast(entry.fixture, sources, frozen_at=frozen,
-                                         cutoff=cutoff, models=(model,))
+                                         cutoff=cutoff, models=(model,), history_calendar=history_calendar)
             latest = (prepared.corner.latest_history_date if model == "corner"
                       else prepared.btts.inputs.latest_history_date)
             assessment = assess_freshness(sources, latest=latest, cutoff=prepared.cutoff,

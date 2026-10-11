@@ -188,7 +188,10 @@ Final scores must agree. Missing, extra, ambiguous or un-covered current-season
 results reject the proof. The existing completed-corner cohort is preserved;
 missing corners are never fabricated. Results on or after the shared matchday cutoff are excluded from both completeness
 comparison and frozen model inputs. The source matchday must map uniquely to the
-pre-known fixture by Europe/London date and exact ordered canonical teams.
+pre-known fixture by the exact UTC kickoff and ordered canonical teams. Each of the
+46 matchdays must contain 12 fixtures and each verified team exactly once; fixture
+dates may differ because of rescheduling. Cancelled/postponed non-kickoffs do not
+start the round, and unavailable target fixtures cannot authorize preparation.
 
 ### Offline preparation and acceptance
 
@@ -225,6 +228,18 @@ matched completed fixture IDs and installed history fingerprints. Forecast model
 explicit matchweek cutoff rather than the individual preparation date. Reuse requires proof of the exact frozen
 history bytes; changed sources cannot silently certify an older forecast. Proof
 freshness is checked again immediately before the irrevocable claim/reservation.
+Direct offline preparation and BTTS freezing also require and verify the calendar
+when the explicit cutoff follows preparation's UTC date. The same history join
+proves that included same-day prior-round results were already reported finished
+at the independently observed calendar time, before the truthful freeze. Merely
+supplying a future date cannot authorize those results. BTTS records preserve a
+small calendar-proof provenance contract (hashes, observation timestamp, matchday
+and first kickoff); serialized validation checks its chronology and cutoff. The
+field is omitted for legacy forecasts, preserving their JSON and evidence IDs.
+London dates are used consistently for kickoff limits and corner fixture dates.
+The existing 27-hour planning horizon can span two London dates near midnight;
+a future cutoff must bind to a real active kickoff within that horizon.
+
 No history, production evidence, account controls or services are migrated.
 
 ### October 9 acceptance remains conditional
