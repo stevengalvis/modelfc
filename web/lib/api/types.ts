@@ -111,7 +111,7 @@ export type OpportunityResult = "WIN" | "LOSS" | "PUSH";
 
 export interface ProspectivePrediction {
   prediction_id: string;
-  source_observation_id: string;
+  source_observation_id: string | null;
   created_at_utc: string;
   competition: string;
   provider: string;
@@ -121,9 +121,9 @@ export interface ProspectivePrediction {
   away_team: string;
   model_name: string;
   model_version: string;
-  expected_home_corners: number;
-  expected_away_corners: number;
-  expected_match_corners: number;
+  expected_home_corners: number | null;
+  expected_away_corners: number | null;
+  expected_match_corners: number | null;
   dispersion_size: number | null;
   latest_history_date: string;
   source_data_hashes: Array<{ filename: string; sha256: string }>;
@@ -132,6 +132,19 @@ export interface ProspectivePrediction {
   settlement_status: ProspectiveStatus;
   actual_home_corners: number | null;
   actual_away_corners: number | null;
+  prediction_type?: "CORNER" | "BTTS";
+  research_status?: "RESEARCH_ONLY";
+  qualified_recommendation?: false;
+  cutoff_date?: string;
+  calendar_sha256?: string;
+  calendar_source_sha256?: string;
+  calendar_retrieved_at_utc?: string;
+  supplemental_result_count?: number;
+  home_expected_goals?: number | null;
+  away_expected_goals?: number | null;
+  btts_yes_probability?: number | null;
+  btts_no_probability?: number | null;
+  expected_value?: null;
 }
 
 export interface ProspectiveOpportunity {

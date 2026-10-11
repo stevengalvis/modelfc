@@ -21,6 +21,7 @@ from modelfc.corner_opportunities import (
 from modelfc.ledger_storage import (
     LedgerError, LedgerStorageUnavailable, existing_read_lock, ledger_read_lock,
 )
+from modelfc.research_predictions import records as research_prediction_records
 
 
 def _time(value: Any) -> datetime:
@@ -323,7 +324,7 @@ def _opportunity_detail(
 def _contains_prospective_records(state: Path) -> bool:
     # Outcomes also belong to the older analysis workflow.  Only the
     # prospective record families establish that this inventory exists.
-    for name in ("predictions", "prediction-targets", "opportunities"):
+    for name in ("predictions", "prediction-targets", "opportunities", "research-predictions"):
         directory = _state_directory(state, name)
         if directory.exists() and any(directory.rglob("*.json")):
             return True
@@ -339,6 +340,7 @@ def _locked_inventory(
     opportunities_dir = _state_directory(state, "opportunities")
     _state_directory(state, "market-observations")
     _state_directory(state, "analysis-outcomes")
+    _state_directory(state, "research-predictions")
 
     predictions = prediction_records(state)
     prediction_ids = {item["prediction_id"] for item in predictions}
@@ -500,6 +502,14 @@ def _locked_inventory(
     prediction_views.sort(key=lambda item: (
         -_time(item["created_at_utc"]).timestamp(), item["prediction_id"],
     ))
+    research = research_prediction_records(state, now=now)
+    if {item["prediction_id"] for item in research} & {
+            item["prediction_id"] for item in prediction_views}:
+        raise LedgerError("INVALID_PROSPECTIVE_RECORD")
+    prediction_views.extend(research)
+    prediction_views.sort(key=lambda item: (
+        -_time(item["created_at_utc"]).timestamp(), item["prediction_id"],
+    ))
     status_order = {"UPCOMING": 0, "SETTLED": 1, "EXPIRED_UNSETTLED": 2}
     opportunity_views.sort(key=lambda item: (
         status_order[item["settlement_status"]], _time(item["kickoff_utc"]),
@@ -574,7 +584,10 @@ def read_opportunity(state_dir: str | Path, opportunity_id: str) -> dict[str, An
 
 def read_performance(state_dir: str | Path) -> dict[str, Any]:
     inventory = _inventory(state_dir)
-    predictions = inventory["predictions"]
+    # Research-only forecasts have no settled betting targets and must not
+    # change the established prospective model/opportunity performance series.
+    predictions = [item for item in inventory["predictions"]
+                   if item.get("research_status") is None]
     settled_predictions = [item for item in predictions if item["settlement_status"] == "SETTLED"]
     team_errors, total_errors = [], []
     for item in settled_predictions:

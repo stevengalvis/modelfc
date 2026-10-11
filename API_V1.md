@@ -1194,3 +1194,14 @@ well-formed match-total request remains in a successful batch with
 `status: UNSUPPORTED` and
 `unsupported_reason: HISTORICAL_EVALUATION_REQUIRED`. This keeps a mixed batch
 useful without presenting an unevaluated probability as production-ready.
+
+# Research forecasts on `/api/v1/predictions`
+
+The predictions list can include odds-independent `RESEARCH_ONLY` records in
+addition to the existing prospective corner prediction records. Research records
+have `source_observation_id: null`, `qualified_recommendation: false`, zero targets
+and opportunities, an explicit `prediction_type` (`CORNER` or `BTTS`), a historical
+cutoff, and model/source provenance. Their `expected_value` is null because no price
+was observed. They do not enter opportunity, recommendation, or betting-performance
+views. Provider payloads, tokens, storage paths, and private supplemental result
+records are never returned.

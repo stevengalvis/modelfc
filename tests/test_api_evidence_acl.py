@@ -45,6 +45,25 @@ class EvidenceAclTests(unittest.TestCase):
         self.assertTrue(all(item.kwargs["env"] == {"PATH": "/usr/bin:/bin"}
                             for item in run.call_args_list))
 
+    def test_research_prediction_is_public_but_supplemental_history_is_not(self):
+        uid = type("User", (), {"pw_uid": 10001})()
+        public = self.state / "research-predictions" / ("a" * 64 + ".json")
+        private = self.state / "supplemental-history" / "E1" / ("b" * 64 + ".json")
+        public.parent.mkdir(); private.parent.mkdir(parents=True)
+        with patch.dict(os.environ, {"MODELFC_EVIDENCE_ACL_USER": "modelfc-api"}), \
+                patch("modelfc.ledger_storage.pwd.getpwnam", return_value=uid), \
+                patch("modelfc.ledger_storage.subprocess.run") as run:
+            with ledger_lock(self.state) as lock_fd:
+                write_new_record(public, {"public": True}, evidence_state=self.state,
+                                 evidence_lock_fd=lock_fd)
+                with self.assertRaisesRegex(LedgerStorageUnavailable,
+                                            "public evidence read ACL failed"):
+                    write_new_record(private, {"private": True}, evidence_state=self.state,
+                                     evidence_lock_fd=lock_fd)
+        self.assertTrue(public.exists())
+        self.assertFalse(private.exists())
+        self.assertTrue(run.called)
+
     def test_acl_failure_never_publishes_record(self):
         with patch.dict(os.environ, {"MODELFC_EVIDENCE_ACL_USER": "modelfc-api"}), \
                 patch("modelfc.ledger_storage.pwd.getpwnam", return_value=type("User", (), {"pw_uid": 10001})()), \

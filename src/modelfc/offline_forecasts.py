@@ -69,9 +69,10 @@ def history_bytes_from_config(config: CornerDataConfig, competition: str) -> tup
 
 def prepare_forecast(fixture: KnownFixture, sources: tuple[tuple[str, bytes], ...], *,
                      frozen_at: datetime, cutoff: date, models: tuple[str, ...] = ("corner", "btts"),
-                     history_calendar=None) -> PreparedForecast:
+                     history_calendar=None, fixture_provider: str = "oddspapi") -> PreparedForecast:
     """Call before supplying any odds bytes. Both models retain their frozen methodology."""
-    if not models or len(set(models)) != len(models) or set(models) - {"corner", "btts"}:
+    if (not models or len(set(models)) != len(models) or set(models) - {"corner", "btts"}
+            or not isinstance(fixture_provider, str) or not fixture_provider.strip()):
         raise ValueError("UNSUPPORTED_MODEL")
     frozen = utc(frozen_at)
     if (type(cutoff) is not date or cutoff > e1_result_date(fixture.identity.kickoff_utc)
@@ -109,7 +110,7 @@ def prepare_forecast(fixture: KnownFixture, sources: tuple[tuple[str, bytes], ..
                                                        and r.match_date <= e1_result_date(frozen)
                                                        for n in (r.home_team, r.away_team)}:
             raise ValueError("FORECAST_TEAM_IDENTITY_REVIEW")
-        btts = freeze_btts_forecast(BttsFixture(competition="E1", provider="oddspapi",
+        btts = freeze_btts_forecast(BttsFixture(competition="E1", provider=fixture_provider,
             provider_fixture_id=fixture.identity.fixture_id, home_team=fixture.home_team,
             away_team=fixture.away_team, kickoff_utc=fixture.identity.kickoff_utc.isoformat()),
             history, frozen_at=frozen, cutoff=cutoff, history_calendar=history_calendar)

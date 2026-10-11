@@ -75,6 +75,33 @@ describe("prospective response boundary", () => {
     expect(items.map((item) => item.settlement_status)).toEqual(["UPCOMING", "SETTLED"]);
     expect(items[1]).toMatchObject({ actual_home_corners: 6, actual_away_corners: 4, target_count: 3 });
   });
+  it("accepts strict odds-independent corner and BTTS research predictions", async () => {
+    const common = {
+      prediction_id: "a".repeat(64), source_observation_id: null,
+      created_at_utc: "2099-09-30T12:00:00Z", competition: "E1",
+      provider: "football-data.org", provider_fixture_id: "123",
+      kickoff_utc: "2099-10-01T14:00:00Z", home_team: "West Ham", away_team: "QPR",
+      research_status: "RESEARCH_ONLY", qualified_recommendation: false,
+      cutoff_date: "2099-09-29", latest_history_date: "2099-09-28",
+      calendar_sha256: "d".repeat(64), calendar_source_sha256: "e".repeat(64),
+      calendar_retrieved_at_utc: "2099-09-30T11:59:00Z", supplemental_result_count: 0,
+      source_data_hashes: [{ filename: "E1_9999.csv", sha256: "b".repeat(64) }],
+      target_count: 0, opportunity_count: 0, settlement_status: "UPCOMING",
+      actual_home_corners: null, actual_away_corners: null, expected_value: null,
+    };
+    const corner = { ...common, prediction_type: "CORNER", model_name: "corner-model",
+      model_version: "corner-v1", expected_home_corners: 5, expected_away_corners: 4,
+      expected_match_corners: 9, dispersion_size: 2, home_expected_goals: null,
+      away_expected_goals: null, btts_yes_probability: null, btts_no_probability: null };
+    const btts = { ...common, prediction_id: "c".repeat(64), prediction_type: "BTTS",
+      model_name: "btts-model", model_version: "btts-v1", expected_home_corners: null,
+      expected_away_corners: null, expected_match_corners: null, dispersion_size: null,
+      home_expected_goals: 1.5, away_expected_goals: 1.2,
+      btts_yes_probability: 0.6, btts_no_probability: 0.4 };
+    expect(await live([corner, btts]).predictions()).toEqual([corner, btts]);
+    await expect(live([{ ...btts, qualified_recommendation: true }]).predictions())
+      .rejects.toMatchObject({ code: "PROSPECTIVE_CONTRACT_MISMATCH" });
+  });
   it("preserves exact prices, probabilities, edge and WIN/LOSS/PUSH profits", async () => {
     const items = await live(mockOpportunities).opportunities();
     expect(items[0]).toMatchObject({ bookmaker: "DraftKings", line: 4.5, american_odds: -110, model_decisive_probability: 0.62, no_vig_market_probability: 0.52, no_vig_probability_edge: 0.10 });
