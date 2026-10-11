@@ -37,13 +37,19 @@ def generate(destination: Path) -> None:
     destination.mkdir(parents=True, exist_ok=True)
     with TemporaryDirectory() as temporary:
         root = Path(temporary)
-        (root / "E1_2627.csv").write_text(HISTORY, encoding="utf-8")
+        # The public reader requires completed-score evidence, unlike the local
+        # analysis fixture below. Preserve those existing analysis source hashes.
+        capability_history = (HISTORY.replace("AwayTeam,HC,AC", "AwayTeam,FTHG,FTAG,FTR,HC,AC")
+            .replace("Birmingham,Millwall,", "Birmingham,Millwall,2,1,H,")
+            .replace("Millwall,Birmingham,", "Millwall,Birmingham,2,1,H,"))
+        (root / "E1_2627.csv").write_text(capability_history, encoding="utf-8")
         config = root / "corner_data.json"
         config.write_text(json.dumps({
             "data_directory": ".", "leagues": ["E1"], "max_age_days": 14,
         }), encoding="utf-8")
         refresh = root / "data" / "corner-refresh"
         refresh.mkdir(parents=True)
+        (refresh / "refresh.lock").touch()
         (refresh / "status.json").write_text(json.dumps({
             "checked_at": "2026-09-16T03:17:39+00:00",
             "season": "2627", "max_age_days": 14,
@@ -63,6 +69,8 @@ def generate(destination: Path) -> None:
             _write(destination / "capabilities.json", client.get(
                 "/api/v1/capabilities",
             ).json())
+
+        (root / "E1_2627.csv").write_text(HISTORY, encoding="utf-8")
 
         base = {
             "fixture": {
