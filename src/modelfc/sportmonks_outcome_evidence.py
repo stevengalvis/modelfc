@@ -191,7 +191,8 @@ def main(argv=None):
                   "calendar_sha256", "retrieved_at_utc", "season_id", "fixture_id", "team_bindings"}
         _require(isinstance(manifest, dict) and set(manifest) == fields
                  and type(manifest["version"]) is int and manifest["version"] == 1
-                 and manifest["provider"] == "sportmonks" and manifest["competition"] == "E1",
+                 and manifest["provider"] == "sportmonks" and manifest["competition"] == "E1"
+                 and isinstance(manifest["retrieved_at_utc"], str),
                  "SAVED_RESULT_REJECTED")
         evidence = validate_saved_result(
             response=read_pinned(args.response_file, manifest["response_sha256"], MAX_PAGE_BYTES),

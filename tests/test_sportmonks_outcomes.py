@@ -135,6 +135,51 @@ class SportmonksOutcomeTests(unittest.TestCase):
         after=api.state_bytes()
         for name,raw in prediction_before.items():self.assertEqual(after[name],raw)
 
+    def cli_files(self, folder):
+        response=json.dumps({'data':[self.saved.row],'pagination':{'has_more':False,'next_page':None}}).encode()
+        source=Path(folder)/'response';source.write_bytes(response)
+        calendar=Path(folder)/'calendar';calendar.write_bytes(self.saved.calendar)
+        manifest={'version':1,'provider':'sportmonks','competition':'E1',
+            'capture_reference':'saved-capture-001','response_sha256':hashlib.sha256(response).hexdigest(),
+            'calendar_sha256':hashlib.sha256(self.saved.calendar).hexdigest(),
+            'retrieved_at_utc':'2026-10-09T22:00:00+00:00','season_id':27903,
+            'fixture_id':self.saved.row['id'],'team_bindings':self.saved.bindings}
+        return source,calendar,manifest
+
+    def invoke_cli(self, folder, manifest):
+        from contextlib import redirect_stdout
+        from io import StringIO
+        from modelfc.sportmonks_outcome_evidence import main
+        path=Path(folder)/'manifest';raw=json.dumps(manifest).encode();path.write_bytes(raw)
+        output=StringIO()
+        with patch('modelfc.providers.sportmonks_results.SportmonksRecentResultsClient.fetch',
+                   side_effect=AssertionError('network forbidden')),redirect_stdout(output):
+            code=main(['--manifest',str(path),'--manifest-sha256',hashlib.sha256(raw).hexdigest(),
+                '--response-file',str(Path(folder)/'response'),'--calendar-file',str(Path(folder)/'calendar'),
+                '--state-dir',str(self.setup.state),'--analysis-id',self.setup.analysis_id,'--key','cli-final'])
+        self.assertNotIn(folder,output.getvalue())
+        return code,json.loads(output.getvalue())
+
+    def test_cli_settles_and_reuses_without_network_or_mutating_capture(self):
+        with TemporaryDirectory() as folder:
+            _,_,manifest=self.cli_files(folder)
+            for status in ('RECORDED','REUSED'):
+                code,receipt=self.invoke_cli(folder,manifest)
+                self.assertEqual(code,0);self.assertEqual(receipt['status'],status)
+                self.assertEqual(receipt['provider_requests'],0)
+        self.assertEqual(self.setup.capture_path.read_bytes(),self.setup.original)
+
+    def test_cli_malformed_manifest_timestamp_is_sanitized_before_writes(self):
+        with TemporaryDirectory() as folder:
+            _,_,manifest=self.cli_files(folder)
+            for value in (None,5,{},'private-secret-invalid-date'):
+                manifest['retrieved_at_utc']=value
+                code,receipt=self.invoke_cli(folder,manifest)
+                self.assertEqual(code,1)
+                self.assertEqual(receipt,{'status':'REJECTED','reason':'SAVED_RESULT_SETTLEMENT_REJECTED',
+                    'provider_requests':0});self.assertNotIn('private-secret',json.dumps(receipt))
+        self.assertFalse(self.setup.outdir.exists())
+
     def test_cli_rejects_missing_private_evidence_without_leakage_or_provider_calls(self):
         from contextlib import redirect_stdout
         from io import StringIO
