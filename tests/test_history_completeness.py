@@ -272,8 +272,16 @@ class CalendarCoordinatorTests(unittest.TestCase):
         from modelfc import guarded_acquisition as a
         from modelfc.acquisition_storage import private_store
         path=self.proof_path();entry=a._calendar(self.calendar_path.read_bytes(),NOW,['E1'])[1]['fixture-1']
-        sources=tuple((n,b.replace(b'West Ham',b'Burnley').replace(b'QPR',b'Cardiff') if n=='E1_2526.csv' else b)
-                      for n,b in histories())
+        sources = []
+        for name, data in histories():
+            if name == 'E1_2526.csv':
+                lines = data.splitlines(keepends=True)
+                data = b''.join(lines[:4] + [
+                    row.replace(b'West Ham', b'Burnley').replace(b'QPR', b'Cardiff')
+                    for row in lines[4:]
+                ])
+            sources.append((name, data))
+        sources = tuple(sources)
         with private_store(self.private) as store:
             forecasts=a._prepare(store,entry,sources,NOW,parse_calendar(path.read_bytes(),as_of=NOW))
             self.assertEqual(len(forecasts),1)
