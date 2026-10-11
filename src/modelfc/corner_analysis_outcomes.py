@@ -271,7 +271,7 @@ def record_sportmonks_outcome(*, state_dir, analysis_id, evidence, idempotency_k
     from modelfc.sportmonks_outcome_evidence import SavedResultEvidence
     _require(isinstance(evidence, SavedResultEvidence), "SAVED_RESULT_REJECTED")
     return _record_outcome(state_dir=state_dir, analysis_id=analysis_id,
-        evidence=evidence.for_fixture, idempotency_key=idempotency_key)
+        evidence=evidence.for_settlement, idempotency_key=idempotency_key)
 
 
 def _record_outcome(*, state_dir, analysis_id, evidence, idempotency_key,
@@ -326,6 +326,9 @@ def _record_outcome(*, state_dir, analysis_id, evidence, idempotency_key,
                   "matching_rule_version": matching, "settlement_rule_version": SETTLEMENT_VERSION,
                   "settlements": settlements, "evidence_hash": evidence_hash,
                   "supersedes_outcome_id": supersedes_outcome_id, "correction_reason": correction_reason}
+        if source["provider"] == "sportmonks":
+            from modelfc.sportmonks_outcome_evidence import validate_outcome_source
+            validate_outcome_source(record)
         record["record_hash"] = _canonical_hash(record)
         ensure_directory(directory, "analysis outcome directory")
         write_new_record(directory / f"{outcome_id}.json", record,

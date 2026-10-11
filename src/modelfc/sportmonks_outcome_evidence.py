@@ -72,23 +72,29 @@ class SavedResultEvidence:
                  and type(self.calendar_fixture_id) is int and self.calendar_fixture_id > 0,
                  "SAVED_RESULT_PROVENANCE_REJECTED")
 
-        _require(self.result.provider_league_id == 9
-                 and datetime.fromisoformat(self.result.retrieved_at_utc) <= datetime.now(timezone.utc),
+        _require(self.result.provider_league_id == 9,
                  "SAVED_RESULT_PROVENANCE_REJECTED")
         try:
             timestamp = datetime.fromisoformat(self.calendar_retrieved_at_utc.replace("Z", "+00:00"))
-            _require(timestamp.tzinfo is not None and timestamp <= datetime.now(timezone.utc),
+            _require(timestamp.tzinfo is not None,
                      "SAVED_RESULT_PROVENANCE_REJECTED")
         except (ValueError, AttributeError):
             raise OutcomeError("SAVED_RESULT_PROVENANCE_REJECTED") from None
 
-    def for_fixture(self, fixture, kickoff):
+    def for_settlement(self, fixture, kickoff):
+        """Use the live clock only when accepting a new settlement."""
+        return self.for_fixture(fixture, kickoff, as_of=datetime.now(timezone.utc))
+
+    def for_fixture(self, fixture, kickoff, *, as_of):
         result = self.result
         _require(fixture["competition"] == result.competition == "E1"
                  and (fixture["home_team"], fixture["away_team"]) ==
                      (result.home_team, result.away_team)
                  and kickoff == datetime.fromisoformat(result.kickoff_utc)
-                 and kickoff < datetime.now(timezone.utc), "SAVED_RESULT_IDENTITY_CONFLICT")
+                 and as_of.tzinfo is not None and kickoff < as_of
+                 and datetime.fromisoformat(result.retrieved_at_utc) <= as_of
+                 and datetime.fromisoformat(self.calendar_retrieved_at_utc) <= as_of,
+                 "SAVED_RESULT_IDENTITY_CONFLICT")
         source = {"provider": "sportmonks", "capture_reference": self.capture_reference,
                   "response_sha256": result.response_sha256,
                   "normalized_record": {**asdict(result), "match_date": result.match_date.isoformat()},
@@ -161,7 +167,8 @@ def validate_outcome_source(record):
         calendar["source_sha256"], calendar["fixture_id"], calendar["retrieved_at_utc"])
     fixture = record["fixture"]
     season, reconstructed, corners = evidence.for_fixture(fixture,
-        datetime.fromisoformat(fixture["kickoff_at"].replace("Z", "+00:00")))
+        datetime.fromisoformat(fixture["kickoff_at"].replace("Z", "+00:00")),
+        as_of=datetime.fromisoformat(record["recorded_at_utc"].replace("Z", "+00:00")))
     _require(source == reconstructed and record["result"] == corners
         and fixture["source_season"] == season
         and record["matching_rule_version"] == "sportmonks-exact-calendar-v1"

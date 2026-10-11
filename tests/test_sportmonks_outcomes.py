@@ -77,6 +77,28 @@ class SportmonksOutcomeTests(unittest.TestCase):
         self.assertEqual(source['final_state'],'FT')
         self.assertEqual(outcomes.load_outcome(self.setup.state,self.setup.analysis_id,record['outcome_id']),record)
 
+    def test_immutable_outcome_and_performance_reads_do_not_consult_live_clock(self):
+        api=api_tests.ProspectiveApiTests();api.setUp();self.addCleanup(api.doCleanups)
+        record,_=outcomes.record_sportmonks_outcome(state_dir=api.state,analysis_id=api.analysis_id,
+            evidence=self.saved.evidence(),idempotency_key='clock-independent')
+        class Clock(datetime):
+            @classmethod
+            def now(cls,tz=None): raise AssertionError('immutable reads must not use live clock')
+        with patch('modelfc.sportmonks_outcome_evidence.datetime',Clock):
+            self.assertEqual(outcomes.load_outcome(api.state,api.analysis_id,record['outcome_id']),record)
+            response=api.client.get('/api/v1/prospective/performance')
+        self.assertEqual(response.status_code,200,response.text)
+        self.assertEqual(response.json()['model_performance']['settled_prediction_runs'],1)
+
+    def test_initial_settlement_still_rejects_future_retrieval_under_corrected_clock(self):
+        evidence=self.saved.evidence()
+        class Clock(datetime):
+            @classmethod
+            def now(cls,tz=None): return datetime(2026,9,23,tzinfo=timezone.utc)
+        with patch('modelfc.sportmonks_outcome_evidence.datetime',Clock):
+            with self.assertRaisesRegex(ValueError,'SAVED_RESULT_IDENTITY_CONFLICT'):self.record(evidence)
+        self.assertFalse(self.setup.outdir.exists())
+
     def test_wrong_fixture_and_provenance(self):
         for changes in ({'fixture_id':1},{'season_id':1},{'response_sha256':'0'*64},
                         {'calendar_sha256':'0'*64},{'capture_reference':'/private/token'}):
