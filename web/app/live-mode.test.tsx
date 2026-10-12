@@ -27,7 +27,7 @@ describe("site modes", () => {
     expect(screen.queryByRole("link", { name: "Analyze" })).not.toBeInTheDocument();
     const navigation = screen.getByRole("navigation", { name: "Primary navigation" });
     expect(Array.from(navigation.querySelectorAll("a")).map((link) => link.textContent))
-      .toEqual(["Recommendations", "Predictions", "Teams", "BTTS Value", "Performance"]);
+      .toEqual(["Next matches", "Recommendations", "Predictions", "Teams", "BTTS Value", "Performance"]);
   });
 
   it("keeps live BTTS empty and isolated from deterministic mock research", async () => {
