@@ -182,6 +182,24 @@ class CalendarGateTests(unittest.TestCase):
         self.assertEqual(report['calendar_gate']['skip_reason'], 'CALENDAR_NO_RELEVANT_FIXTURES')
         self.assertIn('calendar_gate', report)
 
+    def test_duplicate_mapping_isolated_while_unrelated_fixture_is_quoted(self):
+        from copy import deepcopy
+        from tests.test_oddspapi import recorded
+        other = deepcopy(recorded('odds-fixtures')[1])
+        duplicate = dict(other, fixtureId='duplicate-provider-id')
+        self.fixtures.extend([other, duplicate])
+        value = json.loads(self.calendar()); payload = json.loads(value['payload'])
+        for row in payload['matches']:
+            if (row['homeTeam']['name'], row['awayTeam']['name']) == ('Source Norwich', 'Source Bolton'):
+                row['utcDate'] = other['startTime']
+        value['payload'] = json.dumps(payload)
+        bridge.publish(self.state, raw(value), as_of=self.now)
+        result = self.run_gate()
+        self.assertEqual(result['reasons'], ['CALENDAR_FIXTURE_MISMATCH'])
+        self.assertEqual(result['captures_created'], 1)
+        self.assertEqual([c[0] for c in self.calls], ['fixtures', 'markets', 'odds'])
+        self.assertEqual(set(self.control()['attempts']), {self.fixtures[0]['fixtureId']})
+
     def test_six_hour_window_unchanged(self):
         self.fixtures[0]['startTime'] = '2026-09-20T16:00:00Z'
         self.publish()

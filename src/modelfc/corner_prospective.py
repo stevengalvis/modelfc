@@ -6,6 +6,7 @@ enrollment, run-once performs durable UTC-month rollover when required.
 """
 
 import argparse
+from collections import Counter
 from contextlib import contextmanager
 from datetime import date, datetime, timedelta, timezone
 import fcntl
@@ -439,18 +440,21 @@ def _provider_work(path, control, state, config, summary, captured, market_data_
     fixtures = [market_data_type.cached_fixture(
         raw, datetime.combine(date.fromisoformat(day), datetime.min.time(), timezone.utc) - timedelta(seconds=1), "E1")
         for raw in discovery["fixtures"]]
+    ambiguous = set()
     if calendar_gate:
         check_calendar()
         eligible = odds_calendar.active(calendar, _now())
         identities = [odds_calendar.identity(f) for f in fixtures]
-        if len(identities) != len(set(identities)):
-            raise RunnerError("CALENDAR_FIXTURE_MISMATCH")
+        ambiguous = {key for key, count in Counter(identities).items() if count > 1}
+        if ambiguous:
+            _reason(summary, "CALENDAR_FIXTURE_MISMATCH")
         if eligible - set(identities):
             _reason(summary, "CALENDAR_FIXTURE_UNMAPPED")
     for fixture in sorted(fixtures, key=lambda f: (f.kickoff_utc, f.provider_fixture_id)):
         if calendar_gate:
             check_calendar()
-            if odds_calendar.identity(fixture) not in odds_calendar.active(calendar, _now()):
+            if (odds_calendar.identity(fixture) in ambiguous
+                    or odds_calendar.identity(fixture) not in odds_calendar.active(calendar, _now())):
                 _reason(summary, "CALENDAR_FIXTURE_MISMATCH")
                 continue
         fid = fixture.provider_fixture_id
