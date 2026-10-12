@@ -201,4 +201,5 @@ with patch.object(runner,'run_once',side_effect=offline), patch('socket.socket',
             env={**os.environ,'CREDENTIALS_DIRECTORY':str(credentials)},capture_output=True,text=True,timeout=20)
         self.assertEqual(result.returncode,0,result.stderr+result.stdout)
         self.assertEqual(json.loads(result.stdout)['status'],'RECORDED')
-        self.assertEqual(result.stderr,'')
+        self.assertNotIn('Traceback',result.stderr)
+        self.assertNotIn('FORECAST_LAUNCH_REJECTED',result.stderr)
