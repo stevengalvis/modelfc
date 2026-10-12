@@ -58,7 +58,7 @@ class HelperTests(unittest.TestCase):
         stack.enter_context(patch.object(helper, 'ready', return_value=False))
         stack.enter_context(patch.object(helper.time, 'monotonic', side_effect=[0, 121]))
         command = stack.enter_context(patch.object(helper, 'command'))
-        self.assertFalse(helper.handoff(SHA)); self.assertEqual(command.call_count, 1)
+        self.assertFalse(helper.handoff(SHA)); command.assert_not_called()
 
     def test_pid_change_or_wrong_release_cannot_pass_http_health(self):
         with patch.object(helper, 'release', return_value=Path('/candidate')), \
@@ -186,7 +186,7 @@ class BoundaryTests(unittest.TestCase):
 
     def validate(self, fields):
         raw = '\n'.join(k+'='+v for k,v in fields.items())
-        with patch.object(helper, 'command', return_value=raw), patch.object(helper, 'api_account'), patch.object(helper, 'protected'):
+        with patch.object(helper, 'command', return_value=raw), patch.object(helper, 'empty_bus_properties'), patch.object(helper, 'api_account'), patch.object(helper, 'protected'):
             return helper.unit_properties()
 
     def test_full_effective_unit_and_every_required_property_fail_closed(self):
@@ -197,7 +197,8 @@ class BoundaryTests(unittest.TestCase):
                 changed = dict(good); changed[key] = 'unexpected'
                 with self.assertRaises(ValueError): self.validate(changed)
                 missing = dict(good); missing.pop(key)
-                with self.assertRaises(ValueError): self.validate(missing)
+                if key not in helper.OMITTED_EMPTY_TYPES:
+                    with self.assertRaises(ValueError): self.validate(missing)
         for key in helper.TOKEN_SECURITY:
             changed = dict(good); changed[key] += ' /extra'
             with self.assertRaises(ValueError): self.validate(changed)
@@ -282,3 +283,30 @@ class BoundaryTests(unittest.TestCase):
         with patch.object(helper.subprocess,'run',side_effect=subprocess.TimeoutExpired('systemctl',3)) as run:
             with self.assertRaises(subprocess.TimeoutExpired): helper.unit_properties()
             self.assertEqual(run.call_args.kwargs['timeout'],3)
+
+
+    def test_systemd_255_omissions_require_typed_empty_arrays(self):
+        good = self.properties()
+        original = dict(good)
+        for name in helper.OMITTED_EMPTY_TYPES: good.pop(name)
+        for name in helper.CREDENTIAL_TYPES:
+            if name != 'ImportCredential': good[name] = '[unprintable]'
+        signatures = {**helper.CREDENTIAL_TYPES, **helper.OMITTED_EMPTY_TYPES}
+        output = '\n'.join(json.dumps({'type': signature, 'data': []}) for signature in signatures.values())
+        raw = '\n'.join(k+'='+v for k,v in good.items())
+        with patch.object(helper,'command',side_effect=[raw,output]) as command, \
+                patch.object(helper,'api_account'), patch.object(helper,'protected'):
+            self.assertEqual(helper.unit_properties(),original)
+            self.assertEqual(command.call_args.args[:4],('/usr/bin/busctl','--system','--json=short','get-property'))
+            self.assertIn('/org/freedesktop/systemd1/unit/modelfc_2dcorner_2dapi_2eservice',command.call_args.args)
+        for name, signature in signatures.items():
+            for bad in ({'type':signature,'data':['configured']}, {'type':'wrong','data':[]},
+                        {'type':signature,'data':None}, {'type':signature,'data':[],'extra':1}):
+                rows = [json.dumps(bad if key==name else {'type':typ,'data':[]}) for key,typ in signatures.items()]
+                with self.subTest(name=name,bad=bad), patch.object(helper,'command',return_value='\n'.join(rows)):
+                    with self.assertRaises(ValueError): helper.empty_bus_properties(signatures)
+        for raw in ('', '{"type":"as","type":"as","data":[]}', '{}', 'not-json'):
+            with patch.object(helper,'command',return_value=raw):
+                with self.assertRaises(ValueError): helper.empty_bus_properties({'ImportCredential':'as'})
+        with patch.object(helper,'command',side_effect=subprocess.TimeoutExpired('busctl',3)):
+            with self.assertRaises(subprocess.TimeoutExpired): helper.empty_bus_properties(signatures)
