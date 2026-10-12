@@ -368,9 +368,16 @@ class ResearchPredictionResponse(StrictModel):
     expected_value: None
     target_count: Literal[0]
     opportunity_count: Literal[0]
-    settlement_status: Literal["UPCOMING", "EXPIRED_UNSETTLED"]
-    actual_home_corners: None
-    actual_away_corners: None
+    settlement_status: Literal["UPCOMING", "SETTLED", "EXPIRED_UNSETTLED"]
+    actual_home_corners: int | None = Field(default=None, ge=0)
+    actual_away_corners: int | None = Field(default=None, ge=0)
+    actual_home_goals: int | None = Field(default=None, ge=0)
+    actual_away_goals: int | None = Field(default=None, ge=0)
+    actual_btts: Literal["YES", "NO"] | None = None
+    outcome_id: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    outcome_recorded_at_utc: str | None = None
+    result_provider: Literal["football-data.co.uk", "sportmonks"] | None = None
+    result_source_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
 
 
 class ModelVersionPerformanceResponse(StrictModel):

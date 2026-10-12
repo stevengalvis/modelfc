@@ -158,6 +158,12 @@ def records(state_dir, *, now: datetime | None = None) -> list[dict]:
     directory = state / "research-predictions"
     if directory.exists() and (directory.is_symlink() or not directory.is_dir()):
         raise LedgerError("INVALID_RESEARCH_PREDICTION")
+    # Imports are lazy to avoid the writer inventory/projection dependency cycle.
+    from modelfc.research_outcomes import corner_results, identity
+    from modelfc.btts_research import digest
+    from modelfc.btts_outcomes import performance
+    corners = corner_results(state, as_of=observed) if directory.exists() else {}
+    btts_rows = {row["forecast_id"]: row for row in performance(state, as_of=observed)["forecasts"]}
     result = []
     for path in sorted(directory.glob("*.json")) if directory.exists() else ():
         if path.is_symlink() or not path.is_file():
@@ -207,6 +213,21 @@ def records(state_dir, *, now: datetime | None = None) -> list[dict]:
                     "away_expected_goals": forecast.away_expected_goals,
                     "btts_yes_probability": forecast.yes_probability,
                     "btts_no_probability": forecast.no_probability}
+        outcome = corners.get(digest(identity(prepared))) if model == "CORNER" else btts_rows.get(digest(prepared.btts))
+        view.update(outcome_id=None, outcome_recorded_at_utc=None, result_provider=None,
+                    result_source_sha256=None, actual_home_goals=None, actual_away_goals=None, actual_btts=None)
+        if outcome and (model == "CORNER" or outcome["status"] == "SETTLED"):
+            view.update(settlement_status="SETTLED", outcome_id=outcome["outcome_id"],
+                        outcome_recorded_at_utc=outcome["recorded_at_utc"])
+            if model == "CORNER":
+                view.update(actual_home_corners=outcome["result"]["home_corners"],
+                            actual_away_corners=outcome["result"]["away_corners"],
+                            result_provider=outcome["source"]["provider"],
+                            result_source_sha256=outcome["source"].get("file_sha256") or outcome["source"].get("response_sha256"))
+            else:
+                view.update(actual_home_goals=outcome["home_goals"], actual_away_goals=outcome["away_goals"],
+                            actual_btts=outcome["actual_btts"], result_provider=outcome["result_provider"],
+                            result_source_sha256=outcome["result_source_sha256"])
         if any(isinstance(value, float) and not math.isfinite(value) for value in view.values()):
             raise LedgerError("INVALID_RESEARCH_PREDICTION")
         result.append(view)

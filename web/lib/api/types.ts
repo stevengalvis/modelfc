@@ -132,6 +132,13 @@ export interface ProspectivePrediction {
   settlement_status: ProspectiveStatus;
   actual_home_corners: number | null;
   actual_away_corners: number | null;
+  outcome_id?: string | null;
+  outcome_recorded_at_utc?: string | null;
+  result_provider?: "football-data.co.uk" | "sportmonks" | null;
+  result_source_sha256?: string | null;
+  actual_home_goals?: number | null;
+  actual_away_goals?: number | null;
+  actual_btts?: "YES" | "NO" | null;
   prediction_type?: "CORNER" | "BTTS";
   research_status?: "RESEARCH_ONLY";
   qualified_recommendation?: false;
