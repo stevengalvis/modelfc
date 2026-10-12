@@ -85,6 +85,9 @@ def _csv_result(source, fixture, as_of):
     row = source["row"]
     kickoff = timestamp(fixture["kickoff_utc"])
     local = kickoff.astimezone(ZoneInfo("Europe/London"))
+    # A CSV wall-clock minute cannot disambiguate the repeated autumn DST hour.
+    _require(local.replace(fold=0).utcoffset() == local.replace(fold=1).utcoffset(),
+             "RESULT_IDENTITY_CONFLICT")
     _require(source["provider"] == "football-data.co.uk"
         and source["filename"] == f"E1_{current_season(local.date())}.csv"
         and isinstance(source["file_sha256"], str)

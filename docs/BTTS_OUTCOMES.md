@@ -63,7 +63,7 @@ The original file hash, retained row hash/index, retrieval time and actual recor
 time are kept. The full file remains private operator evidence.
 
 The CSV join requires one exact home/away/date row and matching London-local kickoff
-minute (including DST); missing Time is not guessed. All rows must belong to E1.
+minute (including DST); missing Time and the ambiguous repeated autumn hour are not guessed. All rows must belong to E1.
 Full-time goals must be nonnegative integer strings and FTR must agree with them.
 Consistent with the existing completed-result cohort, both full-time corner fields
 must also be complete nonnegative integers; they are eligibility checks only and

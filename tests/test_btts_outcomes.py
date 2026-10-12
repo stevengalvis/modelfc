@@ -280,3 +280,11 @@ sys.meta_path.insert(0, Block())
         report=outcomes.performance(self.state)
         self.assertEqual((report['unique_fixtures'],report['forecast_cohorts'],report['settled_fixtures'],
                           report['unresolved_fixtures'],report['metrics']['sample_count']),(11,11,1,10,1))
+
+    def test_csv_repeated_dst_hour_cannot_prove_exact_kickoff(self):
+        fixture = outcomes.fixture_identity(self.forecast) | {'kickoff_utc':'2025-10-26T00:30:00+00:00'}
+        row = dict(zip(outcomes.CSV_FIELDS, ('E1','26/10/2025','01:30','A','D','2','1','H','5','4')))
+        source = {'provider':'football-data.co.uk','filename':'E1_2526.csv','file_sha256':'a'*64,
+                  'row_number':2,'row':row,'row_sha256':digest(row),'retrieved_at_utc':'2025-10-26T15:00:00Z'}
+        with self.assertRaisesRegex(LedgerError,'RESULT_IDENTITY_CONFLICT'):
+            outcomes._csv_result(source,fixture,datetime.now(UTC))
