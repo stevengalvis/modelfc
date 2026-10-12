@@ -487,3 +487,13 @@ label { font-size: 11px; }
   .btts-comparison { padding: 18px 15px; }
   .btts-sides { grid-template-columns: 1fr; }
 }
+
+/* Isolated read-only BTTS outcome view. Tables scroll within the panel on mobile. */
+.btts-performance .panel { padding: 20px; }
+.btts-performance .table-scroll { max-width: 100%; overflow-x: auto; }
+.btts-performance table { width: 100%; border-collapse: collapse; text-align: left; font-variant-numeric: tabular-nums; }
+.btts-performance th, .btts-performance td { padding: 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+.btts-performance th { color: var(--muted); font-size: 12px; }
+.btts-performance td { min-width: 140px; }
+.btts-performance code { overflow-wrap: anywhere; }
+.btts-performance details { max-width: 280px; }

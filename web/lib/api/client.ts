@@ -1,3 +1,4 @@
+import { decodeBttsPerformance, emptyBttsPerformance } from "./btts-performance";
 import { decodeRecommendations } from "./recommendations";
 import { mockRecommendations } from "./mock-recommendations";
 import { decodeBttsResearch, isBttsCompetition } from "./btts-research";
@@ -201,6 +202,12 @@ export function createApiClient(
         : await requestJson<unknown>(baseUrl!, `/research/btts?competition=${encodeURIComponent(competition)}`,
           { signal, cache: "no-store" });
       return decodeBttsResearch(value, competition);
+    },
+    async bttsPerformance(signal?: AbortSignal) {
+      checkConfiguration();
+      signal?.throwIfAborted();
+      return decodeBttsPerformance(mode === "mock" ? structuredClone(emptyBttsPerformance)
+        : await requestJson<unknown>(baseUrl!, "/research/btts/performance", { signal, cache: "no-store" }));
     },
     async predictions(signal?: AbortSignal): Promise<ProspectivePrediction[]> {
       checkConfiguration();

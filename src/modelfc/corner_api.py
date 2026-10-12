@@ -24,6 +24,7 @@ from modelfc.corner_prospective_read import (
 )
 from modelfc.ledger_storage import LedgerError, LedgerStorageUnavailable
 from modelfc.btts_research import BttsResearchResponse, read_btts_research
+from modelfc.btts_performance_schema import BttsPerformanceResponse
 from modelfc.btts_market_data import ENABLED_COMPETITIONS
 
 
@@ -582,6 +583,20 @@ def create_app(
                 return read_btts_research(state, competition)
             except LedgerError as cause:
                 error = _public_read_error(cause)
+        error.headers["Cache-Control"] = "no-store"
+        return error
+
+    @app.get("/api/v1/research/btts/performance", response_model=BttsPerformanceResponse)
+    def get_btts_performance(response: Response, competition: str = "E1"):
+        from modelfc.btts_outcomes import performance
+        response.headers["Cache-Control"] = "no-store"
+        if competition != "E1":
+            error = _error("UNSUPPORTED_COMPETITION", "BTTS research competition is not enabled.", 422)
+        else:
+            try:
+                return performance(state)
+            except (LedgerError, ValueError, OSError, KeyError, TypeError):
+                error = _public_read_error(LedgerError("INVALID_BTTS_OUTCOME"))
         error.headers["Cache-Control"] = "no-store"
         return error
 
