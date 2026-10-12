@@ -189,6 +189,7 @@ class FreshReleaseTest(unittest.TestCase):
         self.real_tests = deploy.tests
         self.real_acquisition = deploy.run_acquisition
         self.patches = [patch.object(deploy, "CONTROL", self.control),
+                        patch.object(deploy, "api_handoff"),
                         patch.object(deploy, "ACQUISITION", self.staging),
                         patch.object(deploy, "REMOTE", str(self.remote)),
                         patch.object(deploy, "acquisition_mount", side_effect=self.fake_mount),
@@ -225,7 +226,7 @@ class FreshReleaseTest(unittest.TestCase):
         return deploy.deploy(sha, root=self.deploy_root, releases=self.releases,
                              current=self.current, control=self.control,
                              remote=str(self.remote), check_boundary=lambda: None,
-                             test_runner=deploy.tests)
+                             test_runner=deploy.tests, tip_reader=lambda _: sha)
 
     def test_acquisition_precedes_persistent_candidate_and_preserves_git(self):
         original = deploy.staged_acquisition
