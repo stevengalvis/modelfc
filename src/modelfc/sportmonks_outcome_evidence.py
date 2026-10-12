@@ -7,10 +7,7 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 import hashlib
 import json
-import os
-from pathlib import Path
 import re
-import stat
 
 from modelfc.corner_analysis_outcomes import OutcomeError, _require
 from modelfc.corner_refresh import current_season
@@ -20,38 +17,7 @@ from modelfc.providers.sportmonks_results import MAX_PAGE_BYTES, normalize_page
 from modelfc.supplemental_history import SupplementalResult
 
 
-def read_pinned(path, digest, limit):
-    """Read exactly the reviewed regular inode; no links, mutation or enumeration."""
-    _require(isinstance(digest, str) and re.fullmatch(r"[0-9a-f]{64}", digest),
-             "SAVED_RESULT_PROVENANCE_REJECTED")
-    path = Path(path).absolute()
-    descriptor = os.open("/", os.O_PATH | os.O_DIRECTORY | os.O_CLOEXEC)
-    try:
-        for part in path.parts[1:-1]:
-            _require(part != "..", "SAVED_RESULT_PROVENANCE_REJECTED")
-            following = os.open(part, os.O_PATH | os.O_DIRECTORY | os.O_NOFOLLOW |
-                                os.O_CLOEXEC, dir_fd=descriptor)
-            os.close(descriptor); descriptor = following
-        fd = os.open(path.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK |
-                     os.O_CLOEXEC, dir_fd=descriptor)
-        with os.fdopen(fd, "rb") as source:
-            before = os.fstat(source.fileno())
-            _require(stat.S_ISREG(before.st_mode) and before.st_nlink == 1
-                     and 0 < before.st_size <= limit, "SAVED_RESULT_PROVENANCE_REJECTED")
-            raw = source.read(limit + 1)
-            after = os.fstat(source.fileno())
-            final = os.stat(path.name, dir_fd=descriptor, follow_symlinks=False)
-            _require((before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns,
-                      before.st_ctime_ns) == (after.st_dev, after.st_ino, after.st_size,
-                      after.st_mtime_ns, after.st_ctime_ns)
-                     and (before.st_dev, before.st_ino) == (final.st_dev, final.st_ino)
-                     and len(raw) <= limit and hashlib.sha256(raw).hexdigest() == digest,
-                     "SAVED_RESULT_PROVENANCE_REJECTED")
-            return raw
-    except OSError:
-        raise OutcomeError("SAVED_RESULT_PROVENANCE_REJECTED") from None
-    finally:
-        os.close(descriptor)
+from modelfc.pinned_evidence import read_pinned
 
 
 @dataclass(frozen=True)
@@ -179,6 +145,26 @@ def validate_outcome_source(record):
             "settlement": record["settlement_rule_version"]}), "INVALID_OUTCOME")
 
 
+def load_saved_evidence(manifest_path, manifest_sha256, response_file, calendar_file):
+    """Validate an explicit pinned bundle for offline consumers."""
+    manifest = _json(read_pinned(manifest_path, manifest_sha256, 64 * 1024))
+    fields = {"version", "provider", "competition", "capture_reference", "response_sha256",
+              "calendar_sha256", "retrieved_at_utc", "season_id", "fixture_id", "team_bindings"}
+    _require(isinstance(manifest, dict) and set(manifest) == fields
+             and type(manifest["version"]) is int and manifest["version"] == 1
+             and manifest["provider"] == "sportmonks" and manifest["competition"] == "E1"
+             and isinstance(manifest["retrieved_at_utc"], str),
+             "SAVED_RESULT_REJECTED")
+    return validate_saved_result(
+        response=read_pinned(response_file, manifest["response_sha256"], MAX_PAGE_BYTES),
+        calendar_raw=read_pinned(calendar_file, manifest["calendar_sha256"], MAX_CALENDAR_BYTES),
+        response_sha256=manifest["response_sha256"], calendar_sha256=manifest["calendar_sha256"],
+        capture_reference=manifest["capture_reference"],
+        retrieved_at=datetime.fromisoformat(manifest["retrieved_at_utc"].replace("Z", "+00:00")),
+        bindings=manifest["team_bindings"], season_id=manifest["season_id"],
+        fixture_id=manifest["fixture_id"])
+
+
 def main(argv=None):
     """Explicit operator-only offline settlement. Nothing is auto-discovered."""
     import argparse
@@ -193,22 +179,8 @@ def main(argv=None):
     parser.add_argument("--key", required=True)
     args = parser.parse_args(argv)
     try:
-        manifest = _json(read_pinned(args.manifest, args.manifest_sha256, 64 * 1024))
-        fields = {"version", "provider", "competition", "capture_reference", "response_sha256",
-                  "calendar_sha256", "retrieved_at_utc", "season_id", "fixture_id", "team_bindings"}
-        _require(isinstance(manifest, dict) and set(manifest) == fields
-                 and type(manifest["version"]) is int and manifest["version"] == 1
-                 and manifest["provider"] == "sportmonks" and manifest["competition"] == "E1"
-                 and isinstance(manifest["retrieved_at_utc"], str),
-                 "SAVED_RESULT_REJECTED")
-        evidence = validate_saved_result(
-            response=read_pinned(args.response_file, manifest["response_sha256"], MAX_PAGE_BYTES),
-            calendar_raw=read_pinned(args.calendar_file, manifest["calendar_sha256"], MAX_CALENDAR_BYTES),
-            response_sha256=manifest["response_sha256"], calendar_sha256=manifest["calendar_sha256"],
-            capture_reference=manifest["capture_reference"],
-            retrieved_at=datetime.fromisoformat(manifest["retrieved_at_utc"].replace("Z", "+00:00")),
-            bindings=manifest["team_bindings"], season_id=manifest["season_id"],
-            fixture_id=manifest["fixture_id"])
+        evidence = load_saved_evidence(args.manifest, args.manifest_sha256,
+                                       args.response_file, args.calendar_file)
         record, created = record_sportmonks_outcome(state_dir=args.state_dir,
             analysis_id=args.analysis_id, evidence=evidence, idempotency_key=args.key)
         print(json.dumps({"status": "RECORDED" if created else "REUSED",

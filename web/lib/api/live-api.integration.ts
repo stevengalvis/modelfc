@@ -121,3 +121,13 @@ describe("real read-only Team Intelligence HTTP boundary", () => {
     await expect(live.teamProfile("cardiff")).rejects.toMatchObject({ code: "TEAM_NOT_FOUND" });
   });
 });
+
+
+describe("read-only BTTS performance HTTP boundary", () => {
+  it("returns a validated explicit empty sample without provider access", async () => {
+    const value = await live.bttsPerformance();
+    expect(value.unique_fixtures).toBe(0);
+    expect(value.metrics.brier_score).toBeNull();
+    expect(value.forecasts).toEqual([]);
+  });
+});

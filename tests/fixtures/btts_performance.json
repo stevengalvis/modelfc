@@ -1,0 +1,60 @@
+{
+  "competition": "E1",
+  "research_only": true,
+  "selection_policy": "e1-earliest-frozen-per-exact-fixture-v1",
+  "log_loss_epsilon": 1e-15,
+  "unique_fixtures": 1,
+  "forecast_cohorts": 1,
+  "settled_fixtures": 1,
+  "unresolved_fixtures": 0,
+  "upcoming_fixtures": 0,
+  "metrics": {
+    "sample_count": 1,
+    "brier_score": 0.10866145889147116,
+    "log_loss": 0.39993797479796916,
+    "calibration": [
+      {
+        "lower": 0.6,
+        "upper": 0.8,
+        "sample_count": 1,
+        "mean_probability": 0.6703616240613494,
+        "observed_frequency": 1.0
+      }
+    ]
+  },
+  "forecasts": [
+    {
+      "fixture_id": "1c8640c43df7470d3afddc01b7ea3e7c2d06a7267df1c1ec72024a0c0b5fb3a2",
+      "forecast_id": "dafed67f446bcff84676e6d56d972f234ffccaca09698148b6020272152aac12",
+      "competition": "E1",
+      "home_team": "A",
+      "away_team": "D",
+      "kickoff_utc": "2026-09-20T11:00:00+00:00",
+      "provider": "oddspapi",
+      "provider_fixture_id": "original-1",
+      "origins": [
+        "BOOKMAKER_RESEARCH"
+      ],
+      "selected_for_metrics": true,
+      "frozen_at_utc": "2026-09-19T12:00:00Z",
+      "model_version": "deepfc-arithmetic-btts-v1",
+      "yes_probability": 0.6703616240613494,
+      "no_probability": 0.32963837593865064,
+      "source_data_hashes": [
+        {
+          "competition": "E1",
+          "filename": "E1_2627.csv",
+          "sha256": "7927270fe5c9ea4d9ce46ccc676ae83909bf35a890b8b9abfa72027b6207419d"
+        }
+      ],
+      "status": "SETTLED",
+      "actual_btts": "YES",
+      "home_goals": 2,
+      "away_goals": 1,
+      "outcome_id": "1c8640c43df7470d3afddc01b7ea3e7c2d06a7267df1c1ec72024a0c0b5fb3a2",
+      "recorded_at_utc": "2026-10-12T03:56:36.631481Z",
+      "result_provider": "football-data.co.uk",
+      "result_source_sha256": "5eebf45b2ca019e087408a6b8a0c08e3363619ac8b650149f0cb0fe05cf39946"
+    }
+  ]
+}

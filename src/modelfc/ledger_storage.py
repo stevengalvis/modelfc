@@ -193,14 +193,14 @@ def _grant_evidence_read(target: Path, state: Path, lock_descriptor: int | None,
         is_btts = (len(relative.parts) == 2 and relative.parts[0] == "btts-research"
                    and re.fullmatch(r"(?:forecast-)?[0-9a-f]{64}\.json",
                                     relative.parts[1]) is not None)
-        is_research_prediction = (len(relative.parts) == 2
-                                  and relative.parts[0] == "research-predictions"
+        is_research_record = (len(relative.parts) == 2
+                                  and relative.parts[0] in {"research-predictions", "btts-outcomes"}
                                   and re.fullmatch(r"[0-9a-f]{64}\.json",
                                                    relative.parts[1]) is not None)
         is_public_ledger = ((len(relative.parts) in (2, 3)
                              and relative.parts[0] in public_ledgers
                              and target.suffix == ".json")
-                            or is_research_prediction)
+                            or is_research_record)
         if not (is_btts or is_public_ledger):
             raise ValueError("invalid public evidence location")
         selected_lock = state / "btts-research" / ".lock" if is_btts else state / ".lock"
