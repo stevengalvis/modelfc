@@ -28,7 +28,7 @@ export function decodeFixtureReadiness(v: unknown): FixtureReadiness {
 export async function getFixtureReadiness(): Promise<FixtureReadiness> {
   const base = process.env.NEXT_PUBLIC_MODELFC_API_URL;
   if (process.env.NEXT_PUBLIC_MODELFC_API_MODE !== "live" || !base) throw new Error("Saved fixture API is not configured.");
-  const response = await fetch(`${base.replace(/\/$/, "")}/api/v1/fixture-readiness`, {cache: "no-store"});
+  const response = await fetch(`${base.replace(/\/$/, "")}/fixture-readiness`, {cache: "no-store"});
   if (!response.ok) throw new Error("Saved fixture status is unavailable.");
   return decodeFixtureReadiness(await response.json());
 }
