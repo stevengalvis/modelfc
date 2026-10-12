@@ -106,3 +106,36 @@ requested SHA actually serving healthy reads before PASS. Verify the 30-minute
 settings remain unchanged. Restore the prior controller and remove only the new
 permission/helper if installation acceptance fails; coordinate the API's selected
 release separately and never undo immutable data.
+
+
+## Late-review boundary correction — new installation acceptance required
+
+The original PR137 helper checked only four effective unit properties. Do not
+install that superseded helper under its earlier acceptance report. This patch
+checks the fixed effective installed unit contract: account and supplementary
+groups, filesystem hiding/read-only paths with no writable/bind/image exceptions,
+private devices/tmp/home, capability restrictions, SUID/SGID and address-family
+restrictions, localhost-only IP rules, environment/credential/startup-hook absence,
+exact launcher commands, no drop-ins or pending daemon reload, resource limits
+and the unchanged 30-minute rotation. Missing/unknown serialization fails closed;
+this does not edit a unit or repair drift automatically. The checked-in unit is
+the contract; verify its effective serialization on the actual host before install.
+
+Both NSS account groups and actual MainPID status are checked: real/effective/
+saved/filesystem UID/GID, supplementary groups, no-new-privileges, seccomp mode
+and zero capability masks. Checks occur before restarting an existing process and
+before readiness can pass, including another boundary check after a failed
+readiness probe. Drift raises failure without a retry restart. Existing systemctl,
+HTTP and overall handoff time bounds remain. Remote tip command failures now
+report FETCH_FAILED, preserving the prior release without promotion/handoff.
+
+Require fresh exact-head CI/review/OFFLINE and isolated real systemd acceptance of
+the revised helper. Test each effective-property drift, account/group drift and
+actual process supplementary-group mismatch, plus drift between readiness and
+restart and after restart. Record real effective-property serialization; do not
+silently loosen mismatches or change production security settings. Repeat the
+healthy/adoption/recovery checks and original-data hashes. Unit tests do not prove
+kernel enforcement or installed compatibility. After those pass, obtain explicit
+updated approval for the revised file hashes before installation; the previous
+approval covered different bytes. Keep the same narrow proposed sudo command,
+30-minute rotation, no provider requests and no other host changes.

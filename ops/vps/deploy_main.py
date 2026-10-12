@@ -1204,8 +1204,11 @@ API_HANDOFF = Path("/opt/modelfc-deploy/api_handoff.py")
 
 
 def latest_main(remote):
-    value = command(["git", "ls-remote", "--exit-code", remote, "refs/heads/main"],
-                    env=git_env(), timeout=30).split()
+    try:
+        value = command(["git", "ls-remote", "--exit-code", remote, "refs/heads/main"],
+                        env=git_env(), timeout=30).split()
+    except Failure:
+        raise Failure("FETCH_FAILED") from None
     if len(value) != 2 or not SHA.fullmatch(value[0]) or value[1] != "refs/heads/main":
         raise Failure("FETCH_FAILED")
     return value[0]
