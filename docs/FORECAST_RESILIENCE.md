@@ -40,10 +40,17 @@ these private receipts, so it cannot promise the exact latest acquisition reason
 
 - Verify current physical release and forecast-runner start SHA, installed unit,
   credential-loading behavior and ordinary timer's next trigger without reading
-  credential contents or invoking providers. In particular, prove the installed
-  systemd version permits a missing optional Sportmonks credential to reach Python;
-  any necessary unit adjustment is a separate reviewed host change. No unit,
-  credentials or schedule is changed by this PR.
+  credential contents or invoking providers. The installed template uses an
+  absolute `LoadCredential=sportmonks.key:/etc/modelfc/credentials/sportmonks.key`;
+  a missing file can prevent systemd from reaching Python. The Python missing-key
+  behavior is therefore NOT proof of deployed missing-file resilience. A separate
+  reviewed host design must make just this credential optional (systemd supports
+  credential-store lookup or a SetCredential fallback), preserving the current
+  secret boundary and mapping absence to no token rather than sending a dummy
+  credential. Test that design with disposable dummy credentials and network
+  disabled before installation. Do not move/remove real keys or change units as
+  part of this PR. Official contract: https://github.com/systemd/systemd/blob/main/man/systemd.exec.xml
+  (LoadCredential and SetCredential).
 - After the next ordinary run, inspect its receipt: eligible fixtures, both market
   counts/blocks, missing history, request counts and retry time. Do not manually
   trigger acquisition as an acceptance shortcut.
