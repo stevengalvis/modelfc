@@ -127,3 +127,34 @@ class MetadataCacheTests(unittest.TestCase):
             prepare_forecast(fixture,stale,frozen_at=NOW,cutoff=NOW.date(),models=('corner',))
         with self.assertRaisesRegex(ValueError,'E0_COMPLETENESS_CALENDAR_UNSUPPORTED'):
             prepare_forecast(fixture,e0_sources(),frozen_at=NOW,cutoff=NOW.date(),models=('corner',),history_calendar=object())
+
+
+    def test_e0_target_and_venue_staleness_is_not_hidden_by_other_matches(self):
+        fixture = KnownFixture(Fixture('E0', 17, 'e0', NOW+timedelta(hours=24)), 'Home', 'Away')
+        # Enough old team/venue observations to isolate freshness from sample gates.
+        old = e0_sources()[0][1].decode().splitlines()[:61]
+        recent = (NOW-timedelta(days=1)).strftime('%d/%m/%Y')
+        cases = {
+            'both teams stale': [('Other', 'Third')],
+            'home stale': [('Other', 'Away')],
+            'away stale': [('Home', 'Other')],
+            'both target venues stale': [('Away', 'Home')],
+            'home venue stale': [('Other', 'Home'), ('Third', 'Away')],
+            'away venue stale': [('Home', 'Other'), ('Away', 'Third')],
+        }
+        for label, games in cases.items():
+            with self.subTest(label=label):
+                rows = old + [f'E0,{recent},{h},{a},2,1,5,4' for h,a in games]
+                source = (('E0_2627.csv', ('\n'.join(rows)+'\n').encode()),)
+                with self.assertRaisesRegex(ValueError, 'E0_HISTORY_STALE'):
+                    prepare_forecast(fixture, source, frozen_at=NOW, cutoff=NOW.date(), models=('corner',))
+        for age in (14, 15):
+            day = (NOW-timedelta(days=age)).strftime('%d/%m/%Y')
+            rows = old + [f'E0,{day},Home,Away,2,1,5,4', f'E0,{recent},Other,Third,2,1,5,4']
+            source = (('E0_2627.csv', ('\n'.join(rows)+'\n').encode()),)
+            if age == 14:
+                self.assertEqual(prepare_forecast(fixture, source, frozen_at=NOW,
+                    cutoff=NOW.date(), models=('corner',)).status, 'PREPARED')
+            else:
+                with self.assertRaisesRegex(ValueError, 'E0_HISTORY_STALE'):
+                    prepare_forecast(fixture, source, frozen_at=NOW, cutoff=NOW.date(), models=('corner',))

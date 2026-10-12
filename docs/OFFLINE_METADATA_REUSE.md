@@ -38,7 +38,9 @@ observation, not an offer verified today.
 Explicit `models=("corner",)` preparation now supports E0 using the existing
 venue/opponent negative-binomial team-total model and unchanged sample/line gates.
 Sources are E0-specific, hash-bound and bounded; cutoff filtering is strictly prior,
-with England/London dates. E0 history older than 14 days is rejected, without an
+with England/London dates. E0 history older than 14 days is rejected for the league, each target team and
+each target venue, measured at freeze time; unrelated recent fixtures cannot
+refresh stale team inputs. This gate has no
 E1 calendar-completeness waiver. Same-day/future rows cannot supply model inputs.
 Duplicates and incorrect league source files reject. No new model is fitted or
 promoted, and match-total/first-half prospective outputs remain unsupported.

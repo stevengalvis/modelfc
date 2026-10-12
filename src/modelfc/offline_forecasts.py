@@ -122,8 +122,13 @@ def prepare_forecast(fixture: KnownFixture, sources: tuple[tuple[str, bytes], ..
             raise ValueError("FORECAST_TEAM_IDENTITY_REVIEW")
         prediction = predict_corner_fixture(corners, UpcomingFixture(e1_result_date(fixture.identity.kickoff_utc),
             fixture.home_team, fixture.away_team))
-    if competition == "E0" and (e1_result_date(frozen) - prediction.latest_history_date).days > 14:
-        raise ValueError("E0_HISTORY_STALE")
+    if competition == "E0":
+        # League-wide recency cannot establish freshness for either target team.
+        dates = (prediction.latest_history_date, prediction.home.latest_match_date,
+                 prediction.away.latest_match_date, prediction.home.latest_venue_match_date,
+                 prediction.away.latest_venue_match_date)
+        if any((e1_result_date(frozen) - latest).days > 14 for latest in dates):
+            raise ValueError("E0_HISTORY_STALE")
     btts = None
     if "btts" in models:
         history = history_from_bytes("E1", sources)
