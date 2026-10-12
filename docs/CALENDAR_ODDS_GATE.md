@@ -34,9 +34,13 @@ schedule cannot change during that interval. Ordinary hourly :35 publication
 usually gives :05 collection a roughly 30-minute-old source; outages remain explicit.
 
 A complete source with no future SCHEDULED/TIMED E1 fixture on today's UTC date
-returns `CALENDAR_NO_RELEVANT_FIXTURES`, even on the ordinary discovery/rediscovery
-runs. This intentional skip uses the existing PARTIAL/reason receipt contract and
-CLI exit 1; it is not a complete-odds-coverage claim or a trigger for extra retries.
+records `calendar_gate.skip_reason=CALENDAR_NO_RELEVANT_FIXTURES`, even on ordinary
+discovery/rediscovery runs. With no other errors this is `OK`, an empty error
+`reasons` list and CLI exit 0. Genuine evidence errors remain PARTIAL/exit 1; prior
+inventory errors are never cleared by an empty-day decision. This is not a
+complete-odds-coverage claim or a trigger for extra retries. Existing immutable
+PARTIAL empty-day receipts retain their original meaning and bytes; the reader
+accepts both the earlier form and the new optional skip-decision field.
 It leaves discovery and attempt history and reservations untouched. Old receipt
 schemas remain readable; opted-in valid-source receipts additionally pin the
 calendar bundle/source hashes and retrieval time.

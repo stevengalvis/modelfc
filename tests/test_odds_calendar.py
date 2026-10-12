@@ -49,7 +49,9 @@ class CalendarGateTests(unittest.TestCase):
         self.publish(match=False)
         before = self.path.read_bytes()
         report = self.run_gate()
-        self.assertEqual(report['reasons'], ['CALENDAR_NO_RELEVANT_FIXTURES'])
+        self.assertEqual(report['status'], 'OK')
+        self.assertEqual(report['reasons'], [])
+        self.assertEqual(report['calendar_gate']['skip_reason'], 'CALENDAR_NO_RELEVANT_FIXTURES')
         self.assertEqual(self.calls, [])
         self.assertEqual(self.path.read_bytes(), before)
         self.assertIsNone(self.control()['discovery'])
@@ -58,6 +60,37 @@ class CalendarGateTests(unittest.TestCase):
         self.assertEqual(self.run_gate()['provider_requests'], 0)
         self.assertEqual(self.path.read_bytes(), before)
         self.assertEqual(latest(self.state, now=self.now)['summary']['calendar_gate'], self.run_gate()['calendar_gate'])
+
+    def test_old_partial_receipt_semantics_preserved_and_skip_cannot_hide_errors(self):
+        from copy import deepcopy
+        from modelfc.prospective_run_receipts import validate, _hash, ReceiptError
+        self.publish(match=False)
+        self.run_gate()
+        record = latest(self.state, now=self.now)
+        old = deepcopy(record)
+        old['summary']['calendar_gate'].pop('skip_reason')
+        old['summary'].update(status='PARTIAL', reasons=['CALENDAR_NO_RELEVANT_FIXTURES'])
+        old['record_hash'] = _hash(old)
+        original = json.dumps(old, sort_keys=True)
+        self.assertEqual(validate(old), old)
+        self.assertEqual(json.dumps(old, sort_keys=True), original)
+        invalid = deepcopy(record)
+        invalid['summary']['reasons'] = ['CALENDAR_EVIDENCE_UNAVAILABLE']
+        invalid['record_hash'] = _hash(invalid)
+        with self.assertRaises(ReceiptError): validate(invalid)
+        invalid = deepcopy(record)
+        invalid['summary']['provider_requests'] = 1
+        invalid['record_hash'] = _hash(invalid)
+        with self.assertRaises(ReceiptError): validate(invalid)
+        # Existing inventory errors must remain PARTIAL even on a valid empty day.
+        def inventory(state, config, summary, source):
+            runner._reason(summary, 'SETTLEMENT_REVIEW')
+            return {}
+        with patch.object(runner, '_inventory', side_effect=inventory):
+            report = self.run_gate()
+        self.assertEqual(report['status'], 'PARTIAL')
+        self.assertEqual(report['reasons'], ['SETTLEMENT_REVIEW'])
+        self.assertEqual(report['calendar_gate']['skip_reason'], 'CALENDAR_NO_RELEVANT_FIXTURES')
 
     def test_match_day_discovery_metadata_odds_then_idempotent_reuse(self):
         content = self.publish()
@@ -129,7 +162,7 @@ class CalendarGateTests(unittest.TestCase):
         self.now -= timedelta(hours=5)
         self.publish(); self.run_gate()
         self.now += timedelta(hours=5); self.publish(status='POSTPONED')
-        self.assertEqual(self.run_gate()['reasons'], ['CALENDAR_NO_RELEVANT_FIXTURES'])
+        self.assertEqual(self.run_gate()['calendar_gate']['skip_reason'], 'CALENDAR_NO_RELEVANT_FIXTURES')
         self.assertEqual([c[0] for c in self.calls], ['fixtures'])
 
     def test_cli_empty_day_retained_evidence_zero_requests(self):
@@ -141,9 +174,12 @@ class CalendarGateTests(unittest.TestCase):
         result = subprocess.run([sys.executable,'-m','modelfc.corner_prospective','run-once',
             '--state-dir',str(self.state),'--data-config',str(self.config),'--calendar-gate'],
             env=env, capture_output=True, text=True, timeout=20)
+        self.assertEqual(result.returncode, 0, result.stderr)
         report = json.loads(result.stdout)
         self.assertEqual(report['provider_requests'], 0)
-        self.assertEqual(report['reasons'], ['CALENDAR_NO_RELEVANT_FIXTURES'])
+        self.assertEqual(report['status'], 'OK')
+        self.assertEqual(report['reasons'], [])
+        self.assertEqual(report['calendar_gate']['skip_reason'], 'CALENDAR_NO_RELEVANT_FIXTURES')
         self.assertIn('calendar_gate', report)
 
     def test_six_hour_window_unchanged(self):

@@ -359,7 +359,7 @@ def _provider_work(path, control, state, config, summary, captured, market_data_
     if calendar_gate:
         check_calendar()
         if not odds_calendar.active(calendar, _now()):
-            _reason(summary, "CALENDAR_NO_RELEVANT_FIXTURES")
+            summary["calendar_gate"]["skip_reason"] = "CALENDAR_NO_RELEVANT_FIXTURES"
             return
     client = guard = None
     research = BttsResearchAcquisition(state, config, summary["btts_research"], _now)

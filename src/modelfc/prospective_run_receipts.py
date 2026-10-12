@@ -94,12 +94,16 @@ def validate(record, *, path=None, now=None):
         raise ReceiptError("invalid receipt summary")
     if "calendar_gate" in summary:
         proof = summary["calendar_gate"]
-        if (not isinstance(proof, dict) or set(proof) != {
+        if (not isinstance(proof, dict) or set(proof) - {"skip_reason"} != {
                 "bundle_sha256", "source_sha256", "retrieved_at_utc"}
                 or any(not isinstance(proof[key], str) or not re.fullmatch(r"[0-9a-f]{64}", proof[key])
                        for key in ("bundle_sha256", "source_sha256"))
                 or _timestamp(proof["retrieved_at_utc"]) > end):
             raise ReceiptError("invalid calendar gate provenance")
+        if "skip_reason" in proof and (
+                proof["skip_reason"] != "CALENDAR_NO_RELEVANT_FIXTURES"
+                or summary["provider_requests"] != 0):
+            raise ReceiptError("invalid calendar skip decision")
     if "btts_research" in summary:
         try:
             validate_btts_summary(summary["btts_research"])
