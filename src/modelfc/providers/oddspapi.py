@@ -590,6 +590,12 @@ class OddsPapiMarketData(OddsPapiClient):
         """Reuse validated shared metadata only for this client instance."""
         self._reuse_market_metadata = True
 
+    def enable_pinned_metadata(self, metadata) -> None:
+        """Use an explicitly validated dictionary; runner owns pin/expiry checks."""
+        self._validate_market_metadata(metadata)
+        self._market_metadata = deepcopy(metadata)
+        self._reuse_market_metadata = True
+
     def corner_market_request_count(self) -> int:
         """Return the requests the next observation will reserve."""
         return 1 if self._reuse_market_metadata and self._market_metadata is not None else 2
