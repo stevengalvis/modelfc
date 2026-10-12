@@ -24,8 +24,8 @@ class PinnedCollectorMetadata:
         try:
             cached = load_metadata(self.cache_dir, self.entry_id, as_of=self.clock())
             envelope = json.loads(cached.raw)
-            OddsPapiMarketData._validate_market_metadata(envelope['markets'])
-            self.markets = envelope['markets']
+            OddsPapiMarketData._validate_market_metadata(envelope)
+            self.markets = envelope
             self.provenance = dict(cache_version=VERSION, entry_id=cached.entry_id,
                 filter_version=envelope['filter_version'], source_sha256=envelope['source_sha256'],
                 metadata_sha256=cached.metadata_sha256,

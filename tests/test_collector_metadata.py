@@ -131,5 +131,40 @@ class CollectorMetadataTests(unittest.TestCase):
             OddsPapiMarketData('E0')
 
 
+    def test_filtered_excluded_ids_preserve_default_availability_and_unknown_failures(self):
+        from copy import deepcopy
+        from modelfc.providers.oddspapi import normalize_odds, OddsPapiMarketData
+        from modelfc.oddspapi_research_metadata import filter_metadata
+        from modelfc.collector_metadata import PinnedCollectorMetadata
+        unsupported = {'marketId': 999001, 'marketName': 'Unsupported', 'marketType': 'unsupported',
+                       'sportId': 10, 'period': 'fulltime', 'playerProp': False, 'outcomes': []}
+        metadata = deepcopy(self.pilot.metadata)+[unsupported]
+        raw = json.dumps(metadata).encode()
+        filtered = json.loads(filter_metadata(raw)[0])
+        payload = dict(deepcopy(self.pilot.payload), **self.pilot.fixtures[0])
+        for book in payload['bookmakerOdds'].values():
+            book['markets'] = {'999001': {}}
+        kwargs = dict(retrieved_at=self.pilot.now.isoformat(), now=self.pilot.now)
+        baseline = normalize_odds(payload, metadata, self.pilot.fixtures[0], **kwargs)
+        cached = normalize_odds(payload, filtered, self.pilot.fixtures[0], **kwargs)
+        self.assertEqual(cached.availability, baseline.availability)
+        self.assertFalse(any(state['issues'] for state in cached.availability.values()))
+        for book in payload['bookmakerOdds'].values(): book['markets']['999002'] = {}
+        cached = normalize_odds(payload, filtered, self.pilot.fixtures[0], **kwargs)
+        self.assertEqual(cached.availability, normalize_odds(payload, metadata, self.pilot.fixtures[0], **kwargs).availability)
+        self.assertTrue(any({'market_id':'999002','reason':'MISSING_MARKET_METADATA'} in state['issues']
+                            for state in cached.availability.values()))
+        entry = import_metadata(self.cache, raw, source_sha256=hashlib.sha256(raw).hexdigest(),
+                                retrieved_at=self.retrieved, observed_at=self.pilot.now)
+        pinned = PinnedCollectorMetadata(self.cache, entry, self.pilot.state, lambda: self.pilot.now)
+        client = OddsPapiMarketData('E1'); pinned.install(client)
+        self.assertEqual(client._market_metadata, filtered)
+        self.assertEqual(client.corner_market_request_count(), 1)
+        invalid = deepcopy(filtered)
+        invalid['excluded_ids']['UNSUPPORTED_FAMILY'].append(invalid['markets'][0]['marketId'])
+        invalid['source_entries'] += 1
+        with self.assertRaises(ValueError): normalize_odds(payload, invalid, self.pilot.fixtures[0], **kwargs)
+
+
 if __name__ == '__main__':
     unittest.main()
