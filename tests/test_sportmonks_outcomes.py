@@ -3,6 +3,9 @@ from copy import deepcopy
 from datetime import datetime, timezone
 import hashlib
 import json
+import os
+import subprocess
+import sys
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
@@ -168,19 +171,45 @@ class SportmonksOutcomeTests(unittest.TestCase):
             'fixture_id':self.saved.row['id'],'team_bindings':self.saved.bindings}
         return source,calendar,manifest
 
-    def invoke_cli(self, folder, manifest):
-        from contextlib import redirect_stdout
-        from io import StringIO
-        from modelfc.sportmonks_outcome_evidence import main
+    def run_module(self, module, args, *, sportmonks_absent=False):
+        # A fresh interpreter is essential: imported main() missed the __main__
+        # versus canonical SavedResultEvidence class mismatch in production.
+        with TemporaryDirectory() as guard:
+            Path(guard, 'sitecustomize.py').write_text("""
+import sys
+
+def offline(event, args):
+    if event in {'socket.connect', 'socket.getaddrinfo', 'socket.sendto'}:
+        print('NETWORK_FORBIDDEN', file=sys.stderr)
+        raise AssertionError('network forbidden')
+sys.addaudithook(offline)
+""" + ("""
+class NoSportmonks:
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname in {'modelfc.sportmonks_outcome_evidence',
+                        'modelfc.providers.sportmonks_results'}:
+            print('SPORTMONKS_IMPORT_FORBIDDEN', file=sys.stderr)
+            raise ImportError('Sportmonks unavailable')
+sys.meta_path.insert(0, NoSportmonks())
+""" if sportmonks_absent else ''))
+            root = Path(__file__).resolve().parents[1]
+            # No provider credentials or inherited runtime state/configuration.
+            env = {'PATH': os.defpath, 'PYTHONPATH': os.pathsep.join((guard, str(root / 'src'))),
+                   'PYTHONDONTWRITEBYTECODE': '1'}
+            result = subprocess.run([sys.executable, '-m', module, *args],
+                cwd=root, env=env, capture_output=True, text=True, timeout=30)
+        self.assertEqual(result.stderr, '')
+        return result.returncode, json.loads(result.stdout)
+
+    def invoke_cli(self, folder, manifest, *, key='cli-final', state=None, analysis_id=None):
         path=Path(folder)/'manifest';raw=json.dumps(manifest).encode();path.write_bytes(raw)
-        output=StringIO()
-        with patch('modelfc.providers.sportmonks_results.SportmonksRecentResultsClient.fetch',
-                   side_effect=AssertionError('network forbidden')),redirect_stdout(output):
-            code=main(['--manifest',str(path),'--manifest-sha256',hashlib.sha256(raw).hexdigest(),
-                '--response-file',str(Path(folder)/'response'),'--calendar-file',str(Path(folder)/'calendar'),
-                '--state-dir',str(self.setup.state),'--analysis-id',self.setup.analysis_id,'--key','cli-final'])
-        self.assertNotIn(folder,output.getvalue())
-        return code,json.loads(output.getvalue())
+        code, receipt = self.run_module('modelfc.sportmonks_outcome_evidence',
+            ['--manifest',str(path),'--manifest-sha256',hashlib.sha256(raw).hexdigest(),
+             '--response-file',str(Path(folder)/'response'),'--calendar-file',str(Path(folder)/'calendar'),
+             '--state-dir',str(state or self.setup.state),
+             '--analysis-id',analysis_id or self.setup.analysis_id,'--key',key])
+        self.assertNotIn(folder,json.dumps(receipt))
+        return code,receipt
 
     def test_cli_settles_and_reuses_without_network_or_mutating_capture(self):
         with TemporaryDirectory() as folder:
@@ -210,19 +239,93 @@ class SportmonksOutcomeTests(unittest.TestCase):
         self.assertFalse(self.setup.outdir.exists())
 
     def test_cli_rejects_missing_private_evidence_without_leakage_or_provider_calls(self):
-        from contextlib import redirect_stdout
-        from io import StringIO
-        from modelfc.sportmonks_outcome_evidence import main
-        output=StringIO()
-        with patch('modelfc.providers.sportmonks_results.SportmonksRecentResultsClient.fetch',
-                   side_effect=AssertionError('network forbidden')), redirect_stdout(output):
-            code=main(['--manifest','/private/credential-token','--manifest-sha256','0'*64,
-                '--response-file','/private/response','--calendar-file','/private/calendar',
-                '--state-dir',str(self.setup.state),'--analysis-id',self.setup.analysis_id,'--key','final'])
+        code, receipt = self.run_module('modelfc.sportmonks_outcome_evidence',
+            ['--manifest','/private/credential-token','--manifest-sha256','0'*64,
+             '--response-file','/private/response','--calendar-file','/private/calendar',
+             '--state-dir',str(self.setup.state),'--analysis-id',self.setup.analysis_id,'--key','final'])
         self.assertEqual(code,1)
-        self.assertEqual(json.loads(output.getvalue()),{'status':'REJECTED',
+        self.assertEqual(receipt,{'status':'REJECTED',
             'reason':'SAVED_RESULT_SETTLEMENT_REJECTED','provider_requests':0})
-        self.assertNotIn('/private',output.getvalue());self.assertFalse(self.setup.outdir.exists())
+        self.assertNotIn('/private',json.dumps(receipt));self.assertFalse(self.setup.outdir.exists())
+
+    def test_cli_invalid_saved_evidence_preserves_baseline(self):
+        baseline = {p: p.read_bytes() for p in self.setup.state.rglob('*') if p.is_file()}
+        base = deepcopy(self.saved.row)
+        mutations = [(lambda r: r.update(state={'short_name':'NS'}), 'REJECTED'),
+                     (lambda r: r.update(statistics=r['statistics'][:1]), 'REJECTED'),
+                     (lambda r: r['scores'][0]['score'].update(goals=9), 'CONFLICT')]
+        with TemporaryDirectory() as folder:
+            for mutate, status in mutations:
+                self.saved.row = deepcopy(base); mutate(self.saved.row)
+                _,_,manifest = self.cli_files(folder)
+                code,receipt = self.invoke_cli(folder,manifest)
+                self.assertEqual((code,receipt['status']), (1,status))
+            self.saved.row = base
+            source,_,manifest = self.cli_files(folder)
+            source.write_bytes(source.read_bytes() + b' ')
+            code,receipt = self.invoke_cli(folder,manifest)
+            self.assertEqual((code,receipt['status']), (1,'REJECTED'))
+        self.assertFalse(self.setup.outdir.exists())
+        self.assertEqual(baseline, {p:p.read_bytes() for p in self.setup.state.rglob('*') if p.is_file()})
+
+    def test_cli_preserves_predictions_sources_and_performance_on_replay_and_conflict(self):
+        api=api_tests.ProspectiveApiTests();api.setUp();self.addCleanup(api.doCleanups)
+        baseline=api.state_bytes()
+        history=api.setup.history.read_bytes()
+        with TemporaryDirectory() as folder:
+            _,_,manifest=self.cli_files(folder)
+            sources={p:p.read_bytes() for p in Path(folder).iterdir()}
+            before=datetime.now(timezone.utc)
+            code,receipt=self.invoke_cli(folder,manifest,state=api.state,analysis_id=api.analysis_id)
+            self.assertEqual((code,receipt['status']),(0,'RECORDED'))
+            record=outcomes.load_outcome(api.state,api.analysis_id,receipt['outcome_id'])
+            self.assertEqual(record['result'],{'home_corners':6,'away_corners':3})
+            source=record['source']
+            self.assertEqual(source['provider'],'sportmonks')
+            self.assertEqual(source['response_sha256'],manifest['response_sha256'])
+            self.assertEqual(source['retrieved_at_utc'],manifest['retrieved_at_utc'])
+            self.assertEqual(source['calendar']['bundle_sha256'],manifest['calendar_sha256'])
+            self.assertEqual(source['calendar']['retrieved_at_utc'],
+                             self.saved.evidence().calendar_retrieved_at_utc)
+            recorded=datetime.fromisoformat(record['recorded_at_utc'].replace('Z','+00:00'))
+            self.assertLessEqual(before,recorded);self.assertLessEqual(recorded,datetime.now(timezone.utc))
+            after=api.state_bytes()
+            for name,raw in baseline.items():self.assertEqual(after[name],raw)
+            for p,raw in sources.items():self.assertEqual(p.read_bytes(),raw)
+            code,reused=self.invoke_cli(folder,manifest,state=api.state,analysis_id=api.analysis_id)
+            self.assertEqual((code,reused['status'],reused['outcome_id']),
+                             (0,'REUSED',receipt['outcome_id']))
+            self.saved.row['statistics'][0]['data']['value']=7
+            _,_,conflict=self.cli_files(folder)
+            for key,reason in (('cli-final','IDEMPOTENCY_CONFLICT'),('different-key','RESULT_CONFLICT')):
+                code,result=self.invoke_cli(folder,conflict,key=key,state=api.state,analysis_id=api.analysis_id)
+                self.assertEqual((code,result['status'],result['reason']),(1,'CONFLICT',reason))
+            self.assertEqual(api.state_bytes(),after)
+        self.assertEqual(api.setup.history.read_bytes(),history)
+        response=api.client.get('/api/v1/prospective/performance')
+        self.assertEqual(response.status_code,200,response.text)
+        self.assertEqual(response.json()['model_performance']['settled_prediction_runs'],1)
+
+    def test_csv_module_records_and_reuses_when_sportmonks_is_absent(self):
+        args=['settle','--state-dir',str(self.setup.state),'--analysis-id',self.setup.analysis_id,
+              '--data-config',str(self.setup.config),'--key','csv-final']
+        baseline=self.setup.capture_path.read_bytes(),self.setup.history.read_bytes()
+        for created in (True,False):
+            code,receipt=self.run_module('modelfc.corner_analysis_outcomes',args,sportmonks_absent=True)
+            self.assertEqual(code,0,receipt)
+            self.assertEqual(receipt['created'],created)
+            self.assertEqual(receipt['outcome']['source']['provider'],'football-data.co.uk')
+            self.assertEqual(receipt['outcome']['matching_rule_version'],'football-data-exact-v1')
+            if created: original=receipt['outcome']
+            else: self.assertEqual(receipt['outcome'],original)
+        self.assertEqual((self.setup.capture_path.read_bytes(),self.setup.history.read_bytes()),baseline)
+        # Saved evidence cannot silently replace even an identical CSV result.
+        with TemporaryDirectory() as folder:
+            _,_,manifest=self.cli_files(folder)
+            code,receipt=self.invoke_cli(folder,manifest)
+            self.assertEqual((code,receipt['status'],receipt['reason']),(1,'CONFLICT','RESULT_CONFLICT'))
+        self.assertEqual(outcomes.load_outcome(self.setup.state,self.setup.analysis_id,
+                                              original['outcome_id']),original)
 
     def test_pinned_reader_rejects_links_hash_mismatch_and_missing(self):
         with TemporaryDirectory() as folder:
