@@ -1,4 +1,5 @@
 """Production forecast-only E1 runner.  It never imports or calls OddsPapi."""
+from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
 import csv
 import hashlib
@@ -17,13 +18,21 @@ from modelfc.ledger_storage import (LedgerError, ensure_directory, git_commit_sh
                                     ledger_lock, read_json_record, write_new_record)
 from modelfc.offline_forecasts import KnownFixture, load_history_bytes, prepare_forecast
 from modelfc.providers.football_data_calendar import FootballDataCalendarClient
-from modelfc.providers.sportmonks_results import SportmonksRecentResultsClient, validate_bindings
+from modelfc.providers.sportmonks_results import SportmonksRecentResultsClient, SportmonksRejected, validate_bindings
 from modelfc.research_predictions import publish as publish_prediction
 from modelfc.research_predictions import load_prepared
 from modelfc.supplemental_history import augment_sources, load_results, publish_result
 
 
 CONFIG_VERSION = 1
+RESULT_RETRY_DELAY = timedelta(hours=1)
+
+
+class ProviderUnavailable(ValueError):
+    def __init__(self, reason, retry_at=None):
+        self.reason = reason
+        self.retry_at = retry_at
+        super().__init__(reason)
 
 
 class ForecastRunRejected(ValueError):
@@ -122,12 +131,16 @@ def _publish_receipt(state, receipt):
 
 
 def _claim_results_request(state, *, start, end, season_id, requested_at, deployed_sha):
-    """Durably prevent an automatic repeat of one authenticated result request."""
+    """One bounded attempt per hour/season, including after failure or process death.
+
+    V1 claims remain immutable evidence but no longer poison an interval forever.
+    """
     identity = hashlib.sha256(json.dumps({"competition": "E1", "provider": "sportmonks",
-        "season_id": season_id, "start": start.isoformat(), "end": end.isoformat()},
+        "season_id": season_id, "start": start.isoformat(), "end": end.isoformat(),
+        "requested_at": requested_at.isoformat()},
         sort_keys=True, separators=(",", ":")).encode()).hexdigest()
     path = state / "supplemental-history-attempts" / f"{identity}.json"
-    claim = {"schema_version": 1, "record_type": "supplemental_history_attempt",
+    claim = {"schema_version": 2, "record_type": "supplemental_history_attempt",
              "provider": "sportmonks", "competition": "E1", "season_id": season_id,
              "start_date": start.isoformat(), "end_date": end.isoformat(),
              "requested_at_utc": requested_at.isoformat(), "deployed_sha": deployed_sha}
@@ -147,12 +160,15 @@ def _claim_results_request(state, *, start, end, season_id, requested_at, deploy
                 old_start = datetime.fromisoformat(old["start_date"]).date()
                 old_end = datetime.fromisoformat(old["end_date"]).date()
                 observed = datetime.fromisoformat(old["requested_at_utc"].replace("Z", "+00:00"))
-                old_identity = hashlib.sha256(json.dumps({"competition": "E1",
+                identity_fields = {"competition": "E1",
                     "provider": "sportmonks", "season_id": old["season_id"],
-                    "start": old["start_date"], "end": old["end_date"]},
+                    "start": old["start_date"], "end": old["end_date"]}
+                if old["schema_version"] == 2:
+                    identity_fields["requested_at"] = old["requested_at_utc"]
+                old_identity = hashlib.sha256(json.dumps(identity_fields,
                     sort_keys=True, separators=(",", ":")).encode()).hexdigest()
                 if (old_path.is_symlink() or not old_path.is_file() or set(old) != required
-                        or old["schema_version"] != 1
+                        or type(old["schema_version"]) is not int or old["schema_version"] not in (1, 2)
                         or old["record_type"] != "supplemental_history_attempt"
                         or old["provider"] != "sportmonks" or old["competition"] != "E1"
                         or type(old["season_id"]) is not int or old["season_id"] <= 0
@@ -163,9 +179,10 @@ def _claim_results_request(state, *, start, end, season_id, requested_at, deploy
             except (KeyError, TypeError, ValueError, AttributeError, LedgerError):
                 raise ForecastRunRejected("SPORTMONKS_ATTEMPT_REJECTED") from None
             if (old["season_id"] == season_id
-                    and not (end < old_start or start > old_end)):
+                    and requested_at < observed + RESULT_RETRY_DELAY):
                 _sync_directories(path.parent, state)
-                raise ForecastRunRejected("SPORTMONKS_ATTEMPT_ALREADY_RECORDED")
+                raise ProviderUnavailable("SPORTMONKS_RETRY_WAIT",
+                                          observed + RESULT_RETRY_DELAY)
         write_new_record(path, claim)
         _sync_directories(path.parent, state)
 
@@ -193,6 +210,7 @@ def run_once(*, state_dir, data_config_path, configuration, sportmonks_token,
     receipt = {"status": "REJECTED", "reason": None, "deployed_sha": git_commit_sha(),
                "run_at_utc": started.isoformat(), "eligible_fixture_count": 0,
                "forecasts_prepared": 0, "forecasts_reused": 0, "blocks": 0,
+               "retry_after_utc": None, "missing_history": [], "market_blocks": [],
                "provider_requests": {"football_data_org": 0, "sportmonks": 0,
                                      "oddspapi": 0}}
     def count_request(provider):
@@ -247,6 +265,12 @@ def run_once(*, state_dir, data_config_path, configuration, sportmonks_token,
             covered_recent = {record.key for record in supplement}
             missing_results -= covered_recent
             if missing_results:
+                receipt["missing_history"] = [
+                    {"date": day.isoformat(), "home_team": home, "away_team": away,
+                     "required": "validated final goals and full-match corners"}
+                    for day, home, away in sorted(missing_results)]
+                if not sportmonks_token:
+                    raise ProviderUnavailable("SPORTMONKS_CREDENTIAL_MISSING")
                 # Re-fetch the whole bounded recent gap interval after a partial
                 # publication crash. Existing immutable records replay exactly;
                 # omitted records can then be completed without advancing a
@@ -257,10 +281,20 @@ def run_once(*, state_dir, data_config_path, configuration, sportmonks_token,
                 _claim_results_request(state, start=start, end=end,
                     season_id=config["sportmonks_season_id"], requested_at=started,
                     deployed_sha=receipt["deployed_sha"])
-                fetched = results_client_type(sportmonks_token, clock=clock,
-                    on_request=lambda: count_request("sportmonks")).fetch(
-                    start, end, bindings=config["sportmonks_team_bindings"],
-                    season_id=config["sportmonks_season_id"])
+                try:
+                    fetched = results_client_type(sportmonks_token, clock=clock,
+                        on_request=lambda: count_request("sportmonks")).fetch(
+                        start, end, bindings=config["sportmonks_team_bindings"],
+                        season_id=config["sportmonks_season_id"])
+                except SportmonksRejected as error:
+                    reason = str(error)
+                    if reason in {"SPORTMONKS_HTTP_401", "SPORTMONKS_HTTP_403",
+                                  "SPORTMONKS_HTTP_429", "SPORTMONKS_TRANSPORT_REJECTED",
+                                  "SPORTMONKS_HTTP_408", "SPORTMONKS_HTTP_500",
+                                  "SPORTMONKS_HTTP_502", "SPORTMONKS_HTTP_503",
+                                  "SPORTMONKS_HTTP_504"}:
+                        raise ProviderUnavailable(reason, started + RESULT_RETRY_DELAY) from None
+                    raise ForecastRunRejected("SPORTMONKS_EVIDENCE_REJECTED") from None
                 if fetched.requests != receipt["provider_requests"]["sportmonks"]:
                     raise ForecastRunRejected("PROVIDER_REQUEST_ACCOUNTING_REJECTED")
                 if (len(fetched.response_hashes) != fetched.requests
@@ -274,15 +308,29 @@ def run_once(*, state_dir, data_config_path, configuration, sportmonks_token,
                 # Validate every supplied row, including exact CSV duplicates,
                 # before retaining only the fixtures absent from the archive.
                 augment_sources(base_sources, fetched.records, calendar)
+                retained = {record.key: record for record in supplement}
                 for record in fetched.records:
                     if not start <= record.match_date <= end or record.key not in expected_range:
                         raise ForecastRunRejected("SPORTMONKS_RANGE_REJECTED")
-                    if record.key not in base_keys:
+                    if record.key in retained:
+                        # A later successful fetch has new capture provenance. Preserve
+                        # the first immutable result if all semantic fields agree.
+                        semantic = lambda item: {key: value for key, value in asdict(item).items()
+                            if key not in {"retrieved_at_utc", "response_sha256"}}
+                        if semantic(record) != semantic(retained[record.key]):
+                            raise ForecastRunRejected("SUPPLEMENTAL_RESULT_CONFLICT")
+                    elif record.key not in base_keys:
                         publish_result(state, record)
                 stored_supplement = load_results(state)
                 supplement = tuple(record for record in stored_supplement
                                    if record.provider_season_id == config["sportmonks_season_id"])
                 sources = augment_sources(base_sources, supplement, calendar)
+            remaining = missing_results - {record.key for record in supplement}
+            if remaining:
+                receipt["missing_history"] = [row for row in receipt["missing_history"]
+                    if (datetime.fromisoformat(row["date"]).date(), row["home_team"], row["away_team"]) in remaining]
+                raise ProviderUnavailable("HISTORY_RESULTS_MISSING", started + RESULT_RETRY_DELAY)
+            receipt["missing_history"] = []
             verification_at = utc(clock())
             if verification_at < calendar.retrieved_at:
                 raise ForecastRunRejected("CALENDAR_PROVENANCE_REJECTED")
@@ -294,16 +342,20 @@ def run_once(*, state_dir, data_config_path, configuration, sportmonks_token,
             for fixture in eligible:
                 entry = entries[fixture.fixture_id]
                 for model in ("corner", "btts"):
-                    old = _eligible_existing(state, entry, model, cutoff, sources)
-                    if old is not None:
-                        prepared_for_run.append((old, model.upper(), False))
-                        receipt["forecasts_reused"] += 1
-                        continue
                     try:
+                        old = _eligible_existing(state, entry, model, cutoff, sources)
+                        if old is not None:
+                            prepared_for_run.append((old, model.upper(), False))
+                            receipt["forecasts_reused"] += 1
+                            continue
                         prepared = prepare_forecast(entry, sources, frozen_at=utc(clock()),
                             cutoff=cutoff, models=(model,), history_calendar=calendar,
                             fixture_provider="football-data.org")
-                    except (ValueError, KeyError, TypeError):
+                    except (ValueError, KeyError, TypeError) as error:
+                        receipt["market_blocks"].append({"fixture_id": fixture.fixture_id,
+                            "market": model.upper(), "reason": str(error) if str(error) in {
+                                "FORECAST_TEAM_IDENTITY_REVIEW", "STALE_HISTORY",
+                                "INSUFFICIENT_HISTORY", "FORECAST_CONFLICT"} else "MODEL_INPUT_REQUIREMENTS_NOT_MET"})
                         receipt["blocks"] += 1
                         continue
                     prepared_for_run.append((prepared, model.upper(), True))
@@ -325,6 +377,10 @@ def run_once(*, state_dir, data_config_path, configuration, sportmonks_token,
             receipt["status"] = "RECORDED"
             _publish_receipt(state, receipt)
             return receipt
+    except ProviderUnavailable as error:
+        receipt["status"] = "BLOCKED"
+        receipt["reason"] = error.reason
+        receipt["retry_after_utc"] = error.retry_at.isoformat() if error.retry_at else None
     except (ForecastRunRejected, AcquisitionRejected) as error:
         receipt["reason"] = str(error)
     except (OSError, ValueError, TypeError, KeyError, LedgerError):
@@ -364,13 +420,16 @@ def main():
     args = parser.parse_args()
     try:
         configuration = json.loads(_credential("forecast-only.json", 64 * 1024))
-        sportmonks = _credential("sportmonks.key", 4096).decode("ascii").strip()
+        try:
+            sportmonks = _credential("sportmonks.key", 4096).decode("ascii").strip()
+        except FileNotFoundError:
+            sportmonks = None
         football_data = _credential("football-data.key", 4096).decode("ascii").strip()
         result = run_once(state_dir=args.state_dir, data_config_path=args.data_config,
                           configuration=configuration, sportmonks_token=sportmonks,
                           football_data_token=football_data)
         print(json.dumps(result, sort_keys=True, separators=(",", ":")), flush=True)
-        raise SystemExit(0 if result["status"] in ("RECORDED", "NO_ELIGIBLE_FIXTURES") else 1)
+        raise SystemExit(0 if result["status"] in ("RECORDED", "NO_ELIGIBLE_FIXTURES", "BLOCKED") else 1)
     except (OSError, UnicodeError, json.JSONDecodeError, ForecastRunRejected):
         print('{"reason":"FORECAST_LAUNCH_REJECTED","status":"REJECTED"}', flush=True)
         raise SystemExit(1) from None

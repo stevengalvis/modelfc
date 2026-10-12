@@ -11,7 +11,7 @@ from unittest.mock import patch
 from fastapi.testclient import TestClient
 
 from modelfc.corner_api import create_app
-from modelfc.forecast_only_runner import ForecastRunRejected, _claim_results_request, run_once
+from modelfc.forecast_only_runner import ForecastRunRejected, ProviderUnavailable, _claim_results_request, run_once
 from modelfc.providers.football_data_calendar import CalendarFetch
 from modelfc.providers.sportmonks_results import FetchResult
 from modelfc.supplemental_history import make_result, publish_result
@@ -208,11 +208,11 @@ class ForecastOnlyRunnerTests(unittest.TestCase):
             _claim_results_request(self.state, start=date(2026, 10, 9),
                 end=date(2026, 10, 10), season_id=999, requested_at=NOW,
                 deployed_sha="f" * 40)
-            with self.assertRaisesRegex(ForecastRunRejected,
-                                         "SPORTMONKS_ATTEMPT_ALREADY_RECORDED"):
+            with self.assertRaisesRegex(ProviderUnavailable,
+                                         "SPORTMONKS_RETRY_WAIT"):
                 _claim_results_request(self.state, start=date(2026, 10, 9),
                     end=date(2026, 10, 10), season_id=999,
-                    requested_at=NOW + timedelta(hours=1), deployed_sha="f" * 40)
+                    requested_at=NOW + timedelta(minutes=30), deployed_sha="f" * 40)
         records = list((self.state / "supplemental-history-attempts").glob("*.json"))
         self.assertEqual(len(records), 1)
         self.assertNotIn("results-token", records[0].read_text())
@@ -222,11 +222,11 @@ class ForecastOnlyRunnerTests(unittest.TestCase):
             _claim_results_request(self.state, start=date(2026, 10, 9),
                 end=date(2026, 10, 10), season_id=999, requested_at=NOW,
                 deployed_sha="f" * 40)
-            with self.assertRaisesRegex(ForecastRunRejected,
-                                         "SPORTMONKS_ATTEMPT_ALREADY_RECORDED"):
+            with self.assertRaisesRegex(ProviderUnavailable,
+                                         "SPORTMONKS_RETRY_WAIT"):
                 _claim_results_request(self.state, start=date(2026, 10, 10),
                     end=date(2026, 10, 11), season_id=999,
-                    requested_at=NOW + timedelta(hours=1), deployed_sha="f" * 40)
+                    requested_at=NOW + timedelta(minutes=30), deployed_sha="f" * 40)
             _claim_results_request(self.state, start=date(2026, 10, 11),
                 end=date(2026, 10, 12), season_id=999,
                 requested_at=NOW + timedelta(hours=2), deployed_sha="f" * 40)
