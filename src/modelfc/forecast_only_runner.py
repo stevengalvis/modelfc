@@ -415,6 +415,20 @@ def _credential(name, limit):
         os.close(descriptor)
 
 
+def _sportmonks_credential():
+    """Map the public systemd absence fallback to no token, never to a request."""
+    try:
+        raw = _credential("sportmonks.key", 4096)
+    except FileNotFoundError:
+        return None
+    if raw == b"MODELFC_SPORTMONKS_NOT_CONFIGURED":
+        return None
+    token = raw.decode("ascii").strip()
+    if not token or "MODELFC_SPORTMONKS_NOT_CONFIGURED" in token:
+        raise ForecastRunRejected("FORECAST_CREDENTIAL_REJECTED")
+    return token
+
+
 def main():
     import argparse
     parser = argparse.ArgumentParser()
@@ -423,10 +437,7 @@ def main():
     args = parser.parse_args()
     try:
         configuration = json.loads(_credential("forecast-only.json", 64 * 1024))
-        try:
-            sportmonks = _credential("sportmonks.key", 4096).decode("ascii").strip()
-        except FileNotFoundError:
-            sportmonks = None
+        sportmonks = _sportmonks_credential()
         football_data = _credential("football-data.key", 4096).decode("ascii").strip()
         result = run_once(state_dir=args.state_dir, data_config_path=args.data_config,
                           configuration=configuration, sportmonks_token=sportmonks,

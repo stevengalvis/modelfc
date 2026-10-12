@@ -42,7 +42,10 @@ these private receipts, so it cannot promise the exact latest acquisition reason
   credential-loading behavior and ordinary timer's next trigger without reading
   credential contents or invoking providers. The installed template uses an
   absolute `LoadCredential=sportmonks.key:/etc/modelfc/credentials/sportmonks.key`;
-  a missing file can prevent systemd from reaching Python. The Python missing-key
+  a missing file can prevent systemd from reaching Python. The proposed
+  [optional credential design](OPTIONAL_SPORTMONKS_CREDENTIAL.md) adds a public
+  SetCredential absence marker; it still requires isolated host acceptance and
+  separately approved installation. The Python missing-key
   behavior is therefore NOT proof of deployed missing-file resilience. A separate
   reviewed host design must make just this credential optional (systemd supports
   credential-store lookup or a SetCredential fallback), preserving the current
