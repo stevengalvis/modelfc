@@ -6,6 +6,7 @@ enrollment, run-once performs durable UTC-month rollover when required.
 """
 
 import argparse
+from collections import Counter
 from contextlib import contextmanager
 from datetime import date, datetime, timedelta, timezone
 import fcntl
@@ -38,6 +39,7 @@ from modelfc.corner_prospective_budget import (
     rollover_if_needed, validate_calendar_control,
 )
 from modelfc.providers.oddspapi import OddsPapiMarketData
+from modelfc import odds_calendar
 
 class RunnerError(ValueError):
     pass
@@ -186,8 +188,11 @@ class _RequestBudgetGuard:
             raise RunnerError("REQUEST_BUDGET")
         self.invocation_limit = invocation_limit
         self.reserved = self.tokens = 0
+        self.calendar_check = None
 
     def reserve(self, count):
+        if self.calendar_check is not None:
+            self.calendar_check()
         period = self.control["period"]
         if not date.fromisoformat(period["start"]) <= _now().date() < date.fromisoformat(period["end"]):
             raise RunnerError("PERIOD_EXPIRED")
@@ -209,6 +214,8 @@ class _RequestBudgetGuard:
             delay = last + interval - _now().timestamp()
             if delay > 0:
                 time.sleep(delay)
+        if self.calendar_check is not None:
+            self.calendar_check()
         self.control["last_request"] = _now().timestamp()
         _save(self.path, self.control)
         self.tokens -= 1
@@ -338,13 +345,31 @@ def _inventory(state, config, summary, market_data_type):
     return captured
 
 
-def _provider_work(path, control, state, config, summary, captured, market_data_type, release_sha):
+def _provider_work(path, control, state, config, summary, captured, market_data_type, release_sha,
+                   calendar_gate=False):
+    calendar = None
+    def check_calendar():
+        nonlocal calendar
+        try:
+            _, calendar = odds_calendar.load(state, as_of=_now())
+            summary["calendar_gate"] = {"bundle_sha256": calendar.bundle_sha256,
+                "source_sha256": calendar.source_sha256,
+                "retrieved_at_utc": calendar.retrieved_at.isoformat()}
+        except odds_calendar.CalendarGateRejected as error:
+            raise RunnerError(str(error)) from None
+    if calendar_gate:
+        check_calendar()
+        if not odds_calendar.active(calendar, _now()):
+            summary["calendar_gate"]["skip_reason"] = "CALENDAR_NO_RELEVANT_FIXTURES"
+            return
     client = guard = None
     research = BttsResearchAcquisition(state, config, summary["btts_research"], _now)
     def get_client():
         nonlocal client, guard
         if client is None:
             guard = _RequestBudgetGuard(path, control, summary)
+            if calendar_gate:
+                guard.calendar_check = check_calendar
             try:
                 client = market_data_type("E1", guard)
                 enable_reuse = getattr(client, "enable_run_metadata_reuse", None)
@@ -415,7 +440,23 @@ def _provider_work(path, control, state, config, summary, captured, market_data_
     fixtures = [market_data_type.cached_fixture(
         raw, datetime.combine(date.fromisoformat(day), datetime.min.time(), timezone.utc) - timedelta(seconds=1), "E1")
         for raw in discovery["fixtures"]]
+    ambiguous = set()
+    if calendar_gate:
+        check_calendar()
+        eligible = odds_calendar.active(calendar, _now())
+        identities = [odds_calendar.identity(f) for f in fixtures]
+        ambiguous = {key for key, count in Counter(identities).items() if count > 1}
+        if ambiguous:
+            _reason(summary, "CALENDAR_FIXTURE_MISMATCH")
+        if eligible - set(identities):
+            _reason(summary, "CALENDAR_FIXTURE_UNMAPPED")
     for fixture in sorted(fixtures, key=lambda f: (f.kickoff_utc, f.provider_fixture_id)):
+        if calendar_gate:
+            check_calendar()
+            if (odds_calendar.identity(fixture) in ambiguous
+                    or odds_calendar.identity(fixture) not in odds_calendar.active(calendar, _now())):
+                _reason(summary, "CALENDAR_FIXTURE_MISMATCH")
+                continue
         fid = fixture.provider_fixture_id
         seconds = (fixture.kickoff_utc - _now()).total_seconds()
         existing_capture = captured.get(fid)
@@ -555,7 +596,7 @@ def _provider_work(path, control, state, config, summary, captured, market_data_
 
 
 def run_once(*, state_dir, data_config_path, market_data_type: type[MarketDataSource] = OddsPapiMarketData,
-             require_calendar_budget=False):
+             require_calendar_budget=False, calendar_gate=False):
     started = _now()
     summary = {"status": "OK", **dict.fromkeys(("fixtures_discovered", "captures_created",
         "captures_existing", "captures_skipped_no_team_totals", "captures_with_history_warnings",
@@ -580,7 +621,7 @@ def run_once(*, state_dir, data_config_path, market_data_type: type[MarketDataSo
                 if control["version"] == 2:
                     rollover_if_needed(path, control, now=_now(), save=_save)
                 captured = _inventory(Path(state_dir), data_config_path, summary, market_data_type)
-                _provider_work(path, control, Path(state_dir), data_config_path, summary, captured, market_data_type, release_sha)
+                _provider_work(path, control, Path(state_dir), data_config_path, summary, captured, market_data_type, release_sha, calendar_gate)
             except RunnerError as error:
                 code = str(error)
                 if code not in REASONS:
@@ -621,6 +662,8 @@ def main(argv=None):
     parser.add_argument("--expected-allowance", type=int)
     parser.add_argument("--expected-reserved", type=int)
     parser.add_argument("--require-calendar-budget", action="store_true")
+    parser.add_argument("--calendar-gate", action="store_true",
+                        help="Require fresh retained football-data.org evidence before paid acquisition")
     args = parser.parse_args(argv)
     if args.command == "initialize-period":
         if args.period_start is None or args.period_end is None:
@@ -640,7 +683,7 @@ def main(argv=None):
             report = {"status": "FAIL", "reasons": ["BUDGET_ENROLLMENT_FAILED"]}
     else:
         report = run_once(state_dir=args.state_dir, data_config_path=args.data_config,
-                          require_calendar_budget=args.require_calendar_budget)
+                          require_calendar_budget=args.require_calendar_budget, calendar_gate=args.calendar_gate)
     print(json.dumps(report, sort_keys=True))
     return 0 if report["status"] in ("OK", "INITIALIZED", "ENROLLED") else 1
 
