@@ -55,11 +55,21 @@ describe("next Championship matches", () => {
     expect(await screen.findByText("No upcoming forecasts recorded")).toBeInTheDocument();
     expect(screen.getByText(/not the full fixture calendar/)).toBeInTheDocument();
   });
+  it("does not treat a recommendation outage as missing fixture coverage", async () => {
+    sources(); vi.mocked(api.predictions).mockResolvedValue([]);
+    vi.mocked(api.recommendations).mockRejectedValue(new Error("down"));
+    render(<UpcomingDashboard/>);
+    expect(await screen.findByText("No upcoming forecasts recorded")).toBeInTheDocument();
+    expect(screen.getByText(/0 unique upcoming fixtures/)).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent("Recommendation status is unavailable");
+  });
   it("distinguishes total source outage from empty successful reads", async () => {
     sources(); vi.mocked(api.predictions).mockRejectedValue(new Error("down"));
     vi.mocked(api.bttsPerformance).mockRejectedValue(new Error("down"));
     render(<UpcomingDashboard/>);
     expect(await screen.findByText("Upcoming coverage unavailable or incomplete")).toBeInTheDocument();
+    expect(screen.getByText(/total coverage unknown/)).toBeInTheDocument();
+    expect(screen.queryByText(/0 unique upcoming fixtures/)).not.toBeInTheDocument();
     expect(screen.queryByText("No upcoming forecasts recorded")).not.toBeInTheDocument();
   });
 });

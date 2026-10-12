@@ -46,6 +46,7 @@ export function UpcomingDashboard() {
   }, [attempt]);
   useEffect(() => { const timer = setInterval(() => setNow(Date.now()), 30000); return () => clearInterval(timer); }, []);
   const refresh = () => { setLoading(true); setAttempt(v => v+1); };
+  const forecastIncomplete = Boolean(data?.errors.some(source => source !== "recommendations"));
   const fixtures = data ? upcomingFixtures(data.predictions, data.btts, now) : [];
   return <div className="workspace ledger-workspace">
     <header className="page-heading"><div><p className="eyebrow">Championship · E1</p><h1>Next matches</h1><p>One card per exact fixture, with independently recorded corner and BTTS forecasts.</p></div><button className="secondary-button" onClick={refresh} disabled={loading}>Refresh</button></header>
@@ -55,9 +56,11 @@ export function UpcomingDashboard() {
     </section>
     {loading && <p role="status">Loading recorded upcoming fixtures…</p>}
     {data && <>
-      {data.errors.length > 0 && <p className="error-banner" role="alert">Read unavailable: {data.errors.join(", ")}. Coverage is incomplete. Use Refresh to retry.</p>}
-      <p className="ledger-meta">{fixtures.length} unique upcoming fixtures with recorded forecasts · Checked {ageLabel(new Date(data.checked).toISOString(),now)}</p>
-      {!fixtures.length && !loading && <section className="panel ledger-panel upcoming-summary"><h2>{data.errors.length ? "Upcoming coverage unavailable or incomplete" : "No upcoming forecasts recorded"}</h2><p>The public feed cannot establish the next fixture or its acquisition status. Historical results remain available above.</p></section>}
+      {data.errors.length > 0 && <p className="error-banner" role="alert">Read unavailable: {data.errors.join(", ")}. {forecastIncomplete ? "Forecast coverage is incomplete." : "Recommendation status is unavailable."} Use Refresh to retry.</p>}
+      <p className="ledger-meta">{forecastIncomplete
+        ? `${fixtures.length} fixtures visible from available records · total coverage unknown`
+        : `${fixtures.length} unique upcoming fixtures with recorded forecasts`} · Checked {ageLabel(new Date(data.checked).toISOString(),now)}</p>
+      {!fixtures.length && !loading && <section className="panel ledger-panel upcoming-summary"><h2>{forecastIncomplete ? "Upcoming coverage unavailable or incomplete" : "No upcoming forecasts recorded"}</h2><p>The public feed cannot establish the next fixture or its acquisition status. Historical results remain available above.</p></section>}
       <div className="ledger-list">{fixtures.map(f => <article className="panel ledger-card" key={f.key}>
         <div className="ledger-card-head"><div><small>{kickoff(f.kickoff_utc)} UTC</small><h2>{f.home_team} <span>vs</span> {f.away_team}</h2></div></div>
         <div className="upcoming-markets"><Market title="Corners" data={f.corner} blocked={data.errors.includes("predictions")} now={now}/><Market title="BTTS" data={f.btts} blocked={data.errors.includes("BTTS") || data.errors.includes("predictions")} now={now}/></div>
