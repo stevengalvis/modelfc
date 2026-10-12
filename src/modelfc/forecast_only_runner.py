@@ -278,8 +278,11 @@ def run_once(*, state_dir, data_config_path, configuration, sportmonks_token,
                 start = min(key[0] for key in missing_results)
                 if (end-start).days + 1 > 31:
                     raise ForecastRunRejected("SPORTMONKS_RANGE_REJECTED")
+                attempt_at = utc(clock())
+                if attempt_at < started:
+                    raise ForecastRunRejected("FORECAST_CLOCK_REJECTED")
                 _claim_results_request(state, start=start, end=end,
-                    season_id=config["sportmonks_season_id"], requested_at=started,
+                    season_id=config["sportmonks_season_id"], requested_at=attempt_at,
                     deployed_sha=receipt["deployed_sha"])
                 try:
                     fetched = results_client_type(sportmonks_token, clock=clock,
@@ -293,7 +296,7 @@ def run_once(*, state_dir, data_config_path, configuration, sportmonks_token,
                                   "SPORTMONKS_HTTP_408", "SPORTMONKS_HTTP_500",
                                   "SPORTMONKS_HTTP_502", "SPORTMONKS_HTTP_503",
                                   "SPORTMONKS_HTTP_504"}:
-                        raise ProviderUnavailable(reason, started + RESULT_RETRY_DELAY) from None
+                        raise ProviderUnavailable(reason, attempt_at + RESULT_RETRY_DELAY) from None
                     raise ForecastRunRejected("SPORTMONKS_EVIDENCE_REJECTED") from None
                 if fetched.requests != receipt["provider_requests"]["sportmonks"]:
                     raise ForecastRunRejected("PROVIDER_REQUEST_ACCOUNTING_REJECTED")
@@ -316,7 +319,7 @@ def run_once(*, state_dir, data_config_path, configuration, sportmonks_token,
                         # A later successful fetch has new capture provenance. Preserve
                         # the first immutable result if all semantic fields agree.
                         semantic = lambda item: {key: value for key, value in asdict(item).items()
-                            if key not in {"retrieved_at_utc", "response_sha256"}}
+                            if key not in {"retrieved_at_utc", "response_sha256", "normalized_sha256"}}
                         if semantic(record) != semantic(retained[record.key]):
                             raise ForecastRunRejected("SUPPLEMENTAL_RESULT_CONFLICT")
                     elif record.key not in base_keys:
@@ -329,7 +332,7 @@ def run_once(*, state_dir, data_config_path, configuration, sportmonks_token,
             if remaining:
                 receipt["missing_history"] = [row for row in receipt["missing_history"]
                     if (datetime.fromisoformat(row["date"]).date(), row["home_team"], row["away_team"]) in remaining]
-                raise ProviderUnavailable("HISTORY_RESULTS_MISSING", started + RESULT_RETRY_DELAY)
+                raise ProviderUnavailable("HISTORY_RESULTS_MISSING", attempt_at + RESULT_RETRY_DELAY)
             receipt["missing_history"] = []
             verification_at = utc(clock())
             if verification_at < calendar.retrieved_at:

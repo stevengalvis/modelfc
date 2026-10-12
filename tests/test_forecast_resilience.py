@@ -29,6 +29,8 @@ class ResilienceTests(unittest.TestCase):
         self.calls = []
         self.mode = 403
         self.archive = (histories()[0],)
+        self.calendar_value = bundle()
+        self.clock = lambda: self.at
 
     def execute(self, token='fake'):
         owner = self
@@ -36,7 +38,7 @@ class ResilienceTests(unittest.TestCase):
             def __init__(self, *args, on_request, **kwargs): self.count = on_request
             def fetch(self, *args, **kwargs):
                 self.count()
-                value = bundle(); value['retrieved_at'] = owner.at.isoformat()
+                value = dict(owner.calendar_value); value['retrieved_at'] = owner.at.isoformat()
                 return CalendarFetch(raw(value), hashlib.sha256(value['payload'].encode()).hexdigest(), owner.at, 1)
         class Opener:
             def open(self, request, timeout):
@@ -52,19 +54,24 @@ class ResilienceTests(unittest.TestCase):
                     self.count(); owner.calls.append('restored')
                     rows=owner.fixture.configuration['sportmonks_team_bindings']
                     ids={r['history_name']:r['provider_team_id'] for r in rows}
-                    record=make_result(competition='E1',provider='sportmonks',provider_fixture_id=987,
-                        provider_league_id=9,provider_season_id=999,kickoff_utc='2026-09-20T14:00:00+00:00',
-                        match_date=date(2026,9,20),home_provider_team_id=ids['Birmingham'],
-                        away_provider_team_id=ids['Blackburn'],home_team='Birmingham',away_team='Blackburn',
-                        home_goals=2,away_goals=1,home_corners=5,away_corners=4,
-                        retrieved_at_utc=owner.at.isoformat(),response_sha256='9'*64)
-                    return FetchResult((record,),1,('9'*64,),owner.at)
+                    records=[]
+                    for row in json.loads(owner.calendar_value['payload'])['matches']:
+                        if row['status'] != 'FINISHED': continue
+                        home=row['homeTeam']['name'].removeprefix('Source ')
+                        away=row['awayTeam']['name'].removeprefix('Source ')
+                        records.append(make_result(competition='E1',provider='sportmonks',provider_fixture_id=row['id'],
+                            provider_league_id=9,provider_season_id=999,kickoff_utc=row['utcDate'],
+                            match_date=date.fromisoformat(row['utcDate'][:10]),home_provider_team_id=ids[home],
+                            away_provider_team_id=ids[away],home_team=home,away_team=away,
+                            home_goals=2,away_goals=1,home_corners=5,away_corners=4,
+                            retrieved_at_utc=owner.at.isoformat(),response_sha256='9'*64))
+                    return FetchResult(tuple(records),1,('9'*64,),owner.at)
             client=Restored
         with patch.object(socket,'socket',side_effect=AssertionError('network forbidden')), \
              patch('modelfc.forecast_only_runner.git_commit_sha',return_value='f'*40):
             return run_once(state_dir=self.fixture.state,data_config_path=self.fixture.config_path,
                 configuration=self.fixture.configuration,sportmonks_token=token,
-                football_data_token='fake',clock=lambda:self.at,calendar_client_type=Calendar,
+                football_data_token='fake',clock=self.clock,calendar_client_type=Calendar,
                 results_client_type=client,history_loader=lambda *_:self.archive)
 
     def test_failures_cooldown_restore_and_reuse_without_duplicates(self):
@@ -98,6 +105,39 @@ class ResilienceTests(unittest.TestCase):
                 with TestClient(create_app(state_dir=self.fixture.state)) as api:
                     self.assertEqual(api.get('/api/v1/predictions').status_code,200)
                     self.assertEqual(api.get('/api/v1/research/btts/performance').status_code,200)
+
+    def test_partial_publication_restores_with_new_capture_hashes(self):
+        payload=json.loads(self.calendar_value['payload'])
+        other=next(row for row in payload['matches'] if row['status']=='TIMED' and row['matchday']!=9)
+        other.update(status='FINISHED',utcDate='2026-09-20T16:00:00Z')
+        other['score']['fullTime']={'home':2,'away':1}
+        payload['resultSet']['played']=2
+        self.calendar_value['payload']=json.dumps(payload)
+        self.mode='restored'
+        from modelfc.supplemental_history import publish_result
+        calls=[]
+        def interrupted(state,record):
+            calls.append(record)
+            if len(calls)==2: raise OSError('simulated interruption')
+            return publish_result(state,record)
+        with patch('modelfc.forecast_only_runner.publish_result',side_effect=interrupted):
+            self.assertEqual(self.execute()['status'],'REJECTED')
+        paths=list((self.fixture.state/'supplemental-history/E1').glob('*.json'))
+        self.assertEqual(len(paths),1); original=paths[0].read_bytes()
+        self.at+=timedelta(hours=1)
+        result=self.execute()
+        self.assertEqual(result['status'],'RECORDED',result)
+        self.assertEqual(len(list((self.fixture.state/'supplemental-history/E1').glob('*.json'))),2)
+        self.assertEqual(paths[0].read_bytes(),original)
+
+    def test_cooldown_uses_actual_attempt_time_after_slow_calendar(self):
+        times=iter([NOW,NOW+timedelta(seconds=25)])
+        self.clock=lambda:next(times)
+        result=self.execute()
+        self.assertEqual(result['retry_after_utc'],(NOW+timedelta(hours=1,seconds=25)).isoformat())
+        self.at=NOW+timedelta(hours=1); self.clock=lambda:self.at
+        self.assertEqual(self.execute()['reason'],'SPORTMONKS_RETRY_WAIT')
+        self.assertEqual(self.calls,[30])
 
     def test_missing_key_does_not_claim_or_block_complete_history(self):
         result=self.execute(token=None)
