@@ -261,3 +261,22 @@ sys.meta_path.insert(0, Block())
         self.assertEqual(sum(b['sample_count'] for b in metrics['calibration']),4)
         self.assertEqual([b['lower'] for b in metrics['calibration']],[0.,.2,.6,.8])
         self.assertTrue(math.isfinite(metrics['log_loss']))
+
+    def test_38_bookmaker_comparisons_are_11_fixtures_not_38_predictions(self):
+        for index in range(11):
+            target = self.fixture if index == 0 else self.fixture.model_copy(update={
+                'provider_fixture_id':f'original-{index+1}',
+                'kickoff_utc':(datetime(2026,9,20,11,tzinfo=UTC)+timedelta(days=index)).isoformat()})
+            forecast = freeze_btts_forecast(target, history(), frozen_at=datetime(2026,9,19,12,tzinfo=UTC))
+            for minute in range(1, 3 if index < 8 else 2):
+                base = observation(retrieved=datetime(2026,9,19,12,minute,tzinfo=UTC), snapshot=f'{index}-{minute}')
+                selections = tuple(s.model_copy(update={'provider':target.provider,
+                    'provider_fixture_id':target.provider_fixture_id}) for s in base.selections)
+                record_btts_research(self.state, forecast, base.model_copy(update={'fixture':target,'selections':selections}))
+        from modelfc.btts_research import _read_inventory
+        records, _, _ = _read_inventory(self.state/'btts-research')
+        self.assertEqual(sum(len(record.comparisons) for record in records),38)
+        outcomes.settle(self.state,self.forecast_id,self.source())
+        report=outcomes.performance(self.state)
+        self.assertEqual((report['unique_fixtures'],report['forecast_cohorts'],report['settled_fixtures'],
+                          report['unresolved_fixtures'],report['metrics']['sample_count']),(11,11,1,10,1))
