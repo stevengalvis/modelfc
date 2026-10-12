@@ -22,7 +22,12 @@ class Contract(BaseModel):
 
 
 def timestamp(value):
-    return utc(datetime.fromisoformat(value.replace("Z", "+00:00")))
+    try:
+        if not isinstance(value, str) or len(value) > 40:
+            raise ValueError("INVALID_TIMESTAMP")
+        return utc(datetime.fromisoformat(value.replace("Z", "+00:00")))
+    except (ValueError, OverflowError):
+        raise ValueError("INVALID_TIMESTAMP") from None
 
 
 class Market(Contract):

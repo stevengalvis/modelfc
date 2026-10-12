@@ -51,6 +51,23 @@ class ReadinessTests(unittest.TestCase):
             self.assertEqual(result['calendar_state'], 'UNAVAILABLE')
             self.assertNotIn('SECRET', json.dumps(result))
 
+    def test_overflowing_timestamps_fail_closed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'public.json'
+            value = project(raw(bundle()), forecasts=[], observed=NOW)
+            for field in ('generated_at_utc', 'calendar_retrieved_at_utc'):
+                changed = {**value, field: '0001-01-01T00:00:00+14:00'}
+                path.write_text(json.dumps(changed))
+                self.assertEqual(public_status(path, observed=NOW)['calendar_state'], 'UNAVAILABLE')
+                with patch.dict('os.environ', {'MODELFC_FIXTURE_PROJECTION': str(path)}):
+                    response = TestClient(create_app()).get('/api/v1/fixture-readiness')
+                    self.assertEqual(response.status_code, 200)
+                    self.assertEqual(response.json()['reason'], 'PROJECTION_UNAVAILABLE')
+            for bad in ('0001-01-01T00:00:00+14:00', None, [], 3):
+                source = bundle(); source['retrieved_at'] = bad
+                with self.assertRaises(ValueError):
+                    project(raw(source), forecasts=[], observed=NOW)
+
     def test_future_calendar_rejected(self):
         with self.assertRaises(ValueError):
             project(raw(bundle()), forecasts=[], observed=NOW - timedelta(seconds=1))
