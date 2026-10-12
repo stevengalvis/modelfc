@@ -19,7 +19,9 @@ COUNTERS = ("fixtures_discovered", "captures_created", "captures_existing",
             "captures_awaiting_kickoff", "outcomes_created", "outcomes_pending",
             "outcomes_settled", "market_observations_created", "opportunities_created",
             "review_required", "provider_requests")
-REASONS = frozenset(("PERIOD_EXPIRED", "REQUEST_BUDGET", "SETTLEMENT_REVIEW",
+REASONS = frozenset(("CALENDAR_EVIDENCE_UNAVAILABLE", "CALENDAR_NO_RELEVANT_FIXTURES",
+                     "CALENDAR_FIXTURE_UNMAPPED", "CALENDAR_FIXTURE_MISMATCH",
+                     "PERIOD_EXPIRED", "REQUEST_BUDGET", "SETTLEMENT_REVIEW",
                      "DISCOVERY_INVALID", "DISCOVERY_INCOMPLETE", "ATTEMPT_INCOMPLETE",
                      "CAPTURE_WINDOW_CLOSED", "FIXTURE_REVIEW", "INSUFFICIENT_HISTORY",
                      "PROVIDER_FAILURE", "PROVIDER_CONFIGURATION", "MARKET_METADATA_INVALID",
@@ -80,7 +82,7 @@ def validate(record, *, path=None, now=None):
             or record["duration_ms"] != _duration_ms(start, end)):
         raise ReceiptError("invalid receipt completion")
     summary = record["summary"]
-    if (not isinstance(summary, dict) or set(summary) - {"btts_research"} != {"status", "reasons",
+    if (not isinstance(summary, dict) or set(summary) - {"btts_research", "calendar_gate"} != {"status", "reasons",
             "prospective_budget_remaining", *COUNTERS}
             or summary["status"] not in ("OK", "PARTIAL", "FAIL")
             or not isinstance(summary["reasons"], list)
@@ -90,6 +92,14 @@ def validate(record, *, path=None, now=None):
             or any(reason not in REASONS for reason in summary["reasons"])
             or (summary["status"] == "OK") != (not summary["reasons"])):
         raise ReceiptError("invalid receipt summary")
+    if "calendar_gate" in summary:
+        proof = summary["calendar_gate"]
+        if (not isinstance(proof, dict) or set(proof) != {
+                "bundle_sha256", "source_sha256", "retrieved_at_utc"}
+                or any(not isinstance(proof[key], str) or not re.fullmatch(r"[0-9a-f]{64}", proof[key])
+                       for key in ("bundle_sha256", "source_sha256"))
+                or _timestamp(proof["retrieved_at_utc"]) > end):
+            raise ReceiptError("invalid calendar gate provenance")
     if "btts_research" in summary:
         try:
             validate_btts_summary(summary["btts_research"])

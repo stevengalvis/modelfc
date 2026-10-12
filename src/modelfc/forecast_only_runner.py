@@ -21,6 +21,7 @@ from modelfc.providers.football_data_calendar import FootballDataCalendarClient
 from modelfc.providers.sportmonks_results import SportmonksRecentResultsClient, SportmonksRejected, validate_bindings
 from modelfc.research_predictions import publish as publish_prediction
 from modelfc.research_predictions import load_prepared
+from modelfc.odds_calendar import publish as publish_odds_calendar
 from modelfc.supplemental_history import augment_sources, load_results, publish_result
 
 
@@ -230,6 +231,7 @@ def run_once(*, state_dir, data_config_path, configuration, sportmonks_token,
             if (calendar.source_sha256 != calendar_fetch.source_sha256
                     or calendar.retrieved_at != calendar_fetch.retrieved_at):
                 raise ForecastRunRejected("CALENDAR_PROVENANCE_REJECTED")
+            publish_odds_calendar(state, calendar_fetch.raw, as_of=clock())
             fixtures = _calendar_fixtures(calendar)
             plan = plan_acquisition({"E1": fixtures}, as_of=started, completed=(),
                                      leagues=configured_leagues(["E1"]))
