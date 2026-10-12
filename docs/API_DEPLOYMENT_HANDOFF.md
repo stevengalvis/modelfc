@@ -31,7 +31,8 @@ return HTTP 200 JSON list (maximum 2 MB). PID/start/release are checked again ar
 that read. This uses an existing loopback route; no ingress or public API changes.
 
 At most one asynchronous fixed-service restart is requested per helper invocation.
-Polling has a 120-second deadline, with 3-second systemctl and 2-second HTTP timeouts
+After a restart request, a new systemd InvocationID is required; a briefly healthy
+old invocation cannot satisfy the gate. Polling has a 120-second deadline, with 3-second systemctl and 2-second HTTP timeouts
 (a final in-flight probe can extend the deadline briefly). The controller bounds
 the complete helper subprocess at 150 seconds. Startup is not inferred from a
 successful systemctl exit or a previous startup log. A failed handoff may leave a

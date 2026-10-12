@@ -24,7 +24,8 @@ class HelperTests(unittest.TestCase):
         stack = ExitStack(); self.addCleanup(stack.close)
         stack.enter_context(patch.object(helper, 'release', return_value=Path('/candidate')))
         stack.enter_context(patch.object(helper, 'protected'))
-        stack.enter_context(patch.object(helper, 'unit_properties'))
+        stack.enter_context(patch.object(helper, 'unit_properties', side_effect=[
+            {'InvocationID': 'a'*32}] + [{'InvocationID': 'b'*32}]*10))
         return stack
 
     def test_healthy_matching_process_is_not_restarted(self):
@@ -40,6 +41,17 @@ class HelperTests(unittest.TestCase):
         command = stack.enter_context(patch.object(helper, 'command'))
         self.assertTrue(helper.handoff(SHA))
         command.assert_called_once_with('/usr/bin/systemctl', 'restart', '--no-block', 'modelfc-corner-api.service')
+
+    def test_restart_must_reach_new_invocation_not_old_healthy_process(self):
+        stack = self.context()
+        stack.enter_context(patch.object(helper, 'unit_properties', side_effect=[
+            {'InvocationID':'a'*32}, {'InvocationID':'a'*32}, {'InvocationID':'b'*32}]))
+        ready = stack.enter_context(patch.object(helper, 'ready', side_effect=[False, True]))
+        sleep = stack.enter_context(patch.object(helper.time, 'sleep'))
+        stack.enter_context(patch.object(helper, 'command'))
+        self.assertTrue(helper.handoff(SHA))
+        self.assertEqual(ready.call_count, 2)
+        sleep.assert_called_once()
 
     def test_deadline_and_current_movement_fail_without_repeat_restart(self):
         stack = self.context()

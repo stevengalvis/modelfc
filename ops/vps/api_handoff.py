@@ -64,7 +64,7 @@ def release(sha):
 def unit_properties():
     raw = command('/usr/bin/systemctl', 'show', UNIT, '--no-pager',
                   '-p', 'User', '-p', 'Group', '-p', 'MainPID', '-p', 'ActiveState',
-                  '-p', 'SubState', '-p', 'NoNewPrivileges', '-p', 'ProtectSystem')
+                  '-p', 'SubState', '-p', 'InvocationID', '-p', 'NoNewPrivileges', '-p', 'ProtectSystem')
     properties = dict(line.split('=', 1) for line in raw.splitlines())
     if (properties['User'] != 'modelfc-api' or properties['Group'] != 'modelfc-api'
             or properties['NoNewPrivileges'] != 'yes' or properties['ProtectSystem'] != 'strict'):
@@ -125,14 +125,17 @@ def handoff(sha):
     target = release(sha)
     protected(LAUNCHER, 0)
     for path in (LAUNCHER.parent, *LAUNCHER.parent.parents): protected(path, 0, True)
-    unit_properties()  # Refuse a changed identity/sandbox even before restart.
+    before = unit_properties()['InvocationID']  # Refuse changed service boundaries before restart.
     if ready(sha, target): return True
     if release(sha) != target: return False
     command('/usr/bin/systemctl', 'restart', '--no-block', UNIT)
     until = time.monotonic() + DEADLINE_SECONDS
     while time.monotonic() < until:
         if release(sha) != target: return False
-        if ready(sha, target): return True
+        invocation = unit_properties()['InvocationID']
+        if (re.fullmatch('[0-9a-f]{32}', invocation) and invocation != before
+                and ready(sha, target)):
+            return True
         time.sleep(1)
     return False
 

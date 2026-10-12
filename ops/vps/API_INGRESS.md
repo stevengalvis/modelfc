@@ -125,6 +125,10 @@ environment and loopback bind, and external inability to reach port 8000.
 Confirm that this account cannot read other state files, history, budget events
 or the writer's credential even if the API unit's mount sandbox were absent.
 
+The proposed [verified deployment handoff](../../docs/API_DEPLOYMENT_HANDOFF.md)
+adds explicit API adoption and readiness to deployment after separate controller/helper
+installation. It leaves the periodic settings below unchanged.
+
 After a verified start, this long-running process continues using its pinned
 physical release through any deployment promotion. `RuntimeMaxSec=30min` and
 `Restart=always` make it start afresh from `current` within roughly 30 minutes
