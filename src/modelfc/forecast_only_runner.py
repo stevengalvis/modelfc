@@ -231,7 +231,7 @@ def run_once(*, state_dir, data_config_path, configuration, sportmonks_token,
             if (calendar.source_sha256 != calendar_fetch.source_sha256
                     or calendar.retrieved_at != calendar_fetch.retrieved_at):
                 raise ForecastRunRejected("CALENDAR_PROVENANCE_REJECTED")
-            publish_odds_calendar(state, calendar_fetch.raw, as_of=clock())
+            publish_odds_calendar(state, calendar_fetch.raw, as_of=calendar_fetch.retrieved_at)
             fixtures = _calendar_fixtures(calendar)
             plan = plan_acquisition({"E1": fixtures}, as_of=started, completed=(),
                                      leagues=configured_leagues(["E1"]))
