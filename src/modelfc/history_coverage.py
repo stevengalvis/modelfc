@@ -74,7 +74,7 @@ def audit_sources(competition, sources, *, before, observed_at):
             records = load_team_match_stats_history(paths, competition=competition)
     except CoverageRejected:
         raise
-    except (OSError, ValueError, TypeError, UnicodeError, OverflowError):
+    except (OSError, ValueError, TypeError, UnicodeError, OverflowError, csv.Error):
         raise CoverageRejected('HISTORY_VALIDATION_REJECTED') from None
     eligible = [r for r in records if r.match_date < before]
     fixtures = [r for r in eligible if r.venue is Venue.HOME]

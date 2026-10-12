@@ -1,9 +1,13 @@
 from datetime import date, datetime, timezone, timedelta
 import hashlib
+import io
+from contextlib import redirect_stdout, redirect_stderr
+from pathlib import Path
+import tempfile
 import unittest
 from unittest.mock import patch
 
-from modelfc.history_coverage import audit_sources, timestamp, CoverageRejected
+from modelfc.history_coverage import audit_sources, timestamp, CoverageRejected, main
 
 NOW=datetime(2026,10,12,12,tzinfo=timezone.utc)
 HEADER='Div,Date,HomeTeam,AwayTeam,FTHG,FTAG,FTR,HC,AC,HS,AS,HST,AST\n'
@@ -56,6 +60,23 @@ class CoverageTests(unittest.TestCase):
                 audit_sources('E0',rows,before=NOW.date(),observed_at=NOW)
         with self.assertRaises(CoverageRejected):
             audit_sources('E0',[source(),source(RAW,'E0_2526.csv')],before=NOW.date(),observed_at=NOW)
+
+    def test_oversized_csv_fields_have_fixed_cli_rejection(self):
+        oversized = [b'x'*140_000+b'\n', RAW.replace(b'Home', b'x'*140_000, 1)]
+        for raw in oversized:
+            with self.assertRaisesRegex(CoverageRejected, 'HISTORY_VALIDATION_REJECTED'):
+                audit_sources('E0',[source(raw)],before=NOW.date(),observed_at=NOW)
+            with tempfile.TemporaryDirectory() as directory:
+                path = Path(directory)/'E0_2627.csv'; path.write_bytes(raw)
+                args = ['coverage', '--competition', 'E0', '--before', '2000-01-01',
+                        '--source', str(path), hashlib.sha256(raw).hexdigest(), '2000-01-01T00:00:00Z']
+                out, err = io.StringIO(), io.StringIO()
+                with patch('sys.argv', args), redirect_stdout(out), redirect_stderr(err):
+                    with self.assertRaises(SystemExit) as result:
+                        main()
+                self.assertEqual(result.exception.code, 1)
+                self.assertEqual(out.getvalue(), '')
+                self.assertEqual(err.getvalue(), 'HISTORY_COVERAGE_REJECTED\n')
 
     def test_future_retrieval_and_overflowing_timestamp_reject(self):
         name,raw,pin,_=source()
