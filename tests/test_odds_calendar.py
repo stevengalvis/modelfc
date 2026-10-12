@@ -222,6 +222,29 @@ class CalendarGateTests(unittest.TestCase):
         self.assertIn('REQUEST_BUDGET', self.run_gate()['reasons'])
         self.assertEqual(self.calls, [])
 
+    def test_first_publication_syncs_parent_and_retries_failed_directory_sync(self):
+        original_sync = os.fsync
+        seen = []
+        def sync(fd):
+            path = Path(os.readlink(f'/proc/self/fd/{fd}'))
+            seen.append(path)
+            if path == self.state:
+                raise OSError('simulated parent sync failure')
+            original_sync(fd)
+        with patch.object(bridge.os, 'fsync', side_effect=sync):
+            with self.assertRaises(OSError): self.publish()
+        self.assertIn(self.state, seen)
+        self.assertFalse((self.state/'odds-calendar/latest.json').exists())
+        seen.clear()
+        def successful_sync(fd):
+            seen.append(Path(os.readlink(f'/proc/self/fd/{fd}')))
+            original_sync(fd)
+        with patch.object(bridge.os, 'fsync', side_effect=successful_sync):
+            content = self.publish()
+        self.assertIn(self.state, seen)
+        self.assertIn(self.state/'odds-calendar', seen)
+        self.assertEqual(bridge.load(self.state, as_of=self.now)[0], content)
+
     def test_immutable_replay_conflict_symlink_and_tamper(self):
         original = self.publish()
         root = self.state/'odds-calendar'

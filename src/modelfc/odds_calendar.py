@@ -28,6 +28,12 @@ def directory(state, *, create=False):
         info = path.lstat()
         if not stat.S_ISDIR(info.st_mode) or info.st_mode & 0o022 or info.st_uid != os.geteuid():
             raise ValueError('unsafe calendar directory')
+    if create:
+        # Sync even on retry: an earlier failed first publication may have left
+        # the directory visible without durably linking it into its parent.
+        fd = os.open(state, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        try: os.fsync(fd)
+        finally: os.close(fd)
     return root
 
 
