@@ -24,8 +24,8 @@ class HelperTests(unittest.TestCase):
         stack = ExitStack(); self.addCleanup(stack.close)
         stack.enter_context(patch.object(helper, 'release', return_value=Path('/candidate')))
         stack.enter_context(patch.object(helper, 'protected'))
-        stack.enter_context(patch.object(helper, 'unit_properties', side_effect=[
-            {'InvocationID': 'a'*32}] + [{'InvocationID': 'b'*32}]*10))
+        stack.enter_context(patch.object(helper, 'boundary_before_restart', return_value={'InvocationID': 'a'*32}))
+        stack.enter_context(patch.object(helper, 'unit_properties', return_value={'InvocationID': 'b'*32}))
         return stack
 
     def test_healthy_matching_process_is_not_restarted(self):
@@ -45,7 +45,7 @@ class HelperTests(unittest.TestCase):
     def test_restart_must_reach_new_invocation_not_old_healthy_process(self):
         stack = self.context()
         stack.enter_context(patch.object(helper, 'unit_properties', side_effect=[
-            {'InvocationID':'a'*32}, {'InvocationID':'a'*32}, {'InvocationID':'b'*32}]))
+            {'InvocationID':'a'*32}, {'InvocationID':'b'*32}]))
         ready = stack.enter_context(patch.object(helper, 'ready', side_effect=[False, True]))
         sleep = stack.enter_context(patch.object(helper.time, 'sleep'))
         stack.enter_context(patch.object(helper, 'command'))
@@ -80,7 +80,7 @@ class HelperTests(unittest.TestCase):
                     'modelfc.corner_api:app', '--host', '127.0.0.1', '--port', '8000',
                     '--workers', '1', '--limit-concurrency', '16', '--timeout-keep-alive', '5']
             (proc/'cmdline').write_bytes(('\0'.join(args)+'\0').encode())
-            with patch.object(helper, 'PROC', root), patch.object(helper, 'unit_properties',
+            with patch.object(helper, 'process_credentials'), patch.object(helper, 'PROC', root), patch.object(helper, 'unit_properties',
                     return_value={'ActiveState':'active','SubState':'running','MainPID':'123'}), \
                     patch.object(helper.pwd, 'getpwnam', return_value=SimpleNamespace(pw_uid=os.getuid())):
                 self.assertEqual(helper.process_identity(target), (123, '456'))
@@ -156,3 +156,129 @@ class HandoffControllerTests(unittest.TestCase):
                 tip_reader=lambda _: next(tips))
         self.assertEqual(result['status'], 'SUPERSEDED')
         self.assertEqual(self.current.resolve(), before); helper_call.assert_not_called()
+
+
+    def test_tip_failure_before_or_after_tests_preserves_active_without_handoff(self):
+        self.run_deploy(self.a)
+        before = self.current.resolve()
+        for tips in ([deploy.Failure('FETCH_FAILED')], [self.b, deploy.Failure('FETCH_FAILED')]):
+            with self.subTest(tips=len(tips)), patch.object(deploy, 'api_handoff') as handoff:
+                reader = unittest.mock.Mock(side_effect=tips)
+                result = deploy.deploy(self.b, root=self.deploy_root, releases=self.releases,
+                    current=self.current, control=self.control, remote=str(self.remote),
+                    check_boundary=lambda: None, test_runner=deploy.tests, tip_reader=reader)
+                self.assertEqual(result['status'], 'FAIL')
+                self.assertEqual(result['reason'], 'FETCH_FAILED')
+                self.assertEqual(result['final_sha'], self.a)
+                self.assertEqual(self.current.resolve(), before)
+                handoff.assert_not_called()
+
+
+class BoundaryTests(unittest.TestCase):
+    def properties(self):
+        result = dict(helper.SECURITY)
+        result.update({k: ' '.join(sorted(v)) for k,v in helper.TOKEN_SECURITY.items()})
+        argv = '/usr/bin/python3 -I -B ' + str(helper.LAUNCHER)
+        for key, flags in [('ExecStart','ignore_errors=no'), ('ExecStartEx','flags=')]:
+            result[key] = '{ path=/usr/bin/python3 ; argv[]=' + argv + ' ; ' + flags + ' ; start_time=n/a ; stop_time=n/a ; pid=0 ; code=(null) ; status=0/0 }'
+        result.update(MainPID='0', ActiveState='inactive', SubState='dead', InvocationID='a'*32)
+        return result
+
+    def validate(self, fields):
+        raw = '\n'.join(k+'='+v for k,v in fields.items())
+        with patch.object(helper, 'command', return_value=raw), patch.object(helper, 'api_account'), patch.object(helper, 'protected'):
+            return helper.unit_properties()
+
+    def test_full_effective_unit_and_every_required_property_fail_closed(self):
+        good = self.properties()
+        self.assertEqual(self.validate(good), good)
+        for key in (*helper.SECURITY, *helper.TOKEN_SECURITY, 'ExecStart', 'ExecStartEx'):
+            with self.subTest(key=key):
+                changed = dict(good); changed[key] = 'unexpected'
+                with self.assertRaises(ValueError): self.validate(changed)
+                missing = dict(good); missing.pop(key)
+                with self.assertRaises(ValueError): self.validate(missing)
+        for key in helper.TOKEN_SECURITY:
+            changed = dict(good); changed[key] += ' /extra'
+            with self.assertRaises(ValueError): self.validate(changed)
+        for key in ('ExecStart','ExecStartEx'):
+            changed = dict(good); changed[key] += ' '+changed[key]
+            with self.assertRaises(ValueError): self.validate(changed)
+        raw = '\n'.join(k+'='+v for k,v in good.items())+'\nUser=modelfc-api'
+        with patch.object(helper, 'command', return_value=raw):
+            with self.assertRaises(ValueError): helper.unit_properties()
+
+    def test_account_group_drift_rejected(self):
+        account = SimpleNamespace(pw_uid=1234, pw_gid=1234)
+        with patch.object(helper.pwd, 'getpwnam', return_value=account), \
+                patch.object(helper.grp, 'getgrnam', return_value=SimpleNamespace(gr_gid=1234)):
+            for groups in ([1234,5678], [], [5678]):
+                with patch.object(helper.os, 'getgrouplist', return_value=groups):
+                    with self.assertRaises(ValueError): helper.api_account()
+            with patch.object(helper.os, 'getgrouplist', return_value=[1234]):
+                self.assertEqual(helper.api_account(), account)
+
+    def test_real_proc_status_groups_ids_privileges_and_seccomp(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory); proc=root/'123'; proc.mkdir()
+            account=SimpleNamespace(pw_uid=os.getuid(),pw_gid=os.getgid())
+            fields={'Uid':' '.join([str(account.pw_uid)]*4), 'Gid':' '.join([str(account.pw_gid)]*4),
+                    'Groups':str(account.pw_gid), 'NoNewPrivs':'1', 'Seccomp':'2',
+                    **{k:'0000000000000000' for k in ('CapInh','CapPrm','CapEff','CapBnd','CapAmb')}}
+            def write(value): (proc/'status').write_text('\n'.join(k+':\t'+v for k,v in value.items()))
+            with patch.object(helper,'PROC',root), patch.object(helper,'api_account',return_value=account):
+                write(fields); helper.process_credentials(123)
+                for key in fields:
+                    with self.subTest(key=key):
+                        bad=dict(fields); bad[key]='999999'
+                        write(bad)
+                        with self.assertRaises(ValueError): helper.process_credentials(123)
+                        bad=dict(fields); bad.pop(key); write(bad)
+                        with self.assertRaises(ValueError): helper.process_credentials(123)
+                bad=dict(fields);bad['Groups']+=' 999999';write(bad)
+                with self.assertRaises(ValueError): helper.process_credentials(123)
+
+    def test_drift_refuses_restart_and_readiness_pass(self):
+        with patch.object(helper,'release',return_value=Path('/candidate')), patch.object(helper,'protected'), \
+                patch.object(helper,'boundary_before_restart',side_effect=ValueError('drift')), \
+                patch.object(helper,'command') as command:
+            with self.assertRaises(ValueError): helper.handoff(SHA)
+            command.assert_not_called()
+        with patch.object(helper,'release',return_value=Path('/candidate')), patch.object(helper,'protected'), \
+                patch.object(helper,'boundary_before_restart',side_effect=[{'InvocationID':'a'*32},ValueError('drift')]), \
+                patch.object(helper,'ready',return_value=False), patch.object(helper,'command') as command:
+            with self.assertRaises(ValueError): helper.handoff(SHA)
+            command.assert_not_called()
+        with patch.object(helper,'release',return_value=Path('/candidate')), \
+                patch.object(helper,'process_identity',side_effect=ValueError('drift')), patch.object(helper,'read_ready') as read:
+            self.assertFalse(helper.ready(SHA,Path('/candidate')));read.assert_not_called()
+        with patch.object(helper,'unit_properties',return_value={'MainPID':'123'}), \
+                patch.object(helper,'process_credentials',side_effect=ValueError('groups')):
+            with self.assertRaises(ValueError): helper.boundary_before_restart()
+
+    def test_tip_failures_keep_fetch_classification(self):
+        for error in (subprocess.TimeoutExpired('git',30), subprocess.CalledProcessError(1,'git'), OSError('offline')):
+            with patch.object(deploy.subprocess,'run',side_effect=error):
+                with self.assertRaises(deploy.Failure) as raised: deploy.latest_main('offline')
+                self.assertEqual(raised.exception.code,'FETCH_FAILED')
+        for raw in (b'\xff', b'', b'bad output', (SHA+' refs/heads/other').encode()):
+            with patch.object(deploy.subprocess,'run',return_value=SimpleNamespace(stdout=raw)):
+                with self.assertRaises(deploy.Failure) as raised: deploy.latest_main('offline')
+                self.assertEqual(raised.exception.code,'FETCH_FAILED')
+        with patch.object(deploy.subprocess,'run',return_value=SimpleNamespace(stdout=(SHA+'\trefs/heads/main\n').encode())):
+            self.assertEqual(deploy.latest_main('offline'),SHA)
+
+
+    def test_drift_after_restart_fails_without_second_restart(self):
+        with patch.object(helper,'release',return_value=Path('/candidate')), patch.object(helper,'protected'), \
+                patch.object(helper,'boundary_before_restart',return_value={'InvocationID':'a'*32}), \
+                patch.object(helper,'ready',return_value=False), \
+                patch.object(helper,'unit_properties',side_effect=ValueError('drift')), \
+                patch.object(helper,'command') as command:
+            with self.assertRaises(ValueError): helper.handoff(SHA)
+            command.assert_called_once_with('/usr/bin/systemctl','restart','--no-block',helper.UNIT)
+
+    def test_systemctl_probe_is_bounded(self):
+        with patch.object(helper.subprocess,'run',side_effect=subprocess.TimeoutExpired('systemctl',3)) as run:
+            with self.assertRaises(subprocess.TimeoutExpired): helper.unit_properties()
+            self.assertEqual(run.call_args.kwargs['timeout'],3)

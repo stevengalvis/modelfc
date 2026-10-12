@@ -2,6 +2,7 @@
 
 Input is exactly one lowercase SHA (40 bytes). No candidate code runs as root.
 """
+import grp
 import http.client
 import json
 import os
@@ -61,15 +62,106 @@ def release(sha):
     return target
 
 
+# Fixed installed-unit contract; no candidate config or host mutations.
+UNIT_FILE = Path('/etc/systemd/system') / UNIT
+SECURITY = {
+    'User': 'modelfc-api', 'Group': 'modelfc-api', 'SupplementaryGroups': '',
+    'DynamicUser': 'no', 'PrivateNetwork': 'no', 'PrivateUsers': 'no',
+    'NetworkNamespacePath': '', 'JoinsNamespaceOf': '', 'PAMName': '', 'NoNewPrivileges': 'yes', 'ProtectSystem': 'strict',
+    'ProtectHome': 'yes', 'PrivateTmp': 'yes', 'PrivateDevices': 'yes',
+    'RestrictSUIDSGID': 'yes', 'CapabilityBoundingSet': '', 'AmbientCapabilities': '',
+    'ReadWritePaths': '', 'BindPaths': '', 'BindReadOnlyPaths': '', 'MountImages': '',
+    'TemporaryFileSystem': '', 'RootDirectory': '', 'RootImage': '',
+    'Environment': '', 'EnvironmentFiles': '', 'PassEnvironment': '',
+    'LoadCredential': '', 'LoadCredentialEncrypted': '', 'ImportCredential': '',
+    'SetCredential': '', 'SetCredentialEncrypted': '',
+    'ExecCondition': '', 'ExecStartPre': '', 'ExecStartPost': '', 'ExecStop': '', 'ExecStopPost': '',
+    'DropInPaths': '', 'FragmentPath': str(UNIT_FILE), 'NeedDaemonReload': 'no',
+    'Type': 'simple', 'WorkingDirectory': '/srv/modelfc/current', 'UMask': '0077',
+    'StandardInput': 'null', 'Delegate': 'no', 'KillMode': 'control-group',
+    'TasksMax': '32', 'MemoryMax': '268435456', 'CPUQuotaPerSecUSec': '1s',
+    'RuntimeMaxUSec': '30min', 'Restart': 'always', 'RestartUSec': '10s',
+}
+TOKEN_SECURITY = {
+    'ReadOnlyPaths': {'/srv/modelfc', '/etc/modelfc', '/var/lib/modelfc/state'},
+    'InaccessiblePaths': {'-/etc/modelfc/credentials', '-/run/credentials',
+        '-/var/lib/modelfc/history/data/corner-refresh/backups', '-/var/lib/modelfc-deploy',
+        '-/run/modelfc-acquisition', '-/etc/modelfc-validator', '-/var/lib/modelfc-validator',
+        '-/opt/modelfc-deploy', '-/opt/modelfc-validator', '-/root/modelfc-state', '-/root'},
+    'RestrictAddressFamilies': {'AF_INET', 'AF_UNIX'},
+    'IPAddressDeny': {'0.0.0.0/0', '::/0'},
+    'IPAddressAllow': {'127.0.0.0/8', '::1/128'},
+    'UnsetEnvironment': set('GITHUB_TOKEN GH_TOKEN SSH_AUTH_SOCK PYTHONPATH PYTHONHOME LD_PRELOAD '
+        'LD_LIBRARY_PATH LD_AUDIT ODDSPAPI_API_KEY MODELFC_DATA_CONFIG MODELFC_STATE_DIR MODELFC_CORS_ORIGINS'.split()),
+}
+
+
+def api_account():
+    account = pwd.getpwnam('modelfc-api')
+    gid = grp.getgrnam('modelfc-api').gr_gid
+    if account.pw_uid == 0 or account.pw_gid != gid or set(os.getgrouplist('modelfc-api', gid)) != {gid}:
+        raise ValueError('invalid account groups')
+    return account
+
+
+def trusted_start(value, extended=False):
+    # stdlib-only copy of the controller's strict systemctl command parser.
+    match = re.fullmatch(r'\{\s*([^{}]*)\s*\}', value)
+    if match is None: return False
+    parts = [part.strip().partition('=') for part in match.group(1).split(';')]
+    flag = 'flags' if extended else 'ignore_errors'
+    keys = {'path', 'argv[]', flag, 'start_time', 'stop_time', 'pid', 'code', 'status'}
+    if (len(parts) != len(keys) or {key for key, _, _ in parts} != keys
+            or any(separator != '=' for _, separator, _ in parts)): return False
+    fields = {key: item for key, _, item in parts}
+    return (fields['path'] == '/usr/bin/python3'
+            and fields['argv[]'] == '/usr/bin/python3 -I -B ' + str(LAUNCHER)
+            and fields[flag] == ('' if extended else 'no'))
+
+
 def unit_properties():
-    raw = command('/usr/bin/systemctl', 'show', UNIT, '--no-pager',
-                  '-p', 'User', '-p', 'Group', '-p', 'MainPID', '-p', 'ActiveState',
-                  '-p', 'SubState', '-p', 'InvocationID', '-p', 'NoNewPrivileges', '-p', 'ProtectSystem')
-    properties = dict(line.split('=', 1) for line in raw.splitlines())
-    if (properties['User'] != 'modelfc-api' or properties['Group'] != 'modelfc-api'
-            or properties['NoNewPrivileges'] != 'yes' or properties['ProtectSystem'] != 'strict'):
+    keys = (*SECURITY, *TOKEN_SECURITY, 'ExecStart', 'ExecStartEx',
+            'MainPID', 'ActiveState', 'SubState', 'InvocationID')
+    args = ['/usr/bin/systemctl', 'show', UNIT, '--no-pager', '--all']
+    for key in keys: args.extend(('-p', key))
+    raw = command(*args)
+    lines = [line.partition('=') for line in raw.splitlines()]
+    if (len(raw) > 65536 or len(lines) != len(keys) or {k for k, _, _ in lines} != set(keys)
+            or any(sep != '=' for _, sep, _ in lines)):
+        raise ValueError('invalid service properties')
+    properties = {k: v for k, _, v in lines}
+    if (any(properties[k] != v for k, v in SECURITY.items())
+            or any(set(properties[k].split()) != v for k, v in TOKEN_SECURITY.items())
+            or not trusted_start(properties['ExecStart'])
+            or not trusted_start(properties['ExecStartEx'], True)):
         raise ValueError('invalid service boundary')
+    api_account()
+    for path in (UNIT_FILE, *UNIT_FILE.parents): protected(path, 0, path != UNIT_FILE)
     return properties
+
+
+def process_credentials(pid):
+    account = api_account()
+    proc = PROC / str(pid)
+    if proc.stat().st_uid != account.pw_uid: raise ValueError('wrong process owner')
+    lines = [line.partition(':') for line in (proc / 'status').read_text().splitlines()]
+    fields = {k: v.split() for k, sep, v in lines if sep}
+    expected = {'Uid': [str(account.pw_uid)]*4, 'Gid': [str(account.pw_gid)]*4,
+                'NoNewPrivs': ['1'], 'Seccomp': ['2']}
+    if (any(fields.get(k) != v for k, v in expected.items())
+            or 'Groups' not in fields
+            or not set(fields['Groups']) <= {str(account.pw_gid)}
+            or any(fields.get(k) != ['0000000000000000'] for k in
+                   ('CapInh', 'CapPrm', 'CapEff', 'CapBnd', 'CapAmb'))):
+        raise ValueError('invalid process credentials')
+
+
+def boundary_before_restart():
+    props = unit_properties()
+    pid = int(props['MainPID'])
+    if pid > 1: process_credentials(pid)
+    elif pid != 0: raise ValueError('invalid pid')
+    return props
 
 
 def process_identity(target):
@@ -78,6 +170,7 @@ def process_identity(target):
         raise ValueError('not running')
     pid = int(props['MainPID'])
     if pid <= 1: raise ValueError('invalid pid')
+    process_credentials(pid)
     proc = PROC / str(pid)
     uid = pwd.getpwnam('modelfc-api').pw_uid
     if proc.stat().st_uid != uid or Path(os.readlink(proc / 'cwd')) != target:
@@ -128,9 +221,10 @@ def handoff(sha):
     target = release(sha)
     protected(LAUNCHER, 0)
     for path in (LAUNCHER.parent, *LAUNCHER.parent.parents): protected(path, 0, True)
-    before = unit_properties()['InvocationID']  # Refuse changed service boundaries before restart.
+    before = boundary_before_restart()['InvocationID']  # Refuse changed service boundaries before restart.
     if ready(sha, target): return True
     if release(sha) != target: return False
+    boundary_before_restart()  # Recheck drift discovered during the readiness probe.
     command('/usr/bin/systemctl', 'restart', '--no-block', UNIT)
     until = time.monotonic() + DEADLINE_SECONDS
     while time.monotonic() < until:
