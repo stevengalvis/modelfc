@@ -11,6 +11,8 @@ WorkingDirectory=/srv/modelfc/current
 ExecStart=/usr/bin/python3 -I -B /usr/local/libexec/modelfc-forecast-only-launch.py
 LoadCredential=forecast-only.json:/etc/modelfc/credentials/forecast-only.json
 LoadCredential=sportmonks.key:/etc/modelfc/credentials/sportmonks.key
+# Public absence marker only; LoadCredential takes precedence when the file exists.
+SetCredential=sportmonks.key:MODELFC_SPORTMONKS_NOT_CONFIGURED
 LoadCredential=football-data.key:/etc/modelfc/credentials/football-data.key
 UMask=0077
 StandardInput=null
