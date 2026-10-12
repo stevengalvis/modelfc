@@ -139,3 +139,14 @@ kernel enforcement or installed compatibility. After those pass, obtain explicit
 updated approval for the revised file hashes before installation; the previous
 approval covered different bytes. Keep the same narrow proposed sudo command,
 30-minute rotation, no provider requests and no other host changes.
+
+
+Systemd 255 omits empty EnvironmentFiles/Exec-hook arrays and may print credential
+arrays as [unprintable]. The helper verifies those using typed empty arrays from
+read-only system-bus busctl queries, with the same fixed-unit encoding and strict
+signature checks as the controller. No empty-text assumption, provider call or
+new permission is used. Each bus/systemctl probe retains its three-second bound;
+the 120-second handoff deadline now begins before initial boundary/readiness
+checks, and an expired deadline prevents issuing a restart. The controller's
+150-second outer timeout remains unchanged. Include actual systemd serialization
+and nonempty/wrong-type/malformed bus replies in disposable acceptance.

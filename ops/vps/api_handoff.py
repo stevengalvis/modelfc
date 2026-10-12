@@ -119,17 +119,60 @@ def trusted_start(value, extended=False):
             and fields[flag] == ('' if extended else 'no'))
 
 
+
+CREDENTIAL_TYPES = {
+    'LoadCredential': 'a(ss)', 'LoadCredentialEncrypted': 'a(ss)',
+    'SetCredential': 'a(say)', 'SetCredentialEncrypted': 'a(say)', 'ImportCredential': 'as',
+}
+OMITTED_EMPTY_TYPES = {'EnvironmentFiles': 'a(sb)', **{name: 'a(sasbttttuii)' for name in
+    ('ExecCondition', 'ExecStartPre', 'ExecStartPost', 'ExecStop', 'ExecStopPost')}}
+
+
+def unique_properties(pairs):
+    pairs = list(pairs)
+    result = dict(pairs)
+    if len(result) != len(pairs): raise ValueError('duplicate property')
+    return result
+
+
+def empty_bus_properties(signatures):
+    # Fixed system bus and unit: never inherit a caller's bus address or load code.
+    label = re.sub(r'[^a-zA-Z0-9]', lambda m: '_%02x' % ord(m[0]), UNIT)
+    raw = command('/usr/bin/busctl', '--system', '--json=short', 'get-property',
+                  'org.freedesktop.systemd1', '/org/freedesktop/systemd1/unit/' + label,
+                  'org.freedesktop.systemd1.Service', *signatures)
+    rows = raw.splitlines()
+    if len(raw) > 65536 or len(rows) != len(signatures): raise ValueError('invalid bus properties')
+    for signature, row in zip(signatures.values(), rows):
+        value = json.loads(row, object_pairs_hook=unique_properties)
+        if (not isinstance(value, dict) or set(value) != {'type', 'data'}
+                or value['type'] != signature or value['data'] != []):
+            raise ValueError('nonempty or invalid bus property')
+
+
+def normalize_properties(raw, keys):
+    if len(raw) > 65536: raise ValueError('invalid service properties')
+    properties = unique_properties(line.split('=', 1) for line in raw.splitlines())
+    signatures = dict(CREDENTIAL_TYPES)
+    for name in CREDENTIAL_TYPES:
+        allowed = ('',) if name == 'ImportCredential' else ('', '[unprintable]')
+        if properties.get(name) not in allowed: raise ValueError('invalid credential property')
+    for name, signature in OMITTED_EMPTY_TYPES.items():
+        if name not in properties: signatures[name] = signature
+        elif properties[name] != '': raise ValueError('unexpected service hook')
+    empty_bus_properties(signatures)
+    properties.update({name: '' for name in signatures})
+    if set(properties) != set(keys): raise ValueError('invalid service properties')
+    return properties
+
+
 def unit_properties():
     keys = (*SECURITY, *TOKEN_SECURITY, 'ExecStart', 'ExecStartEx',
             'MainPID', 'ActiveState', 'SubState', 'InvocationID')
     args = ['/usr/bin/systemctl', 'show', UNIT, '--no-pager', '--all']
     for key in keys: args.extend(('-p', key))
     raw = command(*args)
-    lines = [line.partition('=') for line in raw.splitlines()]
-    if (len(raw) > 65536 or len(lines) != len(keys) or {k for k, _, _ in lines} != set(keys)
-            or any(sep != '=' for _, sep, _ in lines)):
-        raise ValueError('invalid service properties')
-    properties = {k: v for k, _, v in lines}
+    properties = normalize_properties(raw, keys)
     if (any(properties[k] != v for k, v in SECURITY.items())
             or any(set(properties[k].split()) != v for k, v in TOKEN_SECURITY.items())
             or not trusted_start(properties['ExecStart'])
@@ -218,15 +261,16 @@ def ready(sha, target):
 
 
 def handoff(sha):
+    until = time.monotonic() + DEADLINE_SECONDS
     target = release(sha)
     protected(LAUNCHER, 0)
     for path in (LAUNCHER.parent, *LAUNCHER.parent.parents): protected(path, 0, True)
     before = boundary_before_restart()['InvocationID']  # Refuse changed service boundaries before restart.
-    if ready(sha, target): return True
+    if ready(sha, target): return time.monotonic() < until
     if release(sha) != target: return False
     boundary_before_restart()  # Recheck drift discovered during the readiness probe.
+    if time.monotonic() >= until: return False
     command('/usr/bin/systemctl', 'restart', '--no-block', UNIT)
-    until = time.monotonic() + DEADLINE_SECONDS
     while time.monotonic() < until:
         if release(sha) != target: return False
         invocation = unit_properties()['InvocationID']
