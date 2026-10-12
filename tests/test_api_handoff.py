@@ -91,16 +91,19 @@ class HelperTests(unittest.TestCase):
                 with self.assertRaises(ValueError): helper.process_identity(target)
 
     def test_readiness_rejects_errors_redirects_wrong_shape_and_oversize(self):
-        for status, raw in [(503,b'[]'), (302,b'[]'), (200,b'{}'), (200,b'x'*2_000_001), (200,b'[]')]:
+        valid = b'{"api_version":"v1","competitions":[],"models":[]}'
+        for status, raw in [(503,valid), (302,valid), (200,b'{}'), (200,b'x'*65_537), (200,valid)]:
             response = unittest.mock.Mock(status=status)
             response.read.return_value = raw
             response.getheader.return_value = 'application/json'
             connection = unittest.mock.Mock(); connection.getresponse.return_value = response
             with patch.object(helper.http.client, 'HTTPConnection', return_value=connection):
-                if status == 200 and raw == b'[]': helper.read_ready()
+                if status == 200 and raw == valid: helper.read_ready()
                 else:
                     with self.assertRaises(ValueError): helper.read_ready()
                 connection.close.assert_called_once()
+                connection.request.assert_called_once_with('GET', '/api/v1/capabilities',
+                    headers={'Connection':'close'})
 
     def test_cli_rejects_extra_arguments_without_host_calls_or_traceback(self):
         result = subprocess.run([sys.executable, str(SOURCE), '--unit', 'other.service'],

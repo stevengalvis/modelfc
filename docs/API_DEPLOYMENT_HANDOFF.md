@@ -26,8 +26,11 @@ The helper accepts no command-line arguments and exactly one SHA on stdin. It
 only controls `modelfc-corner-api.service`; it imports no candidate code. It checks
 `current` and the protected release marker, service identity/sandbox, MainPID,
 process UID, physical cwd, exact Uvicorn command, process start identity and ownership
-of the listening 127.0.0.1:8000 socket. A bounded GET of `/api/v1/predictions` must
-return HTTP 200 JSON list (maximum 2 MB). PID/start/release are checked again around
+of the listening 127.0.0.1:8000 socket. A bounded GET of `/api/v1/capabilities` must
+return HTTP 200 with the v1 capabilities contract (maximum 64 KiB). This response
+is bounded by configured competitions, not by the ever-growing prediction ledger.
+Data-unavailable/stale warnings remain legitimate capability states, not a failed
+application start; readiness does not certify forecast/result coverage. PID/start/release are checked again around
 that read. This uses an existing loopback route; no ingress or public API changes.
 
 At most one asynchronous fixed-service restart is requested per helper invocation.

@@ -100,12 +100,15 @@ def process_identity(target):
 def read_ready():
     connection = http.client.HTTPConnection('127.0.0.1', 8000, timeout=2)
     try:
-        connection.request('GET', '/api/v1/predictions', headers={'Connection': 'close'})
+        connection.request('GET', '/api/v1/capabilities', headers={'Connection': 'close'})
         response = connection.getresponse()
-        raw = response.read(2_000_001)
-        if (response.status != 200 or len(raw) > 2_000_000
+        raw = response.read(65_537)
+        value = json.loads(raw) if len(raw) <= 65_536 else None
+        if (response.status != 200 or len(raw) > 65_536
                 or response.getheader('Content-Type', '').split(';')[0] != 'application/json'
-                or not isinstance(json.loads(raw), list)):
+                or not isinstance(value, dict) or value.get('api_version') != 'v1'
+                or not isinstance(value.get('competitions'), list)
+                or not isinstance(value.get('models'), list)):
             raise ValueError('api not ready')
     finally:
         connection.close()
