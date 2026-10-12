@@ -32,9 +32,16 @@ replacement. Continued production use requires an active subscription and an
 explicit commercial-rights decision.
 
 Each authorized Sportmonks date-range request receives a private durable claim
-before dispatch. A failed or interrupted authenticated attempt is not retried by
-the scheduled runner; it remains visibly blocked for operator review. Successful
-replays use the immutable normalized records and make no duplicate provider call.
+before dispatch. A failed or interrupted authenticated attempt blocks further result fetching
+for the season until the existing one-hour RESULT_RETRY_DELAY expires, including
+changing or overlapping date ranges. A later ordinary eligible timer run may then
+make another authenticated attempt; no immediate retry occurs. Each attempt keeps
+the adapter limit of four requests/pages with 30-second request timeouts. Missing
+credentials create no request claim. Complete retained history bypasses acquisition;
+successful replays preserve immutable normalized records and make no duplicate
+Sportmonks call. Recovery still requires the original pre-kickoff acquisition window
+and full history-validity gates. Inspect explicit BLOCKED receipts and retry time;
+this is bounded automatic recovery, not a permanent manual-review hold.
 
 ## Reviewed installation procedure
 

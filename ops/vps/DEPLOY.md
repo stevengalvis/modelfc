@@ -298,8 +298,12 @@ report does not make that retained candidate active or approved. Do not delete
 it without separately establishing that no process uses it. Abandoned
 candidates after a crash may be inspected manually; this controller does not
 garbage-collect previously published releases.
-There is no automatic rollback: failures before promotion leave `current`
-pointing to the previous successful release. A repeated request for the
+The reviewed [API handoff controller](../../docs/API_DEPLOYMENT_HANDOFF.md), once
+separately installed with its fixed helper/permission, requires actual API adoption
+before PASS and restores/verifies the previous code release on handoff failure.
+Older installed controllers only verify the pointer and do not provide that API
+health recovery. Failures before promotion leave `current` pointing to the previous
+successful release. A repeated request for the
 already current SHA returns `ALREADY_CURRENT` without rebuilding; a superseded
 push reports `SUPERSEDED` without moving `current` backward.
 

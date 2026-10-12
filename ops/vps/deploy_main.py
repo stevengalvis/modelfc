@@ -1200,6 +1200,57 @@ def promote(release, sha, *, current=CURRENT, releases=RELEASES,
         temporary.unlink(missing_ok=True)
 
 
+API_HANDOFF = Path("/opt/modelfc-deploy/api_handoff.py")
+
+
+def latest_main(remote):
+    value = command(["git", "ls-remote", "--exit-code", remote, "refs/heads/main"],
+                    env=git_env(), timeout=30).split()
+    if len(value) != 2 or not SHA.fullmatch(value[0]) or value[1] != "refs/heads/main":
+        raise Failure("FETCH_FAILED")
+    return value[0]
+
+
+def api_handoff(sha):
+    # Only this root-owned stdlib helper gets a fixed, argument-free sudo grant.
+    for path in (API_HANDOFF, *API_HANDOFF.parents):
+        info = path.lstat()
+        kind = stat.S_ISREG if path == API_HANDOFF else stat.S_ISDIR
+        if info.st_uid != 0 or info.st_mode & 0o022 or not kind(info.st_mode):
+            raise Failure("STATE_BOUNDARY_FAILED")
+    try:
+        result = subprocess.run(["sudo", "-n", "/usr/bin/python3", "-I", str(API_HANDOFF)],
+            input=sha.encode("ascii"), stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+            env={"PATH": "/usr/bin:/bin", "HOME": "/nonexistent", "LANG": "C"}, timeout=150)
+        if result.returncode != 0 or result.stdout != b'{"status": "PASS"}\n':
+            raise Failure("PROMOTION_FAILED")
+    except (OSError, subprocess.SubprocessError):
+        raise Failure("PROMOTION_FAILED") from None
+
+
+def adopt_api(sha, *, candidate, previous, current, releases, control):
+    receipt = {"requested_sha": sha, "adoption": "FAIL", "recovery": "NOT_ATTEMPTED"}
+    try:
+        api_handoff(sha)
+        receipt["adoption"] = "PASS"
+    except (Failure, OSError):
+        if previous is not None and previous != candidate:
+            try:
+                active, _ = current_release(current=current, releases=releases)
+                if active != candidate:
+                    raise Failure("FINAL_SHA_MISMATCH")
+                previous_sha = previous.name[:40]
+                verify_source(previous, previous_sha)
+                promote(previous, previous_sha, current=current, releases=releases)
+                api_handoff(previous_sha)
+                receipt["recovery"] = "PASS"
+            except (Failure, OSError):
+                receipt["recovery"] = "FAIL"
+        write_json(control / "last-api-handoff.json", receipt)
+        raise Failure("PROMOTION_FAILED") from None
+    write_json(control / "last-api-handoff.json", receipt)
+
+
 def report(sha):
     return dict(status="FAIL", requested_sha=sha, previous_sha=None, final_sha=None,
                 fetch_verified=False, release_created=False, dependency_sync="NOT_ATTEMPTED",
@@ -1208,7 +1259,7 @@ def report(sha):
 
 
 def deploy(sha, *, root=ROOT, releases=RELEASES, current=CURRENT, control=CONTROL,
-           remote=REMOTE, check_boundary=boundary, test_runner=tests):
+           remote=REMOTE, check_boundary=boundary, test_runner=tests, tip_reader=None):
     value = report(sha)
     if not isinstance(sha, str) or SHA.fullmatch(sha) is None:
         return value
@@ -1232,7 +1283,14 @@ def deploy(sha, *, root=ROOT, releases=RELEASES, current=CURRENT, control=CONTRO
             recover_service(control)
             active, previous = current_release(current=current, releases=releases)
             value.update(previous_sha=previous, final_sha=previous)
+            read_tip = tip_reader or latest_main
             if previous == sha:
+                if read_tip(remote) != sha:
+                    value.update(status="SUPERSEDED", reason="SUPERSEDED", promotion_status="SUPERSEDED", fetch_verified=True)
+                    return value
+                verify_source(active, sha)
+                adopt_api(sha, candidate=active, previous=active, current=current,
+                          releases=releases, control=control)
                 value.update(status="PASS", reason="ALREADY_CURRENT",
                              promotion_status="ALREADY_CURRENT")
                 return value
@@ -1247,6 +1305,9 @@ def deploy(sha, *, root=ROOT, releases=RELEASES, current=CURRENT, control=CONTRO
                              promotion_status="SUPERSEDED")
                 return value
             value["release_created"] = True
+            if read_tip(remote) != sha:
+                value.update(status="SUPERSEDED", reason="SUPERSEDED", promotion_status="SUPERSEDED")
+                return value
             verify_source(candidate, sha)
             value["dependency_sync"] = dependencies(candidate)
             verify_venv_size(candidate / ".venv")
@@ -1256,8 +1317,16 @@ def deploy(sha, *, root=ROOT, releases=RELEASES, current=CURRENT, control=CONTRO
                 raise Failure("TESTS_FAILED")
             value["tests_status"] = "PASS"
             verify_source(candidate, sha)
+            if read_tip(remote) != sha:
+                value.update(status="SUPERSEDED", reason="SUPERSEDED", promotion_status="SUPERSEDED")
+                return value
             promote(candidate, sha, current=current, releases=releases,
                     on_publish_attempt=mark_candidate_publication_attempt)
+            try:
+                adopt_api(sha, candidate=candidate, previous=active, current=current,
+                          releases=releases, control=control)
+            finally:
+                _, value["final_sha"] = current_release(current=current, releases=releases)
             value.update(status="PASS", reason="OK", final_sha=sha,
                          promotion_status="PROMOTED")
     except Failure as error:
