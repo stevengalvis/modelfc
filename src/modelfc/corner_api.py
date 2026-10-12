@@ -549,6 +549,11 @@ def create_app(
         except (ValueError, LedgerError) as error:
             return _domain_error(error)
 
+    @app.get("/api/v1/fixture-readiness")
+    def get_fixture_readiness() -> dict[str, Any]:
+        from modelfc.fixture_readiness import public_status
+        return public_status(os.environ.get("MODELFC_FIXTURE_PROJECTION"))
+
     @app.get("/api/v1/capabilities", response_model=CapabilitiesResponse)
     def get_capabilities() -> dict[str, Any]:
         try:

@@ -497,3 +497,9 @@ label { font-size: 11px; }
 .btts-performance td { min-width: 140px; }
 .btts-performance code { overflow-wrap: anywhere; }
 .btts-performance details { max-width: 280px; }
+
+.fixture-readiness { max-width: 1200px; margin: auto; padding: 1rem; }
+.fixture-readiness p { line-height: 1.6; overflow-wrap: anywhere; }
+.fixture-readiness h2 { margin-top: 2rem; }
+.fixture-status-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr)); gap: 1rem; margin-top: 1rem; }
+.fixture-status-grid article { border: 1px solid #64748b; border-radius: 12px; padding: 1rem; }
