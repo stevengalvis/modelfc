@@ -150,6 +150,14 @@ sys.meta_path.insert(0,Block())
             with self.assertRaisesRegex(OutcomeError,'RESEARCH_INVENTORY_CHANGED'):
                 outcomes.settle_corner(self.state,forecast_id,source)
 
+    def test_corner_inner_fixture_and_future_inputs_are_rejected(self):
+        from dataclasses import replace
+        forecast=next(iter(outcomes.corner_inventory(self.state).values()))
+        for corner in (replace(forecast.corner,fixture=replace(forecast.corner.fixture,home_team='Other')),
+                       replace(forecast.corner,latest_history_date=forecast.cutoff)):
+            with self.assertRaisesRegex(OutcomeError,'INVALID_RESEARCH_FORECAST'):
+                outcomes.identity(replace(forecast,corner=corner))
+
     def saved_index(self):
         saved=SavedEvidence();value=bundle(); names={r['history_name']:r for r in saved.bindings}
         home,away=names['West Ham'],names['QPR'];row=saved.row

@@ -13,6 +13,7 @@ import stat
 
 from modelfc import btts_outcomes as btts
 from modelfc.btts_market_data import timestamp
+from modelfc.btts_model import e1_result_date
 from modelfc.btts_research import digest
 from modelfc.corner_analysis_outcomes import OutcomeError, _require
 from modelfc.ledger_storage import LedgerError, ensure_directory, ledger_lock, write_new_record, utc_timestamp
@@ -26,6 +27,13 @@ def identity(prepared):
     _require(fixture.identity.competition == "E1"
              and prepared.frozen_at < fixture.identity.kickoff_utc,
              "INVALID_RESEARCH_FORECAST")
+    if prepared.corner is not None:
+        corner = prepared.corner
+        _require((corner.fixture.home_team, corner.fixture.away_team, corner.fixture.match_date) ==
+                 (fixture.home_team, fixture.away_team, e1_result_date(fixture.identity.kickoff_utc))
+                 and corner.latest_history_date < prepared.cutoff <= e1_result_date(fixture.identity.kickoff_utc)
+                 and corner.latest_history_date <= e1_result_date(prepared.frozen_at),
+                 "INVALID_RESEARCH_FORECAST")
     return {"competition": "E1", "home_team": fixture.home_team,
             "away_team": fixture.away_team,
             "kickoff_utc": fixture.identity.kickoff_utc.isoformat()}
