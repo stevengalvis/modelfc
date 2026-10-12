@@ -109,7 +109,10 @@ def corner_results(state, *, as_of=None):
 def settle_corner(state, forecast_id, source):
     state = Path(state); forecasts = corner_inventory(state)
     _require(forecast_id in forecasts, "UNKNOWN_RESEARCH_FORECAST")
-    prepared = forecasts[forecast_id]; fixture = identity(prepared)
+    fixture = identity(forecasts[forecast_id])
+    forecast_id = min((key for key, candidate in forecasts.items() if identity(candidate) == fixture),
+                      key=lambda key: (forecasts[key].frozen_at, key))
+    prepared = forecasts[forecast_id]
     recorded = utc_timestamp(); result = _result(source, prepared, timestamp(recorded))
     record = {"schema_version": 1, "rule_version": RULE, "outcome_id": digest(fixture),
         "fixture": fixture, "forecast_id": forecast_id, "forecast": _forecast_value(prepared),
@@ -176,7 +179,7 @@ def sweep(state, source_for_fixture, *, as_of=None):
                 receipt["reason"] = "NO_SAVED_RESULT"
             else:
                 record, created = (settle_corner(state, forecast.forecast_id, source) if market == "CORNER"
-                    else btts.settle(state, digest(forecast.btts), source))
+                    else btts.settle(state, digest(forecast.btts), source, select_earliest=True))
                 receipt.update(status="RECORDED" if created else "REUSED", outcome_id=record["outcome_id"])
         except OutcomeError as error:
             if str(error) == "RESULT_NOT_AVAILABLE": receipt["reason"] = "RESULT_NOT_AVAILABLE"

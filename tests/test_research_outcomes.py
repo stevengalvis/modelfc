@@ -158,6 +158,37 @@ sys.meta_path.insert(0,Block())
             with self.assertRaisesRegex(OutcomeError,'INVALID_RESEARCH_FORECAST'):
                 outcomes.identity(replace(forecast,corner=corner))
 
+    def test_earlier_cohorts_published_after_sweep_snapshot_are_selected(self):
+        from dataclasses import replace
+        from datetime import timedelta
+        from modelfc.research_predictions import load_prepared, publish
+        from modelfc.history_completeness import parse_calendar
+        from tests.test_history_completeness import raw
+        from modelfc.btts_research import digest
+        original=load_prepared(self.state)
+        at=original[0][0].frozen_at-timedelta(minutes=1)
+        value=bundle();value['retrieved_at']=at.isoformat()
+        calendar=parse_calendar(raw(value),as_of=at)
+        earlier={}
+        for prepared,market in original:
+            new=replace(prepared,frozen_at=at,btts=prepared.btts.model_copy(
+                update={'frozen_at_utc':at.isoformat(), 'history_calendar_proof':prepared.btts.history_calendar_proof.model_copy(update={'retrieved_at_utc':at.isoformat(),'calendar_sha256':calendar.bundle_sha256})}) if market=='BTTS' else None)
+            earlier[market]=new
+        published=False
+        def racing_source(fixture):
+            nonlocal published
+            if not published:
+                for market,new in earlier.items():publish(self.state,new,market,calendar=calendar)
+                published=True
+            return self.source(fixture)
+        receipt=outcomes.sweep(self.state,racing_source)
+        self.assertEqual({r['status'] for r in receipt['markets']},{'RECORDED'})
+        corner=next(iter(outcomes.corner_results(self.state).values()))
+        self.assertEqual(corner['forecast_id'],earlier['CORNER'].forecast_id)
+        btts=json.loads(next((self.state/'btts-outcomes').glob('*.json')).read_text())
+        self.assertEqual(btts['forecast_id'],digest(earlier['BTTS'].btts))
+        self.assertEqual({r['status'] for r in outcomes.sweep(self.state,self.source)['markets']},{'REUSED'})
+
     def saved_index(self):
         saved=SavedEvidence();value=bundle(); names={r['history_name']:r for r in saved.bindings}
         home,away=names['West Ham'],names['QPR'];row=saved.row

@@ -199,13 +199,18 @@ def _load(path, forecasts):
         raise OutcomeError("INVALID_BTTS_OUTCOME") from None
 
 
-def settle(state_dir, forecast_id, source):
+def settle(state_dir, forecast_id, source, *, select_earliest=False):
     """One immutable outcome per exact fixture; identical evidence reuses it."""
     state = Path(state_dir)
     forecasts = inventory(state)
     _require(forecast_id in forecasts, "UNKNOWN_BTTS_FORECAST")
     forecast = forecasts[forecast_id][0]
     fixture = fixture_identity(forecast)
+    if select_earliest:
+        forecast_id = min((key for key, (candidate, _) in forecasts.items()
+            if fixture_identity(candidate) == fixture),
+            key=lambda key: (timestamp(forecasts[key][0].frozen_at_utc), key))
+        forecast = forecasts[forecast_id][0]
     recorded = utc_timestamp()
     result = _source_result(source, fixture, timestamp(recorded))
     for candidate, _ in forecasts.values():
