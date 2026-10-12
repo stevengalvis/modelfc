@@ -69,7 +69,7 @@ export function decodePredictions(value: unknown): ProspectivePrediction[] {
       && count(item.target_count) && count(item.opportunity_count)
       && ((item.opportunity_count as number) === 0 || (item.target_count as number) > 0)
       && status(item.settlement_status)
-      && (settled ? count(item.actual_home_corners) && count(item.actual_away_corners)
+      && (settled && !(research && item.prediction_type === "BTTS") ? count(item.actual_home_corners) && count(item.actual_away_corners)
         : item.actual_home_corners === null && item.actual_away_corners === null);
     if (!common) return false;
     if (!research) return id(item.source_observation_id)
@@ -83,6 +83,16 @@ export function decodePredictions(value: unknown): ProspectivePrediction[] {
         || !timestamp(item.calendar_retrieved_at_utc) || !count(item.supplemental_result_count)
         || item.target_count !== 0 || item.opportunity_count !== 0 || item.expected_value !== null
         || (item.prediction_type !== "CORNER" && item.prediction_type !== "BTTS")) return false;
+    if (settled) {
+      if (!id(item.outcome_id) || !timestamp(item.outcome_recorded_at_utc)
+          || Date.parse(item.outcome_recorded_at_utc as string) <= Date.parse(item.kickoff_utc as string)
+          || !["football-data.co.uk", "sportmonks"].includes(item.result_provider as string)
+          || typeof item.result_source_sha256 !== "string" || !/^[a-f0-9]{64}$/.test(item.result_source_sha256)) return false;
+      if (item.prediction_type === "BTTS" && (!count(item.actual_home_goals) || !count(item.actual_away_goals)
+          || item.actual_btts !== ((item.actual_home_goals as number) > 0 && (item.actual_away_goals as number) > 0 ? "YES" : "NO"))) return false;
+    } else if ([item.outcome_id, item.outcome_recorded_at_utc, item.result_provider,
+        item.result_source_sha256, item.actual_home_goals, item.actual_away_goals, item.actual_btts].some(v => v != null)) return false;
+    if (item.prediction_type === "CORNER" && [item.actual_home_goals,item.actual_away_goals,item.actual_btts].some(v => v != null)) return false;
     return item.prediction_type === "CORNER"
       ? nonnegative(item.expected_home_corners) && nonnegative(item.expected_away_corners)
         && nonnegative(item.expected_match_corners)
