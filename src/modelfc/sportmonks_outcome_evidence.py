@@ -228,4 +228,7 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    # The writer requires the canonical SavedResultEvidence class. Running the
+    # local main would construct a distinct __main__.SavedResultEvidence class.
+    from modelfc.sportmonks_outcome_evidence import main as canonical_main
+    raise SystemExit(canonical_main())

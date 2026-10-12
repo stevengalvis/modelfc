@@ -44,6 +44,72 @@ time; this does **not** waive calendar freshness for new forecasts. Missing or
 contradictory evidence blocks settlement. Neither a scheduled kickoff nor an
 unverified display name proves a final result.
 
+Complete validated saved evidence is sufficient: settlement does not need a fresh
+provider request, credentials, or a continuing Sportmonks subscription. Genuine
+football-data.co.uk CSV results retain their existing independent settlement path
+(`python -m modelfc.corner_analysis_outcomes settle ...`). The saved Sportmonks
+path uses football-data.org for independent calendar reconciliation; that calendar
+is distinct from the football-data.co.uk CSV result source. Both paths publish to
+the same immutable outcome store. A different provider's evidence must not silently
+replace an existing outcome, even when the corner totals agree.
+
+## Module-entrypoint regression and disposable replay
+
+The original command failed because `python -m` constructed
+`__main__.SavedResultEvidence`, while the writer required the canonical module's
+class. The entrypoint now delegates to the canonical module's `main`, retaining
+the strict class check and all source validation. Test the real module boundary:
+
+```sh
+PYTHONPATH=src <locked-python> -m unittest tests.test_sportmonks_outcomes -v
+```
+
+These tests launch fresh `python -m` subprocesses with network access blocked by
+an audit hook and no inherited provider credentials. They cover RECORDED, REUSED,
+same-key and different-key conflicts, malformed/missing/hash-mismatched/nonfinal/
+incomplete evidence, preserved predictions and sources, timestamps and performance.
+The CSV command also records/reuses with Sportmonks modules unavailable.
+
+After review and separately approved deployment, step 3 below must use the real
+seven saved manifests and original state in a **new private disposable copy**.
+Do not reuse the earlier diagnostic copy with its pre-existing outcome. Hash all
+baseline captures, predictions, observations, opportunities, CSVs, manifests and
+saved responses/calendars before replay. Use the locked interpreter, physical
+release's `PYTHONPATH`, restricted runtime identity and existing publication opt-in:
+
+```sh
+MODELFC_EVIDENCE_ACL_USER=modelfc-api <locked-python> -m modelfc.sportmonks_outcome_evidence \
+  --manifest <disposable-manifest> --manifest-sha256 <approved-manifest-sha256> \
+  --response-file <disposable-saved-response> --calendar-file <disposable-saved-calendar> \
+  --state-dir <disposable-state-root> --analysis-id <original-analysis-id> \
+  --key saved-sm-final-v1-<original-analysis-id>
+```
+
+Run once for each of the seven reviewed analyses: require exit 0 / RECORDED and
+seven outcomes with the reviewed exact results and original source timestamps.
+Repeat all seven with identical keys: require exit 0 / REUSED, identical outcome
+IDs, bytes and recording timestamps. On a separate disposable source copy only,
+alter one corner count to another valid integer and repin that test response and
+manifest. Require exit 1 / IDEMPOTENCY_CONFLICT with the original key and exit 1 /
+RESULT_CONFLICT with a new key; outcome inventory and bytes must stay unchanged.
+Also test a missing-corner response and a hash mismatch: require exit 1 / REJECTED
+and no outcome change. Never carry these altered test sources into production.
+
+Read disposable predictions/performance through the existing API configuration
+pointed explicitly at the disposable state: require 8 original runs, 7 settled
+runs, the eighth unresolved, and unchanged prediction IDs and baseline bytes.
+Check outcome provenance, exact corner results, derived team/target/opportunity
+counts and real API-reader permissions. Do not redirect the production service to
+the copy. Preserve the sanitized acceptance report; a passing synthetic test or
+disposable replay is not production settlement authorization or evidence.
+
+No automatic provider fallback/acquisition schedule is added here. The existing
+prospective runner's CSV settlement and the operator-only saved-result command
+remain separate; the forecast-only timer does not automatically invoke this
+command. Missing saved corners still require separately authorized acquisition or
+later valid CSV evidence. Existing CSV refresh failures/readiness remain separate
+operational work; this repair neither refreshes history nor relaxes completeness.
+
 ## Bounded post-deployment acceptance
 
 1. Verify the deployed release and protected SHA marker match the reviewed SHA.
