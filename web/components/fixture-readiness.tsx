@@ -34,6 +34,7 @@ export function FixtureReadinessDashboard() {
       <div className="fixture-status-grid">{fixtures.map(f => <article key={f.fixture_id}>
         <h3>{f.home_team} v {f.away_team}</h3>
         <p><time>{f.kickoff_utc}</time> · {f.status}</p>
+        {f.markets.filter(m => m.state === "RECORDED").length === 1 && <p>Partial forecast coverage</p>}
         {f.markets.map(m => <p key={m.market}><strong>{m.market === "CORNER" ? "Team corners" : "BTTS research"}:</strong> {m.state === "RECORDED" ? `Recorded at ${m.frozen_at_utc}` : "No recorded forecast in this export; reason unknown"}</p>)}
       </article>)}</div>
     </>}
