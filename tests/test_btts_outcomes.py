@@ -288,3 +288,50 @@ sys.meta_path.insert(0, Block())
                   'row_number':2,'row':row,'row_sha256':digest(row),'retrieved_at_utc':'2025-10-26T15:00:00Z'}
         with self.assertRaisesRegex(LedgerError,'RESULT_IDENTITY_CONFLICT'):
             outcomes._csv_result(source,fixture,datetime.now(UTC))
+
+    def test_publication_holds_both_locks_and_serializes_racing_forecast(self):
+        import fcntl
+        from concurrent.futures import ThreadPoolExecutor
+        from threading import Event
+        started, completed = Event(), Event()
+        target = self.fixture.model_copy(update={'provider_fixture_id':'next', 'kickoff_utc':'2026-09-21T11:00:00Z'})
+        forecast = freeze_btts_forecast(target, history(), frozen_at=datetime(2026,9,19,12,tzinfo=UTC))
+        def append():
+            started.set()
+            get_or_freeze_btts_forecast(self.state,target,lambda:forecast)
+            completed.set()
+        real_write = outcomes.write_new_record
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            def during_publication(*args, **kwargs):
+                for path in (self.state/'.lock', self.state/'btts-research'/'.lock'):
+                    with path.open('rb') as lock:
+                        with self.assertRaises(BlockingIOError):
+                            fcntl.flock(lock,fcntl.LOCK_EX | fcntl.LOCK_NB)
+                future = pool.submit(append)
+                self.assertTrue(started.wait(2))
+                self.assertFalse(completed.wait(.1))
+                return real_write(*args,**kwargs)
+            with patch.object(outcomes,'write_new_record',side_effect=during_publication):
+                outcomes.settle(self.state,self.forecast_id,self.source())
+        self.assertTrue(completed.is_set())
+        report=outcomes.performance(self.state)
+        self.assertEqual((report['unique_fixtures'],report['settled_fixtures']),(2,1))
+
+    def test_namespace_creation_waits_for_state_lock(self):
+        from concurrent.futures import ThreadPoolExecutor
+        from threading import Event
+        from modelfc.ledger_storage import ledger_lock
+        state=self.root/'odds-free-state';state.mkdir()
+        started,completed=Event(),Event()
+        def create():
+            started.set()
+            get_or_freeze_btts_forecast(state,self.fixture,lambda:self.forecast)
+            completed.set()
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            with ledger_lock(state):
+                future=pool.submit(create)
+                self.assertTrue(started.wait(2))
+                self.assertFalse(completed.wait(.1))
+                self.assertFalse((state/'btts-research').exists())
+            future.result(timeout=5)
+        self.assertTrue(completed.is_set())

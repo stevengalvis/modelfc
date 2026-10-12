@@ -25,7 +25,7 @@ from modelfc.btts_model import BttsForecast, HistorySource
 from modelfc.corner_analysis_store import _canonical_hash
 from modelfc.ledger_storage import (
     LedgerError, LedgerStorageUnavailable, ensure_directory,
-    ledger_read_lock, write_new_record,
+    ledger_lock, ledger_read_lock, write_new_record,
 )
 
 MAX_RECORDS = 1000
@@ -204,6 +204,20 @@ def _write_lock(directory: Path):
             os.close(descriptor)
 
 
+@contextmanager
+def _publication_lock(directory: Path):
+    """State then BTTS lock: coordinate namespace creation and outcome joins.
+
+    Both immutable forecast stores now serialize with outcome publication. No
+    provider requests occur here. The BTTS lock remains the API read boundary.
+    """
+    ensure_directory(directory.parent, "Model FC state directory")
+    with ledger_lock(directory.parent):
+        ensure_directory(directory, "BTTS research")
+        with _write_lock(directory) as descriptor:
+            yield descriptor
+
+
 class FrozenForecastEvidence(ResearchContract):
     schema_version: Literal[1] = 1
     record_type: Literal["BTTS_FROZEN_FORECAST"] = "BTTS_FROZEN_FORECAST"
@@ -288,8 +302,7 @@ def get_or_freeze_btts_forecast(state_dir: Path, fixture: BttsFixture, factory) 
     A factory is evaluated only when no forecast for this provider fixture exists.
     """
     directory = _directory(Path(state_dir))
-    ensure_directory(directory, "BTTS research")
-    with _write_lock(directory) as lock_descriptor:
+    with _publication_lock(directory) as lock_descriptor:
         _, forecasts, forecast_count = _read_inventory(directory)
         previous = forecasts.get(_fixture_key(fixture))
         if previous is not None:
@@ -322,8 +335,7 @@ def record_btts_research(state_dir: Path, forecast: BttsForecast, observation: B
     """
     record = make_record(forecast, observation)
     directory = _directory(Path(state_dir))
-    ensure_directory(directory, "BTTS research")
-    with _write_lock(directory) as lock_descriptor:
+    with _publication_lock(directory) as lock_descriptor:
         records, forecasts, _ = _read_inventory(directory)
         saved_forecast = forecasts.get(_fixture_key(forecast.fixture))
         if saved_forecast is not None and saved_forecast != forecast:

@@ -5,6 +5,7 @@ source trust, matching and sample policies. CLI paths/hashes are operator suppli
 """
 import argparse
 import csv
+from contextlib import nullcontext
 from datetime import datetime, timezone
 import hashlib
 from io import StringIO
@@ -218,7 +219,11 @@ def settle(state_dir, forecast_id, source):
     payload["record_hash"] = digest(payload)
     directory = _directory_outcomes(state)
     ensure_directory(state, "state")
-    with ledger_lock(state) as lock:
+    # Consistent order with both forecast writers: state, then BTTS inventory.
+    # Creation of an absent BTTS namespace also requires the state lock, so an
+    # odds-free-only state needs no new empty namespace or permission grants.
+    with ledger_lock(state) as lock, (ledger_read_lock(_directory(state))
+            if _directory(state).exists() else nullcontext()):
         _require(inventory(state) == forecasts, "BTTS_INVENTORY_CHANGED")
         ensure_directory(directory, "BTTS outcomes")
         path = directory / f"{outcome_id}.json"

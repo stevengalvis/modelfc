@@ -84,13 +84,18 @@ the saved-result normalizer remains; goals-only/incomplete bundles are unresolve
 ## Immutability and access
 
 One deterministic `btts-outcomes/<exact-fixture-hash>.json` is atomically published
-under the existing state lock, containing the selected original forecast and
+under the existing state lock and the BTTS inventory read lock, containing the selected original forecast and
 validated result source. Its first recording timestamp never changes. Replay with
 identical source/result reuses the record, including when another cohort of the
 same fixture requests it. Different scores **or different evidence** conflict;
 there is no correction/overwrite switch. Reuse requires the exact original pinned
 CSV file and retrieval time or saved bundle. Appending unrelated CSV rows therefore
 requires replaying the retained original file, not a newly downloaded copy.
+
+Writers acquire locks in state → BTTS order. BTTS namespace creation also takes
+the state lock, so a research writer cannot add a cohort between settlement's
+final inventory validation and publication, including odds-free-only states with
+no research namespace. The command never creates an empty research namespace.
 
 Read-time validation checks the outcome hash, original forecast, exact fixture,
 source and grade. It needs no raw CSV, provider response, calendar or credentials.
