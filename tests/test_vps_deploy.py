@@ -2160,10 +2160,64 @@ class TestFailureDiagnosticsTest(unittest.TestCase):
             children.append(child)
             return child
         with patch.object(deploy.subprocess, "Popen", side_effect=start):
-            with self.assertRaises(subprocess.TimeoutExpired):
+            with self.assertRaises(deploy.TestCaptureFailure) as raised:
                 deploy.capture_test_process([sys.executable, "-c", "import time; time.sleep(60)"],
                                             cwd=self.root, env={}, timeout=0.05)
         self.assertIsNotNone(children[0].poll())
+        self.assertEqual(raised.exception.classification, "TIMEOUT")
+
+    def test_timeout_partial_progress_and_exception_are_sanitized(self):
+        self.request.write_text(json.dumps(dict(release_id=self.release.name, sha=self.sha, controller_netns=[4,2])))
+        captured = (f"test_case_0 ({self.names[0]}) ... \nsecret token and payload\n"
+                    "test_secret (test_sample.Sample.test_secret) ... ").encode()
+        cases = [(deploy.TestCaptureFailure("TIMEOUT", captured, True), "TIMEOUT", self.names[0]),
+                 (OSError("secret environment"), "PROCESS_ERROR", None)]
+        for error, expected, last in cases:
+            with self.subTest(expected=expected), patch.object(deploy, "REQUEST", self.request), patch.object(
+                    deploy, "TEST_OUTPUT", self.output), patch.object(deploy, "RELEASES", self.root), patch.object(
+                    deploy, "head", return_value=self.sha), patch.object(deploy, "verify_test_network"), patch.object(
+                    deploy.os, "access", return_value=False), patch.object(
+                    deploy, "capture_test_process", side_effect=error):
+                self.assertFalse(deploy.run_tests())
+            report = json.loads(self.output.read_text())
+            self.assertEqual(report["sha"], self.sha)
+            info = report["diagnostics"]
+            self.assertEqual(info["classification"], expected)
+            self.assertEqual(info["last_test_id"], last)
+            self.assertFalse(info["count_known"])
+            self.assertNotIn("secret", json.dumps(report))
+            self.assertTrue(deploy.valid_test_diagnostics(info, self.allowed))
+
+    def test_real_timeout_retains_partial_tail_and_closes_pipe(self):
+        real_popen = subprocess.Popen
+        children = []
+        def start(*args, **kwargs):
+            child = real_popen(*args, **kwargs)
+            children.append(child)
+            return child
+        with patch.object(deploy.subprocess, "Popen", side_effect=start):
+            with self.assertRaises(deploy.TestCaptureFailure) as raised:
+                deploy.capture_test_process([sys.executable, "-c",
+                    "import os,time; os.write(2,b'partial progress'); time.sleep(60)"],
+                    cwd=self.root, env={}, timeout=0.2)
+        self.assertEqual(raised.exception.captured, b"partial progress")
+        self.assertIsNotNone(children[0].poll())
+        self.assertTrue(children[0].stderr.closed)
+
+    def test_stale_failure_removed_and_unknown_count_retained_as_null(self):
+        retained = self.root / "last-test-failure.json"
+        retained.write_text(json.dumps({"sha": "b" * 40, "tests_run": 100}))
+        info = deploy.extended_diagnostics("", None, self.allowed, False, "TIMEOUT", False)
+        with self.assertRaisesRegex(deploy.Failure, "TESTS_FAILED"):
+            self.run_report("FAIL", 0, info)
+        record = json.loads(retained.read_text())
+        self.assertEqual(record["sha"], self.sha)
+        self.assertIsNone(record["tests_run"])
+        # Missing output cannot leave a misleading older artifact behind.
+        with patch.object(deploy, "run_service"), self.assertRaises(deploy.Failure):
+            deploy.tests(self.release, self.sha, request=self.request, output=self.output)
+        self.assertFalse(retained.exists())
+        self.assertFalse(self.request.exists())
 
     def run_report(self, status, count, diagnostics=None, **changes):
         def service(*args):
