@@ -53,6 +53,17 @@ export function PredictionsDashboard() {
       .finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
   }, [attempt]);
+  useEffect(() => {
+    if (!data) return;
+    const scrollToForecast = () => {
+      const target = data.predictions.find(item => window.location.hash === `#prediction-${item.prediction_id}`);
+      if (target) document.getElementById(`prediction-${target.prediction_id}`)?.scrollIntoView();
+    };
+    // Navigation can reach this page before the asynchronous ledger exists.
+    scrollToForecast();
+    window.addEventListener("hashchange", scrollToForecast);
+    return () => window.removeEventListener("hashchange", scrollToForecast);
+  }, [data]);
   const retry = () => { setLoading(true); setError(null); setAttempt((value) => value + 1); };
   return <div className="workspace ledger-workspace">
     <header className="page-heading"><div><p className="eyebrow">Prospective evidence</p><h1>Predictions & opportunities</h1><p>Recorded before kickoff. Read only.</p></div></header>

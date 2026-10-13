@@ -1,11 +1,42 @@
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { mockOpportunities, mockPerformance, mockPredictions } from "../lib/api/mock";
 import { api } from "../lib/api/client";
 import { PredictionsDashboard, PerformanceDashboard } from "./prospective-dashboard";
 
-afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+afterEach(() => { cleanup(); vi.restoreAllMocks(); window.history.replaceState(null, "", "/"); });
 describe("prospective dashboards", () => {
+  it("resolves a forecast fragment after delayed ledger data and cleans up hash navigation", async () => {
+    let resolve!: (value: typeof mockPredictions) => void;
+    vi.spyOn(api, "predictions").mockImplementation(() => new Promise(done => { resolve = done; }));
+    vi.spyOn(api, "opportunities").mockResolvedValue(mockOpportunities);
+    const scroll = vi.fn();
+    const lookup = document.getElementById.bind(document);
+    vi.spyOn(document, "getElementById").mockImplementation(id => {
+      const element = lookup(id);
+      if (element) element.scrollIntoView = scroll;
+      return element;
+    });
+    const first = `prediction-${mockPredictions[0].prediction_id}`;
+    const second = `prediction-${mockPredictions[1].prediction_id}`;
+    window.history.replaceState(null, "", `/predictions#${second}`);
+    const { unmount } = render(<PredictionsDashboard />);
+    await waitFor(() => expect(api.predictions).toHaveBeenCalled());
+    expect(scroll).not.toHaveBeenCalled();
+    await act(async () => resolve(mockPredictions));
+    expect(scroll).toHaveBeenCalledTimes(1);
+    expect(scroll.mock.contexts[0]).toBe(lookup(second));
+    window.history.replaceState(null, "", `/predictions#${first}`);
+    fireEvent(window, new Event("hashchange"));
+    expect(scroll.mock.contexts[1]).toBe(lookup(first));
+    window.history.replaceState(null, "", "/predictions#missing");
+    fireEvent(window, new Event("hashchange"));
+    expect(scroll).toHaveBeenCalledTimes(2);
+    unmount();
+    window.history.replaceState(null, "", `/predictions#${first}`);
+    fireEvent(window, new Event("hashchange"));
+    expect(scroll).toHaveBeenCalledTimes(2);
+  });
   it("shows loading, prediction details and settled opportunities", async () => {
     let resolve!: (value: typeof mockPredictions) => void;
     vi.spyOn(api, "predictions").mockImplementation(() => new Promise((done) => { resolve = done; }));
