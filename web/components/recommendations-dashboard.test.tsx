@@ -25,11 +25,29 @@ describe("recorded Recommendations", () => {
     }
     expect(firstSignal?.aborted).toBe(true);
     expect(screen.getByText("Recently checked · qualifying")).toBeInTheDocument();
-    expect(screen.getByText("Loading recorded offers…")).toBeInTheDocument();
+    expect(screen.getByText("Saved offers could not be refreshed")).toBeInTheDocument();
     unmount();
     expect(recorded.mock.calls.at(-1)?.[0]?.aborted).toBe(true);
     await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
     expect(api.recommendations).toHaveBeenCalledTimes(7);
+  });
+  it("surfaces both deadline failures while retrying and clears them on recovery", async () => {
+    vi.useFakeTimers();
+    vi.mocked(api.recommendations).mockImplementation(() => new Promise(() => {}));
+    vi.spyOn(api, "recordedOffers").mockImplementation(() => new Promise(() => {}));
+    render(<RecommendationsDashboard />); await act(async () => {});
+    await act(async () => { await vi.advanceTimersByTimeAsync(120_000); });
+    expect(screen.getByText("Current recommendations could not be refreshed.")).toBeInTheDocument();
+    expect(screen.getByText("Saved offers could not be refreshed")).toBeInTheDocument();
+    expect(screen.queryByText("Loading current recommendations…")).not.toBeInTheDocument();
+    expect(screen.queryByText("Loading recorded offers…")).not.toBeInTheDocument();
+    expect(api.recommendations).toHaveBeenCalledTimes(3);
+    vi.mocked(api.recommendations).mockResolvedValue([]);
+    vi.mocked(api.recordedOffers).mockResolvedValue(data());
+    await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.getByText("No current recommendations")).toBeInTheDocument();
+    expect(screen.getByRole("article")).toBeInTheDocument();
   });
   it("resets age only for fresh responses after a backward wall-clock correction", async () => {
     vi.useFakeTimers(); vi.setSystemTime(new Date("2026-10-10T13:04:59Z"));

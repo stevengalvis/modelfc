@@ -104,20 +104,26 @@ export function RecommendationsDashboard() {
   useEffect(() => {
     const controller = new AbortController();
     const started = clock();
+    let currentPending = true;
+    let recordedPending = true;
     const refresh = () => { setAges(tickAges); setCurrent([]); setCurrentLoading(true); setAttempt(value => value + 1); };
     // A stalled read must not prevent either saved-data feed from polling again.
-    const timer = window.setTimeout(refresh, 60_000);
+    const timer = window.setTimeout(() => {
+      if (currentPending) setCurrentFailed(true);
+      if (recordedPending) setFailed(true);
+      refresh();
+    }, 60_000);
     const resume = () => { if (document.visibilityState === "visible") refresh(); };
     window.addEventListener("focus", refresh);
     document.addEventListener("visibilitychange", resume);
     // Keep the existing all-cohort current feed independent of recorded history.
-    setCurrent([]); setCurrentLoading(true); setCurrentFailed(false);
+    setCurrent([]); setCurrentLoading(true);
     api.recommendations(controller.signal).then(value => {
       if (!controller.signal.aborted) { setCurrent(value); setAges(previous => ({...previous, current:{started, elapsed:elapsedSince(clock(), started)}})); setCurrentFailed(false); }
-    }).catch(() => { if (!controller.signal.aborted) { setCurrent([]); setCurrentFailed(true); } }).finally(() => { if (!controller.signal.aborted) setCurrentLoading(false); });
+    }).catch(() => { if (!controller.signal.aborted) { setCurrent([]); setCurrentFailed(true); } }).finally(() => { currentPending = false; if (!controller.signal.aborted) setCurrentLoading(false); });
     api.recordedOffers(controller.signal).then(value => {
       if (!controller.signal.aborted) { setData(value); setAges(previous => ({...previous, recorded:{started, elapsed:elapsedSince(clock(), started)}})); setFailed(false); }
-    }).catch(() => { if (!controller.signal.aborted) setFailed(true); });
+    }).catch(() => { if (!controller.signal.aborted) setFailed(true); }).finally(() => { recordedPending = false; });
     return () => { controller.abort(); window.clearTimeout(timer); window.removeEventListener("focus", refresh); document.removeEventListener("visibilitychange", resume); };
   }, [attempt]);
   const elapsed = ages.recorded?.elapsed ?? 0;
@@ -135,7 +141,7 @@ export function RecommendationsDashboard() {
     <section aria-label="Current recommendations across all forecast cohorts">
       <h2>Current qualifying offers · all forecast cohorts</h2>
       <p className="recorded-note">This is the existing current recommendation feed, including eligible offers from earlier frozen forecasts. Recorded fixture cards below use their latest capture forecast.</p>
-      {currentLoading && <p role="status">Loading current recommendations…</p>}
+      {currentLoading && !currentFailed && <p role="status">Loading current recommendations…</p>}
       {!currentLoading && !currentFailed && eligibleCurrent.length === 0 && <p>No current recommendations</p>}
       {currentFailed && <p role="alert">Current recommendations could not be refreshed.</p>}
       <div className="recorded-fixtures">{eligibleCurrent.map(item => <section className="panel" key={`${item.prediction_id}:${item.target_id}:${item.bookmaker}`}>
