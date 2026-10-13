@@ -150,3 +150,8 @@ the 120-second handoff deadline now begins before initial boundary/readiness
 checks, and an expired deadline prevents issuing a restart. The controller's
 150-second outer timeout remains unchanged. Include actual systemd serialization
 and nonempty/wrong-type/malformed bus replies in disposable acceptance.
+
+The API UID and GID must be positive and distinct from the deployment, runtime
+and validator accounts' UIDs, primary GIDs and named groups. Missing required
+service-account lookups fail closed. Disposable acceptance must include GID 0,
+shared numeric IDs and named-group drift without modifying production NSS.

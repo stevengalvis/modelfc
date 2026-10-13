@@ -99,8 +99,15 @@ TOKEN_SECURITY = {
 def api_account():
     account = pwd.getpwnam('modelfc-api')
     gid = grp.getgrnam('modelfc-api').gr_gid
-    if account.pw_uid == 0 or account.pw_gid != gid or set(os.getgrouplist('modelfc-api', gid)) != {gid}:
+    if (account.pw_uid <= 0 or gid <= 0 or account.pw_gid != gid
+            or set(os.getgrouplist('modelfc-api', gid)) != {gid}):
         raise ValueError('invalid account groups')
+    # These installed roles must never alias the API's low-privilege identity.
+    for name in ('modelfc-deploy', 'modelfc-runtime', 'modelfc-validator'):
+        other = pwd.getpwnam(name)
+        other_group = grp.getgrnam(name).gr_gid
+        if account.pw_uid == other.pw_uid or gid in (other.pw_gid, other_group):
+            raise ValueError('shared service identity')
     return account
 
 
