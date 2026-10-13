@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api/client";
-import type { RecordedFixture, RecordedOffer, RecordedOffers, RecordedOfferStatus } from "@/lib/api/types";
+import type { RecordedFixture, RecordedOffer, RecordedOffers, RecordedOfferStatus, Recommendation } from "@/lib/api/types";
 
 const percent = (value: number | null) => value === null ? "Not available" : `${(value * 100).toFixed(1)}%`;
 const signed = (value: number, digits = 0) => `${value >= 0 ? "+" : "−"}${Math.abs(value).toFixed(digits)}`;
@@ -83,6 +83,9 @@ export function RecommendationsDashboard() {
   const [failed, setFailed] = useState(false);
   const [attempt, setAttempt] = useState(0);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [current, setCurrent] = useState<Recommendation[]>([]);
+  const [currentReceived, setCurrentReceived] = useState(0);
+  const [currentFailed, setCurrentFailed] = useState(false);
   useEffect(() => {
     const timer = window.setInterval(() => setTick(performance.now()), 1000);
     return () => window.clearInterval(timer);
@@ -93,6 +96,11 @@ export function RecommendationsDashboard() {
     let timer: number | undefined;
     const refresh = () => setAttempt(value => value + 1);
     window.addEventListener("focus", refresh);
+    // Keep the existing all-cohort current feed independent of recorded history.
+    setCurrent([]);
+    api.recommendations(controller.signal).then(value => {
+      if (!controller.signal.aborted) { setCurrent(value); setCurrentReceived(started); setTick(performance.now()); setCurrentFailed(false); }
+    }).catch(() => { if (!controller.signal.aborted) { setCurrent([]); setCurrentFailed(true); } });
     api.recordedOffers(controller.signal).then(value => {
       if (!controller.signal.aborted) { setData(value); setReceived(started); setTick(performance.now()); setFailed(false); }
     }).catch(() => { if (!controller.signal.aborted) setFailed(true); }).finally(() => {
@@ -101,6 +109,9 @@ export function RecommendationsDashboard() {
     return () => { controller.abort(); window.clearTimeout(timer); window.removeEventListener("focus", refresh); };
   }, [attempt]);
   const elapsed = Math.max(0, tick - received) / 1000;
+  const currentElapsed = Math.max(0, tick - currentReceived) / 1000;
+  const eligibleCurrent = current.filter(item => item.observation_age_seconds + currentElapsed <= 300
+    && Date.parse(item.retrieved_at_utc) + (item.observation_age_seconds + currentElapsed) * 1000 < Date.parse(item.kickoff_utc));
   const asOf = data ? Date.parse(data.as_of_utc) : 0;
   const upcoming = data?.fixtures.filter(f => f.status === "UPCOMING" && Date.parse(f.kickoff_utc) > asOf + elapsed * 1000) ?? [];
   const historical = data?.fixtures.filter(f => !upcoming.includes(f)) ?? [];
@@ -109,6 +120,17 @@ export function RecommendationsDashboard() {
       <p>Corner forecasts and last-known prices. Recheck older prices before relying on their recorded value.</p></div></header>
     <p className="recorded-note">This page checks saved data every minute; it does not fetch sportsbook odds. A scheduler check does not guarantee new prices. Next eligible odds refresh is not available here.</p>
     <p className="recorded-note">Showing up to 100 fixtures, nearest upcoming first, with at most seven days of kicked-off history. <Link href="/predictions">Open the full forecast ledger</Link> for older evidence.</p>
+    <section aria-label="Current recommendations across all forecast cohorts">
+      <h2>Current qualifying offers · all forecast cohorts</h2>
+      <p className="recorded-note">This is the existing current recommendation feed, including eligible offers from earlier frozen forecasts. Recorded fixture cards below use their latest capture forecast.</p>
+      {currentFailed && <p role="alert">Current recommendations could not be refreshed.</p>}
+      <div className="recorded-fixtures">{eligibleCurrent.map(item => <section className="panel" key={`${item.prediction_id}:${item.target_id}:${item.bookmaker}`}>
+        <h3>{item.home_team} vs {item.away_team}</h3>
+        <p className="ledger-meta">Frozen forecast {item.prediction_id}</p>
+        <Offer item={{...item, status: "RECENT_QUALIFYING", current_recommendation: true, opportunity_id: null}}
+          asOf={Date.parse(item.retrieved_at_utc) + item.observation_age_seconds * 1000} elapsed={currentElapsed} failed={false} />
+      </section>)}</div>
+    </section>
     {failed && <section className="panel ledger-message" role="alert"><h2>Saved offers could not be refreshed</h2>
       <p>{data ? "Showing the previous read. Prices need rechecking." : "Recorded offers are unavailable. Please try again."}</p>
       <button className="secondary-button" onClick={() => setAttempt(v => v + 1)}>Retry</button></section>}
@@ -116,7 +138,7 @@ export function RecommendationsDashboard() {
     {data && <><p className="ledger-meta">Saved data read <time dateTime={data.as_of_utc}>{utc(data.as_of_utc)}</time></p>
       {!upcoming.length && <section className="panel ledger-message"><h2>No upcoming recorded fixtures</h2><p>Fixtures appear when a forecast has been recorded.</p></section>}
       <div className="recorded-fixtures">{upcoming.map(item => <Fixture key={item.fixture_id} item={item} asOf={asOf} elapsed={elapsed} failed={failed} />)}</div>
-      {historical.length > 0 && <details className="recorded-details" onToggle={event => setHistoryOpen(event.currentTarget.open)}><summary>Kicked-off / historical fixtures ({historical.length})</summary>
+      {historical.length > 0 && <details className="recorded-details" open={historyOpen} onToggle={event => setHistoryOpen(event.currentTarget.open)}><summary>Kicked-off / historical fixtures ({historical.length})</summary>
         <div className="recorded-fixtures">{historyOpen && historical.map(item => <Fixture key={item.fixture_id} item={item} asOf={asOf} elapsed={elapsed} failed={failed} />)}</div>
       </details>}</>}
   </div>;

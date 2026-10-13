@@ -1,5 +1,5 @@
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { api } from "@/lib/api/client";
 import { mockRecordedOffers } from "@/lib/api/mock-recorded-offers";
 import { RecommendationsDashboard } from "./recommendations-dashboard";
@@ -7,9 +7,48 @@ import { RecommendationsDashboard } from "./recommendations-dashboard";
 const data = () => structuredClone(mockRecordedOffers);
 const fresh = () => { const v = data(); v.as_of_utc = "2026-10-10T13:04:59Z";
   Object.assign(v.fixtures[0].offers[0], { observation_age_seconds: 299, status: "RECENT_QUALIFYING", current_recommendation: true }); return v; };
+beforeEach(() => { vi.spyOn(api, "recommendations").mockResolvedValue([]); });
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks(); });
 
 describe("recorded Recommendations", () => {
+  it("preserves current offers from earlier cohorts independently of recorded selection", async () => {
+    const { mockRecommendations } = await import("@/lib/api/mock-recommendations");
+    const older = structuredClone(mockRecommendations[0]);
+    older.prediction_id = "a".repeat(64);
+    older.observation_age_seconds = 0;
+    vi.mocked(api.recommendations).mockResolvedValue([older]);
+    vi.spyOn(api, "recordedOffers").mockResolvedValue(data());
+    render(<RecommendationsDashboard />);
+    const feed = screen.getByRole("region", {name: "Current recommendations across all forecast cohorts"});
+    await within(feed).findByText(`Frozen forecast ${older.prediction_id}`);
+    expect(within(feed).getByText("Recently checked · qualifying")).toBeInTheDocument();
+    expect(within(feed).getByRole("link", {name: "Recorded forecast evidence"})).toHaveAttribute("href", `/predictions#prediction-${older.prediction_id}`);
+    expect(await screen.findByRole("article")).toBeInTheDocument();
+  });
+  it("keeps the current feed visible when recorded history fails and clears it on current-read failure", async () => {
+    const { mockRecommendations } = await import("@/lib/api/mock-recommendations");
+    vi.mocked(api.recommendations).mockResolvedValue(structuredClone(mockRecommendations));
+    vi.spyOn(api, "recordedOffers").mockRejectedValue(new Error("unavailable"));
+    render(<RecommendationsDashboard />);
+    const feed = screen.getByRole("region", {name: "Current recommendations across all forecast cohorts"});
+    await within(feed).findByText("Recently checked · qualifying");
+    vi.mocked(api.recommendations).mockRejectedValue(new Error("private"));
+    fireEvent(window, new Event("focus"));
+    await within(feed).findByRole("alert");
+    expect(within(feed).queryByText("Recently checked · qualifying")).not.toBeInTheDocument();
+  });
+  it("expires current-feed offers locally without hiding their recorded cards", async () => {
+    vi.useFakeTimers();
+    const { mockRecommendations } = await import("@/lib/api/mock-recommendations");
+    vi.mocked(api.recommendations).mockResolvedValue([{...mockRecommendations[0], observation_age_seconds:299}]);
+    vi.spyOn(api, "recordedOffers").mockResolvedValue(data());
+    render(<RecommendationsDashboard />); await act(async () => {});
+    const feed = screen.getByRole("region", {name: "Current recommendations across all forecast cohorts"});
+    expect(within(feed).getByText("Recently checked · qualifying")).toBeInTheDocument();
+    await act(async () => { await vi.advanceTimersByTimeAsync(2000); });
+    expect(within(feed).queryByText("Recently checked · qualifying")).not.toBeInTheDocument();
+    expect(screen.getByRole("article")).toBeInTheDocument();
+  });
   it("keeps stale prices/value visible with timestamp and evidence links", async () => {
     vi.spyOn(api, "recordedOffers").mockResolvedValue(data());
     render(<RecommendationsDashboard />);

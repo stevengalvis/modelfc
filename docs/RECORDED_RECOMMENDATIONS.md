@@ -68,7 +68,14 @@ are retained for inspection, never advertised as usable bets.
 
 ## Display behavior
 
-Recommendations shows one card per fixture, up to three backend-ranked unique
+Recommendations first shows the unchanged current recommendation feed across all
+forecast cohorts, in backend order, independently of the recorded view. This keeps
+eligible earlier-cohort offers and Next matches recommendation links visible even
+when the latest capture cohort has no edge or recorded-history loading fails.
+Current-read failures clear current offers; monotonic elapsed age and kickoff
+checks only expire them locally. The recorded cards retain prior saved reads.
+
+The recorded view shows one card per fixture, up to three backend-ranked unique
 team/side/line targets with one bookmaker each, and expandable full bookmaker/line
 detail. Each quote shows recorded price, exact UTC observation time, age, model
 probability, edge and expected value at that quote. Exact opportunity links are used

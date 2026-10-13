@@ -16,7 +16,7 @@ describe("site modes", () => {
   it("renders live recommendations empty without demo offers or Analyze navigation", async () => {
     vi.stubEnv("NEXT_PUBLIC_MODELFC_API_MODE", "live");
     vi.stubEnv("NEXT_PUBLIC_MODELFC_API_URL", "https://api.example.test/api/v1");
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({as_of_utc: "2026-10-13T13:00:00Z", fixtures: []}), { status: 200 })));
+    vi.stubGlobal("fetch", vi.fn().mockImplementation((url: string) => Promise.resolve(new Response(JSON.stringify(url.includes("view=recorded") ? {as_of_utc: "2026-10-13T13:00:00Z", fixtures: []} : []), { status: 200 }))));
     const { default: Recommendations } = await import("./recommendations/page");
     render(<Recommendations />);
     await screen.findByText("No upcoming recorded fixtures");
