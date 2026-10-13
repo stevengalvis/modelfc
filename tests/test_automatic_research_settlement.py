@@ -210,6 +210,79 @@ sys.meta_path.insert(0,Block())
         self.assertEqual([(r['market'],r['status']) for r in self.run_settlement()['markets']], [('BTTS','REUSED')])
         self.assertEqual(self.immutable(), before)
 
+    def test_partial_refresh_entrypoints_preserve_failure_and_settle_only_successful_e1(self):
+        self.config_file.write_text(json.dumps({'data_directory': str(self.history), 'leagues': ['E1','SP1'], 'max_age_days':14}))
+        payload_path = self.fixture.root/'synthetic-response.csv'; payload_path.write_bytes(self.payload)
+        guard = self.fixture.root/'partial-guard'; guard.mkdir()
+        (guard/'sitecustomize.py').write_text('''import socket, urllib.request, os
+socket.socket.connect=lambda *a,**k: (_ for _ in ()).throw(AssertionError('network forbidden'))
+class Response:
+ status=200
+ headers={}
+ def __enter__(self): return self
+ def __exit__(self,*a): pass
+ def read(self,limit): return open(os.environ['SYNTHETIC_CSV'],'rb').read(limit)
+ def geturl(self): return 'https://www.football-data.co.uk/mmz4281/2627/E1.csv'
+def saved(url,**kwargs):
+ with open(os.environ['SYNTHETIC_CSV']+'.requests','a') as log: log.write(url+'\\n')
+ if not url.endswith('/E1.csv'): raise OSError('synthetic unrelated league failure')
+ return Response()
+urllib.request.urlopen=saved
+''')
+        env={**os.environ,'SYNTHETIC_CSV':str(payload_path), 'PYTHONPATH':os.pathsep.join((str(guard),str(Path('src').resolve())))}
+        refreshed=subprocess.run([sys.executable,'-m','modelfc.corner_refresh','--config',str(self.config_file),'--retain-result-evidence'],env=env,capture_output=True,text=True,timeout=30)
+        self.assertEqual(refreshed.returncode,1,refreshed.stdout+refreshed.stderr)
+        self.assertIn('SP1: FAILED',refreshed.stdout)
+        requests=Path(str(payload_path)+'.requests')
+        self.assertEqual(requests.read_text().splitlines(),[
+            'https://www.football-data.co.uk/mmz4281/2627/E1.csv',
+            'https://www.football-data.co.uk/mmz4281/2627/SP1.csv'])
+        self.assertIn('OnFailure=modelfc-research-settlement.service', Path('deploy/modelfc-corner-refresh.service.d/research-settlement.conf').read_text())
+        report_path=self.refresh_state/'status.json'; saved_report=report_path.read_bytes()
+        pin=json.loads(saved_report)['results'][0]['result_evidence']['sha256']
+        acquisition=(self.refresh_state/'result-evidence'/f'{pin}.json').read_bytes()
+        for expected in ('RECORDED','REUSED'):
+            process=subprocess.run([sys.executable,'-m','modelfc.research_settlement','--config',str(self.config_file),'--state-dir',str(self.state),'--enabled'],env=env,capture_output=True,text=True,timeout=30)
+            self.assertEqual(process.returncode,0,process.stdout+process.stderr)
+            result=json.loads(process.stdout)
+            receipt=json.loads((self.state/'research-settlement-runs'/f"{result['run_id']}.json").read_bytes())
+            self.assertEqual({r['status'] for r in receipt['markets']},{expected})
+            self.assertEqual(report_path.read_bytes(),saved_report)
+            self.assertEqual((self.refresh_state/'result-evidence'/f'{pin}.json').read_bytes(),acquisition)
+            self.assertEqual(len(requests.read_text().splitlines()),2)  # No settlement downloads/retries.
+        # E1 failure/staleness or an incomplete report cannot borrow another row.
+        self.config=CornerDataConfig(self.history,('E1','SP1'),14)
+        for change in ({'status':'failed'}, {'stale':True}):
+            report=json.loads(saved_report); report['results'][0].update(change)
+            report_path.write_text(json.dumps(report))
+            self.assertEqual(self.run_settlement()['reason'],'REFRESH_NOT_SUCCESSFUL')
+        report=json.loads(saved_report);report['results'].pop(0);report_path.write_text(json.dumps(report))
+        self.assertEqual(self.run_settlement()['reason'],'REFRESH_NOT_SUCCESSFUL')
+
+    def test_304_does_not_retimestamp_or_replace_retained_acquisition(self):
+        self.refresh()
+        before={p:p.read_bytes() for p in (self.refresh_state/'result-evidence').glob('*.json')}
+        metadata={}
+        class NotModified:
+            status=304
+            def __enter__(self): return self
+            def __exit__(self,*args): pass
+            def read(self,*args): raise AssertionError('304 must not supply bytes')
+        with patch.object(refresh,'urlopen',return_value=NotModified()):
+            with self.assertRaisesRegex(ValueError,'HTTP 200'):
+                refresh.download_csv('https://www.football-data.co.uk/mmz4281/2627/E1.csv',metadata=metadata)
+        self.assertEqual(metadata,{})
+        self.assertEqual(before,{p:p.read_bytes() for p in before})
+
+    def test_unchanged_hash_skips_csv_publication_without_disabling_settlement(self):
+        self.refresh(); target=self.history/'E1_2627.csv'; before=target.stat().st_ino
+        with patch.object(refresh,'atomic_write',wraps=refresh.atomic_write) as writes:
+            report=self.refresh()
+        self.assertEqual(report['results'][0]['status'],'unchanged')
+        self.assertFalse(any(call.args[0]==target for call in writes.call_args_list))
+        self.assertEqual(target.stat().st_ino,before)
+        self.assertEqual(self.run_settlement()['status'],'COMPLETE')
+
     def test_nonfinal_and_wrong_kickoff_remain_pending_or_rejected(self):
         for payload in (self.payload.replace(b',6,3',b',6,3,ABANDONED').replace(b'HC,AC\n',b'HC,AC,Status\n').replace(b',4,4\n',b',4,4,FT\n'),
                         self.payload.replace(b'13:00',b'12:00')):

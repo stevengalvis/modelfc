@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "enabled": false,
+  "competition": "E1",
+  "daily_utc": "06:00",
+  "conditional_utc": "18:00"
+}

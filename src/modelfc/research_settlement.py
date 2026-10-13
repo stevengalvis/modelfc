@@ -1,6 +1,6 @@
 """Opt-in, network-free research settlement after a validated CSV refresh.
 
-Invoked by refresh OnSuccess, not an independent timer. Never holds a history
+Invoked after refresh success or failure, not an independent timer. Never holds a history
 lock while taking a ledger lock. Existing market writers remain authoritative.
 """
 import argparse
@@ -33,10 +33,15 @@ def evidence(config, *, as_of):
         _require(checked <= as_of and (as_of - checked).total_seconds() <= 86400,
                  'REFRESH_EVIDENCE_STALE')
         rows = report['results']
-        _require(isinstance(rows, list) and {r['league'] for r in rows} == set(config.leagues)
-            and len(rows) == len(config.leagues) and all(r['status'] in ('updated', 'unchanged')
-                and r['stale'] is False for r in rows), 'REFRESH_NOT_SUCCESSFUL')
+        _require(isinstance(rows, list) and all(isinstance(r, dict) for r in rows)
+            and {r['league'] for r in rows} == set(config.leagues)
+            and len(rows) == len(config.leagues) and 'E1' in config.leagues,
+            'REFRESH_NOT_SUCCESSFUL')
         row = next(r for r in rows if r['league'] == 'E1')
+        # Overall refresh health remains nonzero for other leagues. Only E1's
+        # own successful publication may authorize this E1-only consumer.
+        _require(row['status'] in ('updated', 'unchanged') and row['stale'] is False,
+                 'REFRESH_NOT_SUCCESSFUL')
         _require(isinstance(row.get('result_evidence'), dict) and row['result_evidence'].get('status') == 'RETAINED', 'REFRESH_EVIDENCE_UNAVAILABLE')
         pin = row['result_evidence']['sha256']
         metadata, raw = load(refresh, pin, as_of=as_of)
@@ -79,6 +84,7 @@ def run(config, state, *, enabled=False, as_of=None):
             metadata, raw, pin = evidence(config, as_of=observed)
             receipt['evidence_sha256'] = pin
             receipt['source'] = metadata
+            receipt['eligibility_scope'] = 'E1_SUCCESSFUL_PUBLICATION'
             receipt.update(research_outcomes.sweep(state, lambda fixture:
                 btts_outcomes.csv_bytes_evidence(raw, metadata['filename'], metadata['file_sha256'],
                     metadata['retrieved_at_utc'], fixture), as_of=observed,

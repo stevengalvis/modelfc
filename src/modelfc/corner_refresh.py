@@ -30,6 +30,10 @@ def current_season(today: date) -> str:
 def download_csv(url: str, *, metadata: dict | None = None) -> bytes:
     requested = datetime.now(timezone.utc).isoformat()
     with urlopen(url, timeout=45) as response:
+        # No conditional-cache substitution: a 304 is not acquisition of bytes.
+        # Never mint a new retrieval timestamp for a retained old CSV.
+        if metadata is not None and response.status != 200:
+            raise ValueError("result evidence requires an HTTP 200 acquisition")
         payload = response.read(MAX_DOWNLOAD_BYTES + 1)
         if metadata is not None:
             from modelfc.refresh_result_evidence import HEADERS
