@@ -13,6 +13,7 @@ import tempfile
 
 from modelfc.history_completeness import MAX_CALENDAR_BYTES, parse_calendar
 from modelfc.ledger_storage import write_new_record
+from modelfc.providers.oddspapi_saved_response import _json as parse_json
 
 
 # Leave headroom for existing forecast ledgers; this is not a disk reservation.
@@ -55,10 +56,10 @@ def read(path, limit):
 
 def retained(state):
     root = directory(state)
-    pin = json.loads(read(root / 'latest.json', 256))
+    pin = parse_json(read(root / 'latest.json', 256))
     if not isinstance(pin, dict) or set(pin) != {'bundle_sha256'} or not isinstance(pin['bundle_sha256'], str) or not re.fullmatch('[0-9a-f]{64}', pin['bundle_sha256']):
         raise ValueError('invalid calendar pin')
-    record = json.loads(read(root / (pin['bundle_sha256'] + '.json'), 8 * MAX_CALENDAR_BYTES))
+    record = parse_json(read(root / (pin['bundle_sha256'] + '.json'), 8 * MAX_CALENDAR_BYTES))
     if not isinstance(record, dict) or set(record) != {'raw'} or not isinstance(record['raw'], str):
         raise ValueError('invalid calendar record')
     raw = record['raw'].encode('utf-8')
@@ -83,7 +84,7 @@ def publish(state, raw, *, as_of):
         # Validate old evidence at its original time, even when now stale.
         from modelfc.acquisition_planner import utc
         from datetime import datetime
-        old_bundle = json.loads(previous)
+        old_bundle = parse_json(previous)
         if not isinstance(old_bundle, dict) or not isinstance(old_bundle.get('retrieved_at'), str):
             raise ValueError('invalid retained calendar timestamp')
         try:
@@ -105,7 +106,7 @@ def publish(state, raw, *, as_of):
             or space.f_favail < MIN_FREE_INODES + 2):
         raise OSError('calendar retention capacity unavailable')
     if os.path.lexists(path):
-        if json.loads(read(path, 8 * MAX_CALENDAR_BYTES)) != {'raw': raw.decode('utf-8')}:
+        if parse_json(read(path, 8 * MAX_CALENDAR_BYTES)) != {'raw': raw.decode('utf-8')}:
             raise ValueError('calendar publication conflict')
     else:
         write_new_record(path, {'raw': raw.decode('utf-8')})

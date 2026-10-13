@@ -203,9 +203,11 @@ class RetentionTests(unittest.TestCase):
         self.root.mkdir(mode=0o700)
         malformed = [{'retrieved_at': value} for value in (42, None, [], {}, 'invalid', '9999-12-31T23:59:59-12:00')]
         malformed.extend([[], 42, {}])
-        for index, value in enumerate(malformed):
-            with self.subTest(value=value):
-                previous = json.dumps(value).encode()
+        encoded = [json.dumps(value).encode() for value in malformed]
+        encoded.extend([b'[' * 2000 + b'0' + b']' * 2000,
+                        b'{"retrieved_at":0,"retrieved_at":null}'])
+        for index, previous in enumerate(encoded):
+            with self.subTest(case=index):
                 digest = hashlib.sha256(previous).hexdigest()
                 record = self.root/(digest+'.json')
                 record.write_text(json.dumps({'raw': previous.decode()})); record.chmod(0o600)
