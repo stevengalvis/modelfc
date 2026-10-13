@@ -2204,6 +2204,32 @@ class TestFailureDiagnosticsTest(unittest.TestCase):
         self.assertIsNotNone(children[0].poll())
         self.assertTrue(children[0].stderr.closed)
 
+    def test_capture_read_error_reaps_child_and_preserves_bounded_progress(self):
+        real_popen = subprocess.Popen
+        children = []
+        def start(*args, **kwargs):
+            child = real_popen(*args, **kwargs)
+            children.append(child)
+            return child
+        real_read = os.read
+        reads = 0
+        def read(fd, size):
+            nonlocal reads
+            if children and fd == children[0].stderr.fileno():
+                reads += 1
+                if reads > 1:
+                    raise OSError("secret capture exception")
+            return real_read(fd, size)
+        with patch.object(deploy.subprocess, "Popen", side_effect=start), patch.object(deploy.os, "read", side_effect=read):
+            with self.assertRaises(deploy.TestCaptureFailure) as raised:
+                deploy.capture_test_process([sys.executable, "-c",
+                    "import os,time; os.write(2,b'progress'); time.sleep(.1); os.write(2,b'x'); time.sleep(60)"],
+                    cwd=self.root, env={}, timeout=2)
+        self.assertEqual(raised.exception.classification, "CAPTURE_ERROR")
+        self.assertEqual(raised.exception.captured, b"progress")
+        self.assertIsNotNone(children[0].poll())
+        self.assertTrue(children[0].stderr.closed)
+
     def test_stale_failure_removed_and_unknown_count_retained_as_null(self):
         retained = self.root / "last-test-failure.json"
         retained.write_text(json.dumps({"sha": "b" * 40, "tests_run": 100}))
