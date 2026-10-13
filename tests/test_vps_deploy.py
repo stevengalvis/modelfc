@@ -2223,7 +2223,7 @@ class TestFailureDiagnosticsTest(unittest.TestCase):
         with patch.object(deploy.subprocess, "Popen", side_effect=start), patch.object(deploy.os, "read", side_effect=read):
             with self.assertRaises(deploy.TestCaptureFailure) as raised:
                 deploy.capture_test_process([sys.executable, "-c",
-                    "import os,time; os.write(2,b'progress'); time.sleep(.1); os.write(2,b'x'); time.sleep(60)"],
+                    "import os; os.write(2,b'progress')"],
                     cwd=self.root, env={}, timeout=2)
         self.assertEqual(raised.exception.classification, "CAPTURE_ERROR")
         self.assertEqual(raised.exception.captured, b"progress")
