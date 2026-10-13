@@ -178,3 +178,30 @@ class RecordedOffersTests(unittest.TestCase):
         self.assertEqual(chosen, display_keys(list(reversed(rows)), now=now))
         recent = display_keys(history, now=now)
         self.assertEqual(recent, {fixture_key(p) for p in history[:8]})
+
+    def test_research_polling_selects_before_full_validation_and_never_loads_performance(self):
+        from modelfc import research_predictions
+        from tests.test_history_completeness import NOW
+        fixture = forecasts.ForecastOnlyRunnerTests(); fixture.setUp(); self.addCleanup(fixture.doCleanups)
+        with patch('modelfc.forecast_only_runner.git_commit_sha', return_value='f'*40):
+            fixture.execute()
+        before = {p: p.read_bytes() for p in fixture.state.rglob('*.json')}
+        with patch('modelfc.research_outcomes.corner_results', side_effect=AssertionError('outcome scan forbidden')), \
+             patch('modelfc.btts_outcomes.performance', side_effect=AssertionError('performance forbidden')), \
+             patch.object(research_predictions, '_validate', wraps=research_predictions._validate) as validate:
+            self.fixture.clock.now.return_value = NOW
+            current = reader.read_recorded_offers(fixture.state)
+            self.assertTrue(current['fixtures'])
+            self.assertGreater(validate.call_count, 0)
+            validate.reset_mock()
+            self.fixture.clock.now.return_value = NOW + timedelta(days=10)
+            self.assertEqual(reader.read_recorded_offers(fixture.state)['fixtures'], [])
+            validate.assert_not_called()
+        self.assertEqual(before, {p: p.read_bytes() for p in fixture.state.rglob('*.json')})
+        # Identity selection still rejects tampered evidence instead of hiding it.
+        path = next((fixture.state/'research-predictions').glob('*.json'))
+        record = json.loads(path.read_bytes())
+        record['forecast']['frozen_at'] = '2000-01-01T00:00:00+00:00'
+        path.write_text(json.dumps(record))
+        with self.assertRaises(reader.LedgerError):
+            reader.read_recorded_offers(fixture.state)

@@ -32,7 +32,11 @@ Canonical fixture identity breaks ties. Future-created forecasts remain excluded
 Selection occurs before historical observation/target/outcome loading or market
 intelligence work, not after enriching the entire history. The validated prediction
 inventory still requires a ledger scan; this change does not claim indexed or
-constant-time storage access. Older evidence remains in the existing on-demand
+constant-time storage access. Research selection uses only hash-checked fixture
+identities; full forecast validation applies to the selected records, and this
+price display never computes full research outcomes or BTTS performance. Research
+fixtures become historical at kickoff without requiring an outcome join. Full
+outcomes remain available in their existing ledger/performance views. Older evidence remains in the existing on-demand
 forecast ledger. The UI labels the bound and links there, and historical fixture
 components mount only when their section is opened.
 
