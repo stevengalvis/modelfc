@@ -155,3 +155,10 @@ The API UID and GID must be positive and distinct from the deployment, runtime
 and validator accounts' UIDs, primary GIDs and named groups. Missing required
 service-account lookups fail closed. Disposable acceptance must include GID 0,
 shared numeric IDs and named-group drift without modifying production NSS.
+
+The invocation baseline is refreshed immediately before the helper's restart
+request, after initial readiness probes that may cross an automatic rotation.
+Readiness also requires no pending systemd Job before and after HTTP; an empty
+text Job is verified as the typed (uo) [0, /] tuple. An already queued job blocks
+issuing another restart. Include automatic rotation during the first readiness
+probe and a queued restart with an otherwise healthy old invocation in acceptance.
