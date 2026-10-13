@@ -1,6 +1,6 @@
 """Real retained refresh -> existing outcome writers, with no provider access."""
 from copy import deepcopy
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 import fcntl
 import hashlib
 import json
@@ -41,7 +41,7 @@ class AutomaticSettlementTests(unittest.TestCase):
             def read(self, limit): return payload
             def geturl(self): return 'https://www.football-data.co.uk/mmz4281/2627/E1.csv'
         with patch.object(refresh, 'urlopen', return_value=Response()) as request:
-            report = refresh.refresh_data(self.config, retain_result_evidence=enabled)
+            report = refresh.refresh_data(self.config, date(2026, 10, 13), retain_result_evidence=enabled)
         self.assertEqual(request.call_count, 1)
         return report
 
@@ -81,6 +81,11 @@ class AutomaticSettlementTests(unittest.TestCase):
         self.refresh(self.payload.replace(b',6,3', b',,'))
         result = self.run_settlement()
         self.assertEqual({r['market']:r['status'] for r in result['markets']}, {'CORNER':'UNRESOLVED','BTTS':'RECORDED'})
+        with TestClient(create_app(state_dir=self.state)) as api:
+            rows = {r['prediction_type']: r for r in api.get('/api/v1/predictions').json()}
+            self.assertEqual(rows['BTTS']['settlement_status'], 'SETTLED')
+            self.assertEqual(rows['CORNER']['settlement_status'], 'EXPIRED_UNSETTLED')
+            self.assertEqual(api.get('/api/v1/research/btts/performance').json()['metrics']['sample_count'], 1)
         before = self.immutable()
         self.refresh()
         self.assertEqual({r['market']:r['status'] for r in self.run_settlement()['markets']}, {'CORNER':'RECORDED','BTTS':'REUSED'})
