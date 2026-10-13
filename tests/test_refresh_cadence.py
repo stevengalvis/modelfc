@@ -92,4 +92,6 @@ class CadenceTests(unittest.TestCase):
         pin=json.loads((self.state/'odds-calendar/latest.json').read_text())['bundle_sha256']
         path=self.state/'odds-calendar'/f'{pin}.json'
         path.write_bytes(path.read_bytes()+b'corrupt')
-        self.assertFalse(self.plan(self.now+timedelta(minutes=1))['would_request'])
+        result=self.plan(self.now+timedelta(seconds=1))
+        self.assertFalse(result['would_request'])
+        self.assertEqual(result['reason'],'SAVED_EVIDENCE_UNAVAILABLE_OR_INVALID')
