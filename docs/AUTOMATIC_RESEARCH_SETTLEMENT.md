@@ -110,81 +110,95 @@ rollback. Storage retention/pruning is not introduced; evidence capture refuses
 low capacity with an explicit failure rather than exhausting the shared volume.
 
 
-## Disabled cadence preparation and permission boundary
+## Disabled one-morning cadence preparation
 
 Private experimentation is the current use case; commercialization is not a
-current blocker. That does not establish explicit automation permission. The
-football-data.co.uk `data.php` and `contact.php` wording remains under separate
-parent review. This PR makes zero new live downloads and activates no schedule.
+current blocker. That does not establish automation permission. Official
+football-data.co.uk permission wording remains under separate parent review.
+Zero live downloads or host activation occur in this PR.
 
-The checked-in/live-template cadence remains Monday/Thursday 06:00 UTC. No timer
-or refresh service schedule is changed here. `deploy/proposals/refresh-cadence.json`
-is deliberately `enabled:false` and is not read by any installed launcher/unit.
-The read-only planner can be reviewed with saved state:
+The revised proposal replaces daily-plus-afternoon: **one 06:00 UTC opportunity
+per needed league; no 18:00 opportunity**. Corners and BTTS share the same CSV.
+`deploy/proposals/refresh-cadence.json` is `enabled:false`; no launcher or installed
+service reads it. The installed/checked-in Monday/Thursday 06:00 timer is unchanged.
+The offline, read-only planner is reviewable with disposable saved state:
 
 ```bash
 PYTHONPATH=src python -m modelfc.refresh_cadence \
   --state-dir /path/to/disposable/state \
   --config /path/to/reviewed/corner_data.json \
   --policy deploy/proposals/refresh-cadence.json \
-  --as-of 2026-10-13T18:00:00Z
+  --as-of 2026-10-13T06:00:00Z
 ```
 
-Proposed policy: daily 06:00 UTC; an additional 18:00 UTC opportunity only for
-unique supported E1 fixtures/markets with unresolved outcomes and a matching
-FINISHED fixture in a fresh, hash-verified retained calendar. Exact canonical
-teams and UTC kickoff must match; elapsed kickoff is not proof of completion.
-Existing saved calendar parsing supplies the present adapter; cadence policy is
-separate from any CSV downloader. No new calendar/provider calls occur. Missing,
-stale, future, corrupt, nonfinal or mismatched calendar evidence blocks the evening
-proposal without implying that no matches finished. A settled BTTS result with
-missing corners leaves only the separate CORNER result pending. This calendar
-is a scheduling signal, never substituted for verified CSV settlement evidence.
+### Evidence, training history and fallback
 
-Output always reports `DISABLED`, zero provider requests and `would_request` plus
-reason/pending identities; an enabled or broadened policy is rejected. Evaluation
-uses UTC minute slots and cannot execute a request or write state. It is not an
-installed scheduler and does not implement catch-up, last-attempt deduplication or
-host activation. Future host wiring must serialize attempts, persist per-slot
-receipts, recheck pending evidence immediately before acquisition, and enforce at
-most one request opportunity per slot. Those execution controls and permission
-approval are prerequisites, not claims of this offline preparation.
+The currently available retained calendar covers E1 only. It must pass the existing
+full-season, hash, team-binding and final-status validator, with retrieval no more
+than **six hours** before evaluation and not in the future. The calendar was saved
+by the existing forecast acquisition path; this planner never refreshes it.
+FINISHED status and canonical date/team history identity identify missing CSV
+training rows or corner counts, or a discrepancy in final goals. Therefore a
+finished match can qualify even when no model forecast exists. An absent current
+season CSV can also qualify when the existing history lock and verified calendar
+are available. Missing locks, corrupt history or missing/stale calendar are
+**unknown**, not evidence of no matches and not permission for blind fetching.
 
-Before considering an extra request, retry the existing network-free settlement
-against its retained verified successful E1 publication, then recompute pending
-fixtures. Replays do not rewrite metadata or original retrieval timestamps. A real
-HTTP 200 fetch with byte-identical content may have its own real acquisition time;
-it still skips CSV replacement and reuses existing immutable agreeing outcomes.
-HTTP 304 is deliberately unsupported for acquisition evidence and cannot mint a
-new retrieval time for cached bytes. No conditional HTTP validator headers are
-sent in this change. A future conditional-fetch adapter must distinguish check
-metadata from the original byte acquisition and retain/validate both bindings;
-it cannot infer provenance from ETag, mtime or a 304 alone. Until approved, use
-existing verified hashes/replays rather than fetching merely to retry settlement.
+Unresolved frozen fixture/market pairs are reported independently, using exact
+canonical teams and UTC kickoff and deduplicating cohorts/books. If their verified
+finished result already exists in CSV, they require offline settlement, not another
+fetch. Missing corner statistics remain a separate history/result need after BTTS
+settles. The calendar is only a scheduling signal; outcomes still require retained
+genuine CSV acquisition evidence. Never manufacture that provenance for an old CSV.
 
-Offline tests exercise a real refresh command exiting 1 for SP1 failure with a
-successful retained E1 publication, followed by the actual network-blocked
-settlement command and idempotent replay. This verifies command semantics and the
-unit's configured OnFailure handoff; only disposable real-systemd host acceptance
-can prove the trigger, identity/ACL and sandbox behavior after installation.
+Other configured leagues are listed as `unassessed_leagues`, never silently treated
+as complete or newly supported. **Do not replace or disable the existing history
+refresh with this E1-only gate.** Activation requires either equivalent already-
+permitted saved calendar coverage for each affected league or a separately reviewed
+bounded baseline history-refresh fallback. Without that fallback, suppressing
+refresh could strand training history during calendar outages or before forecasts
+exist. The present six-hour calendar availability at 06:00 must be demonstrated
+from existing saved evidence; no new calendar request is authorized to satisfy it.
 
+### Requests, cache semantics and retry limits
 
-Request budget is per configured league, not per timer wake-up. A normal direct
-HTTP 200 opportunity invokes one CSV download per configured league: E1+SP1 means
-two initial requests at 06:00, and at most two more if the evening opportunity is
-eligible. The existing refresh loop has zero automatic download retries per league;
-its failure remains in the report and nonzero exit. The subprocess test counts
-exactly E1 then SP1 once (even when SP1 fails), and zero additional requests across
-two settlement runs. The planner reports configured leagues, maximum download
-attempts per opportunity, zero HTTP retries and disabled conditional caching.
-This is an application-attempt budget, not an unconditional transport-request
-ceiling: existing urllib redirect handling can issue extra requests. Retained
-settlement evidence rejects a response URL different from the requested canonical
-E1 URL. Strict redirect/request metering and once-per-slot host enforcement must
-be settled before live cadence activation; neither is silently claimed here.
+The proposed E1 opportunity reports zero or one eligible league/download attempt,
+shared by BTTS and corners, regardless of how many predictions or markets await
+results. Unassessed leagues do not join that proposed request automatically. The
+existing Mon/Thu refresh still performs one download attempt per configured league:
+E1+SP1 means two initial requests per run. Its loop retries zero times after failure.
+Subprocess tests count E1 then SP1 once and preserve exit 1 on SP1 failure; later
+settlement/replay produces zero further downloads. There is no HEAD+GET sequence.
 
-Unchanged validated bytes still undergo history integrity checks, but do not
-replace/rebuild the published CSV (tested with write-call and inode checks).
-Safe offline settlement retries reuse retained verified provenance within the
-existing freshness window, independent of a byte change; they issue no downloads.
-There is no automatic live retry loop or activated daily/18:00 timer in this PR.
+Unchanged validated bytes still pass history integrity checks, but skip CSV
+replacement/publication (write-call/inode checked). Validated retained evidence can
+be retried offline within the existing freshness window without a new acquisition
+or changed content. Source timestamps and original immutable outcomes remain
+unchanged. A real HTTP 200 with identical bytes may retain its actual retrieval
+time as a separate acquisition; it does not restamp old outcomes.
+
+Conditional HTTP caching is **not enabled**. HTTP 304 cannot supply new byte
+acquisition and is rejected without changing retained metadata. A future adapter
+must bind any conditional check to the original verified bytes and distinguish
+check time from original retrieval time. ETag, mtime or 304 alone cannot invent
+provenance. Existing urllib redirects can add transport requests; the current
+application-attempt count is not a strict wire-request ceiling.
+
+### Disabled controls and activation differences
+
+Output is always `DISABLED`, zero provider requests, and a `would_request` proposal
+with reasons, eligible/unassessed leagues and pending identities. Enabled or
+broadened policy is rejected. This is not a running once-daily scheduler. Future
+approved host wiring must enforce at most one attempt per needed league/UTC day,
+serialize attempts, persist slot/attempt receipts, recheck evidence immediately
+before acquisition, select only approved needed leagues, and refuse redirect or
+retry behavior that breaks the one-request ceiling. These controls are outstanding
+activation prerequisites; no hidden automatic retry or timer is introduced here.
+First try offline settlement from retained verified evidence, then evaluate actual
+missing history. Late updates can wait for the next morning.
+
+Disposable real-systemd acceptance must verify OnSuccess/OnFailure behavior,
+identity/ACLs and denied networking separately from static unit checks. Only a
+successful, non-stale retained E1 publication can authorize settlement; another
+league failure never turns into permission to use failed E1 evidence. Existing
+refresh health signals and all training-history validation stay intact.
