@@ -142,7 +142,7 @@ def _profit(outcome: str | None, american_odds: int) -> float | None:
 
 def _empty_inventory() -> dict[str, Any]:
     return {"predictions": [], "opportunities": [], "targets": {}, "detail": None,
-            "recommendations": []}
+            "recommendations": [], "recorded": {}}
 
 
 def _movement_summary(snapshots: list[dict[str, Any]], decisive: float) -> dict[str, Any]:
@@ -333,7 +333,7 @@ def _contains_prospective_records(state: Path) -> bool:
 
 def _locked_inventory(
     state: Path, *, now: datetime, detail_id: str | None = None,
-    include_recommendations: bool = False,
+    include_recommendations: bool = False, include_recorded: bool = False,
 ) -> dict[str, Any]:
     _state_directory(state, "predictions")
     targets_dir = _state_directory(state, "prediction-targets")
@@ -360,6 +360,7 @@ def _locked_inventory(
     seen_opportunities: set[str] = set()
     recommendation_offers = []
     recommendation_metadata = {}
+    recorded = {}
     for prediction in predictions:
         try:
             prediction_id = prediction["prediction_id"]
@@ -380,6 +381,8 @@ def _locked_inventory(
             outcome = _outcome_tip(state, prediction)
             settlement_status = _status(kickoff, outcome, now)
             opportunities = opportunity_records(state, prediction_id)
+            if include_recorded:
+                recorded[prediction_id] = market_intelligence_from_snapshot(prediction, observations, as_of=now)
             if include_recommendations and settlement_status == "UPCOMING":
                 intelligence = market_intelligence_from_snapshot(prediction, observations, as_of=now)
                 recommendation_offers.extend(intelligence["recommendations"])
@@ -516,6 +519,7 @@ def _locked_inventory(
         item["qualified_at_utc"], item["opportunity_id"],
     ))
     return {
+        "recorded": recorded,
         "predictions": prediction_views,
         "opportunities": opportunity_views,
         "targets": target_views,
@@ -535,7 +539,8 @@ def _locked_inventory(
 
 
 def _inventory(state_dir: str | Path, *, now: datetime | None = None,
-               detail_id: str | None = None, include_recommendations: bool = False) -> dict[str, Any]:
+               detail_id: str | None = None, include_recommendations: bool = False,
+               include_recorded: bool = False) -> dict[str, Any]:
     state = Path(state_dir)
     if not state.exists():
         return _empty_inventory()
@@ -552,7 +557,7 @@ def _inventory(state_dir: str | Path, *, now: datetime | None = None,
     with existing_read_lock(runner_lock):
         with ledger_read_lock(state):
             return _locked_inventory(state, now=now, detail_id=detail_id,
-                                     include_recommendations=include_recommendations)
+                                     include_recommendations=include_recommendations, include_recorded=include_recorded)
 
 
 def read_recommendations(state_dir: str | Path) -> list[dict[str, Any]]:
@@ -711,3 +716,10 @@ def read_performance(state_dir: str | Path) -> dict[str, Any]:
             "unresolved_open_opportunities": len(opportunities) - len(settled),
         },
     }
+
+
+def read_recorded_offers(state_dir: str | Path) -> dict[str, Any]:
+    """Read-only display, never a replacement for current recommendation policy."""
+    from modelfc.recorded_offers import project
+    now = datetime.now(timezone.utc)
+    return project(_inventory(state_dir, now=now, include_recorded=True), now=now)

@@ -1,144 +1,87 @@
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { api } from "@/lib/api/client";
-import { ModelFCApiError } from "@/lib/api/errors";
-import { mockRecommendations } from "@/lib/api/mock-recommendations";
-import type { Recommendation } from "@/lib/api/types";
-import RecommendationsPage from "@/app/recommendations/page";
+import { mockRecordedOffers } from "@/lib/api/mock-recorded-offers";
 import { RecommendationsDashboard } from "./recommendations-dashboard";
 
+const data = () => structuredClone(mockRecordedOffers);
+const fresh = () => { const v = data(); v.as_of_utc = "2026-10-10T13:04:59Z";
+  Object.assign(v.fixtures[0].offers[0], { observation_age_seconds: 299, status: "RECENT_QUALIFYING", current_recommendation: true }); return v; };
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks(); });
 
-describe("Recommendations workspace", () => {
-  it("refreshes the API after a minute and removes backend-expired recommendations", async () => {
-    vi.useFakeTimers();
-    const get = vi.spyOn(api, "recommendations").mockResolvedValueOnce(mockRecommendations).mockResolvedValueOnce([]);
+describe("recorded Recommendations", () => {
+  it("keeps stale prices/value visible with timestamp and evidence links", async () => {
+    vi.spyOn(api, "recordedOffers").mockResolvedValue(data());
     render(<RecommendationsDashboard />);
-    await act(async () => {});
-    expect(screen.getByRole("article")).toBeInTheDocument();
-    await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
-    expect(get).toHaveBeenCalledTimes(2);
-    expect(get.mock.calls[0][0]?.aborted).toBe(true);
-    expect(screen.queryByRole("article")).not.toBeInTheDocument();
-    expect(screen.getByText("No current recommendations")).toBeInTheDocument();
-  });
-  it("refreshes an empty response to discover backend-returned recommendations", async () => {
-    vi.useFakeTimers();
-    vi.spyOn(api, "recommendations").mockResolvedValueOnce([]).mockResolvedValueOnce(mockRecommendations);
-    render(<RecommendationsDashboard />);
-    await act(async () => {});
-    expect(screen.getByText("No current recommendations")).toBeInTheDocument();
-    await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
-    expect(screen.getByRole("article")).toBeInTheDocument();
-  });
-  it("hides the previous offers while a refresh is pending and on refresh failure", async () => {
-    vi.useFakeTimers();
-    let fail!: (error: Error) => void;
-    vi.spyOn(api, "recommendations").mockResolvedValueOnce(mockRecommendations)
-      .mockImplementationOnce(() => new Promise((_, reject) => { fail = reject; }));
-    render(<RecommendationsDashboard />);
-    await act(async () => {});
-    await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
-    expect(screen.getByRole("status")).toBeInTheDocument();
-    expect(screen.queryByRole("article")).not.toBeInTheDocument();
-    await act(async () => { fail(new Error("private backend failure")); });
-    expect(screen.getByRole("alert")).toBeInTheDocument();
-    expect(screen.queryByRole("article")).not.toBeInTheDocument();
-  });
-  it("refreshes on window focus and removes the listener on unmount", async () => {
-    const get = vi.spyOn(api, "recommendations").mockResolvedValue(mockRecommendations);
-    const view = render(<RecommendationsDashboard />);
-    await screen.findByRole("article");
-    fireEvent(window, new Event("focus"));
-    await act(async () => {});
-    expect(get).toHaveBeenCalledTimes(2);
-    view.unmount();
-    fireEvent(window, new Event("focus"));
-    expect(get).toHaveBeenCalledTimes(2);
-  });
-  it("clears the scheduled refresh on unmount", async () => {
-    vi.useFakeTimers();
-    const get = vi.spyOn(api, "recommendations").mockResolvedValue(mockRecommendations);
-    const view = render(<RecommendationsDashboard />);
-    await act(async () => {});
-    view.unmount();
-    await vi.advanceTimersByTimeAsync(120_000);
-    expect(get).toHaveBeenCalledTimes(1);
-  });
-  it("renders the page, active navigation and all backend card facts", async () => {
-    vi.spyOn(api, "recommendations").mockResolvedValue(structuredClone(mockRecommendations));
-    render(<RecommendationsPage />);
-    expect(screen.getByRole("heading", { level: 1, name: "Recommendations" })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Recommendations" })).toHaveAttribute("aria-current", "page");
     const card = await screen.findByRole("article");
-    expect(within(card).getByText("Demo West Ham vs Demo QPR · E1")).toBeInTheDocument();
-    expect(within(card).getByRole("heading", { name: "Demo West Ham UNDER 5.5 CORNERS" })).toBeInTheDocument();
-    for (const value of ["-105", "64.2%", "53.1%", "+11.1 pp", "+$0.25 / $1"])
-      expect(within(card).getByText(value)).toBeInTheDocument();
-    expect(card).toHaveTextContent("FanDuel");
-    expect(card).toHaveTextContent("Kickoff 10 Oct 2026, 14:00 UTC");
-    expect(card).toHaveTextContent("Retrieved 10 Oct 2026, 13:00 UTC");
-    expect(card).toHaveTextContent("Availability checked 10 Oct 2026, 13:00 UTC");
-    expect(card).toHaveTextContent("Quote age at read: 60s");
-    expect(screen.queryByRole("table")).not.toBeInTheDocument();
-    expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
+    expect(within(card).getByRole("heading", { name: "Demo West Ham vs Demo QPR" })).toBeInTheDocument();
+    expect(within(card).getByText("Price needs rechecking")).toBeInTheDocument();
+    expect(within(card).getByText("FanDuel · −105")).toBeInTheDocument();
+    expect(within(card).getByText(/20m 0s/)).toBeInTheDocument();
+    expect(within(card).getByText("Expected value at quote")).toBeInTheDocument();
+    expect(within(card).getByRole("link", {name: "Recorded forecast evidence"})).toHaveAttribute("href", "/predictions#prediction-"+data().fixtures[0].selected_prediction_id);
+    expect(screen.getByText(/does not fetch sportsbook odds/)).toBeInTheDocument();
   });
-  it("formats positive prices and signed negative values without hiding signs", async () => {
-    vi.spyOn(api, "recommendations").mockResolvedValue([{ ...mockRecommendations[0],
-      american_odds: 125, no_vig_probability_edge: -0.011, expected_profit: -0.25 }]);
-    render(<RecommendationsDashboard />);
-    expect(await screen.findByText("+125")).toBeInTheDocument();
-    expect(screen.getByText("-1.1 pp")).toBeInTheDocument();
-    expect(screen.getByText("-$0.25 / $1")).toBeInTheDocument();
+  it("downgrades a recently checked quote locally after five minutes without hiding it", async () => {
+    vi.useFakeTimers(); vi.spyOn(api, "recordedOffers").mockResolvedValue(fresh());
+    render(<RecommendationsDashboard />); await act(async () => {});
+    expect(screen.getByText("Recently checked · qualifying")).toBeInTheDocument();
+    await act(async () => { await vi.advanceTimersByTimeAsync(2000); });
+    expect(screen.getByText("Price needs rechecking")).toBeInTheDocument();
+    expect(screen.getByRole("article")).toBeInTheDocument();
   });
-  it("preserves returned order without price comparison or client sorting", async () => {
-    vi.spyOn(api, "recommendations").mockResolvedValue([mockRecommendations[0],
-      { ...mockRecommendations[0], target_id: "second", team: "Demo QPR", team_side: "AWAY", expected_profit: 10 }]);
-    render(<RecommendationsDashboard />);
-    await screen.findAllByRole("article");
-    expect(screen.getAllByRole("heading", { level: 2 }).map((heading) => heading.textContent))
-      .toEqual(["Demo West Ham UNDER 5.5 CORNERS", "Demo QPR UNDER 5.5 CORNERS"]);
+  it("retains cards during pending refresh and failure without advertising current eligibility", async () => {
+    vi.useFakeTimers(); let fail!: (e: Error) => void;
+    const get = vi.spyOn(api, "recordedOffers").mockResolvedValueOnce(fresh()).mockImplementationOnce(() => new Promise((_, reject) => { fail = reject; }));
+    render(<RecommendationsDashboard />); await act(async () => {});
+    await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+    expect(get).toHaveBeenCalledTimes(2); expect(screen.getByRole("article")).toBeInTheDocument();
+    await act(async () => { fail(new Error("private failure")); });
+    expect(screen.getByRole("alert")).toHaveTextContent("Showing the previous read");
+    expect(screen.queryByText(/private failure/)).not.toBeInTheDocument();
+    expect(screen.getByText("Price needs rechecking")).toBeInTheDocument();
   });
-  it("renders the intentional empty state", async () => {
-    vi.spyOn(api, "recommendations").mockResolvedValue([]);
-    render(<RecommendationsDashboard />);
-    expect(await screen.findByRole("heading", { name: "No current recommendations" })).toBeInTheDocument();
-    expect(screen.getByText("Zeno will surface qualified team-corner opportunities here when fresh sportsbook prices are available.")).toBeInTheDocument();
-    expect(screen.queryByRole("article")).not.toBeInTheDocument();
+  it("moves a fixture to historical at kickoff without discarding the quote", async () => {
+    vi.useFakeTimers(); const v = data(); v.as_of_utc = "2026-10-10T13:59:59Z";
+    v.fixtures[0].offers[0].observation_age_seconds = 3599;
+    vi.spyOn(api, "recordedOffers").mockResolvedValue(v);
+    render(<RecommendationsDashboard />); await act(async () => {});
+    await act(async () => { await vi.advanceTimersByTimeAsync(2000); });
+    expect(screen.getByText("Kicked-off / historical fixtures (1)")).toBeInTheDocument();
+    expect(screen.getByText("Historical quote · kickoff passed")).toBeInTheDocument();
+    expect(screen.getByText("No upcoming recorded fixtures")).toBeInTheDocument();
   });
-  it("has accessible loading until the request completes", async () => {
-    let finish!: (items: Recommendation[]) => void;
-    vi.spyOn(api, "recommendations").mockReturnValue(new Promise((resolve) => { finish = resolve; }));
+  it("groups multiple books and lines in one fixture with expanded detail", async () => {
+    const v = data(); const base = v.fixtures[0].offers[0];
+    v.fixtures[0].offers = [base, {...base, bookmaker: "DraftKings"}, ...[1,2,3].map(n => ({...base, line: base.line+n, target_id: String(n).repeat(32)}))];
+    vi.spyOn(api, "recordedOffers").mockResolvedValue(v);
     render(<RecommendationsDashboard />);
-    expect(screen.getByRole("status")).toHaveTextContent("Loading recommendations");
-    await act(async () => { finish([]); });
-    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    await screen.findByRole("article");
+    expect(screen.getAllByRole("article")).toHaveLength(1);
+    expect(screen.getByText("All 5 recorded offers · bookmakers and lines")).toBeInTheDocument();
+    expect(screen.getByText("DraftKings · −105")).toBeInTheDocument();
   });
-  it.each([new Error("SECRET /private/ledger stack trace"),
-    new ModelFCApiError("SECRET /private/ledger", "LEDGER_INTEGRITY_FAILURE", false, 503)])
-  ("sanitizes errors and retries with a new request", async (error) => {
-    const get = vi.spyOn(api, "recommendations").mockRejectedValueOnce(error).mockResolvedValueOnce([]);
-    render(<RecommendationsDashboard />);
-    const alert = await screen.findByRole("alert");
-    expect(alert).toHaveTextContent("Could not load current recommendations");
-    expect(alert).not.toHaveTextContent("SECRET");
-    expect(alert).not.toHaveTextContent("/private");
-    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
-    await screen.findByText("No current recommendations");
-    expect(get).toHaveBeenCalledTimes(2);
-    expect(get.mock.calls[0][0]?.aborted).toBe(true);
+  it.each([['QUOTE_UNAVAILABLE', 'Quote unavailable at last check'], ['NO_QUALIFYING_EDGE', 'No qualifying edge'], ['VALUE_UNVERIFIED', 'Value comparison incomplete']])("labels %s separately", async (status, label) => {
+    const v = fresh(); Object.assign(v.fixtures[0].offers[0], {status, current_recommendation:false});
+    vi.spyOn(api, "recordedOffers").mockResolvedValue(v);
+    render(<RecommendationsDashboard />); await screen.findByText(label);
   });
-  it("aborts on unmount and ignores a late completion", async () => {
-    let finish!: (items: Recommendation[]) => void;
-    const get = vi.spyOn(api, "recommendations").mockReturnValue(new Promise((resolve) => { finish = resolve; }));
-    const first = render(<RecommendationsDashboard />);
-    const signal = get.mock.calls[0][0];
-    first.unmount();
-    expect(signal?.aborted).toBe(true);
-    get.mockResolvedValueOnce([]);
+  it("shows forecast-only fixtures and labels BTTS as research", async () => {
+    const v = data(); v.fixtures[0].offers = []; v.fixtures[0].selected_prediction_id = null;
+    v.fixtures[0].forecasts.push({...v.fixtures[0].forecasts[0], prediction_id:'f'.repeat(64), prediction_type:'BTTS', research_only:true, btts_yes_probability:0.61, expected_home_corners:null, expected_away_corners:null});
+    vi.spyOn(api, "recordedOffers").mockResolvedValue(v);
     render(<RecommendationsDashboard />);
-    await screen.findByText("No current recommendations");
-    await act(async () => { finish(mockRecommendations); });
-    expect(screen.queryByRole("article")).not.toBeInTheDocument();
+    await screen.findByText(/No recorded corner odds/);
+    expect(screen.getByText("BTTS research · not a recommendation")).toBeInTheDocument();
+    expect(screen.getByText("BTTS Yes probability: 61.0%")).toBeInTheDocument();
+    expect(screen.queryByText("Recently checked · qualifying")).not.toBeInTheDocument();
+  });
+  it("refreshes on focus, cleans up timers and handles initial errors", async () => {
+    const get = vi.spyOn(api, "recordedOffers").mockRejectedValueOnce(new Error('private')).mockResolvedValue(data());
+    const view = render(<RecommendationsDashboard />);
+    await screen.findByRole('alert'); fireEvent.click(screen.getByRole('button', {name:'Retry'}));
+    await screen.findByRole('article'); fireEvent(window, new Event('focus')); await act(async()=>{});
+    expect(get).toHaveBeenCalledTimes(3); view.unmount(); fireEvent(window, new Event('focus'));
+    expect(get).toHaveBeenCalledTimes(3);
   });
 });
