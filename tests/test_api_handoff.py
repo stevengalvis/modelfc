@@ -211,8 +211,8 @@ class BoundaryTests(unittest.TestCase):
 
     def test_account_group_drift_rejected(self):
         account = SimpleNamespace(pw_uid=1234, pw_gid=1234)
-        with patch.object(helper.pwd, 'getpwnam', return_value=account), \
-                patch.object(helper.grp, 'getgrnam', return_value=SimpleNamespace(gr_gid=1234)):
+        with patch.object(helper.pwd, 'getpwnam', side_effect=lambda name: account if name=='modelfc-api' else SimpleNamespace(pw_uid=5678,pw_gid=5678)), \
+                patch.object(helper.grp, 'getgrnam', side_effect=lambda name: SimpleNamespace(gr_gid=1234 if name=='modelfc-api' else 5678)):
             for groups in ([1234,5678], [], [5678]):
                 with patch.object(helper.os, 'getgrouplist', return_value=groups):
                     with self.assertRaises(ValueError): helper.api_account()
@@ -310,3 +310,27 @@ class BoundaryTests(unittest.TestCase):
                 with self.assertRaises(ValueError): helper.empty_bus_properties({'ImportCredential':'as'})
         with patch.object(helper,'command',side_effect=subprocess.TimeoutExpired('busctl',3)):
             with self.assertRaises(subprocess.TimeoutExpired): helper.empty_bus_properties(signatures)
+
+
+    def test_api_ids_cannot_be_privileged_or_alias_other_service_roles(self):
+        names = ('modelfc-api','modelfc-deploy','modelfc-runtime','modelfc-validator')
+        baseline = {name:SimpleNamespace(pw_uid=1000+i,pw_gid=2000+i) for i,name in enumerate(names)}
+        def check(accounts, groups=None):
+            groups = groups or {name:row.pw_gid for name,row in accounts.items()}
+            with patch.object(helper.pwd,'getpwnam',side_effect=lambda name: accounts[name]), \
+                    patch.object(helper.grp,'getgrnam',side_effect=lambda name:SimpleNamespace(gr_gid=groups[name])), \
+                    patch.object(helper.os,'getgrouplist',side_effect=lambda name,gid:[gid]):
+                return helper.api_account()
+        self.assertEqual(check(baseline),baseline['modelfc-api'])
+        for uid,gid in ((0,2000),(1000,0),(-1,2000),(1000,-1)):
+            changed=dict(baseline); changed['modelfc-api']=SimpleNamespace(pw_uid=uid,pw_gid=gid)
+            with self.assertRaises(ValueError): check(changed)
+        for role in names[1:]:
+            for field in ('pw_uid','pw_gid'):
+                with self.subTest(role=role,field=field):
+                    changed=dict(baseline); values=vars(baseline[role]).copy()
+                    values[field]=getattr(baseline['modelfc-api'],field)
+                    changed[role]=SimpleNamespace(**values)
+                    with self.assertRaises(ValueError): check(changed)
+            groups={name:row.pw_gid for name,row in baseline.items()};groups[role]=2000
+            with self.assertRaises(ValueError): check(baseline,groups)
