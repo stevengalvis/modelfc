@@ -11,6 +11,33 @@ beforeEach(() => { vi.spyOn(api, "recommendations").mockResolvedValue([]); });
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks(); });
 
 describe("recorded Recommendations", () => {
+  it("distinguishes a pending current feed from a successful empty feed with saved cards", async () => {
+    let resolve!: (items: []) => void;
+    vi.mocked(api.recommendations).mockImplementation(() => new Promise(done => { resolve = done; }));
+    vi.spyOn(api, "recordedOffers").mockResolvedValue(data());
+    render(<RecommendationsDashboard />);
+    await screen.findByRole("article");
+    expect(screen.getByText("Loading current recommendations…")).toBeInTheDocument();
+    expect(screen.queryByText("No current recommendations")).not.toBeInTheDocument();
+    await act(async () => { resolve([]); });
+    expect(screen.getByText("No current recommendations")).toBeInTheDocument();
+    expect(screen.queryByText("Loading current recommendations…")).not.toBeInTheDocument();
+  });
+  it("ages through system sleep on focus even if monotonic time pauses and refresh hangs", async () => {
+    vi.useFakeTimers(); vi.setSystemTime(new Date("2026-10-10T13:04:59Z"));
+    vi.spyOn(performance, "now").mockReturnValue(100);
+    vi.spyOn(api, "recordedOffers").mockResolvedValueOnce(fresh()).mockImplementation(() => new Promise(() => {}));
+    render(<RecommendationsDashboard />); await act(async () => {});
+    expect(screen.getByText("Recently checked · qualifying")).toBeInTheDocument();
+    vi.setSystemTime(new Date("2026-10-10T15:00:00Z"));
+    fireEvent(window, new Event("focus")); await act(async () => {});
+    expect(screen.queryByText("Recently checked · qualifying")).not.toBeInTheDocument();
+    expect(screen.getByText("Kicked-off / historical fixtures (1)")).toBeInTheDocument();
+    // A backwards wall-clock adjustment cannot make retained quotes current again.
+    vi.setSystemTime(new Date("2026-10-10T13:04:59Z"));
+    await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+    expect(screen.getByText("Kicked-off / historical fixtures (1)")).toBeInTheDocument();
+  });
   it("preserves current offers from earlier cohorts independently of recorded selection", async () => {
     const { mockRecommendations } = await import("@/lib/api/mock-recommendations");
     const older = structuredClone(mockRecommendations[0]);

@@ -76,40 +76,48 @@ function Fixture({ item, asOf, elapsed, failed }: { item: RecordedFixture; asOf:
   </article>;
 }
 
+type Clock = { mono: number; wall: number };
+const clock = (): Clock => ({ mono: performance.now(), wall: Date.now() });
+const tickClock = (previous: Clock): Clock => ({ mono: performance.now(), wall: Math.max(previous.wall, Date.now()) });
+const elapsedSince = (tick: Clock, started: Clock) => Math.max(0, tick.mono - started.mono, tick.wall - started.wall) / 1000;
+
 export function RecommendationsDashboard() {
   const [data, setData] = useState<RecordedOffers | null>(null);
-  const [received, setReceived] = useState(0);
-  const [tick, setTick] = useState(0);
+  const [received, setReceived] = useState<Clock>({mono:0, wall:0});
+  const [tick, setTick] = useState<Clock>({mono:0, wall:0});
   const [failed, setFailed] = useState(false);
   const [attempt, setAttempt] = useState(0);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [current, setCurrent] = useState<Recommendation[]>([]);
-  const [currentReceived, setCurrentReceived] = useState(0);
+  const [currentReceived, setCurrentReceived] = useState<Clock>({mono:0, wall:0});
+  const [currentLoading, setCurrentLoading] = useState(true);
   const [currentFailed, setCurrentFailed] = useState(false);
   useEffect(() => {
-    const timer = window.setInterval(() => setTick(performance.now()), 1000);
+    const timer = window.setInterval(() => setTick(tickClock), 1000);
     return () => window.clearInterval(timer);
   }, []);
   useEffect(() => {
     const controller = new AbortController();
-    const started = performance.now();
+    const started = clock();
     let timer: number | undefined;
-    const refresh = () => setAttempt(value => value + 1);
+    const refresh = () => { setTick(tickClock); setCurrent([]); setCurrentLoading(true); setAttempt(value => value + 1); };
+    const resume = () => { if (document.visibilityState === "visible") refresh(); };
     window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", resume);
     // Keep the existing all-cohort current feed independent of recorded history.
-    setCurrent([]);
+    setCurrent([]); setCurrentLoading(true); setCurrentFailed(false);
     api.recommendations(controller.signal).then(value => {
-      if (!controller.signal.aborted) { setCurrent(value); setCurrentReceived(started); setTick(performance.now()); setCurrentFailed(false); }
-    }).catch(() => { if (!controller.signal.aborted) { setCurrent([]); setCurrentFailed(true); } });
+      if (!controller.signal.aborted) { setCurrent(value); setCurrentReceived(started); setTick(tickClock); setCurrentFailed(false); }
+    }).catch(() => { if (!controller.signal.aborted) { setCurrent([]); setCurrentFailed(true); } }).finally(() => { if (!controller.signal.aborted) setCurrentLoading(false); });
     api.recordedOffers(controller.signal).then(value => {
-      if (!controller.signal.aborted) { setData(value); setReceived(started); setTick(performance.now()); setFailed(false); }
+      if (!controller.signal.aborted) { setData(value); setReceived(started); setTick(tickClock); setFailed(false); }
     }).catch(() => { if (!controller.signal.aborted) setFailed(true); }).finally(() => {
       if (!controller.signal.aborted) timer = window.setTimeout(refresh, 60_000);
     });
-    return () => { controller.abort(); window.clearTimeout(timer); window.removeEventListener("focus", refresh); };
+    return () => { controller.abort(); window.clearTimeout(timer); window.removeEventListener("focus", refresh); document.removeEventListener("visibilitychange", resume); };
   }, [attempt]);
-  const elapsed = Math.max(0, tick - received) / 1000;
-  const currentElapsed = Math.max(0, tick - currentReceived) / 1000;
+  const elapsed = elapsedSince(tick, received);
+  const currentElapsed = elapsedSince(tick, currentReceived);
   const eligibleCurrent = current.filter(item => item.observation_age_seconds + currentElapsed <= 300
     && Date.parse(item.retrieved_at_utc) + (item.observation_age_seconds + currentElapsed) * 1000 < Date.parse(item.kickoff_utc));
   const asOf = data ? Date.parse(data.as_of_utc) : 0;
@@ -123,6 +131,8 @@ export function RecommendationsDashboard() {
     <section aria-label="Current recommendations across all forecast cohorts">
       <h2>Current qualifying offers · all forecast cohorts</h2>
       <p className="recorded-note">This is the existing current recommendation feed, including eligible offers from earlier frozen forecasts. Recorded fixture cards below use their latest capture forecast.</p>
+      {currentLoading && <p role="status">Loading current recommendations…</p>}
+      {!currentLoading && !currentFailed && eligibleCurrent.length === 0 && <p>No current recommendations</p>}
       {currentFailed && <p role="alert">Current recommendations could not be refreshed.</p>}
       <div className="recorded-fixtures">{eligibleCurrent.map(item => <section className="panel" key={`${item.prediction_id}:${item.target_id}:${item.bookmaker}`}>
         <h3>{item.home_team} vs {item.away_team}</h3>

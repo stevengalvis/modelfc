@@ -72,8 +72,9 @@ Recommendations first shows the unchanged current recommendation feed across all
 forecast cohorts, in backend order, independently of the recorded view. This keeps
 eligible earlier-cohort offers and Next matches recommendation links visible even
 when the latest capture cohort has no edge or recorded-history loading fails.
-Current-read failures clear current offers; monotonic elapsed age and kickoff
-checks only expire them locally. The recorded cards retain prior saved reads.
+Current loading, empty and failed reads have separate explicit states.
+Current-read failures clear current offers; elapsed age and kickoff checks only
+expire them locally. The recorded cards retain prior saved reads.
 
 The recorded view shows one card per fixture, up to three backend-ranked unique
 team/side/line targets with one bookmaker each, and expandable full bookmaker/line
@@ -85,10 +86,12 @@ forecasts remain expandable. BTTS links to existing research, never validated be
 
 Reads repeat each minute/on focus without acquiring odds. Cards survive refreshes
 and transient read failures; failures explicitly label the previous read and remove
-recent-current presentation. A monotonic elapsed clock conservatively ages quotes
-between reads (including request latency), downgrades them after 300 seconds and
+recent-current presentation. The greater of monotonic and nondecreasing wall-clock elapsed time conservatively
+ages quotes between reads (including request latency and system sleep), downgrades them after 300 seconds and
 moves fixtures into historical at kickoff. It can only downgrade server status,
-never promote an old or unavailable quote to current. No assumed unchanged lines,
+never promote an old or unavailable quote to current. Focus and visibility resume
+advance the clock immediately and clear current offers while refreshing, even if
+the new request hangs. No assumed unchanged lines,
 current availability or guaranteed refresh time is shown. The API has no trustworthy
 installed scheduler/eligibility timestamp, so the UI promises neither a next check
 nor a next odds capture; it states their distinction.
