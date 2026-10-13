@@ -101,7 +101,12 @@ class ResilienceTests(unittest.TestCase):
                 self.assertEqual(repeated['forecasts_reused'],2,repeated)
                 self.assertEqual(len(self.calls),2)
                 self.assertTrue(all(p.read_bytes()==b for p,b in saved.items()))
-                self.assertTrue(all(self.fixture.state_bytes()[p]==b for p,b in before.items()))
+                self.assertTrue(all(self.fixture.state_bytes()[p]==b for p,b in before.items()
+                    if p != Path("odds-calendar/latest.json")))
+                # Only the latest pointer advances; all original source bytes remain immutable.
+                from modelfc.odds_calendar import retained
+                self.assertEqual(json.loads(retained(self.fixture.state))["retrieved_at"],
+                                 self.at.isoformat())
                 with TestClient(create_app(state_dir=self.fixture.state)) as api:
                     self.assertEqual(api.get('/api/v1/predictions').status_code,200)
                     self.assertEqual(api.get('/api/v1/research/btts/performance').status_code,200)

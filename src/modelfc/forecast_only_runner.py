@@ -16,6 +16,7 @@ from modelfc.history_completeness import (CompletenessRejected, matchweek_cutoff
                                           parse_calendar, verify_completeness)
 from modelfc.ledger_storage import (LedgerError, ensure_directory, git_commit_sha,
                                     ledger_lock, read_json_record, write_new_record)
+from modelfc.odds_calendar import publish as publish_odds_calendar
 from modelfc.offline_forecasts import KnownFixture, load_history_bytes, prepare_forecast
 from modelfc.providers.football_data_calendar import FootballDataCalendarClient
 from modelfc.providers.sportmonks_results import SportmonksRecentResultsClient, SportmonksRejected, validate_bindings
@@ -211,6 +212,7 @@ def run_once(*, state_dir, data_config_path, configuration, sportmonks_token,
                "run_at_utc": started.isoformat(), "eligible_fixture_count": 0,
                "forecasts_prepared": 0, "forecasts_reused": 0, "blocks": 0,
                "retry_after_utc": None, "missing_history": [], "market_blocks": [],
+               "calendar_retention": {"status": "NOT_ATTEMPTED"},
                "provider_requests": {"football_data_org": 0, "sportmonks": 0,
                                      "oddspapi": 0}}
     def count_request(provider):
@@ -230,6 +232,21 @@ def run_once(*, state_dir, data_config_path, configuration, sportmonks_token,
             if (calendar.source_sha256 != calendar_fetch.source_sha256
                     or calendar.retrieved_at != calendar_fetch.retrieved_at):
                 raise ForecastRunRejected("CALENDAR_PROVENANCE_REJECTED")
+            # Evidence retention is optional for forecasting, never for a future
+            # consumer's freshness/provenance gate. Do not retry or fetch again.
+            receipt["calendar_retention"] = {
+                "status": "UNAVAILABLE", "source": "football-data.org",
+                "bundle_sha256": calendar.bundle_sha256,
+                "source_sha256": calendar.source_sha256,
+                "retrieved_at_utc": calendar.retrieved_at.isoformat(),
+            }
+            try:
+                publish_odds_calendar(state, calendar_fetch.raw, as_of=calendar_fetch.retrieved_at)
+            except (OSError, ValueError, TypeError, KeyError):
+                # Fixed status only: filesystem/provider exception text is private.
+                pass
+            else:
+                receipt["calendar_retention"]["status"] = "RETAINED"
             fixtures = _calendar_fixtures(calendar)
             plan = plan_acquisition({"E1": fixtures}, as_of=started, completed=(),
                                      leagues=configured_leagues(["E1"]))
