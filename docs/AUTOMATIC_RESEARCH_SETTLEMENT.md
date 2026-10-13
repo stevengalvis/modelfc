@@ -76,7 +76,9 @@ After a tested deployment and explicit host approval, proposed installation is:
    Do not install/change the separate deployment controller or PR140 handoff.
 3. Create root-owned, mode 0644 `/etc/modelfc/research-settlement.json` containing
    `{"enabled":true}` only after acceptance. Absence/false keeps capture disabled;
-   the settlement launcher refuses disabled execution. Both launcher and unit are
+   the settlement launcher refuses disabled execution. Malformed/unreadable optional
+   control disables capture with a sanitized warning while ordinary refresh continues;
+   it cannot activate the consumer. Both launcher and unit are
    required; deploying Python source alone does not activate the consumer.
 4. Keep the refresh unit's existing history-only writes and state denial unchanged.
    The new service runs as the existing `modelfc-runtime`, with history read-only,

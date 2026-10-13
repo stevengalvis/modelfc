@@ -63,7 +63,14 @@ def launch(*, settlement=False):
     protected(CONFIG, 0)
     if json.loads(CONFIG.read_text())['data_directory'] != str(HISTORY):
         raise ValueError('invalid refresh history configuration')
-    enabled = settlement_enabled()
+    try:
+        enabled = settlement_enabled()
+    except (OSError, ValueError, KeyError):
+        if settlement:
+            raise
+        # Optional consumer configuration must not stop ordinary CSV refresh.
+        print('RESEARCH_SETTLEMENT_CONTROL_REJECTED', file=sys.stderr, flush=True)
+        enabled = False
     if settlement and not enabled:
         raise ValueError('research settlement disabled')
     if settlement:

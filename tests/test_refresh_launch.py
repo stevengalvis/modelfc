@@ -181,7 +181,9 @@ launcher.launch()
             launcher.launch()
             self.assertNotIn('--retain-result-evidence', execute.call_args.args[1])
             control.write_text('{"enabled":"true"}')
-            with self.assertRaises(ValueError): launcher.launch()
+            with self.assertRaises(ValueError): launcher.launch(settlement=True)
+            launcher.launch()
+            self.assertNotIn('--retain-result-evidence', execute.call_args.args[1])
 
     def test_settlement_unit_is_offline_separate_and_no_new_timer(self):
         unit = (ROOT/'deploy/modelfc-research-settlement.service').read_text()
