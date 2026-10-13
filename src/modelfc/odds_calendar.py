@@ -46,7 +46,7 @@ def read(path, limit):
     with os.fdopen(fd, 'rb') as source:
         info = os.fstat(source.fileno())
         if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_size > limit
-                or info.st_uid != os.geteuid() or info.st_mode & 0o077):
+                or info.st_uid != os.geteuid() or stat.S_IMODE(info.st_mode) != 0o600):
             raise ValueError('unsafe calendar file')
         raw = source.read(limit + 1)
         if len(raw) > limit:

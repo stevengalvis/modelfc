@@ -75,9 +75,16 @@ class RetentionTests(unittest.TestCase):
         self.root.rmdir(); self.root.symlink_to(self.state/'prospective', target_is_directory=True)
         with self.assertRaises(ValueError): self.publish()
         self.root.unlink(); self.publish()
-        pin = self.root/'latest.json'; pin.chmod(0o644)
-        with self.assertRaises(ValueError): self.publish()
-        self.assertEqual(pin.stat().st_mode & 0o777, 0o644)
+        for path in self.root.glob('*.json'):
+            for mode in (0o644, 0o400, 0o500, 0o700, 0o1600):
+                with self.subTest(file=path.name, mode=mode):
+                    path.chmod(mode)
+                    before = self.snapshot()
+                    with self.assertRaises(ValueError): self.publish()
+                    self.assertEqual(path.stat().st_mode & 0o7777, mode)
+                    self.assertEqual(self.snapshot(), before)
+            path.chmod(0o600)
+        self.publish()
 
     def test_capacity_guard_preserves_shared_state_and_old_pin(self):
         self.publish()
@@ -227,10 +234,16 @@ class RetentionTests(unittest.TestCase):
         (credentials/'football-data.key').write_text('calendar-token')
         (credentials/'sportmonks.key').write_text('MODELFC_SPORTMONKS_NOT_CONFIGURED')
         script = '''import runpy, socket, sys
+from datetime import datetime, timedelta
 from unittest.mock import patch
+from tests.test_history_completeness import NOW
+class Clock(datetime):
+    @classmethod
+    def now(cls, tz=None):
+        return NOW + timedelta(hours=6)
 from tests.test_forecast_only_runner import _CalendarClient
 from modelfc.providers import football_data_calendar
-with patch.object(football_data_calendar, 'FootballDataCalendarClient', _CalendarClient), patch.object(socket, 'socket', side_effect=AssertionError('network forbidden')):
+with patch('datetime.datetime', Clock), patch.object(football_data_calendar, 'FootballDataCalendarClient', _CalendarClient), patch.object(socket, 'socket', side_effect=AssertionError('network forbidden')):
     sys.argv = ['modelfc.forecast_only_runner', '--state-dir', sys.argv[1], '--data-config', sys.argv[2]]
     runpy.run_module('modelfc.forecast_only_runner', run_name='__main__')
 '''
