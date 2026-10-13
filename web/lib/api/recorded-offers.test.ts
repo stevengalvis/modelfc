@@ -9,6 +9,16 @@ describe("recorded offer contract", () => {
     const v=data(); expect(decodeRecordedOffers(v)).toBe(v);
     expect(decodeRecordedOffers({...v,fixtures:[]})).toEqual({...v,fixtures:[]});
   });
+  it.each([0.000999, -0.000999])("accepts microsecond timestamp precision loss %s without changing age", delta => {
+    const v=data();
+    v.as_of_utc=delta > 0 ? "2026-10-10T13:20:00.000999Z" : "2026-10-10T13:20:00.000000Z";
+    v.fixtures[0].offers[0].retrieved_at_utc=delta > 0 ? "2026-10-10T13:00:00.000000Z" : "2026-10-10T13:00:00.000999Z";
+    v.fixtures[0].offers[0].availability_checked_at_utc=v.fixtures[0].offers[0].retrieved_at_utc;
+    v.fixtures[0].offers[0].observation_age_seconds=1200+delta;
+    expect(decodeRecordedOffers(v)).toBe(v);
+    v.fixtures[0].offers[0].observation_age_seconds+=0.01;
+    expect(()=>decodeRecordedOffers(v)).toThrow();
+  });
   it.each([{status:'RECENT_QUALIFYING',current_recommendation:true}, {observation_age_seconds:2},
     {market_type:'BTTS'}, {market_type:'MATCH_TOTAL'}, {retrieved_at_utc:'2026-10-10T15:00:00Z'},
     {expected_profit:99}, {current_recommendation:true}, {private_path:'/secret'}, {opportunity_id:'../x'}])("rejects contradictory offer %j", change => {

@@ -27,7 +27,8 @@ function offer(v: unknown, fixture: RecordedFixture, asOf: number): v is Recorde
     || !Number.isSafeInteger(v.american_odds) || Math.abs(v.american_odds as number) < 100
     || !finite(v.decimal_odds) || v.decimal_odds <= 1
     || !timestamp(v.retrieved_at_utc) || !nonnegative(v.observation_age_seconds)
-    || !close(v.observation_age_seconds as number, (asOf - Date.parse(v.retrieved_at_utc as string)) / 1000)
+    // Python retains microseconds; Date.parse truncates each endpoint to milliseconds.
+    || Math.abs((v.observation_age_seconds as number) - (asOf - Date.parse(v.retrieved_at_utc as string)) / 1000) > 0.001
     || Date.parse(v.retrieved_at_utc as string) >= Date.parse(fixture.kickoff_utc)
     || !(v.availability_checked_at_utc === null || (timestamp(v.availability_checked_at_utc)
       && Date.parse(v.availability_checked_at_utc as string) >= Date.parse(v.retrieved_at_utc as string)
