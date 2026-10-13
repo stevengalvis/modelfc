@@ -12,7 +12,7 @@ from pydantic import TypeAdapter
 
 from modelfc.ledger_storage import (LedgerError, ensure_directory, ledger_lock,
                                     read_json_record, write_new_record)
-from modelfc.offline_forecasts import PreparedForecast
+from modelfc.offline_forecasts import KnownFixture, PreparedForecast
 
 
 SCHEMA_VERSION = 1
@@ -152,7 +152,40 @@ def _validate(record: dict, path: Path) -> tuple[PreparedForecast, str]:
         raise LedgerError("INVALID_RESEARCH_PREDICTION") from None
 
 
-def records(state_dir, *, now: datetime | None = None) -> list[dict]:
+def display_identities(state_dir) -> list[dict]:
+    """Cheap, hash-checked selection inventory; not a public forecast projection.
+
+    Full forecast validation remains mandatory for selected records. No outcome
+    inventory or performance calculation is needed by the recorded-offer board.
+    """
+    state = Path(state_dir)
+    directory = state / "research-predictions"
+    if directory.exists() and (directory.is_symlink() or not directory.is_dir()):
+        raise LedgerError("INVALID_RESEARCH_PREDICTION")
+    rows = []
+    for path in sorted(directory.glob("*.json")) if directory.exists() else ():
+        if path.is_symlink() or not path.is_file():
+            raise LedgerError("INVALID_RESEARCH_PREDICTION")
+        record = read_json_record(path, "research prediction", "UNKNOWN_RESEARCH_PREDICTION")
+        try:
+            if (path != _path(state, record["prediction_id"])
+                    or record["record_hash"] != hashlib.sha256(_encoded({
+                        k: v for k, v in record.items() if k != "record_hash"})).hexdigest()):
+                raise ValueError
+            fixture = TypeAdapter(KnownFixture).validate_json(_encoded(record["forecast"]["fixture"]))
+            created = datetime.fromisoformat(record["forecast"]["frozen_at"].replace("Z", "+00:00"))
+            if created.tzinfo is None or created >= fixture.identity.kickoff_utc:
+                raise ValueError
+            rows.append(dict(prediction_id=record["prediction_id"], created_at_utc=created.isoformat(),
+                             competition=fixture.identity.competition, home_team=fixture.home_team,
+                             away_team=fixture.away_team, kickoff_utc=fixture.identity.kickoff_utc.isoformat()))
+        except (KeyError, TypeError, ValueError, AttributeError):
+            raise LedgerError("INVALID_RESEARCH_PREDICTION") from None
+    return rows
+
+
+def records(state_dir, *, now: datetime | None = None,
+            prediction_ids: set[str] | None = None, include_outcomes: bool = True) -> list[dict]:
     state = Path(state_dir)
     observed = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     directory = state / "research-predictions"
@@ -162,10 +195,13 @@ def records(state_dir, *, now: datetime | None = None) -> list[dict]:
     from modelfc.research_outcomes import corner_results, identity
     from modelfc.btts_research import digest
     from modelfc.btts_outcomes import performance
-    corners = corner_results(state, as_of=observed) if directory.exists() else {}
-    btts_rows = {row["forecast_id"]: row for row in performance(state, as_of=observed)["forecasts"]}
+    corners = corner_results(state, as_of=observed) if include_outcomes and directory.exists() else {}
+    btts_rows = ({row["forecast_id"]: row for row in performance(state, as_of=observed)["forecasts"]}
+                 if include_outcomes else {})
     result = []
-    for path in sorted(directory.glob("*.json")) if directory.exists() else ():
+    paths = (sorted(_path(state, key) for key in prediction_ids) if prediction_ids is not None
+             else sorted(directory.glob("*.json")) if directory.exists() else ())
+    for path in paths:
         if path.is_symlink() or not path.is_file():
             raise LedgerError("INVALID_RESEARCH_PREDICTION")
         record = read_json_record(path, "research prediction", "UNKNOWN_RESEARCH_PREDICTION")
