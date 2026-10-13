@@ -24,7 +24,7 @@ class HelperTests(unittest.TestCase):
         stack = ExitStack(); self.addCleanup(stack.close)
         stack.enter_context(patch.object(helper, 'release', return_value=Path('/candidate')))
         stack.enter_context(patch.object(helper, 'protected'))
-        stack.enter_context(patch.object(helper, 'boundary_before_restart', return_value={'InvocationID': 'a'*32}))
+        stack.enter_context(patch.object(helper, 'boundary_before_restart', return_value={'InvocationID': 'a'*32, 'Job': '0'}))
         stack.enter_context(patch.object(helper, 'unit_properties', return_value={'InvocationID': 'b'*32}))
         return stack
 
@@ -45,7 +45,7 @@ class HelperTests(unittest.TestCase):
     def test_restart_must_reach_new_invocation_not_old_healthy_process(self):
         stack = self.context()
         stack.enter_context(patch.object(helper, 'unit_properties', side_effect=[
-            {'InvocationID':'a'*32}, {'InvocationID':'b'*32}]))
+            {'InvocationID':'a'*32, 'Job':'0'}, {'InvocationID':'b'*32}]))
         ready = stack.enter_context(patch.object(helper, 'ready', side_effect=[False, True]))
         sleep = stack.enter_context(patch.object(helper.time, 'sleep'))
         stack.enter_context(patch.object(helper, 'command'))
@@ -81,7 +81,7 @@ class HelperTests(unittest.TestCase):
                     '--workers', '1', '--limit-concurrency', '16', '--timeout-keep-alive', '5']
             (proc/'cmdline').write_bytes(('\0'.join(args)+'\0').encode())
             with patch.object(helper, 'process_credentials'), patch.object(helper, 'PROC', root), patch.object(helper, 'unit_properties',
-                    return_value={'ActiveState':'active','SubState':'running','MainPID':'123'}), \
+                    return_value={'ActiveState':'active','SubState':'running','MainPID':'123','Job':'0'}), \
                     patch.object(helper.pwd, 'getpwnam', return_value=SimpleNamespace(pw_uid=os.getuid())):
                 self.assertEqual(helper.process_identity(target), (123, '456'))
                 (proc/'fd/3').unlink()
@@ -181,7 +181,7 @@ class BoundaryTests(unittest.TestCase):
         argv = '/usr/bin/python3 -I -B ' + str(helper.LAUNCHER)
         for key, flags in [('ExecStart','ignore_errors=no'), ('ExecStartEx','flags=')]:
             result[key] = '{ path=/usr/bin/python3 ; argv[]=' + argv + ' ; ' + flags + ' ; start_time=n/a ; stop_time=n/a ; pid=0 ; code=(null) ; status=0/0 }'
-        result.update(MainPID='0', ActiveState='inactive', SubState='dead', InvocationID='a'*32)
+        result.update(MainPID='0', ActiveState='inactive', SubState='dead', InvocationID='a'*32, Job='0')
         return result
 
     def validate(self, fields):
@@ -246,7 +246,7 @@ class BoundaryTests(unittest.TestCase):
             with self.assertRaises(ValueError): helper.handoff(SHA)
             command.assert_not_called()
         with patch.object(helper,'release',return_value=Path('/candidate')), patch.object(helper,'protected'), \
-                patch.object(helper,'boundary_before_restart',side_effect=[{'InvocationID':'a'*32},ValueError('drift')]), \
+                patch.object(helper,'boundary_before_restart',side_effect=[{'InvocationID':'a'*32, 'Job':'0'},ValueError('drift')]), \
                 patch.object(helper,'ready',return_value=False), patch.object(helper,'command') as command:
             with self.assertRaises(ValueError): helper.handoff(SHA)
             command.assert_not_called()
@@ -272,7 +272,7 @@ class BoundaryTests(unittest.TestCase):
 
     def test_drift_after_restart_fails_without_second_restart(self):
         with patch.object(helper,'release',return_value=Path('/candidate')), patch.object(helper,'protected'), \
-                patch.object(helper,'boundary_before_restart',return_value={'InvocationID':'a'*32}), \
+                patch.object(helper,'boundary_before_restart',return_value={'InvocationID':'a'*32, 'Job':'0'}), \
                 patch.object(helper,'ready',return_value=False), \
                 patch.object(helper,'unit_properties',side_effect=ValueError('drift')), \
                 patch.object(helper,'command') as command:
@@ -334,3 +334,34 @@ class BoundaryTests(unittest.TestCase):
                     with self.assertRaises(ValueError): check(changed)
             groups={name:row.pw_gid for name,row in baseline.items()};groups[role]=2000
             with self.assertRaises(ValueError): check(baseline,groups)
+
+
+    def test_rotation_during_initial_probe_requires_post_request_invocation(self):
+        with patch.object(helper,'release',return_value=Path('/candidate')), patch.object(helper,'protected'), \
+                patch.object(helper,'boundary_before_restart',side_effect=[
+                    {'InvocationID':'a'*32,'Job':'0'}, {'InvocationID':'b'*32,'Job':'0'}]), \
+                patch.object(helper,'unit_properties',side_effect=[{'InvocationID':'b'*32},{'InvocationID':'c'*32}]), \
+                patch.object(helper,'ready',side_effect=[False,True]) as ready, \
+                patch.object(helper.time,'sleep') as sleep, patch.object(helper,'command') as command:
+            self.assertTrue(helper.handoff(SHA))
+            self.assertEqual(ready.call_count,2)  # B never reaches readiness after our queued restart.
+            sleep.assert_called_once()
+            command.assert_called_once_with('/usr/bin/systemctl','restart','--no-block',helper.UNIT)
+
+    def test_pending_restart_job_cannot_pass_readiness_or_queue_another(self):
+        helper.no_pending_job({'Job':'0'})
+        with patch.object(helper,'command',return_value='{"type":"(uo)","data":[0,"/"]}'):
+            helper.no_pending_job({'Job':''})
+        for data in ([42,'/org/freedesktop/systemd1/job/42'], [False,'/'], [0,'/wrong'], []):
+            with patch.object(helper,'command',return_value=json.dumps({'type':'(uo)','data':data})):
+                with self.assertRaises(ValueError): helper.no_pending_job({'Job':''})
+        with patch.object(helper,'unit_properties',return_value={'ActiveState':'active','SubState':'running','MainPID':'123','Job':'42'}), \
+                patch.object(helper,'process_credentials') as credentials, patch.object(helper,'read_ready') as read, \
+                patch.object(helper,'release',return_value=Path('/candidate')):
+            self.assertFalse(helper.ready(SHA,Path('/candidate')))
+            credentials.assert_not_called();read.assert_not_called()
+        with patch.object(helper,'release',return_value=Path('/candidate')), patch.object(helper,'protected'), \
+                patch.object(helper,'boundary_before_restart',return_value={'InvocationID':'b'*32,'Job':'42'}), \
+                patch.object(helper,'ready',return_value=False), patch.object(helper,'command') as command:
+            with self.assertRaises(ValueError): helper.handoff(SHA)
+            command.assert_not_called()

@@ -175,7 +175,7 @@ def normalize_properties(raw, keys):
 
 def unit_properties():
     keys = (*SECURITY, *TOKEN_SECURITY, 'ExecStart', 'ExecStartEx',
-            'MainPID', 'ActiveState', 'SubState', 'InvocationID')
+            'MainPID', 'ActiveState', 'SubState', 'InvocationID', 'Job')
     args = ['/usr/bin/systemctl', 'show', UNIT, '--no-pager', '--all']
     for key in keys: args.extend(('-p', key))
     raw = command(*args)
@@ -214,10 +214,28 @@ def boundary_before_restart():
     return props
 
 
+
+def no_pending_job(props):
+    # systemd 255 prints Job= for the typed no-job tuple; never infer emptiness.
+    if props.get('Job') == '0': return
+    if props.get('Job') != '': raise ValueError('pending service job')
+    label = re.sub(r'[^a-zA-Z0-9]', lambda m: '_%02x' % ord(m[0]), UNIT)
+    raw = command('/usr/bin/busctl', '--system', '--json=short', 'get-property',
+                  'org.freedesktop.systemd1', '/org/freedesktop/systemd1/unit/' + label,
+                  'org.freedesktop.systemd1.Unit', 'Job')
+    if len(raw) > 4096: raise ValueError('invalid service job')
+    value = json.loads(raw, object_pairs_hook=unique_properties)
+    if (not isinstance(value, dict) or set(value) != {'type', 'data'} or value['type'] != '(uo)'
+            or not isinstance(value['data'], list) or len(value['data']) != 2
+            or type(value['data'][0]) is not int or value['data'] != [0, '/']):
+        raise ValueError('pending or invalid service job')
+
+
 def process_identity(target):
     props = unit_properties()
     if props['ActiveState'] != 'active' or props['SubState'] != 'running':
         raise ValueError('not running')
+    no_pending_job(props)
     pid = int(props['MainPID'])
     if pid <= 1: raise ValueError('invalid pid')
     process_credentials(pid)
@@ -275,7 +293,9 @@ def handoff(sha):
     before = boundary_before_restart()['InvocationID']  # Refuse changed service boundaries before restart.
     if ready(sha, target): return time.monotonic() < until
     if release(sha) != target: return False
-    boundary_before_restart()  # Recheck drift discovered during the readiness probe.
+    props = boundary_before_restart()  # Recheck drift and automatic rotation during readiness.
+    before = props['InvocationID']
+    no_pending_job(props)
     if time.monotonic() >= until: return False
     command('/usr/bin/systemctl', 'restart', '--no-block', UNIT)
     while time.monotonic() < until:
