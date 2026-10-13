@@ -11,6 +11,26 @@ beforeEach(() => { vi.spyOn(api, "recommendations").mockResolvedValue([]); });
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks(); });
 
 describe("recorded Recommendations", () => {
+  it("keeps polling current offers when the recorded read never settles", async () => {
+    vi.useFakeTimers();
+    const recorded = vi.spyOn(api, "recordedOffers").mockImplementation(() => new Promise(() => {}));
+    const { mockRecommendations } = await import("@/lib/api/mock-recommendations");
+    vi.mocked(api.recommendations).mockResolvedValue(structuredClone(mockRecommendations));
+    const { unmount } = render(<RecommendationsDashboard />);
+    await act(async () => {});
+    const firstSignal = recorded.mock.calls[0][0];
+    for (let minute = 1; minute <= 6; minute++) {
+      await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+      expect(api.recommendations).toHaveBeenCalledTimes(minute + 1);
+    }
+    expect(firstSignal?.aborted).toBe(true);
+    expect(screen.getByText("Recently checked · qualifying")).toBeInTheDocument();
+    expect(screen.getByText("Loading recorded offers…")).toBeInTheDocument();
+    unmount();
+    expect(recorded.mock.calls.at(-1)?.[0]?.aborted).toBe(true);
+    await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+    expect(api.recommendations).toHaveBeenCalledTimes(7);
+  });
   it("resets age only for fresh responses after a backward wall-clock correction", async () => {
     vi.useFakeTimers(); vi.setSystemTime(new Date("2026-10-10T13:04:59Z"));
     vi.spyOn(performance, "now").mockReturnValue(100);

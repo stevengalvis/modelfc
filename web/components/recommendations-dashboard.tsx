@@ -104,8 +104,9 @@ export function RecommendationsDashboard() {
   useEffect(() => {
     const controller = new AbortController();
     const started = clock();
-    let timer: number | undefined;
     const refresh = () => { setAges(tickAges); setCurrent([]); setCurrentLoading(true); setAttempt(value => value + 1); };
+    // A stalled read must not prevent either saved-data feed from polling again.
+    const timer = window.setTimeout(refresh, 60_000);
     const resume = () => { if (document.visibilityState === "visible") refresh(); };
     window.addEventListener("focus", refresh);
     document.addEventListener("visibilitychange", resume);
@@ -116,9 +117,7 @@ export function RecommendationsDashboard() {
     }).catch(() => { if (!controller.signal.aborted) { setCurrent([]); setCurrentFailed(true); } }).finally(() => { if (!controller.signal.aborted) setCurrentLoading(false); });
     api.recordedOffers(controller.signal).then(value => {
       if (!controller.signal.aborted) { setData(value); setAges(previous => ({...previous, recorded:{started, elapsed:elapsedSince(clock(), started)}})); setFailed(false); }
-    }).catch(() => { if (!controller.signal.aborted) setFailed(true); }).finally(() => {
-      if (!controller.signal.aborted) timer = window.setTimeout(refresh, 60_000);
-    });
+    }).catch(() => { if (!controller.signal.aborted) setFailed(true); });
     return () => { controller.abort(); window.clearTimeout(timer); window.removeEventListener("focus", refresh); document.removeEventListener("visibilitychange", resume); };
   }, [attempt]);
   const elapsed = ages.recorded?.elapsed ?? 0;
