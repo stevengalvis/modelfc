@@ -8,6 +8,7 @@ import csv
 from datetime import datetime, timezone
 import json
 import os
+import re
 from pathlib import Path
 import stat
 
@@ -54,6 +55,8 @@ def _result(source, prepared, recorded):
     fixture = identity(prepared)
     btts._source_result(source, fixture, recorded)  # same final-state/source pin checks
     if source["provider"] == "football-data.co.uk":
+        _require(all(re.fullmatch(r"[0-9]+", source["row"][k]) for k in ("HC", "AC")),
+                 "RESULT_NOT_AVAILABLE")
         return {"home_corners": int(source["row"]["HC"]), "away_corners": int(source["row"]["AC"])}
     _require(str(source["calendar"]["fixture_id"]) == prepared.fixture.identity.fixture_id,
              "RESULT_IDENTITY_CONFLICT")
@@ -106,7 +109,7 @@ def corner_results(state, *, as_of=None):
     return rows
 
 
-def settle_corner(state, forecast_id, source):
+def settle_corner(state, forecast_id, source, *, reconcile=False):
     state = Path(state); forecasts = corner_inventory(state)
     _require(forecast_id in forecasts, "UNKNOWN_RESEARCH_FORECAST")
     fixture = identity(forecasts[forecast_id])
@@ -126,7 +129,7 @@ def settle_corner(state, forecast_id, source):
         path = directory / f'{record["outcome_id"]}.json'
         if path.exists():
             previous = _load(path, forecasts)
-            _require(previous["source"] == source and previous["result"] == result, "RESULT_CONFLICT")
+            _require((reconcile or previous["source"] == source) and previous["result"] == result, "RESULT_CONFLICT")
             _sync_directories(directory, state)
             return previous, False
         write_new_record(path, record, evidence_state=state, evidence_lock_fd=lock)
@@ -156,7 +159,7 @@ def saved_sources(index_path, index_sha256):
     return sources
 
 
-def sweep(state, source_for_fixture, *, as_of=None):
+def sweep(state, source_for_fixture, *, as_of=None, reconcile=False, include_bookmaker=False):
     """Each market settles independently; missing sources stay unresolved, conflicts fail.
 
     Successful earlier writes survive a later conflict/crash and replay idempotently.
@@ -166,20 +169,27 @@ def sweep(state, source_for_fixture, *, as_of=None):
     prepared = load_prepared(state)
     _require(len(prepared) <= 10000, "RESEARCH_INVENTORY_BOUND_EXCEEDED")
     results = []; seen = set()
-    for forecast, market in sorted(prepared, key=lambda row:(row[0].frozen_at, row[0].forecast_id, row[1])):
-        fixture = identity(forecast); key = digest(fixture)
+    candidates = [(identity(f), market, f.fixture.identity.kickoff_utc,
+                   f.forecast_id if market == "CORNER" else digest(f.btts))
+                  for f, market in sorted(prepared, key=lambda row:(row[0].frozen_at, row[0].forecast_id, row[1]))]
+    if include_bookmaker:
+        candidates.extend((btts.fixture_identity(f), "BTTS", timestamp(f.fixture.kickoff_utc), key)
+            for key, (f, _) in btts.inventory(state).items())
+    _require(len(candidates) <= 20000, "RESEARCH_INVENTORY_BOUND_EXCEEDED")
+    for fixture, market, kickoff, forecast_id in candidates:
+        key = digest(fixture)
         if (key, market) in seen: continue
         seen.add((key, market))
         receipt = {"fixture_id": key, "market": market, "status": "UNRESOLVED", "reason": None}
-        if forecast.fixture.identity.kickoff_utc >= observed:
+        if kickoff >= observed:
             receipt["status"] = "UPCOMING"; results.append(receipt); continue
         try:
             source = source_for_fixture(fixture)
             if source is None:
                 receipt["reason"] = "NO_SAVED_RESULT"
             else:
-                record, created = (settle_corner(state, forecast.forecast_id, source) if market == "CORNER"
-                    else btts.settle(state, digest(forecast.btts), source, select_earliest=True))
+                record, created = (settle_corner(state, forecast_id, source, reconcile=reconcile) if market == "CORNER"
+                    else btts.settle(state, forecast_id, source, select_earliest=True, reconcile=reconcile))
                 receipt.update(status="RECORDED" if created else "REUSED", outcome_id=record["outcome_id"])
         except OutcomeError as error:
             if str(error) == "RESULT_NOT_AVAILABLE": receipt["reason"] = "RESULT_NOT_AVAILABLE"

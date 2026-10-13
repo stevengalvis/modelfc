@@ -1,0 +1,105 @@
+# Automatic CSV research settlement (opt-in)
+
+Contributes to ZEN-38. Source readiness does not complete activation acceptance.
+
+The existing Monday/Thursday 06:00 UTC Football-Data refresh is the acquisition
+boundary. When the root-owned settlement control enables retention, that same
+HTTPS response supplies the bytes, exact request/response URL, HTTP status,
+actual request/retrieval timestamps and available allowlisted Date,
+Last-Modified, ETag and Content-Type headers. No additional request is made.
+Absent headers remain absent; no timestamp is inferred from file mtime, CSV match
+dates, an operator report window, or the HTTP Date header.
+
+After normal validation/publication, private immutable bundles are saved below
+`history/data/corner-refresh/result-evidence`. The existing atomic refresh status
+pins the evidence hash. Both unchanged and updated successful fetches can retain
+evidence. Retention failure is reported separately and cannot undo the published
+CSV. It prevents settlement, not unrelated forecasting. Invalid/incomplete refresh
+input still follows the existing strict history validation and preservation rules;
+those history gates and corner loaders are unchanged.
+
+An optional systemd `OnSuccess` drop-in starts a separate network-isolated research
+settlement service, with no new timer and no odds-runner dependency. It requires
+all configured refresh results to be successful and non-stale, and an actual E1
+acquisition no more than an hour before that report. The report must be no more
+than 24 hours old. This is a bounded post-refresh handoff, not permission to relabel
+old CSVs. The published file must still match the retained bytes. A partial/failed
+refresh, stale report, missing old provenance, hash mismatch or future timestamp
+cannot produce outcomes. A failed settlement unit does not fail or roll back the
+already-finished refresh unit and cannot block a later forecasting service.
+
+The consumer copies validated evidence under the existing shared refresh lock,
+releases it, then uses the existing immutable research outcome writers and their
+state/BTTS ledger locks. A separate nonblocking run lock prevents overlapping
+sweeps. It never holds a history lock while acquiring a ledger lock. Starts and
+terminal private receipts are immutable in `state/research-settlement-runs`; a
+start without a terminal receipt means interrupted/unknown, never success. A
+receipt-storage failure is nonzero and sanitized; earlier committed outcomes can
+survive a later failure and are safely reused on the next run. No batch atomicity
+is claimed.
+
+Both odds-free research forecasts and existing bookmaker BTTS forecasts are
+covered. Unique exact E1 competition/team/kickoff identities and market pairs are
+visited once; existing earliest-frozen-cohort selection stays unchanged. There is
+no reforecasting, backdating or sportsbook snapshot selection. The automatic
+reconciliation mode validates new source evidence, reuses the original immutable
+outcome when the required result agrees, and flags conflicting results without
+rewriting anything. A new season-file hash/retrieval timestamp alone is not a
+result conflict. The original strict manual settlement default still requires
+identical evidence on replay. New acquisition evidence remains retained privately.
+
+BTTS requires matching final goals/FTR, independently of HC/AC. Blank, partial or
+absent corner fields do not invalidate a goal-backed BTTS source. Research corner
+settlement separately requires both nonnegative integer corner counts. For example,
+a published CSV with both corner fields blank can settle BTTS and leave CORNER
+pending until counts arrive. A malformed/partial-corner CSV that the existing
+history refresh rejects is not a successful refresh and cannot trigger this path;
+the saved-evidence settlement validator still treats each market independently.
+Sportmonks evidence remains available through the existing reviewed manual path;
+this automatic path neither imports nor calls it. Historical incomplete
+Sportmonks bundles are not upgraded. Missing outcomes/reasons remain explicit in
+receipts and existing read-only performance projections.
+
+## Separate activation approval and disposable acceptance
+
+No production service, control file, timer or permissions are installed by merge.
+The installed old refresh has not retained this metadata: the October 13 report,
+file mtimes and existing CSV hashes cannot reconstruct it. Wait for a future
+ordinary approved refresh after activation; do not fetch again merely to backfill.
+
+After a tested deployment and explicit host approval, proposed installation is:
+
+1. Pin the reviewed merged release; verify its protected physical-release marker.
+2. Install its updated `ops/vps/refresh_launch.py` at the existing root-owned
+   launcher path. Install `deploy/modelfc-research-settlement.service` and the
+   optional `deploy/modelfc-corner-refresh.service.d/research-settlement.conf`.
+   Do not install/change the separate deployment controller or PR140 handoff.
+3. Create root-owned, mode 0644 `/etc/modelfc/research-settlement.json` containing
+   `{"enabled":true}` only after acceptance. Absence/false keeps capture disabled;
+   the settlement launcher refuses disabled execution. Both launcher and unit are
+   required; deploying Python source alone does not activate the consumer.
+4. Keep the refresh unit's existing history-only writes and state denial unchanged.
+   The new service runs as the existing `modelfc-runtime`, with history read-only,
+   state writable, no credentials, PrivateNetwork=yes and AF_UNIX only. Existing
+   outcome publication grants `modelfc-api` read ACLs; receipts/acquisition bundles
+   remain private. No new user, sudo rule or scheduler is required. Run
+   systemd-analyze verify, then daemon-reload only with host approval.
+5. Before activation, exercise isolated copies of genuine approved saved evidence
+   and synthetic transport responses under disposable units/paths. Never use
+   fabricated provenance for genuine bytes. Verify actual runtime read/write ACLs,
+   denied provider networking, successful OnSuccess triggering, failed-refresh
+   non-triggering, stale/hash/corrupt/future refusal, repeat/conflict receipts,
+   missing-corner BTTS independence, service timeout/interruption, no lock inversion,
+   byte-identical frozen forecasts and outcomes, and unchanged forecasting/current
+   recommendations. Verify public reads as the real API identity. Source tests and
+   CI do not establish these host properties.
+6. Observe the next ordinary scheduled refresh and separate settlement receipt;
+   verify exact hashes/source metadata and read-only performance counts. The broad
+   ZEN-38 acceptance remains open until this observed production cycle passes.
+
+Rollback: remove the optional OnSuccess drop-in, set the root control to false,
+stop only the research-settlement unit if running, and daemon-reload with approval.
+The existing refresh timer and forecasting continue unchanged. Retain immutable
+outcomes, acquisition bundles and receipts; never delete or rewrite history as a
+rollback. Storage retention/pruning is not introduced; evidence capture refuses
+low capacity with an explicit failure rather than exhausting the shared volume.

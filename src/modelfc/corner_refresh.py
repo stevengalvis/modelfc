@@ -27,9 +27,16 @@ def current_season(today: date) -> str:
     return f"{start % 100:02d}{(start + 1) % 100:02d}"
 
 
-def download_csv(url: str) -> bytes:
+def download_csv(url: str, *, metadata: dict | None = None) -> bytes:
+    requested = datetime.now(timezone.utc).isoformat()
     with urlopen(url, timeout=45) as response:
         payload = response.read(MAX_DOWNLOAD_BYTES + 1)
+        if metadata is not None:
+            from modelfc.refresh_result_evidence import HEADERS
+            metadata.update(schema_version=1, url=url, response_url=response.geturl(),
+                http_status=response.status, requested_at_utc=requested,
+                retrieved_at_utc=datetime.now(timezone.utc).isoformat(),
+                headers={key: response.headers[key] for key in HEADERS if key in response.headers})
     if len(payload) > MAX_DOWNLOAD_BYTES:
         raise ValueError("download exceeds 20 MiB limit")
     return payload
@@ -130,11 +137,12 @@ def snapshot(path: Path, league: str, season: str, today: date) -> dict:
 
 
 def refresh_league(config: CornerDataConfig, league: str, today: date, state: Path,
-                   *, validator_read_user: str | None = None, public_history_read_user: str | None = None) -> dict:
+                   *, validator_read_user: str | None = None, public_history_read_user: str | None = None, retain_result_evidence: bool = False) -> dict:
     season = current_season(today)
     target = config.directory / f"{league}_{season}.csv"
     url = f"https://www.football-data.co.uk/mmz4281/{season}/{league}.csv"
-    payload = download_csv(url)
+    acquisition = {} if retain_result_evidence and league == "E1" else None
+    payload = download_csv(url, metadata=acquisition) if acquisition is not None else download_csv(url)
     with NamedTemporaryFile(dir=config.directory, suffix=".csv") as staging:
         staging.write(payload)
         staging.flush()
@@ -167,8 +175,19 @@ def refresh_league(config: CornerDataConfig, league: str, today: date, state: Pa
             atomic_write(target, payload, validator_read_user=validator_read_user)
         else:
             atomic_write(target, payload)
+    retained = None
+    if acquisition is not None:
+        try:
+            import hashlib
+            from modelfc.refresh_result_evidence import retain
+            acquisition.update(filename=target.name, file_sha256=hashlib.sha256(payload).hexdigest())
+            retained = {'status': 'RETAINED', 'sha256': retain(state, acquisition, payload)}
+        except (OSError, ValueError, KeyError, TypeError):
+            # A provenance failure cannot roll back or relabel a published CSV.
+            retained = {'status': 'REJECTED', 'reason': 'RESULT_EVIDENCE_RETENTION_FAILED'}
     latest = max(key[0] for key in incoming)
     return {
+        **({"result_evidence": retained} if retained is not None else {}),
         "league": league, "file": str(target), "source": url,
         "status": "updated" if changed else "unchanged",
         "matches": len(incoming), "added": len(incoming.keys() - previous.keys()),
@@ -179,7 +198,7 @@ def refresh_league(config: CornerDataConfig, league: str, today: date, state: Pa
 
 
 def refresh_data(config: CornerDataConfig, today: date | None = None,
-                 *, validator_read_user: str | None = None, public_history_read_user: str | None = None) -> dict:
+                 *, validator_read_user: str | None = None, public_history_read_user: str | None = None, retain_result_evidence: bool = False) -> dict:
     today = today or datetime.now(timezone.utc).date()
     config.directory.mkdir(parents=True, exist_ok=True)
     state = config.directory / "data" / "corner-refresh"
@@ -187,7 +206,8 @@ def refresh_data(config: CornerDataConfig, today: date | None = None,
         results = []
         for league in config.leagues:
             try:
-                results.append(refresh_league(config, league, today, state, validator_read_user=validator_read_user, public_history_read_user=public_history_read_user))
+                results.append(refresh_league(config, league, today, state, validator_read_user=validator_read_user, public_history_read_user=public_history_read_user,
+                    **({"retain_result_evidence": True} if retain_result_evidence else {})))
             except (OSError, ValueError, csv.Error, HTTPException) as error:
                 results.append({"league": league, "status": "failed", "error": str(error)})
         report = {
@@ -224,6 +244,7 @@ def main() -> None:
     parser.add_argument("--config", type=Path, default=Path("corner_data.json"))
     parser.add_argument("--validator-read-user", help="grant read ACLs on published E1/SP1 CSVs before rename")
     parser.add_argument("--public-history-read-user", choices=("modelfc-api",), help="grant current E1 read ACL before rename")
+    parser.add_argument("--retain-result-evidence", action="store_true", help="retain private E1 fetch provenance; no settlement or extra requests")
     parser.add_argument("--status", action="store_true", help="show saved results without downloading; recalculate data age")
     args = parser.parse_args()
     try:
@@ -232,7 +253,8 @@ def main() -> None:
             path = config.directory / "data" / "corner-refresh" / "status.json"
             report = json.loads(path.read_text(encoding="utf-8"))
         else:
-            report = refresh_data(config, validator_read_user=args.validator_read_user, public_history_read_user=args.public_history_read_user)
+            report = refresh_data(config, validator_read_user=args.validator_read_user, public_history_read_user=args.public_history_read_user,
+                **({"retain_result_evidence": True} if args.retain_result_evidence else {}))
         text, unhealthy = format_report(report, datetime.now(timezone.utc).date(), config.max_age_days)
     except (OSError, ValueError) as error:
         parser.error(str(error))
