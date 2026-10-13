@@ -86,12 +86,14 @@ forecasts remain expandable. BTTS links to existing research, never validated be
 
 Reads repeat each minute/on focus without acquiring odds. Cards survive refreshes
 and transient read failures; failures explicitly label the previous read and remove
-recent-current presentation. The greater of monotonic and nondecreasing wall-clock elapsed time conservatively
-ages quotes between reads (including request latency and system sleep), downgrades them after 300 seconds and
+recent-current presentation. The greater of monotonic and wall-clock elapsed time, retained as a nondecreasing
+maximum per accepted response, conservatively ages quotes between reads (including request latency and system sleep), downgrades them after 300 seconds and
 moves fixtures into historical at kickoff. It can only downgrade server status,
 never promote an old or unavailable quote to current. Focus and visibility resume
 advance the clock immediately and clear current offers while refreshing, even if
-the new request hangs. No assumed unchanged lines,
+the new request hangs. Each successfully accepted feed response resets only its
+own age baseline; clock correction cannot permanently age fresh data or make an
+older response from the other feed current again. No assumed unchanged lines,
 current availability or guaranteed refresh time is shown. The API has no trustworthy
 installed scheduler/eligibility timestamp, so the UI promises neither a next check
 nor a next odds capture; it states their distinction.

@@ -78,46 +78,51 @@ function Fixture({ item, asOf, elapsed, failed }: { item: RecordedFixture; asOf:
 
 type Clock = { mono: number; wall: number };
 const clock = (): Clock => ({ mono: performance.now(), wall: Date.now() });
-const tickClock = (previous: Clock): Clock => ({ mono: performance.now(), wall: Math.max(previous.wall, Date.now()) });
 const elapsedSince = (tick: Clock, started: Clock) => Math.max(0, tick.mono - started.mono, tick.wall - started.wall) / 1000;
+
+type Age = { started: Clock; elapsed: number };
+type Ages = { recorded: Age | null; current: Age | null };
+const tickAges = (previous: Ages): Ages => {
+  const now = clock();
+  const advance = (value: Age | null): Age | null => value && ({...value, elapsed: Math.max(value.elapsed, elapsedSince(now, value.started))});
+  return {recorded: advance(previous.recorded), current: advance(previous.current)};
+};
 
 export function RecommendationsDashboard() {
   const [data, setData] = useState<RecordedOffers | null>(null);
-  const [received, setReceived] = useState<Clock>({mono:0, wall:0});
-  const [tick, setTick] = useState<Clock>({mono:0, wall:0});
+  const [ages, setAges] = useState<Ages>({recorded:null, current:null});
   const [failed, setFailed] = useState(false);
   const [attempt, setAttempt] = useState(0);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [current, setCurrent] = useState<Recommendation[]>([]);
-  const [currentReceived, setCurrentReceived] = useState<Clock>({mono:0, wall:0});
   const [currentLoading, setCurrentLoading] = useState(true);
   const [currentFailed, setCurrentFailed] = useState(false);
   useEffect(() => {
-    const timer = window.setInterval(() => setTick(tickClock), 1000);
+    const timer = window.setInterval(() => setAges(tickAges), 1000);
     return () => window.clearInterval(timer);
   }, []);
   useEffect(() => {
     const controller = new AbortController();
     const started = clock();
     let timer: number | undefined;
-    const refresh = () => { setTick(tickClock); setCurrent([]); setCurrentLoading(true); setAttempt(value => value + 1); };
+    const refresh = () => { setAges(tickAges); setCurrent([]); setCurrentLoading(true); setAttempt(value => value + 1); };
     const resume = () => { if (document.visibilityState === "visible") refresh(); };
     window.addEventListener("focus", refresh);
     document.addEventListener("visibilitychange", resume);
     // Keep the existing all-cohort current feed independent of recorded history.
     setCurrent([]); setCurrentLoading(true); setCurrentFailed(false);
     api.recommendations(controller.signal).then(value => {
-      if (!controller.signal.aborted) { setCurrent(value); setCurrentReceived(started); setTick(tickClock); setCurrentFailed(false); }
+      if (!controller.signal.aborted) { setCurrent(value); setAges(previous => ({...previous, current:{started, elapsed:elapsedSince(clock(), started)}})); setCurrentFailed(false); }
     }).catch(() => { if (!controller.signal.aborted) { setCurrent([]); setCurrentFailed(true); } }).finally(() => { if (!controller.signal.aborted) setCurrentLoading(false); });
     api.recordedOffers(controller.signal).then(value => {
-      if (!controller.signal.aborted) { setData(value); setReceived(started); setTick(tickClock); setFailed(false); }
+      if (!controller.signal.aborted) { setData(value); setAges(previous => ({...previous, recorded:{started, elapsed:elapsedSince(clock(), started)}})); setFailed(false); }
     }).catch(() => { if (!controller.signal.aborted) setFailed(true); }).finally(() => {
       if (!controller.signal.aborted) timer = window.setTimeout(refresh, 60_000);
     });
     return () => { controller.abort(); window.clearTimeout(timer); window.removeEventListener("focus", refresh); document.removeEventListener("visibilitychange", resume); };
   }, [attempt]);
-  const elapsed = elapsedSince(tick, received);
-  const currentElapsed = elapsedSince(tick, currentReceived);
+  const elapsed = ages.recorded?.elapsed ?? 0;
+  const currentElapsed = ages.current?.elapsed ?? 0;
   const eligibleCurrent = current.filter(item => item.observation_age_seconds + currentElapsed <= 300
     && Date.parse(item.retrieved_at_utc) + (item.observation_age_seconds + currentElapsed) * 1000 < Date.parse(item.kickoff_utc));
   const asOf = data ? Date.parse(data.as_of_utc) : 0;

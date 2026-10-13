@@ -11,6 +11,27 @@ beforeEach(() => { vi.spyOn(api, "recommendations").mockResolvedValue([]); });
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks(); });
 
 describe("recorded Recommendations", () => {
+  it("resets age only for fresh responses after a backward wall-clock correction", async () => {
+    vi.useFakeTimers(); vi.setSystemTime(new Date("2026-10-10T13:04:59Z"));
+    vi.spyOn(performance, "now").mockReturnValue(100);
+    const recorded = vi.spyOn(api, "recordedOffers").mockResolvedValueOnce(fresh()).mockImplementation(() => new Promise(() => {}));
+    render(<RecommendationsDashboard />); await act(async () => {});
+    vi.setSystemTime(new Date("2026-10-10T15:00:00Z"));
+    fireEvent(window, new Event("focus")); await act(async () => {});
+    expect(screen.getByText("Kicked-off / historical fixtures (1)")).toBeInTheDocument();
+    vi.setSystemTime(new Date("2026-10-10T13:04:59Z"));
+    const { mockRecommendations } = await import("@/lib/api/mock-recommendations");
+    vi.mocked(api.recommendations).mockResolvedValue(structuredClone(mockRecommendations));
+    fireEvent(window, new Event("focus")); await act(async () => {});
+    const feed = screen.getByRole("region", {name:"Current recommendations across all forecast cohorts"});
+    expect(within(feed).getByText("Recently checked · qualifying")).toBeInTheDocument();
+    // Fresh current data must not reset retained recorded history's age.
+    expect(screen.getByText("Kicked-off / historical fixtures (1)")).toBeInTheDocument();
+    recorded.mockResolvedValue(fresh());
+    fireEvent(window, new Event("focus")); await act(async () => {});
+    expect(screen.queryByText("Kicked-off / historical fixtures (1)")).not.toBeInTheDocument();
+    expect(within(screen.getByRole("article")).getByText("Recently checked · qualifying")).toBeInTheDocument();
+  });
   it("distinguishes a pending current feed from a successful empty feed with saved cards", async () => {
     let resolve!: (items: []) => void;
     vi.mocked(api.recommendations).mockImplementation(() => new Promise(done => { resolve = done; }));
