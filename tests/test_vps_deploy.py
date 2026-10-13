@@ -1379,6 +1379,9 @@ class IsolatedBoundaryTest(unittest.TestCase):
             self.assertIn(required, unit)
 
     def test_dependency_group_failure_prevents_install_service_start(self):
+        # These cases exercise security rejection, not host temporary-disk capacity.
+        # Keep the real storage guard; supply an adequate synthetic release filesystem.
+        capacity = shutil._ntuple_diskusage(2 * 1024**3, 0, 2 * 1024**3)
         for index, (old, new) in enumerate((
                 ("\nGroup=modelfc-deploy\n", "\nGroup=root\n"),
                 ("SupplementaryGroups=\n", "SupplementaryGroups=docker\n"))):
@@ -1395,10 +1398,12 @@ class IsolatedBoundaryTest(unittest.TestCase):
                 if args[:2] == ["systemctl", "show"]:
                     return properties
                 self.fail("Dependency installation must not start after a group boundary failure")
-            with self.subTest(group=new), patch.object(deploy, "command", side_effect=fake_command) as run:
+            with self.subTest(group=new), patch.object(deploy, "command", side_effect=fake_command) as run, patch.object(
+                    deploy.shutil, "disk_usage", return_value=capacity) as space:
                 with self.assertRaisesRegex(deploy.Failure, "STATE_BOUNDARY_FAILED"):
                     deploy.dependencies(candidate, check_boundary=lambda release:
                         deploy.dependency_boundary(release, releases=self.releases))
+                space.assert_called_once_with(candidate)
                 self.assertEqual(run.call_count, 2)
 
     def test_dependency_resource_failure_prevents_install_service_start(self):
@@ -1494,6 +1499,9 @@ class IsolatedBoundaryTest(unittest.TestCase):
                 self.assertEqual(run.call_count, 2)
 
     def test_dependency_credentials_prevent_install_service_start(self):
+        # Isolate this security fixture from bounded host temporary filesystems.
+        # The real storage guard still runs and has separate low-space coverage.
+        capacity = shutil._ntuple_diskusage(2 * 1024**3, 0, 2 * 1024**3)
         cases = [(name + "=\n", replacement) for name in
                  ("LoadCredential", "LoadCredentialEncrypted", "ImportCredential", "SetCredential", "SetCredentialEncrypted")
                  for replacement in ("", name + "=unexpected\n")]
@@ -1522,10 +1530,12 @@ class IsolatedBoundaryTest(unittest.TestCase):
                     return properties
                 self.fail("Dependency installation must not start after a credential boundary failure")
             with self.subTest(property=new), patch.object(
-                    deploy, "command", side_effect=fake_command) as run:
+                    deploy, "command", side_effect=fake_command) as run, patch.object(
+                    deploy.shutil, "disk_usage", return_value=capacity) as space:
                 with self.assertRaisesRegex(deploy.Failure, "STATE_BOUNDARY_FAILED"):
                     deploy.dependencies(candidate, check_boundary=lambda release:
                         deploy.dependency_boundary(release, releases=self.releases))
+                space.assert_called_once_with(candidate)
                 self.assertEqual(run.call_count, 2)
 
     def test_dependency_hooks_and_ambient_caps_prevent_service_start(self):
