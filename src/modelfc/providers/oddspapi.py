@@ -136,6 +136,19 @@ def _array(value):
     return value
 
 
+
+def _metadata_parts(metadata):
+    """Keep filtered known-unsupported IDs distinct from unknown provider IDs."""
+    if isinstance(metadata, dict):
+        from modelfc.oddspapi_market_inventory import _metadata_index, _metadata_parts as parts
+        try:
+            _metadata_index(metadata)  # Includes retained/excluded collision checks.
+            return parts(metadata)
+        except ValueError:
+            raise OddsPapiError('Invalid filtered market metadata') from None
+    return _array(metadata), {}
+
+
 def _timestamp(value):
     try:
         parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
@@ -251,7 +264,7 @@ class OddsPapiFixtureSnapshot:
     """One supplied retrieval, retained in memory only; no independent fetch path."""
     fixture: dict
     payload: dict
-    metadata: list
+    metadata: list | dict
     retrieved_at: str
     competition: str
 
@@ -288,7 +301,8 @@ def _normalize_odds(payload, metadata, fixture, retrieved_at, now, competition):
     if not 0 <= age <= MAX_QUOTE_AGE_SECONDS:
         raise OddsPapiError("Stale or future retrieval timestamp; fetch current odds")
     dictionary = {}
-    for entry in _array(metadata):
+    rows, excluded = _metadata_parts(metadata)
+    for entry in rows:
         entry = _object(entry)
         mid = entry.get("marketId")
         if type(mid) is not int or str(mid) in dictionary:
@@ -311,6 +325,8 @@ def _normalize_odds(payload, metadata, fixture, retrieved_at, now, competition):
         for mid, market in sorted(_object(book.get("markets")).items()):
             meta = dictionary.get(mid)
             if meta is None:
+                if mid in excluded:
+                    continue
                 state["issues"].append({"market_id": mid, "reason": "MISSING_MARKET_METADATA"})
                 continue
             family = meta.get("marketType")
@@ -590,6 +606,12 @@ class OddsPapiMarketData(OddsPapiClient):
         """Reuse validated shared metadata only for this client instance."""
         self._reuse_market_metadata = True
 
+    def enable_pinned_metadata(self, metadata) -> None:
+        """Use an explicitly validated dictionary; runner owns pin/expiry checks."""
+        self._validate_market_metadata(metadata)
+        self._market_metadata = deepcopy(metadata)
+        self._reuse_market_metadata = True
+
     def corner_market_request_count(self) -> int:
         """Return the requests the next observation will reserve."""
         return 1 if self._reuse_market_metadata and self._market_metadata is not None else 2
@@ -686,7 +708,7 @@ class OddsPapiMarketData(OddsPapiClient):
         # Validate shared structure before requesting a fixture's odds.
         try:
             ids = set()
-            for entry in _array(metadata):
+            for entry in _metadata_parts(metadata)[0]:
                 entry = _object(entry)
                 mid = entry.get("marketId")
                 if type(mid) is not int or mid in ids:

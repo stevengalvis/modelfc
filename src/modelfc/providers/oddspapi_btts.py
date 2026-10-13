@@ -12,7 +12,7 @@ from modelfc.btts_market_data import (
 )
 from modelfc.btts_research import digest
 from modelfc.providers.oddspapi import (
-    OddsPapiError, _array, _object, _selection_american, normalize_team, validate_fixture,
+    OddsPapiError, _array, _object, _metadata_parts, _selection_american, normalize_team, validate_fixture,
 )
 
 
@@ -33,7 +33,7 @@ def normalize_btts(payload, metadata, fixture, *, competition, historical_names,
                 or not 0 <= (as_of - observed).total_seconds() <= max_age_seconds):
             raise ValueError
         dictionary = {}
-        for item in _array(metadata):
+        for item in _metadata_parts(metadata)[0]:
             item = _object(item)
             mid = item.get("marketId")
             if type(mid) is not int or str(mid) in dictionary:

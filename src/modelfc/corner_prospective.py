@@ -6,6 +6,7 @@ enrollment, run-once performs durable UTC-month rollover when required.
 """
 
 import argparse
+from collections import Counter
 from contextlib import contextmanager
 from datetime import date, datetime, timedelta, timezone
 import fcntl
@@ -38,6 +39,7 @@ from modelfc.corner_prospective_budget import (
     rollover_if_needed, validate_calendar_control,
 )
 from modelfc.providers.oddspapi import OddsPapiMarketData
+from modelfc import odds_calendar
 
 class RunnerError(ValueError):
     pass
@@ -176,7 +178,7 @@ class _RequestBudgetGuard:
     """Persist bounded reservations and pacing across runner invocations."""
     _PRODUCTION_KINDS = frozenset(("FIXTURE_DISCOVERY", "MARKET_METADATA", "FIXTURE_ODDS"))
 
-    def __init__(self, path, control, summary, *, allowed_kinds=None, invocation_limit=8):
+    def __init__(self, path, control, summary, *, allowed_kinds=None, invocation_limit=8, metadata_validator=None):
         self.path, self.control, self.summary = path, control, summary
         self.allowed_kinds = (self._PRODUCTION_KINDS if allowed_kinds is None
                               else frozenset(allowed_kinds))
@@ -186,8 +188,14 @@ class _RequestBudgetGuard:
             raise RunnerError("REQUEST_BUDGET")
         self.invocation_limit = invocation_limit
         self.reserved = self.tokens = 0
+        self.metadata_validator = metadata_validator
+        self.calendar_check = None
 
     def reserve(self, count):
+        if self.metadata_validator is not None:
+            self.metadata_validator()
+        if self.calendar_check is not None:
+            self.calendar_check()
         period = self.control["period"]
         if not date.fromisoformat(period["start"]) <= _now().date() < date.fromisoformat(period["end"]):
             raise RunnerError("PERIOD_EXPIRED")
@@ -209,6 +217,10 @@ class _RequestBudgetGuard:
             delay = last + interval - _now().timestamp()
             if delay > 0:
                 time.sleep(delay)
+        if self.metadata_validator is not None:
+            self.metadata_validator()
+        if self.calendar_check is not None:
+            self.calendar_check()
         self.control["last_request"] = _now().timestamp()
         _save(self.path, self.control)
         self.tokens -= 1
@@ -338,18 +350,39 @@ def _inventory(state, config, summary, market_data_type):
     return captured
 
 
-def _provider_work(path, control, state, config, summary, captured, market_data_type, release_sha):
+def _provider_work(path, control, state, config, summary, captured, market_data_type, release_sha,
+                   pinned_metadata=None, calendar_gate=False):
+    calendar = None
+    def check_calendar():
+        nonlocal calendar
+        try:
+            _, calendar = odds_calendar.load(state, as_of=_now())
+            summary["calendar_gate"] = {"bundle_sha256": calendar.bundle_sha256,
+                "source_sha256": calendar.source_sha256,
+                "retrieved_at_utc": calendar.retrieved_at.isoformat()}
+        except odds_calendar.CalendarGateRejected as error:
+            raise RunnerError(str(error)) from None
+    if calendar_gate:
+        check_calendar()
+        if not odds_calendar.active(calendar, _now()):
+            summary["calendar_gate"]["skip_reason"] = "CALENDAR_NO_RELEVANT_FIXTURES"
+            return
     client = guard = None
     research = BttsResearchAcquisition(state, config, summary["btts_research"], _now)
     def get_client():
         nonlocal client, guard
         if client is None:
-            guard = _RequestBudgetGuard(path, control, summary)
+            guard = _RequestBudgetGuard(path, control, summary,
+                metadata_validator=pinned_metadata.validate if pinned_metadata else None)
+            if calendar_gate:
+                guard.calendar_check = check_calendar
             try:
                 client = market_data_type("E1", guard)
                 enable_reuse = getattr(client, "enable_run_metadata_reuse", None)
                 if enable_reuse is not None:
                     enable_reuse()
+                if pinned_metadata is not None:
+                    pinned_metadata.install(client)
             except MarketDataError as error:
                 raise RunnerError(str(error)) from None
         return client
@@ -415,7 +448,23 @@ def _provider_work(path, control, state, config, summary, captured, market_data_
     fixtures = [market_data_type.cached_fixture(
         raw, datetime.combine(date.fromisoformat(day), datetime.min.time(), timezone.utc) - timedelta(seconds=1), "E1")
         for raw in discovery["fixtures"]]
+    ambiguous = set()
+    if calendar_gate:
+        check_calendar()
+        eligible = odds_calendar.active(calendar, _now())
+        identities = [odds_calendar.identity(f) for f in fixtures]
+        ambiguous = {key for key, count in Counter(identities).items() if count > 1}
+        if ambiguous:
+            _reason(summary, "CALENDAR_FIXTURE_MISMATCH")
+        if eligible - set(identities):
+            _reason(summary, "CALENDAR_FIXTURE_UNMAPPED")
     for fixture in sorted(fixtures, key=lambda f: (f.kickoff_utc, f.provider_fixture_id)):
+        if calendar_gate:
+            check_calendar()
+            if (odds_calendar.identity(fixture) in ambiguous
+                    or odds_calendar.identity(fixture) not in odds_calendar.active(calendar, _now())):
+                _reason(summary, "CALENDAR_FIXTURE_MISMATCH")
+                continue
         fid = fixture.provider_fixture_id
         seconds = (fixture.kickoff_utc - _now()).total_seconds()
         existing_capture = captured.get(fid)
@@ -492,6 +541,8 @@ def _provider_work(path, control, state, config, summary, captured, market_data_
             state, fixture.provider, fixture.competition, fid)) if supports_research else None)
         try:
             quotes = client.get_corner_markets(fixture)
+            if pinned_metadata is not None:
+                pinned_metadata.record_use(quotes)
             if supports_research:
                 research.observe(client, quotes, btts_forecast)
             observation, observation_created = store_market_observation(state, quotes)
@@ -555,7 +606,8 @@ def _provider_work(path, control, state, config, summary, captured, market_data_
 
 
 def run_once(*, state_dir, data_config_path, market_data_type: type[MarketDataSource] = OddsPapiMarketData,
-             require_calendar_budget=False):
+             require_calendar_budget=False, metadata_cache_dir=None, metadata_entry_id=None,
+             calendar_gate=False):
     started = _now()
     summary = {"status": "OK", **dict.fromkeys(("fixtures_discovered", "captures_created",
         "captures_existing", "captures_skipped_no_team_totals", "captures_with_history_warnings",
@@ -577,11 +629,22 @@ def run_once(*, state_dir, data_config_path, market_data_type: type[MarketDataSo
                 control = _load(path, market_data_type)
                 if require_calendar_budget and control["version"] != 2:
                     raise RunnerError("CONTROL_INVALID")
+                pinned_metadata = None
+                if metadata_cache_dir is not None or metadata_entry_id is not None:
+                    from modelfc.collector_metadata import PinnedCollectorMetadata
+                    if metadata_cache_dir is None or metadata_entry_id is None:
+                        raise RunnerError("MARKET_METADATA_INVALID")
+                    try:
+                        pinned_metadata = PinnedCollectorMetadata(
+                            metadata_cache_dir, metadata_entry_id, state_dir, _now)
+                    except MarketDataError:
+                        raise RunnerError("MARKET_METADATA_INVALID") from None
                 if control["version"] == 2:
                     rollover_if_needed(path, control, now=_now(), save=_save)
                 captured = _inventory(Path(state_dir), data_config_path, summary, market_data_type)
-                _provider_work(path, control, Path(state_dir), data_config_path, summary, captured, market_data_type, release_sha)
-            except RunnerError as error:
+                _provider_work(path, control, Path(state_dir), data_config_path, summary,
+                    captured, market_data_type, release_sha, pinned_metadata, calendar_gate)
+            except (RunnerError, MarketDataError) as error:
                 code = str(error)
                 if code not in REASONS:
                     code = "STORAGE_OR_INTEGRITY_FAILURE"
@@ -621,7 +684,15 @@ def main(argv=None):
     parser.add_argument("--expected-allowance", type=int)
     parser.add_argument("--expected-reserved", type=int)
     parser.add_argument("--require-calendar-budget", action="store_true")
+    parser.add_argument("--metadata-cache-dir", type=Path)
+    parser.add_argument("--metadata-entry-id")
+    parser.add_argument("--calendar-gate", action="store_true",
+                        help="Require fresh retained football-data.org evidence before paid acquisition")
     args = parser.parse_args(argv)
+    if args.metadata_cache_dir is not None or args.metadata_entry_id is not None:
+        if (args.command != "run-once" or args.metadata_cache_dir is None
+                or args.metadata_entry_id is None):
+            parser.error("pinned metadata requires run-once and both metadata flags")
     if args.command == "initialize-period":
         if args.period_start is None or args.period_end is None:
             parser.error("initialize-period requires --period-start and --period-end (exclusive)")
@@ -640,7 +711,9 @@ def main(argv=None):
             report = {"status": "FAIL", "reasons": ["BUDGET_ENROLLMENT_FAILED"]}
     else:
         report = run_once(state_dir=args.state_dir, data_config_path=args.data_config,
-                          require_calendar_budget=args.require_calendar_budget)
+                          require_calendar_budget=args.require_calendar_budget,
+                          metadata_cache_dir=args.metadata_cache_dir, metadata_entry_id=args.metadata_entry_id,
+                          calendar_gate=args.calendar_gate)
     print(json.dumps(report, sort_keys=True))
     return 0 if report["status"] in ("OK", "INITIALIZED", "ENROLLED") else 1
 

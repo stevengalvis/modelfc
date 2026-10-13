@@ -4,6 +4,7 @@ import { apiMode } from "@/lib/api/client";
 
 const links = [
   { label: "Next matches", href: "/upcoming" },
+  { label: "Fixtures", href: "/fixtures" },
   { label: "Analyze", href: "/analyze" },
   { label: "Recommendations", href: "/recommendations" },
   { label: "Predictions", href: "/predictions" },
