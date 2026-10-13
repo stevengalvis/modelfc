@@ -83,7 +83,13 @@ def publish(state, raw, *, as_of):
         # Validate old evidence at its original time, even when now stale.
         from modelfc.acquisition_planner import utc
         from datetime import datetime
-        old_time = utc(datetime.fromisoformat(json.loads(previous)['retrieved_at'].replace('Z', '+00:00')))
+        old_bundle = json.loads(previous)
+        if not isinstance(old_bundle, dict) or not isinstance(old_bundle.get('retrieved_at'), str):
+            raise ValueError('invalid retained calendar timestamp')
+        try:
+            old_time = utc(datetime.fromisoformat(old_bundle['retrieved_at'].replace('Z', '+00:00')))
+        except (ValueError, OverflowError):
+            raise ValueError('invalid retained calendar timestamp') from None
         old = parse_calendar(previous, as_of=old_time)
         if old.retrieved_at > calendar.retrieved_at or (old.retrieved_at == calendar.retrieved_at and previous != raw):
             raise ValueError('calendar publication regression/conflict')

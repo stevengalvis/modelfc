@@ -199,6 +199,26 @@ class RetentionTests(unittest.TestCase):
         self.assertTrue(pin.is_symlink())
         self.assertEqual(list(self.root.iterdir()), [pin])
 
+    def test_hash_consistent_malformed_old_timestamp_cannot_stop_forecasts(self):
+        self.root.mkdir(mode=0o700)
+        malformed = [{'retrieved_at': value} for value in (42, None, [], {}, 'invalid', '9999-12-31T23:59:59-12:00')]
+        malformed.extend([[], 42, {}])
+        for index, value in enumerate(malformed):
+            with self.subTest(value=value):
+                previous = json.dumps(value).encode()
+                digest = hashlib.sha256(previous).hexdigest()
+                record = self.root/(digest+'.json')
+                record.write_text(json.dumps({'raw': previous.decode()})); record.chmod(0o600)
+                pin = self.root/'latest.json'
+                pin.write_text(json.dumps({'bundle_sha256':digest})); pin.chmod(0o600)
+                before = self.snapshot()
+                result = self.fixture.execute(when=NOW+timedelta(minutes=index))
+                self.assertEqual(result['status'], 'RECORDED', result)
+                self.assertEqual(result['calendar_retention']['status'], 'UNAVAILABLE')
+                self.assertEqual(result['provider_requests'],
+                                 {'football_data_org':1, 'sportmonks':0, 'oddspapi':0})
+                self.assertEqual(self.snapshot(), before)
+
     def test_actual_module_entrypoint_with_recorded_transport(self):
         credentials = self.fixture.root/'credentials'; credentials.mkdir()
         (credentials/'forecast-only.json').write_text(json.dumps(self.fixture.configuration))
