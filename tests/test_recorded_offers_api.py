@@ -205,3 +205,18 @@ class RecordedOffersTests(unittest.TestCase):
         path.write_text(json.dumps(record))
         with self.assertRaises(reader.LedgerError):
             reader.read_recorded_offers(fixture.state)
+
+    def test_project_orders_upcoming_then_recent_history_deterministically(self):
+        from modelfc.recorded_offers import project
+        template = reader.read_predictions(self.state)[0]
+        now = recorded.NOW
+        rows = [dict(template, prediction_id=str(index), home_team=f'Home {index}',
+                     created_at_utc=(now-timedelta(days=10)).isoformat(),
+                     kickoff_utc=(now+timedelta(days=days)).isoformat())
+                for index, days in enumerate([-5, 3, -1, 1, -1])]
+        result = project({'predictions': rows, 'recorded': {}}, now=now)
+        fixtures = result['fixtures']
+        self.assertEqual([f['kickoff_utc'] for f in fixtures],
+                         [(now+timedelta(days=days)).isoformat() for days in [1, 3, -1, -1, -5]])
+        self.assertEqual([f['status'] for f in fixtures], ['UPCOMING']*2 + ['HISTORICAL']*3)
+        self.assertEqual(result, project({'predictions': list(reversed(rows)), 'recorded': {}}, now=now))

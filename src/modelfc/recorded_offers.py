@@ -102,5 +102,9 @@ def project(inventory, *, now):
             'selected_prediction_id': primary['prediction_id'] if primary else None,
             'forecasts': forecasts, 'offers': offers,
         })
-    result.sort(key=lambda f: (f['status'] == 'HISTORICAL', time(f['kickoff_utc']), f['fixture_id']))
+    result.sort(key=lambda f: (
+        f['status'] == 'HISTORICAL',
+        -time(f['kickoff_utc']).timestamp() if f['status'] == 'HISTORICAL' else time(f['kickoff_utc']).timestamp(),
+        f['fixture_id'],
+    ))
     return {'as_of_utc': now.isoformat(), 'fixtures': result}
