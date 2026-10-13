@@ -375,3 +375,45 @@ export interface BttsResearchComparison {
   best_yes_price: boolean;
   best_no_price: boolean;
 }
+
+export type RecordedOfferStatus = "RECENT_QUALIFYING" | "PRICE_NEEDS_RECHECKING" | "QUOTE_UNAVAILABLE"
+  | "NO_QUALIFYING_EDGE" | "VALUE_UNVERIFIED" | "REVIEW_REQUIRED" | "HISTORICAL";
+export interface RecordedOffer extends Omit<Recommendation, "qualified" | "expected_profit" | "availability_checked_at_utc"
+  | "model_probability" | "push_probability" | "decisive_model_probability" | "sportsbook_implied_probability"
+  | "no_vig_market_probability" | "no_vig_probability_edge"> {
+  qualified: boolean;
+  expected_profit: number | null;
+  availability_checked_at_utc: string | null;
+  model_probability: number | null;
+  push_probability: number | null;
+  decisive_model_probability: number | null;
+  sportsbook_implied_probability: number | null;
+  no_vig_market_probability: number | null;
+  no_vig_probability_edge: number | null;
+  status: RecordedOfferStatus;
+  current_recommendation: boolean;
+  opportunity_id: string | null;
+}
+export interface RecordedForecast {
+  prediction_id: string;
+  created_at_utc: string;
+  model_name: string;
+  model_version: string;
+  prediction_type: "CORNER" | "BTTS";
+  research_only: boolean;
+  expected_home_corners: number | null;
+  expected_away_corners: number | null;
+  btts_yes_probability: number | null;
+}
+export interface RecordedFixture {
+  fixture_id: string;
+  competition: string;
+  home_team: string;
+  away_team: string;
+  kickoff_utc: string;
+  status: "UPCOMING" | "HISTORICAL";
+  selected_prediction_id: string | null;
+  forecasts: RecordedForecast[];
+  offers: RecordedOffer[];
+}
+export interface RecordedOffers { as_of_utc: string; fixtures: RecordedFixture[] }

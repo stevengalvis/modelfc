@@ -1,4 +1,6 @@
 import { decodeBttsPerformance, emptyBttsPerformance } from "./btts-performance";
+import { decodeRecordedOffers } from "./recorded-offers";
+import { mockRecordedOffers } from "./mock-recorded-offers";
 import { decodeRecommendations } from "./recommendations";
 import { mockRecommendations } from "./mock-recommendations";
 import { decodeBttsResearch, isBttsCompetition } from "./btts-research";
@@ -184,6 +186,12 @@ export function createApiClient(
       const value = mode === "mock" ? structuredClone(mockCapabilities)
         : await requestJson<unknown>(baseUrl!, "/capabilities", { signal });
       return decodeCapabilities(value);
+    },
+    async recordedOffers(signal?: AbortSignal) {
+      checkConfiguration();
+      signal?.throwIfAborted();
+      return decodeRecordedOffers(mode === "mock" ? structuredClone(mockRecordedOffers)
+        : await requestJson<unknown>(baseUrl!, "/recommendations?view=recorded", { signal, cache: "no-store" }));
     },
     async recommendations(signal?: AbortSignal): Promise<Recommendation[]> {
       checkConfiguration();
