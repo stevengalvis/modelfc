@@ -36,7 +36,8 @@ describe("recorded Recommendations", () => {
     vi.mocked(api.recommendations).mockImplementation(() => new Promise(() => {}));
     vi.spyOn(api, "recordedOffers").mockImplementation(() => new Promise(() => {}));
     render(<RecommendationsDashboard />); await act(async () => {});
-    await act(async () => { await vi.advanceTimersByTimeAsync(120_000); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
     expect(screen.getByText("Current recommendations could not be refreshed.")).toBeInTheDocument();
     expect(screen.getByText("Saved offers could not be refreshed")).toBeInTheDocument();
     expect(screen.queryByText("Loading current recommendations…")).not.toBeInTheDocument();
