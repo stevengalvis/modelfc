@@ -684,3 +684,7 @@ real-systemd timing/cleanup acceptance and explicit installation approval remain
 required. Keep the 300-second child deadline, service/resource/security limits,
 state isolation and promotion gate unchanged. Missing reports after controller
 termination still provide no last-test evidence; do not infer a cause.
+
+The exact installed-source backport and separately approved acceptance plan are
+now prepared in [patches/README.md](patches/README.md). Use its verified baseline
+and candidate hashes; merging that artifact does not install or activate it.

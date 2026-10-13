@@ -1,0 +1,112 @@
+--- deploy_main.py
++++ deploy_main.py
+@@ -1128,6 +1128,8 @@
+         raise Failure("STATE_BOUNDARY_FAILED")
+     request.unlink(missing_ok=True)
+     output.unlink(missing_ok=True)
++    # A prior attempt must never masquerade as evidence for this attempt.
++    (request.parent / "last-test-failure.json").unlink(missing_ok=True)
+     try:
+         write_json(request, {"release_id": release_id, "sha": sha,
+                              "controller_netns": network_namespace()})
+@@ -1155,6 +1157,8 @@
+             # The test namespace cannot write this control-directory destination.
+             if "diagnostics" in value:
+                 record = {key: value[key] for key in ("sha", "release_id", "tests_run", "diagnostics")}
++                if value["diagnostics"].get("count_known") is False:
++                    record["tests_run"] = None
+                 if len(json.dumps(record).encode("ascii")) + 1 > DIAGNOSTIC_LIMIT:
+                     raise Failure("STATE_BOUNDARY_FAILED")
+                 write_json(request.parent / "last-test-failure.json", record)
+@@ -1311,6 +1315,15 @@
+         raise Failure("STATE_BOUNDARY_FAILED") from None
+ 
+ 
++class TestCaptureFailure(Exception):
++    """Internal bounded capture; only allowlisted derived fields may be retained."""
++    def __init__(self, classification, captured=b"", truncated=False):
++        self.classification = classification
++        self.captured = captured
++        self.truncated = truncated
++        super().__init__(classification)
++
++
+ def capture_test_process(args, *, cwd, env, timeout=300):
+     """Discard stdout; drain stderr with a fixed tail and an overall deadline."""
+     process = subprocess.Popen(args, cwd=cwd, env=env, stdout=subprocess.DEVNULL,
+@@ -1334,6 +1347,10 @@
+                     tail = (tail + chunk)[-TEST_STDERR_LIMIT:]
+             process.wait(timeout=max(0, deadline - time.monotonic()))
+         return process.returncode, tail, truncated
++    except subprocess.TimeoutExpired:
++        raise TestCaptureFailure("TIMEOUT", tail, truncated) from None
++    except (OSError, ValueError, subprocess.SubprocessError):
++        raise TestCaptureFailure("CAPTURE_ERROR", tail, truncated) from None
+     finally:
+         # Same immediate-child timeout cleanup as subprocess.run; systemd owns
+         # complete descendant termination before the controller reads reports.
+@@ -1394,7 +1411,27 @@
+     return result
+ 
+ 
++def extended_diagnostics(stderr, summary, allowed, truncated, classification, count_known):
++    result = test_diagnostics(stderr, summary, allowed, truncated)
++    last = None
++    for line in stderr.splitlines():
++        match = re.match(r"^(test[A-Za-z0-9_]*) \(([A-Za-z0-9_.]+)\)(?: \.\.\.|$)", line)
++        if match and match[2] in allowed and match[2].rsplit(".", 1)[-1] == match[1]:
++            last = match[2]
++    result.update(classification=classification, count_known=count_known, last_test_id=last)
++    return result
++
++
+ def valid_test_diagnostics(value, allowed):
++    basic = {"failures", "errors", "test_ids", "truncated"}
++    extra = {"classification", "count_known", "last_test_id"}
++    if isinstance(value, dict) and set(value) == basic | extra:
++        if (value["classification"] not in ("TIMEOUT", "CAPTURE_ERROR", "PROCESS_ERROR", "TEST_FAILURE", "MISSING_SUMMARY")
++                or type(value["count_known"]) is not bool
++                or (value["last_test_id"] is not None and
++                    (not isinstance(value["last_test_id"], str) or value["last_test_id"] not in allowed))):
++            return False
++        value = {key: value[key] for key in basic}
+     return (isinstance(value, dict)
+             and set(value) == {"failures", "errors", "test_ids", "truncated"}
+             and all(value[key] is None or (type(value[key]) is int and 0 <= value[key] <= 999999)
+@@ -1429,20 +1466,31 @@
+         env = {"PATH": "/usr/bin:/bin", "HOME": "/nonexistent", "PYTHONPATH": "src",
+                "PYTHONDONTWRITEBYTECODE": "1", "PYTHONNOUSERSITE": "1"}
+         allowed = test_identifiers(release)
+-        code, captured, truncated = capture_test_process([str(release / ".venv/bin/python"), "-B", "-m", "unittest",
+-                                  "discover", "-s", "tests"], cwd=release, env=env,
+-                                  timeout=300)
++        classification = None
++        try:
++            code, captured, truncated = capture_test_process([str(release / ".venv/bin/python"), "-B", "-m", "unittest",
++                                  "discover", "-v", "-s", "tests"], cwd=release, env=env,
++                                      timeout=300)
++        except TestCaptureFailure as error:
++            code, captured, truncated = None, error.captured, error.truncated
++            classification = error.classification
++        except (OSError, ValueError, subprocess.SubprocessError):
++            code, captured, truncated = None, b"", False
++            classification = "PROCESS_ERROR"
+         stderr = captured.decode("utf-8", errors="replace")
+         match = re.search(
+             r"(?m)^Ran ([0-9]{1,6}) tests? in [0-9]+(?:\.[0-9]+)?s\r?\n\r?\n"
+             r"(OK(?: \([^\r\n]*\))?|FAILED(?: \([^\r\n]*\))?)\r?\n*\Z", stderr)
+-        if match:
++        if match and classification is None:
+             value["tests_run"] = int(match.group(1))
+         if (code == 0 and match and value["tests_run"] > 0
+                 and match.group(2).startswith("OK")):
+             value["tests_status"] = "PASS"
+         else:
+-            value["diagnostics"] = test_diagnostics(stderr, match[2] if match else None, allowed, truncated)
++            value["diagnostics"] = extended_diagnostics(
++                stderr, match[2] if match and classification is None else None, allowed, truncated,
++                classification or ("TEST_FAILURE" if match else "MISSING_SUMMARY"),
++                match is not None and classification is None)
+     except (Failure, OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
+         pass
+     try:
