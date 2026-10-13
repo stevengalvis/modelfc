@@ -143,3 +143,38 @@ class RecordedOffersTests(unittest.TestCase):
         self.assertEqual(result.status_code, 200)
         self.assertEqual(result.json()['fixtures'], [])
         self.assertFalse(absent.exists())
+
+    def test_old_history_is_not_enriched_or_returned_by_polling_but_remains_in_ledger(self):
+        self.fixture.publish_pair()
+        self.fixture.clock.now.return_value = reader._time(self.fixture.prediction['fixture']['kickoff_at']) + timedelta(days=7, seconds=1)
+        original = self.fixture.data.snapshot()
+        with patch.object(reader, 'prediction_observations', wraps=reader.prediction_observations) as observations, \
+             patch.object(reader, 'market_intelligence_from_snapshot', wraps=reader.market_intelligence_from_snapshot) as intelligence:
+            self.assertEqual(self.board()['fixtures'], [])
+        observations.assert_not_called()
+        intelligence.assert_not_called()
+        self.assertTrue(reader.read_predictions(self.state))
+        self.assertEqual(self.fixture.data.snapshot(), original)
+
+    def test_history_boundary_is_inclusive(self):
+        self.fixture.clock.now.return_value = reader._time(self.fixture.prediction['fixture']['kickoff_at']) + timedelta(days=7)
+        self.assertEqual(len(self.board()['fixtures']), 1)
+
+    def test_fixture_limit_is_deterministic_and_preserves_group_identity(self):
+        from modelfc.recorded_offers import display_keys, fixture_key
+        now = recorded.NOW
+        def forecast(index, days):
+            return dict(prediction_id=str(index), created_at_utc=(now-timedelta(days=10)).isoformat(),
+                        competition='E1', home_team=f'Home {index}', away_team='Away',
+                        kickoff_utc=(now+timedelta(days=days)).isoformat())
+        upcoming = [forecast(i, 1+i/100) for i in range(101)]
+        history = [forecast(200+i, -i) for i in range(10)]
+        duplicate = dict(upcoming[0], prediction_id='other-cohort')
+        future = dict(forecast(400, 0.5), created_at_utc=(now+timedelta(seconds=1)).isoformat())
+        rows = [*upcoming, *history, duplicate, future]
+        chosen = display_keys(rows, now=now)
+        self.assertEqual(len(chosen), 100)
+        self.assertEqual(chosen, {fixture_key(p) for p in upcoming[:100]})
+        self.assertEqual(chosen, display_keys(list(reversed(rows)), now=now))
+        recent = display_keys(history, now=now)
+        self.assertEqual(recent, {fixture_key(p) for p in history[:8]})

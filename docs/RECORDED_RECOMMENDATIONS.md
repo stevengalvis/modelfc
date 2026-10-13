@@ -22,10 +22,19 @@ forecast distribution, using the existing qualification policy and value math.
 
 Fixture grouping uses exact competition, canonical home/away names and UTC kickoff.
 Provider fixture IDs are retained per offer and never substituted across providers.
-Rescheduled kickoffs remain separate identities. All recorded forecast cohorts are
+Rescheduled kickoffs remain separate identities. All recorded forecast cohorts for the selected fixtures are
 listed, including odds-free corner forecasts and explicitly research-only BTTS
 probabilities. Future-created forecasts/observations are excluded. This inventory is
 not a complete league schedule: fixtures without any recorded forecast are absent.
+Polling selects at most 100 fixture identities, prioritizing nearest upcoming
+kickoffs, then the most recent kicked-off fixtures within seven days (inclusive).
+Canonical fixture identity breaks ties. Future-created forecasts remain excluded.
+Selection occurs before historical observation/target/outcome loading or market
+intelligence work, not after enriching the entire history. The validated prediction
+inventory still requires a ledger scan; this change does not claim indexed or
+constant-time storage access. Older evidence remains in the existing on-demand
+forecast ledger. The UI labels the bound and links there, and historical fixture
+components mount only when their section is opened.
 
 The display selects the latest frozen capture cohort by `(created_at, prediction_id)`
 for each fixture, independently of EV, qualification or bookmaker. It does not mix

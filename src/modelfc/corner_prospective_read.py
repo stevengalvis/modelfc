@@ -353,6 +353,16 @@ def _locked_inventory(
     # of this prediction-facing view only through a validated prediction or
     # opportunity reference below.
 
+    research = research_prediction_records(state, now=now) if include_recorded else None
+    if include_recorded:
+        from modelfc.recorded_offers import display_keys, fixture_key
+        selected_keys = display_keys([*predictions, *research], now=now)
+        # Select before reading historical observations/targets/outcomes and before
+        # market-intelligence recomputation under the shared runner lock.
+        predictions = [p for p in predictions if fixture_key(p) in selected_keys
+                       and _time(p["created_at_utc"]) <= now]
+        research = [p for p in research if fixture_key(p) in selected_keys]
+
     prediction_views = []
     opportunity_views = []
     target_views: dict[str, tuple[dict[str, Any], str | None]] = {}
@@ -505,7 +515,8 @@ def _locked_inventory(
     prediction_views.sort(key=lambda item: (
         -_time(item["created_at_utc"]).timestamp(), item["prediction_id"],
     ))
-    research = research_prediction_records(state, now=now)
+    if research is None:
+        research = research_prediction_records(state, now=now)
     if {item["prediction_id"] for item in research} & {
             item["prediction_id"] for item in prediction_views}:
         raise LedgerError("INVALID_PROSPECTIVE_RECORD")

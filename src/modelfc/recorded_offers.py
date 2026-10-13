@@ -6,13 +6,35 @@ All frozen forecasts remain listed; research forecasts are never priced here.
 """
 import hashlib
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from modelfc.corner_market_intelligence import best_recommendations, rank_supported_offers
 
 
 def time(value):
     return datetime.fromisoformat(value.replace('Z', '+00:00'))
+
+
+# Bound the polling display. Complete immutable evidence remains in the ledger.
+HISTORY_DAYS = 7
+FIXTURE_LIMIT = 100
+
+
+def fixture_key(prediction):
+    fixture = prediction.get('fixture', prediction)
+    return (fixture['competition'], fixture['home_team'], fixture['away_team'],
+            time(fixture.get('kickoff_at', fixture.get('kickoff_utc'))).isoformat())
+
+
+def display_keys(predictions, *, now):
+    keys = {fixture_key(p) for p in predictions
+            if time(p['created_at_utc']) <= now
+            and time(fixture_key(p)[3]) >= now - timedelta(days=HISTORY_DAYS)}
+    # Nearest upcoming first, then most recent history; identity breaks ties.
+    return set(sorted(keys, key=lambda k: (
+        time(k[3]) <= now,
+        time(k[3]).timestamp() if time(k[3]) > now else -time(k[3]).timestamp(), k,
+    ))[:FIXTURE_LIMIT])
 
 
 def project(inventory, *, now):

@@ -82,6 +82,7 @@ export function RecommendationsDashboard() {
   const [tick, setTick] = useState(0);
   const [failed, setFailed] = useState(false);
   const [attempt, setAttempt] = useState(0);
+  const [historyOpen, setHistoryOpen] = useState(false);
   useEffect(() => {
     const timer = window.setInterval(() => setTick(performance.now()), 1000);
     return () => window.clearInterval(timer);
@@ -107,6 +108,7 @@ export function RecommendationsDashboard() {
     <header className="page-heading"><div><span className="eyebrow">Recorded market</span><h1>Recommendations</h1>
       <p>Corner forecasts and last-known prices. Recheck older prices before relying on their recorded value.</p></div></header>
     <p className="recorded-note">This page checks saved data every minute; it does not fetch sportsbook odds. A scheduler check does not guarantee new prices. Next eligible odds refresh is not available here.</p>
+    <p className="recorded-note">Showing up to 100 fixtures, nearest upcoming first, with at most seven days of kicked-off history. <Link href="/predictions">Open the full forecast ledger</Link> for older evidence.</p>
     {failed && <section className="panel ledger-message" role="alert"><h2>Saved offers could not be refreshed</h2>
       <p>{data ? "Showing the previous read. Prices need rechecking." : "Recorded offers are unavailable. Please try again."}</p>
       <button className="secondary-button" onClick={() => setAttempt(v => v + 1)}>Retry</button></section>}
@@ -114,8 +116,8 @@ export function RecommendationsDashboard() {
     {data && <><p className="ledger-meta">Saved data read <time dateTime={data.as_of_utc}>{utc(data.as_of_utc)}</time></p>
       {!upcoming.length && <section className="panel ledger-message"><h2>No upcoming recorded fixtures</h2><p>Fixtures appear when a forecast has been recorded.</p></section>}
       <div className="recorded-fixtures">{upcoming.map(item => <Fixture key={item.fixture_id} item={item} asOf={asOf} elapsed={elapsed} failed={failed} />)}</div>
-      {historical.length > 0 && <details className="recorded-details"><summary>Kicked-off / historical fixtures ({historical.length})</summary>
-        <div className="recorded-fixtures">{historical.map(item => <Fixture key={item.fixture_id} item={item} asOf={asOf} elapsed={elapsed} failed={failed} />)}</div>
+      {historical.length > 0 && <details className="recorded-details" onToggle={event => setHistoryOpen(event.currentTarget.open)}><summary>Kicked-off / historical fixtures ({historical.length})</summary>
+        <div className="recorded-fixtures">{historyOpen && historical.map(item => <Fixture key={item.fixture_id} item={item} asOf={asOf} elapsed={elapsed} failed={failed} />)}</div>
       </details>}</>}
   </div>;
 }

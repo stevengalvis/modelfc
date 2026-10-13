@@ -48,7 +48,13 @@ describe("recorded Recommendations", () => {
     render(<RecommendationsDashboard />); await act(async () => {});
     await act(async () => { await vi.advanceTimersByTimeAsync(2000); });
     expect(screen.getByText("Kicked-off / historical fixtures (1)")).toBeInTheDocument();
+    expect(screen.queryByText("Historical quote · kickoff passed")).not.toBeInTheDocument();
+    const history = screen.getByText("Kicked-off / historical fixtures (1)").closest("details")!;
+    await act(async () => { history.open = true; fireEvent(history, new Event("toggle")); });
     expect(screen.getByText("Historical quote · kickoff passed")).toBeInTheDocument();
+    await act(async () => { history.open = false; fireEvent(history, new Event("toggle")); });
+    expect(screen.queryByRole("article")).not.toBeInTheDocument();
+    expect(screen.getByRole("link", {name: "Open the full forecast ledger"})).toHaveAttribute("href", "/predictions");
     expect(screen.getByText("No upcoming recorded fixtures")).toBeInTheDocument();
   });
   it("groups multiple books and lines in one fixture with expanded detail", async () => {
