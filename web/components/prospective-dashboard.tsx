@@ -53,13 +53,24 @@ export function PredictionsDashboard() {
       .finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
   }, [attempt]);
+  useEffect(() => {
+    if (!data) return;
+    const scrollToForecast = () => {
+      const target = data.predictions.find(item => window.location.hash === `#prediction-${item.prediction_id}`);
+      if (target) document.getElementById(`prediction-${target.prediction_id}`)?.scrollIntoView();
+    };
+    // Navigation can reach this page before the asynchronous ledger exists.
+    scrollToForecast();
+    window.addEventListener("hashchange", scrollToForecast);
+    return () => window.removeEventListener("hashchange", scrollToForecast);
+  }, [data]);
   const retry = () => { setLoading(true); setError(null); setAttempt((value) => value + 1); };
   return <div className="workspace ledger-workspace">
     <header className="page-heading"><div><p className="eyebrow">Prospective evidence</p><h1>Predictions & opportunities</h1><p>Recorded before kickoff. Read only.</p></div></header>
     <StateMessage loading={loading} error={error} retry={retry} />
     {data && <>
       <section className="panel ledger-panel"><div className="section-title"><span>01</span><div><h2>Prediction runs</h2><p>{data.predictions.length} recorded</p></div></div>
-        {!data.predictions.length ? <p className="ledger-message">No prospective predictions recorded yet.</p> : <div className="ledger-list">{data.predictions.map((item) => <article className="ledger-card" key={item.prediction_id}>
+        {!data.predictions.length ? <p className="ledger-message">No prospective predictions recorded yet.</p> : <div className="ledger-list">{data.predictions.map((item) => <article className="ledger-card" id={`prediction-${item.prediction_id}`} key={item.prediction_id}>
           <div className="ledger-card-head"><div><small>{item.competition} · {time(item.kickoff_utc)}</small><h3>{item.home_team} <span>vs</span> {item.away_team}</h3></div><Status value={item.settlement_status} /></div>
           <p className="ledger-meta">Created {time(item.created_at_utc)} · {item.model_name} / {item.model_version}{item.research_status ? " · Research only" : ""}</p>
           <dl className="ledger-values">{item.prediction_type === "BTTS" ? <><div><dt>BTTS yes</dt><dd>{percent(item.btts_yes_probability!)}</dd></div><div><dt>BTTS no</dt><dd>{percent(item.btts_no_probability!)}</dd></div><div><dt>Expected home goals</dt><dd>{number(item.home_expected_goals!)}</dd></div><div><dt>Expected away goals</dt><dd>{number(item.away_expected_goals!)}</dd></div></> : <><div><dt>Expected home</dt><dd>{number(item.expected_home_corners!)}</dd></div><div><dt>Expected away</dt><dd>{number(item.expected_away_corners!)}</dd></div><div><dt>Expected match</dt><dd>{number(item.expected_match_corners!)}</dd></div></>}<div><dt>Targets</dt><dd>{item.target_count}</dd></div><div><dt>Opportunities</dt><dd>{item.opportunity_count}</dd></div>{item.settlement_status === "SETTLED" && (item.prediction_type === "BTTS" ? <><div><dt>Final goals</dt><dd>{item.actual_home_goals} · {item.actual_away_goals}</dd></div><div><dt>BTTS result</dt><dd>{item.actual_btts}</dd></div></> : <div><dt>Actual corners</dt><dd>{item.actual_home_corners} · {item.actual_away_corners}</dd></div>)}</dl>

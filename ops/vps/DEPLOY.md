@@ -322,8 +322,17 @@ source-declared test identifiers (160 ASCII characters each), and `truncated`.
 Subtest values, traceback text, stdout and unknown identifiers are never retained.
 Stdout is discarded; stderr is drained in 4096-byte chunks into a 65536-byte tail
 while reading, under the existing 300-second deadline. `truncated` also indicates
-omitted/unrecognized identifiers. A later failure replaces this single record;
-success leaves it unchanged, so always check its SHA/release ID. It does not
+omitted/unrecognized identifiers. Each new test attempt removes the previous failure artifact before starting the
+service, so a missing new report cannot leave stale diagnostics presented as the
+current attempt. Always match both SHA and nonce-bearing release ID. Interrupted
+runs retain only TIMEOUT/CAPTURE_ERROR/PROCESS_ERROR classification, bounded
+source-allowlisted last-test identity (or null), and `count_known=false`;
+`tests_run` in the private failure artifact is null when no accepted terminal
+summary exists. The legacy fixed GitHub report still uses zero for unknown, not
+proof that zero tests executed. Verbose unittest progress supplies the last
+observed identifier, not proof that it caused the interruption. A large tail can
+omit earlier progress; unknown stays unknown. Abnormal exit/invalid summaries
+remain failures. No raw exception messages are retained. It does not
 authorize promotion or change the fixed GitHub JSON report. The normal
 host execution context is used, independent of coding-agent mount restrictions.
 
@@ -662,3 +671,16 @@ correction verified isolation with PID 1 inaccessible, rejection when isolation
 was disabled, both actual tmpfs mounts, byte and inode ENOSPC on each, and rejection
 of legacy private directories, missing mounts and incorrect limits. Those
 diagnostics did not install trusted production components or resume deployment.
+
+### Diagnostic-only controller follow-up
+
+This source change does not install the controller or authorize a production
+retry. The installed controller currently differs from repository main in API
+handoff behavior. Do not copy the whole current-main controller onto the host:
+a separately reviewed diagnostic-only patch against installed hash
+`da79a229d040c1b7b356e107f99e31a8136a68159a83e7de13aa3b484d6cc7a0`
+must preserve that host's existing handoff behavior and exclude PR140. Disposable
+real-systemd timing/cleanup acceptance and explicit installation approval remain
+required. Keep the 300-second child deadline, service/resource/security limits,
+state isolation and promotion gate unchanged. Missing reports after controller
+termination still provide no last-test evidence; do not infer a cause.

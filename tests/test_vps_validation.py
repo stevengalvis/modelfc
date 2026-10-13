@@ -464,11 +464,13 @@ class OfflineHarnessTests(unittest.TestCase):
         (root / "output").mkdir()
         # The installed harness owns a disposable process. These in-process
         # tests must restore its adapters before subsequent application tests.
+        # Recorded responses need no provider pacing, just like execute() below.
         with patch.dict(os.environ, {}, clear=True), \
                 patch.object(oddspapi, "configured_history_lock", oddspapi.configured_history_lock), \
                 patch.object(corner_analysis_store, "configured_history_lock", corner_analysis_store.configured_history_lock), \
                 patch.object(corner_analysis_store, "git_commit_sha", corner_analysis_store.git_commit_sha), \
                 patch.object(harness, "RelayConnection", side_effect=AssertionError("relay forbidden")), \
+                patch.object(oddspapi.time, "sleep"), \
                 patch.object(oddspapi, "build_opener", side_effect=AssertionError("provider HTTP forbidden")):
             return harness.run_capture(SHA, root / "history", root / "output")
 
