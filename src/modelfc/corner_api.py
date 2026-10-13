@@ -20,7 +20,7 @@ from modelfc.corner_analysis import MAX_MARKETS_PER_ANALYSIS, CornerMarketReques
 from modelfc.corner_analysis_store import analyze_and_store, load_analysis
 from modelfc.corner_capabilities import public_api_capabilities
 from modelfc.corner_prospective_read import (
-    read_opportunities, read_opportunity, read_performance, read_predictions, read_recommendations,
+    read_opportunities, read_opportunity, read_performance, read_predictions, read_recommendations, read_recorded_offers,
 )
 from modelfc.ledger_storage import LedgerError, LedgerStorageUnavailable
 from modelfc.btts_research import BttsResearchResponse, read_btts_research
@@ -62,6 +62,51 @@ class RecommendationResponse(StrictModel):
     expected_profit: float = Field(gt=0, allow_inf_nan=False)
     qualified: Literal[True]
     policy_version: str
+
+
+class RecordedOfferResponse(RecommendationResponse):
+    availability_checked_at_utc: str | None
+    model_probability: float | None = Field(ge=0, le=1, allow_inf_nan=False)
+    push_probability: float | None = Field(ge=0, le=1, allow_inf_nan=False)
+    decisive_model_probability: float | None = Field(ge=0, le=1, allow_inf_nan=False)
+    sportsbook_implied_probability: float | None = Field(ge=0, le=1, allow_inf_nan=False)
+    no_vig_market_probability: float | None = Field(ge=0, le=1, allow_inf_nan=False)
+    no_vig_probability_edge: float | None = Field(ge=-1, le=1, allow_inf_nan=False)
+    expected_profit: float | None = Field(allow_inf_nan=False)
+    qualified: bool
+    current_recommendation: bool
+    status: Literal["RECENT_QUALIFYING", "PRICE_NEEDS_RECHECKING", "QUOTE_UNAVAILABLE",
+                    "NO_QUALIFYING_EDGE", "VALUE_UNVERIFIED", "REVIEW_REQUIRED", "HISTORICAL"]
+    opportunity_id: str | None
+
+
+class RecordedForecastResponse(StrictModel):
+    prediction_id: str
+    created_at_utc: str
+    model_name: str
+    model_version: str
+    prediction_type: Literal["CORNER", "BTTS"]
+    research_only: bool
+    expected_home_corners: float | None = Field(ge=0, allow_inf_nan=False)
+    expected_away_corners: float | None = Field(ge=0, allow_inf_nan=False)
+    btts_yes_probability: float | None = Field(ge=0, le=1, allow_inf_nan=False)
+
+
+class RecordedFixtureResponse(StrictModel):
+    fixture_id: str
+    competition: str
+    home_team: str
+    away_team: str
+    kickoff_utc: str
+    status: Literal["UPCOMING", "HISTORICAL"]
+    selected_prediction_id: str | None
+    forecasts: list[RecordedForecastResponse]
+    offers: list[RecordedOfferResponse]
+
+
+class RecordedOffersResponse(StrictModel):
+    as_of_utc: str
+    fixtures: list[RecordedFixtureResponse]
 
 
 class FixtureRequest(StrictModel):
@@ -607,12 +652,15 @@ def create_app(
         error.headers["Cache-Control"] = "no-store"
         return error
 
-    @app.get("/api/v1/recommendations", response_model=list[RecommendationResponse])
-    def get_recommendations() -> list[dict[str, Any]]:
+    @app.get("/api/v1/recommendations", response_model=list[RecommendationResponse] | RecordedOffersResponse)
+    def get_recommendations(response: Response, view: Literal["current", "recorded"] = "current"):
+        response.headers["Cache-Control"] = "no-store"
         try:
-            return read_recommendations(state)
+            return read_recorded_offers(state) if view == "recorded" else read_recommendations(state)
         except LedgerError as error:
-            return _public_read_error(error)
+            result = _public_read_error(error)
+            result.headers["Cache-Control"] = "no-store"
+            return result
 
     @app.get(
         "/api/v1/opportunities/{opportunity_id}",
