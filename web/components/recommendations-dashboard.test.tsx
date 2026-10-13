@@ -102,6 +102,8 @@ describe("recorded Recommendations", () => {
     const { mockRecommendations } = await import("@/lib/api/mock-recommendations");
     const older = structuredClone(mockRecommendations[0]);
     older.prediction_id = "a".repeat(64);
+    older.competition = "E0";
+    older.kickoff_utc = "2026-10-11T16:30:00Z";
     older.observation_age_seconds = 0;
     vi.mocked(api.recommendations).mockResolvedValue([older]);
     vi.spyOn(api, "recordedOffers").mockResolvedValue(data());
@@ -109,6 +111,8 @@ describe("recorded Recommendations", () => {
     const feed = screen.getByRole("region", {name: "Current recommendations across all forecast cohorts"});
     await within(feed).findByText(`Frozen forecast ${older.prediction_id}`);
     expect(within(feed).getByText("Recently checked · qualifying")).toBeInTheDocument();
+    expect(within(feed).getByText(/E0 · Kickoff/)).toBeInTheDocument();
+    expect(within(feed).getByText("11 Oct 2026, 16:30:00 UTC")).toHaveAttribute("dateTime", older.kickoff_utc);
     expect(within(feed).getByRole("link", {name: "Recorded forecast evidence"})).toHaveAttribute("href", `/predictions#prediction-${older.prediction_id}`);
     expect(await screen.findByRole("article")).toBeInTheDocument();
   });

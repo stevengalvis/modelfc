@@ -146,6 +146,7 @@ export function RecommendationsDashboard() {
       {currentFailed && <p role="alert">Current recommendations could not be refreshed.</p>}
       <div className="recorded-fixtures">{eligibleCurrent.map(item => <section className="panel" key={`${item.prediction_id}:${item.target_id}:${item.bookmaker}`}>
         <h3>{item.home_team} vs {item.away_team}</h3>
+        <p className="ledger-meta">{item.competition} · Kickoff <time dateTime={item.kickoff_utc}>{utc(item.kickoff_utc)}</time></p>
         <p className="ledger-meta">Frozen forecast {item.prediction_id}</p>
         <Offer item={{...item, status: "RECENT_QUALIFYING", current_recommendation: true, opportunity_id: null}}
           asOf={Date.parse(item.retrieved_at_utc) + item.observation_age_seconds * 1000} elapsed={currentElapsed} failed={false} />
