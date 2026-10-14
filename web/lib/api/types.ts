@@ -418,5 +418,6 @@ export interface RecordedFixture {
 }
 export interface RecordedOffers { as_of_utc: string; fixtures: RecordedFixture[] }
 
+export type ShortlistRanking = "higher_probability" | "best_value";
 export type ShortlistOffer = RecordedOffer & { fixture_id: string };
 export type Shortlist = { as_of_utc: string; offers: ShortlistOffer[]; total: number; limit: number };

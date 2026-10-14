@@ -17,7 +17,7 @@ describe("saved-price shortlist", () => {
     render(<RecommendationsDashboard />); await screen.findByRole("article");
     expect(screen.getByText("Price needs rechecking")).toBeInTheDocument();
     expect(screen.getByText(/Age 20m/)).toBeInTheDocument();
-    expect(api.shortlist).toHaveBeenCalledWith(5, expect.any(AbortSignal));
+    expect(api.shortlist).toHaveBeenCalledWith(5, expect.any(AbortSignal), "higher_probability");
     expect(api.alternatives).not.toHaveBeenCalled(); expect(api.recordedOffers).not.toHaveBeenCalled(); expect(api.recommendations).not.toHaveBeenCalled();
   });
   it("loads more than five choices from one fixture on demand", async () => {
@@ -28,7 +28,7 @@ describe("saved-price shortlist", () => {
     render(<RecommendationsDashboard />); await screen.findAllByRole("article");
     expect(screen.getAllByRole("article")).toHaveLength(5);
     fireEvent.click(screen.getByText("Show more qualifying choices")); await act(async()=>{});
-    expect(api.shortlist).toHaveBeenLastCalledWith(10,expect.any(AbortSignal));
+    expect(api.shortlist).toHaveBeenLastCalledWith(10,expect.any(AbortSignal), "higher_probability");
     expect(screen.getAllByRole("article")).toHaveLength(6);
   });
   function observe() {
@@ -53,7 +53,7 @@ describe("saved-price shortlist", () => {
     observer.enter(); expect(api.shortlist).toHaveBeenCalledTimes(1);
     fireEvent.scroll(window); observer.enter(); observer.enter();
     expect(api.shortlist).toHaveBeenCalledTimes(2);
-    expect(api.shortlist).toHaveBeenLastCalledWith(10, expect.any(AbortSignal));
+    expect(api.shortlist).toHaveBeenLastCalledWith(10, expect.any(AbortSignal), "higher_probability");
     expect(screen.getByText("Loading more qualifying choices…")).toBeInTheDocument();
     expect(screen.getAllByRole("article")).toHaveLength(5);
     await act(async () => finish(page(12, 10)));
@@ -85,7 +85,7 @@ describe("saved-price shortlist", () => {
     await act(async () => { await vi.advanceTimersByTimeAsync(120_000); });
     expect(api.shortlist).toHaveBeenCalledTimes(2);
     fireEvent.click(screen.getByText("Retry loading qualifying choices")); await act(async () => {});
-    expect(api.shortlist).toHaveBeenLastCalledWith(10, expect.any(AbortSignal));
+    expect(api.shortlist).toHaveBeenLastCalledWith(10, expect.any(AbortSignal), "higher_probability");
     expect(screen.getAllByRole("article")).toHaveLength(6);
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
@@ -113,6 +113,33 @@ describe("saved-price shortlist", () => {
     expect(screen.getByText(/Showing the top 100 qualifying choices/)).toBeInTheDocument();
     expect(screen.queryByText("Show more qualifying choices")).not.toBeInTheDocument();
     expect(api.shortlist).toHaveBeenCalledTimes(20);
+  });
+  it("defaults to higher probability and resets pagination while aborting the previous mode", async () => {
+    let finish!: (value: Shortlist) => void;
+    vi.mocked(api.shortlist).mockResolvedValueOnce(page(12)).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }))
+      .mockResolvedValueOnce({ ...data(), offers: [{ ...data().offers[0], line: 3.5 }] }).mockResolvedValueOnce(page(12));
+    render(<RecommendationsDashboard />); await screen.findAllByRole("article");
+    expect(screen.getByRole("combobox", { name: "Ranking" })).toHaveValue("higher_probability");
+    fireEvent.click(screen.getByText("Show more qualifying choices")); await act(async () => {});
+    const oldSignal = vi.mocked(api.shortlist).mock.calls[1][1];
+    screen.getByRole("combobox").focus();
+    fireEvent.change(screen.getByRole("combobox"), { target: { value: "best_value" } }); await act(async () => {});
+    expect(screen.getByRole("combobox")).toHaveFocus();
+    expect(oldSignal?.aborted).toBe(true);
+    expect(api.shortlist).toHaveBeenLastCalledWith(5, expect.any(AbortSignal), "best_value");
+    expect(screen.getAllByRole("article")).toHaveLength(1);
+    await act(async () => finish(page(12, 10)));
+    expect(screen.getAllByRole("article")).toHaveLength(1);
+    fireEvent.change(screen.getByRole("combobox"), { target: { value: "higher_probability" } }); await act(async () => {});
+    expect(api.shortlist).toHaveBeenLastCalledWith(5, expect.any(AbortSignal), "higher_probability");
+    expect(screen.getAllByRole("article")).toHaveLength(5);
+  });
+  it("shows an honest empty higher-probability result and explains estimates", async () => {
+    vi.mocked(api.shortlist).mockResolvedValue({ ...data(), total: 0, offers: [] });
+    render(<RecommendationsDashboard />);
+    expect(await screen.findByText(/No upcoming choices meet both the value checks and at least 65%/)).toBeInTheDocument();
+    expect(screen.getByText(/Model estimates are not proven hit rates/)).toBeInTheDocument();
+    expect(screen.queryByText("Show more qualifying choices")).not.toBeInTheDocument();
   });
   it("fetches and mounts alternatives only while open and aborts when closed", async()=>{
     render(<RecommendationsDashboard />); await screen.findByRole("article");

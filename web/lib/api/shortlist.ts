@@ -1,9 +1,9 @@
 import { ModelFCApiError } from "./errors";
 import { offer } from "./recorded-offers";
 import { record, timestamp, nonempty, probability } from "./prospective";
-import type { Shortlist } from "./types";
+import type { Shortlist, ShortlistRanking } from "./types";
 
-export function decodeShortlist(value: unknown): Shortlist {
+export function decodeShortlist(value: unknown, ranking: ShortlistRanking = "best_value"): Shortlist {
   const valid = record(value) && Object.keys(value).sort().join() === "as_of_utc,limit,offers,total"
     && timestamp(value.as_of_utc) && Number.isSafeInteger(value.total) && Number(value.total) >= 0
     && Number.isSafeInteger(value.limit) && Number(value.limit) >= 1 && Number(value.limit) <= 100
@@ -26,5 +26,11 @@ export function decodeShortlist(value: unknown): Shortlist {
         && (row.status === "RECENT_QUALIFYING" ? row.current_recommendation : !row.current_recommendation);
     }) && new Set(value.offers.map(v => `${v.fixture_id}:${v.team_side}:${v.direction}:${v.line}`)).size === value.offers.length;
   if (!valid) throw new ModelFCApiError("Shortlist is outside the V1 contract.", "SHORTLIST_CONTRACT_MISMATCH", false);
-  return value as unknown as Shortlist;
+  const shortlist = value as unknown as Shortlist;
+  if (ranking === "higher_probability" && shortlist.offers.some((row, index, rows) =>
+    row.model_probability! < 0.65 || (index > 0 && (rows[index - 1].model_probability! < row.model_probability!
+      || (rows[index - 1].model_probability === row.model_probability && rows[index - 1].expected_profit! < row.expected_profit!))))) {
+    throw new ModelFCApiError("Shortlist ranking is outside the V1 contract.", "SHORTLIST_CONTRACT_MISMATCH", false);
+  }
+  return shortlist;
 }

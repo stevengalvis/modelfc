@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "@/lib/api/client";
-import type { RecordedOffer, RecordedOfferStatus, ShortlistOffer } from "@/lib/api/types";
+import type { RecordedOffer, RecordedOfferStatus, ShortlistOffer, ShortlistRanking } from "@/lib/api/types";
 
 const percent = (value: number | null) => value === null ? "Not available" : `${(value * 100).toFixed(1)}%`;
 const signed = (value: number, digits = 0) => `${value >= 0 ? "+" : "−"}${Math.abs(value).toFixed(digits)}`;
@@ -34,7 +34,7 @@ function Offer({ item, asOf, elapsed, failed }: { item: RecordedOffer; asOf: num
     <div className="recorded-price"><strong>{item.bookmaker} · {signed(item.american_odds)}</strong>
       <span>Recorded price · {item.decimal_odds.toFixed(2)} decimal</span></div>
     <dl className="recorded-metrics">
-      <div><dt>Model probability</dt><dd>{percent(item.model_probability)}</dd></div>
+      <div><dt>Modeled win probability</dt><dd>{percent(item.model_probability)}</dd></div>
       <div><dt>No-vig edge at quote</dt><dd>{item.no_vig_probability_edge === null ? "Not available" : `${signed(item.no_vig_probability_edge * 100, 1)} pp`}</dd></div>
       <div><dt>Expected value at quote</dt><dd>{item.expected_profit === null ? "Not available" : `${signed(item.expected_profit * 100, 1)}% per unit risked`}</dd></div>
     </dl>
@@ -113,9 +113,27 @@ function Alternatives({ item }: { item: ShortlistOffer }) {
 }
 
 export function RecommendationsDashboard() {
+  const [ranking, setRanking] = useState<ShortlistRanking>("higher_probability");
+  // A new mode starts at five and aborts the old read instead of showing its snapshot.
+  return <div className="workspace recommendations-workspace">
+    <header className="page-heading"><div><span className="eyebrow">Saved qualifying prices</span><h1>Recommendations</h1>
+      <p>Ranked upcoming choices at recorded prices. Recheck the price and availability before acting.</p></div></header>
+    <label>Ranking <select value={ranking} onChange={event => setRanking(event.target.value as ShortlistRanking)}>
+      <option value="higher_probability">Higher probability (65%+)</option>
+      <option value="best_value">Best value</option>
+    </select></label>
+    <p className="recorded-note">{ranking === "higher_probability"
+      ? "At least 65% modeled win probability, ranked by win probability then value. All existing value checks still apply."
+      : "Ranked by the existing value criteria. No additional win-probability minimum."}
+      {" "}Pushes do not count as wins. Model estimates are not proven hit rates.</p>
+    <RankedRecommendations key={ranking} ranking={ranking} />
+  </div>;
+}
+
+function RankedRecommendations({ ranking }: { ranking: ShortlistRanking }) {
   const [limit, setLimit] = useState(5);
   const [expanded, setExpanded] = useState<string | null>(null);
-  const load = useCallback((signal: AbortSignal) => api.shortlist(limit, signal), [limit]);
+  const load = useCallback((signal: AbortSignal) => api.shortlist(limit, signal, ranking), [limit, ranking]);
   const { data, elapsed, failed, loading, retry } = useSavedRead(load, limit > 5);
   const sentinel = useRef<HTMLDivElement>(null);
   const scrolled = useRef(false);
@@ -151,16 +169,16 @@ export function RecommendationsDashboard() {
   const asOf = data ? Date.parse(data.as_of_utc) : 0;
   const offers = data?.offers.filter(o => Date.parse(o.kickoff_utc) > asOf + elapsed * 1000) ?? [];
   const selected = offers.find(o => o.fixture_id === expanded);
-  return <div className="workspace recommendations-workspace">
-    <header className="page-heading"><div><span className="eyebrow">Saved qualifying prices</span><h1>Recommendations</h1>
-      <p>Ranked upcoming choices at recorded prices. Recheck the price and availability before acting.</p></div></header>
+  return <>
     <p className="recorded-note">Saved data is checked every minute. This page does not request new sportsbook odds. Older qualifying quotes stay visible with a price-recheck label.</p>
     <p className="recorded-note">Latest capture per fixture, best qualifying bookmaker per target. Ranking covers up to 100 nearest upcoming fixtures. <Link href="/predictions">Forecast ledger and past fixtures</Link></p>
     {failed && <section className="panel ledger-message" role="alert"><h2>Shortlist could not be refreshed</h2>
       <p>{data ? "Showing the previous read. Prices need rechecking." : "Saved choices are unavailable."}</p><button onClick={retry}>Retry</button></section>}
     {!data && !failed && <p role="status">Loading qualifying choices…</p>}
     {data && <><p className="ledger-meta">Saved data read <time dateTime={data.as_of_utc}>{utc(data.as_of_utc)}</time></p>
-      {!offers.length && <p>No qualifying upcoming choices at saved prices.</p>}
+      {!offers.length && <p>{ranking === "higher_probability"
+        ? "No upcoming choices meet both the value checks and at least 65% modeled win probability at saved prices."
+        : "No qualifying upcoming choices at saved prices."}</p>}
       <div className="recorded-fixtures">{offers.map((item, index) => <article className="panel" key={`${item.fixture_id}:${item.target_id}`}>
         <p className="ledger-meta">#{index + 1} · {item.competition} · Kickoff {utc(item.kickoff_utc)}</p>
         <h2>{item.home_team} vs {item.away_team}</h2>
@@ -178,5 +196,5 @@ export function RecommendationsDashboard() {
       {data.total > 100 && data.limit === 100 && <p>Showing the top 100 qualifying choices. Full evidence remains in the forecast ledger.</p>}
       {selected && <><button onClick={() => setExpanded(null)}>Close alternatives</button><Alternatives key={selected.prediction_id} item={selected} /></>}
     </>}
-  </div>;
+  </>;
 }

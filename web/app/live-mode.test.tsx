@@ -19,8 +19,8 @@ describe("site modes", () => {
     vi.stubGlobal("fetch", vi.fn().mockImplementation((url: string) => Promise.resolve(new Response(JSON.stringify(url.includes("view=shortlist") ? {as_of_utc: "2026-10-13T13:00:00Z", offers: [], total: 0, limit: 5} : []), { status: 200 }))));
     const { default: Recommendations } = await import("./recommendations/page");
     render(<Recommendations />);
-    await screen.findByText("No qualifying upcoming choices at saved prices.");
-    expect(fetch).toHaveBeenCalledWith("https://api.example.test/api/v1/recommendations?view=shortlist&limit=5", expect.objectContaining({cache:"no-store"}));
+    await screen.findByText("No upcoming choices meet both the value checks and at least 65% modeled win probability at saved prices.");
+    expect(fetch).toHaveBeenCalledWith("https://api.example.test/api/v1/recommendations?view=shortlist&limit=5&ranking=higher_probability", expect.objectContaining({cache:"no-store"}));
     expect(screen.getByText("Live API")).toBeInTheDocument();
     expect(screen.queryByText("Mock data")).not.toBeInTheDocument();
     expect(screen.queryByText(/Demo West Ham/)).not.toBeInTheDocument();
