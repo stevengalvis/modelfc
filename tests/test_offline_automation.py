@@ -77,6 +77,105 @@ def wire(value):
     return json.dumps(value).encode()
 
 
+class AutomaticTests(unittest.TestCase):
+    def event(self):
+        return {'action': 'completed', 'repository': event()['repository'],
+                'workflow_run': {'name': 'Tests', 'path': '.github/workflows/tests.yml',
+                    'event': 'pull_request', 'status': 'completed', 'conclusion': 'success',
+                    'head_repository': {'full_name': runner.REPOSITORY},
+                    'head_sha': SHA, 'id': 123, 'run_attempt': 1,
+                    'pull_requests': [{'number': 99, 'head': {'sha': SHA}}]}}
+
+    def client(self):
+        value = pr()
+        value.update(draft=False)
+        value['base']['ref'] = 'main'
+        client = api(heads=[value, value])
+        return client
+
+    def test_completed_ci_resolves_exact_open_head(self):
+        self.assertEqual(runner.resolve(self.event(), self.client()), (99, SHA))
+
+    def test_ineligible_ci_rejected_before_remote(self):
+        for field, value in [('event', 'push'), ('conclusion', 'failure'),
+                             ('status', 'in_progress'), ('head_sha', NEW_SHA),
+                             ('path', 'evil.yml'), ('name', 'Other'),
+                             ('pull_requests', []), ('id', True), ('run_attempt', 0),
+                             ('head_repository', {'full_name': 'evil/fork'})]:
+            e = self.event()
+            e['workflow_run'][field] = value
+            remote = Mock()
+            with self.subTest(field=field), self.assertRaises(runner.Rejected):
+                runner.execute(e, SHA, self.client(), remote)
+            remote.assert_not_called()
+
+    def test_draft_stacked_closed_fork_and_moved_head_rejected(self):
+        for change in ('draft', 'stacked', 'closed', 'fork', 'moved'):
+            value = pr()
+            value.update(draft=False)
+            value['base']['ref'] = 'main'
+            if change == 'draft': value['draft'] = True
+            if change == 'stacked': value['base']['ref'] = 'feature'
+            if change == 'closed': value['state'] = 'closed'
+            if change == 'fork': value['head']['repo']['full_name'] = 'evil/fork'
+            if change == 'moved': value['head']['sha'] = NEW_SHA
+            with self.subTest(change=change), self.assertRaises(runner.Rejected):
+                runner.resolve(self.event(), api(heads=[value]))
+
+    def test_request_fingerprint_binds_candidate_revision_ci_and_configuration(self):
+        e = self.event()
+        with patch.dict(os.environ, {'GITHUB_SHA': SHA}, clear=True):
+            baseline = runner.request_marker(e, SHA)
+            self.assertEqual(baseline, runner.request_marker(e, SHA))
+            self.assertNotEqual(baseline, runner.request_marker(e, NEW_SHA))
+            for key in ('GITHUB_SHA', 'VALIDATOR_HOST', 'VALIDATOR_HOST_KEY',
+                        'VALIDATOR_KEY_FINGERPRINT'):
+                with patch.dict(os.environ, {key: NEW_SHA}):
+                    self.assertNotEqual(baseline, runner.request_marker(e, SHA))
+            e['workflow_run']['run_attempt'] = 2
+            self.assertNotEqual(baseline, runner.request_marker(e, SHA))
+
+    def test_duplicate_attempt_never_calls_ssh_or_overwrites_result(self):
+        e, client, remote = self.event(), self.client(), Mock()
+        with patch.dict(os.environ, {'GITHUB_SHA': SHA}, clear=True), \
+                patch.object(runner, 'already_requested', return_value=True):
+            self.assertEqual(runner.execute(e, SHA, client, remote), 'duplicate')
+        remote.assert_not_called()
+        client.status.assert_not_called()
+
+    def test_marker_precedes_pending_and_ssh_and_preserves_report_policy(self):
+        e, client = self.event(), self.client()
+        original = client.call.side_effect
+        calls = []
+        def call(path, data=None):
+            if path.startswith('/statuses/'):
+                calls.append('marker')
+                self.assertEqual(data['context'], 'Trusted OFFLINE request')
+                return {}
+            return original(path, data)
+        client.call.side_effect = call
+        client.status.side_effect = lambda *args: calls.append(args[1])
+        def remote(*args):
+            calls.append('ssh')
+            return wire(report())
+        with patch.dict(os.environ, {'GITHUB_SHA': SHA}, clear=True), \
+                patch.object(runner, 'already_requested', return_value=False):
+            self.assertEqual(runner.execute(e, SHA, client, remote), 'success')
+        self.assertEqual(calls, ['marker', 'pending', 'ssh', 'success'])
+
+    def test_only_trusted_request_markers_deduplicate_not_old_passes(self):
+        client = Mock()
+        for context, login, expected in [('Trusted OFFLINE', 'github-actions[bot]', False),
+                ('Trusted OFFLINE request', 'someone', False),
+                ('Trusted OFFLINE request', 'github-actions[bot]', True)]:
+            client.call.return_value = [{'context': context, 'description': 'marker',
+                                         'creator': {'login': login}}]
+            self.assertEqual(runner.already_requested(client, SHA, 'marker'), expected)
+        client.call.return_value = [{}] * 100
+        with self.assertRaises(runner.Rejected):
+            runner.already_requested(client, SHA, 'marker')
+
+
 class AuthorizationTests(unittest.TestCase):
     def test_authorized_same_repo_resolves_api_sha(self):
         for permission in ('write', 'admin'):
