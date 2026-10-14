@@ -1205,3 +1205,47 @@ cutoff, and model/source provenance. Their `expected_value` is null because no p
 was observed. They do not enter opportunity, recommendation, or betting-performance
 views. Provider payloads, tokens, storage paths, and private supplemental result
 records are never returned.
+
+
+### Upcoming saved-price shortlist
+
+`GET /api/v1/recommendations?view=shortlist&limit=5` returns
+`{as_of_utc, offers, total, limit}`. `limit` is 1–100 (default 5).
+Each offer has the recorded-offer fields plus the opaque 64-hex `fixture_id`.
+The Recommendations page uses this single no-store feed, retaining its prior
+successful display during a refresh. More qualifying choices increase the limit
+on demand. It does not request the current or historical feeds in the background.
+
+Only upcoming fixtures qualify. Select the latest frozen capture by
+`(created_at_utc, prediction_id)` per logical fixture, then the best qualifying
+bookmaker per target and the existing cross-target EV ranking. Multiple targets
+from the same fixture can appear. Research-only forecasts are not candidates.
+The qualification policy, positive EV, paired no-vig edge, supported/consistent
+prices and last-known AVAILABLE requirement are unchanged. Retrieval age alone
+no longer hides a saved qualifying price: an aged offer is labeled
+`PRICE_NEEDS_RECHECKING` with `current_recommendation=false`, retaining exact
+retrieval/availability timestamps and age. This is not verification of a current
+sportsbook price. The legacy `view=current` retains its 300-second eligibility.
+
+`GET /api/v1/recommendations?view=alternatives&fixture_id=<64-hex>` returns the
+recorded-offers envelope for that one upcoming fixture's latest capture, or an
+empty fixture list if it is no longer upcoming/available. The page fetches and
+mounts bookmaker/line detail only while requested. Every alternative retains its
+own qualification status; displaying it does not promote it into the shortlist.
+
+Each read shares one runner/ledger snapshot and one observation/intelligence
+pass per selected fixture. Selection precedes expensive odds/target/outcome
+loading: up to 100 nearest upcoming fixtures for the shortlist, one for detail.
+The initial validated capture inventory scan remains; there is no persistent
+cache that can hide new availability evidence. No historical odds or research
+forecasts are enriched for these views. Historical evidence remains accessible
+through the ledger and existing `view=recorded`. The browser removes choices at
+kickoff even while a refresh is pending, without erasing saved evidence.
+
+Offline performance comparison: `PYTHONPATH=src:. python
+benchmarks/recommendation_shortlist.py` uses twelve saved capture cohorts, one
+fixture, six lines and two books with live provider HTTP denied. On the local
+workspace (seven reads per case), the previous two feeds required 24 observation
+reads/intelligence passes, 127,426 serialized bytes and 177.378 ms median; the
+shortlist required one pass, 5,688 bytes and 13.646 ms median. This synthetic
+comparison is reproducible, not a production latency guarantee.

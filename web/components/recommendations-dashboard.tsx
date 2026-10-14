@@ -1,15 +1,16 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { api } from "@/lib/api/client";
-import type { RecordedFixture, RecordedOffer, RecordedOffers, RecordedOfferStatus, Recommendation } from "@/lib/api/types";
+import type { RecordedOffer, RecordedOfferStatus, ShortlistOffer } from "@/lib/api/types";
 
 const percent = (value: number | null) => value === null ? "Not available" : `${(value * 100).toFixed(1)}%`;
 const signed = (value: number, digits = 0) => `${value >= 0 ? "+" : "−"}${Math.abs(value).toFixed(digits)}`;
-const utc = (value: string) => new Intl.DateTimeFormat("en-GB", {
+const utcFormatter = new Intl.DateTimeFormat("en-GB", {
   dateStyle: "medium", timeStyle: "medium", timeZone: "UTC",
-}).format(new Date(value)) + " UTC";
+});
+const utc = (value: string) => utcFormatter.format(new Date(value)) + " UTC";
 const age = (seconds: number) => seconds < 60 ? `${Math.floor(seconds)}s` : seconds < 3600
   ? `${Math.floor(seconds / 60)}m ${Math.floor(seconds % 60)}s` : `${Math.floor(seconds / 3600)}h ${Math.floor(seconds % 3600 / 60)}m`;
 const labels: Record<RecordedOfferStatus, string> = {
@@ -21,7 +22,7 @@ const labels: Record<RecordedOfferStatus, string> = {
 function displayStatus(item: RecordedOffer, asOf: number, elapsed: number, failed: boolean): RecordedOfferStatus {
   if (item.status === "HISTORICAL" || asOf + elapsed * 1000 >= Date.parse(item.kickoff_utc)) return "HISTORICAL";
   if (["QUOTE_UNAVAILABLE", "REVIEW_REQUIRED"].includes(item.status)) return item.status;
-  if (failed || item.observation_age_seconds + elapsed > 300) return "PRICE_NEEDS_RECHECKING";
+  if (item.status === "RECENT_QUALIFYING" && (failed || item.observation_age_seconds + elapsed > 300)) return "PRICE_NEEDS_RECHECKING";
   return item.status;
 }
 
@@ -44,123 +45,84 @@ function Offer({ item, asOf, elapsed, failed }: { item: RecordedOffer; asOf: num
   </div>;
 }
 
-function Fixture({ item, asOf, elapsed, failed }: { item: RecordedFixture; asOf: number; elapsed: number; failed: boolean }) {
-  // Backend order is authoritative. Show one book per target in the summary;
-  // every returned book/line remains accessible in the expanded recorded detail.
-  const seen = new Set<string>();
-  const summary = item.offers.filter(o => { if (seen.has(o.target_id)) return false; seen.add(o.target_id); return true; }).slice(0, 3);
-  const historical = item.status === "HISTORICAL" || asOf + elapsed * 1000 >= Date.parse(item.kickoff_utc);
-  const primary = item.forecasts.find(p => p.prediction_id === item.selected_prediction_id)
-    ?? item.forecasts.find(p => p.prediction_type === "CORNER");
-  return <article className="panel recorded-fixture">
-    <header><p className="ledger-meta">{item.competition} · {historical ? "Kicked off / historical" : "Upcoming"}</p>
-      <h2>{item.home_team} vs {item.away_team}</h2>
-      <p className="ledger-meta">Kickoff <time dateTime={item.kickoff_utc}>{utc(item.kickoff_utc)}</time></p>
-      {primary && <p>Recorded expected corners: {item.home_team} <strong>{primary.expected_home_corners?.toFixed(1)}</strong> · {item.away_team} <strong>{primary.expected_away_corners?.toFixed(1)}</strong></p>}
-    </header>
-    {summary.length ? <><p className="recorded-note">Ranked corner value at recorded prices. Older quotes are not current recommendations.</p>
-      {summary.map(o => <Offer key={`${o.target_id}:${o.bookmaker}`} item={o} asOf={asOf} elapsed={elapsed} failed={failed} />)}
-      {item.offers.length > summary.length && <details className="recorded-details"><summary>All {item.offers.length} recorded offers · bookmakers and lines</summary>
-        {item.offers.map(o => <Offer key={`${o.target_id}:${o.bookmaker}`} item={o} asOf={asOf} elapsed={elapsed} failed={failed} />)}
-      </details>}</> : <p className="recorded-note">No recorded corner odds. Forecasts remain visible; price and value are unavailable.</p>}
-    <details className="recorded-details"><summary>{item.forecasts.length} recorded {item.forecasts.length === 1 ? "forecast" : "forecasts"} · model and evidence</summary>
-      <p>Offers use the latest frozen capture forecast, not whichever model gives the highest value.</p>
-      {item.forecasts.map(p => <div key={p.prediction_id} className="recorded-forecast">
-        <strong>{p.prediction_type === "BTTS" ? "BTTS research · not a recommendation" : `Corner forecast${p.research_only ? " · research only" : ""}`}</strong>
-        {p.prediction_type === "BTTS" && <p>BTTS Yes probability: {percent(p.btts_yes_probability)}</p>}
-        <p className="ledger-meta">Frozen {utc(p.created_at_utc)} · {p.model_name} · {p.model_version}</p>
-        <p className="ledger-meta">Forecast {p.prediction_id}</p>
-      </div>)}
-      <Link href="/predictions">Forecast ledger</Link> · <Link href="/research/btts">BTTS probabilities and recorded odds · research only</Link>
-    </details>
-  </article>;
-}
 
 type Clock = { mono: number; wall: number };
 const clock = (): Clock => ({ mono: performance.now(), wall: Date.now() });
 const elapsedSince = (tick: Clock, started: Clock) => Math.max(0, tick.mono - started.mono, tick.wall - started.wall) / 1000;
 
-type Age = { started: Clock; elapsed: number };
-type Ages = { recorded: Age | null; current: Age | null };
-const tickAges = (previous: Ages): Ages => {
-  const now = clock();
-  const advance = (value: Age | null): Age | null => value && ({...value, elapsed: Math.max(value.elapsed, elapsedSince(now, value.started))});
-  return {recorded: advance(previous.recorded), current: advance(previous.current)};
-};
-
-export function RecommendationsDashboard() {
-  const [data, setData] = useState<RecordedOffers | null>(null);
-  const [ages, setAges] = useState<Ages>({recorded:null, current:null});
+// Retain the successful snapshot during refresh, failure and a stalled request.
+// Ages advance conservatively even across suspended tabs or wall-clock corrections.
+function useSavedRead<T>(load: (signal: AbortSignal) => Promise<T>) {
+  const [snapshot, setSnapshot] = useState<{ data: T; started: Clock; elapsed: number } | null>(null);
   const [failed, setFailed] = useState(false);
   const [attempt, setAttempt] = useState(0);
-  const [historyOpen, setHistoryOpen] = useState(false);
-  const [current, setCurrent] = useState<Recommendation[]>([]);
-  const [currentLoading, setCurrentLoading] = useState(true);
-  const [currentFailed, setCurrentFailed] = useState(false);
   useEffect(() => {
-    const timer = window.setInterval(() => setAges(tickAges), 1000);
+    const advance = () => setSnapshot(old => old && ({ ...old, elapsed: Math.max(old.elapsed, elapsedSince(clock(), old.started)) }));
+    const timer = window.setInterval(advance, 1000);
     return () => window.clearInterval(timer);
   }, []);
   useEffect(() => {
-    const controller = new AbortController();
-    const started = clock();
-    let currentPending = true;
-    let recordedPending = true;
-    const refresh = () => { setAges(tickAges); setCurrent([]); setCurrentLoading(true); setAttempt(value => value + 1); };
-    // A stalled read must not prevent either saved-data feed from polling again.
-    const timer = window.setTimeout(() => {
-      if (currentPending) setCurrentFailed(true);
-      if (recordedPending) setFailed(true);
-      refresh();
-    }, 60_000);
+    const controller = new AbortController(), started = clock();
+    let pending = true;
+    const refresh = () => {
+      setSnapshot(old => old && ({ ...old, elapsed: Math.max(old.elapsed, elapsedSince(clock(), old.started)) }));
+      setAttempt(v => v + 1);
+    };
+    const timer = window.setTimeout(() => { if (pending) setFailed(true); refresh(); }, 60_000);
     const resume = () => { if (document.visibilityState === "visible") refresh(); };
     window.addEventListener("focus", refresh);
     document.addEventListener("visibilitychange", resume);
-    // Keep the existing all-cohort current feed independent of recorded history.
-    setCurrent([]); setCurrentLoading(true);
-    api.recommendations(controller.signal).then(value => {
-      if (!controller.signal.aborted) { setCurrent(value); setAges(previous => ({...previous, current:{started, elapsed:elapsedSince(clock(), started)}})); setCurrentFailed(false); }
-    }).catch(() => { if (!controller.signal.aborted) { setCurrent([]); setCurrentFailed(true); } }).finally(() => { currentPending = false; if (!controller.signal.aborted) setCurrentLoading(false); });
-    api.recordedOffers(controller.signal).then(value => {
-      if (!controller.signal.aborted) { setData(value); setAges(previous => ({...previous, recorded:{started, elapsed:elapsedSince(clock(), started)}})); setFailed(false); }
-    }).catch(() => { if (!controller.signal.aborted) setFailed(true); }).finally(() => { recordedPending = false; });
+    load(controller.signal).then(data => {
+      if (!controller.signal.aborted) { setSnapshot({ data, started, elapsed: elapsedSince(clock(), started) }); setFailed(false); }
+    }).catch(() => { if (!controller.signal.aborted) setFailed(true); }).finally(() => { pending = false; });
     return () => { controller.abort(); window.clearTimeout(timer); window.removeEventListener("focus", refresh); document.removeEventListener("visibilitychange", resume); };
-  }, [attempt]);
-  const elapsed = ages.recorded?.elapsed ?? 0;
-  const currentElapsed = ages.current?.elapsed ?? 0;
-  const eligibleCurrent = current.filter(item => item.observation_age_seconds + currentElapsed <= 300
-    && Date.parse(item.retrieved_at_utc) + (item.observation_age_seconds + currentElapsed) * 1000 < Date.parse(item.kickoff_utc));
+  }, [load, attempt]);
+  return { data: snapshot?.data, elapsed: snapshot?.elapsed ?? 0, failed, retry: () => setAttempt(v => v + 1) };
+}
+
+function Alternatives({ item }: { item: ShortlistOffer }) {
+  const load = useCallback((signal: AbortSignal) => api.alternatives(item.fixture_id, signal), [item.fixture_id]);
+  const { data, elapsed, failed, retry } = useSavedRead(load);
+  const fixture = data?.fixtures.find(f => f.fixture_id === item.fixture_id && f.selected_prediction_id === item.prediction_id);
+  return <section className="panel" aria-label="Alternative bookmakers and lines">
+    <h2>{item.home_team} vs {item.away_team} · alternatives</h2>
+    <p>Recorded prices from the latest frozen capture. Each line retains its own qualification status.</p>
+    {failed && <p role="alert">Alternatives could not be refreshed. Previous prices need rechecking. <button onClick={retry}>Retry alternatives</button></p>}
+    {!data && !failed && <p role="status">Loading alternatives…</p>}
+    {data && (!fixture || Date.parse(fixture.kickoff_utc) <= Date.parse(data.as_of_utc) + elapsed * 1000)
+      ? <p>These alternatives are no longer available. Refresh the shortlist.</p>
+      : fixture?.offers.map(o => <Offer key={`${o.target_id}:${o.bookmaker}`} item={o} asOf={Date.parse(data!.as_of_utc)} elapsed={elapsed} failed={failed} />)}
+  </section>;
+}
+
+export function RecommendationsDashboard() {
+  const [limit, setLimit] = useState(5);
+  const [expanded, setExpanded] = useState<string | null>(null);
+  const load = useCallback((signal: AbortSignal) => api.shortlist(limit, signal), [limit]);
+  const { data, elapsed, failed, retry } = useSavedRead(load);
   const asOf = data ? Date.parse(data.as_of_utc) : 0;
-  const upcoming = data?.fixtures.filter(f => f.status === "UPCOMING" && Date.parse(f.kickoff_utc) > asOf + elapsed * 1000) ?? [];
-  const historical = data?.fixtures.filter(f => !upcoming.includes(f)) ?? [];
+  const offers = data?.offers.filter(o => Date.parse(o.kickoff_utc) > asOf + elapsed * 1000) ?? [];
+  const selected = offers.find(o => o.fixture_id === expanded);
   return <div className="workspace recommendations-workspace">
-    <header className="page-heading"><div><span className="eyebrow">Recorded market</span><h1>Recommendations</h1>
-      <p>Corner forecasts and last-known prices. Recheck older prices before relying on their recorded value.</p></div></header>
-    <p className="recorded-note">This page checks saved data every minute; it does not fetch sportsbook odds. A scheduler check does not guarantee new prices. Next eligible odds refresh is not available here.</p>
-    <p className="recorded-note">Showing up to 100 fixtures, nearest upcoming first, with at most seven days of kicked-off history. <Link href="/predictions">Open the full forecast ledger</Link> for older evidence.</p>
-    <section aria-label="Current recommendations across all forecast cohorts">
-      <h2>Current qualifying offers · all forecast cohorts</h2>
-      <p className="recorded-note">This is the existing current recommendation feed, including eligible offers from earlier frozen forecasts. Recorded fixture cards below use their latest capture forecast.</p>
-      {currentLoading && !currentFailed && <p role="status">Loading current recommendations…</p>}
-      {!currentLoading && !currentFailed && eligibleCurrent.length === 0 && <p>No current recommendations</p>}
-      {currentFailed && <p role="alert">Current recommendations could not be refreshed.</p>}
-      <div className="recorded-fixtures">{eligibleCurrent.map(item => <section className="panel" key={`${item.prediction_id}:${item.target_id}:${item.bookmaker}`}>
-        <h3>{item.home_team} vs {item.away_team}</h3>
-        <p className="ledger-meta">{item.competition} · Kickoff <time dateTime={item.kickoff_utc}>{utc(item.kickoff_utc)}</time></p>
-        <p className="ledger-meta">Frozen forecast {item.prediction_id}</p>
-        <Offer item={{...item, status: "RECENT_QUALIFYING", current_recommendation: true, opportunity_id: null}}
-          asOf={Date.parse(item.retrieved_at_utc) + item.observation_age_seconds * 1000} elapsed={currentElapsed} failed={false} />
-      </section>)}</div>
-    </section>
-    {failed && <section className="panel ledger-message" role="alert"><h2>Saved offers could not be refreshed</h2>
-      <p>{data ? "Showing the previous read. Prices need rechecking." : "Recorded offers are unavailable. Please try again."}</p>
-      <button className="secondary-button" onClick={() => setAttempt(v => v + 1)}>Retry</button></section>}
-    {!data && !failed && <section className="panel ledger-message" role="status">Loading recorded offers…</section>}
+    <header className="page-heading"><div><span className="eyebrow">Saved qualifying prices</span><h1>Recommendations</h1>
+      <p>Ranked upcoming choices at recorded prices. Recheck the price and availability before acting.</p></div></header>
+    <p className="recorded-note">Saved data is checked every minute. This page does not request new sportsbook odds. Older qualifying quotes stay visible with a price-recheck label.</p>
+    <p className="recorded-note">Latest capture per fixture, best qualifying bookmaker per target. Ranking covers up to 100 nearest upcoming fixtures. <Link href="/predictions">Forecast ledger and past fixtures</Link></p>
+    {failed && <section className="panel ledger-message" role="alert"><h2>Shortlist could not be refreshed</h2>
+      <p>{data ? "Showing the previous read. Prices need rechecking." : "Saved choices are unavailable."}</p><button onClick={retry}>Retry</button></section>}
+    {!data && !failed && <p role="status">Loading qualifying choices…</p>}
     {data && <><p className="ledger-meta">Saved data read <time dateTime={data.as_of_utc}>{utc(data.as_of_utc)}</time></p>
-      {!upcoming.length && <section className="panel ledger-message"><h2>No upcoming recorded fixtures</h2><p>Fixtures appear when a forecast has been recorded.</p></section>}
-      <div className="recorded-fixtures">{upcoming.map(item => <Fixture key={item.fixture_id} item={item} asOf={asOf} elapsed={elapsed} failed={failed} />)}</div>
-      {historical.length > 0 && <details className="recorded-details" open={historyOpen} onToggle={event => setHistoryOpen(event.currentTarget.open)}><summary>Kicked-off / historical fixtures ({historical.length})</summary>
-        <div className="recorded-fixtures">{historyOpen && historical.map(item => <Fixture key={item.fixture_id} item={item} asOf={asOf} elapsed={elapsed} failed={failed} />)}</div>
-      </details>}</>}
+      {!offers.length && <p>No qualifying upcoming choices at saved prices.</p>}
+      <div className="recorded-fixtures">{offers.map((item, index) => <article className="panel" key={`${item.fixture_id}:${item.target_id}`}>
+        <p className="ledger-meta">#{index + 1} · {item.competition} · Kickoff {utc(item.kickoff_utc)}</p>
+        <h2>{item.home_team} vs {item.away_team}</h2>
+        <Offer item={item} asOf={asOf} elapsed={elapsed} failed={failed} />
+        <button className="secondary-button" onClick={() => setExpanded(v => v === item.fixture_id ? null : item.fixture_id)}
+          aria-expanded={expanded === item.fixture_id}>Bookmakers and alternate lines</button>
+      </article>)}</div>
+      {data.total > data.limit && limit < 100 && <button className="secondary-button" onClick={() => setLimit(v => Math.min(100, v + 5))}>Show more qualifying choices</button>}
+      {data.total > 100 && limit === 100 && <p>Showing the top 100 qualifying choices. Full evidence remains in the forecast ledger.</p>}
+      {selected && <><button onClick={() => setExpanded(null)}>Close alternatives</button><Alternatives key={selected.prediction_id} item={selected} /></>}
+    </>}
   </div>;
 }
