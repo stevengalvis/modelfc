@@ -97,11 +97,11 @@ def prepare_read_acl(path: Path, user: str, *, remove: bool = False) -> None:
 
 
 @contextmanager
-def refresh_lock(state: Path):
+def refresh_lock(state: Path, *, wait=False):
     state.mkdir(parents=True, exist_ok=True)
     with (state / "refresh-run.lock").open("a") as run_lock:
         try:
-            fcntl.flock(run_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            fcntl.flock(run_lock, fcntl.LOCK_EX | (0 if wait else fcntl.LOCK_NB))
         except BlockingIOError as error:
             raise ValueError("another refresh is already running for this data directory") from error
         with (state / "refresh.lock").open("a") as data_lock:
@@ -230,7 +230,9 @@ def refresh_data(config: CornerDataConfig, today: date | None = None,
     today = today or datetime.now(timezone.utc).date()
     config.directory.mkdir(parents=True, exist_ok=True)
     state = config.directory / "data" / "corner-refresh"
-    with refresh_lock(state):
+    # Capped overlaps must wait: dropping the baseline would lose UNKNOWN
+    # leagues when the E1-only morning job wins the lock. Recheck cap inside.
+    with refresh_lock(state, wait=refresh_attempts.enabled(state)):
         capped = refresh_attempts.enabled(state)
         # Selection executes under publication lock, immediately before reserve.
         selected = tuple(selection() if selection else config.leagues)

@@ -50,8 +50,9 @@ interruption. The immutable `-finished.json` records delivery/publication status
 source URL, published hash, per-league checked time and E1 evidence pin when
 retention is enabled. A missing terminal receipt is explicitly reported as
 `RESERVED_WITHOUT_TERMINAL_RECEIPT`, never retried. A duplicate completed attempt
-reuses its saved report. Concurrent starts may receive the existing busy error;
-a subsequent trigger remains subject to the same cap. Next UTC day permits a new
+reuses its saved report. Capped concurrent starts wait on the existing run lock, then recheck each cap;
+this preserves the baseline fallback for other leagues when morning starts first.
+Uncapped legacy starts retain the existing busy error. Next UTC day permits a new
 attempt; no operator retry override exists. A failed receipt write is an error
 and leaves the reservation consumed. The cap begins at reservation time; network
 completion may cross midnight. There is no backdating CLI.

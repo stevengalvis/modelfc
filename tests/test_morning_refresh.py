@@ -99,16 +99,21 @@ class MorningTests(unittest.TestCase):
             entered.set(); self.assertTrue(release.wait(5))
             return self.download(url, **kwargs)
         with patch.object(refresh, 'download_csv', side_effect=slow), ThreadPoolExecutor(max_workers=3) as pool:
-            baseline = pool.submit(refresh.refresh_data,self.config)
+            # Morning wins first, but waiting baseline must still refresh SP1.
+            first = pool.submit(morning.run,self.config,self.f.state,{**morning.POLICY,'enabled':True})
             self.assertTrue(entered.wait(2))
-            for call in (lambda: morning.run(self.config,self.f.state,{**morning.POLICY,'enabled':True}),
-                         lambda: refresh.refresh_data(self.config)):
-                with self.assertRaisesRegex(ValueError,'already running'): pool.submit(call).result(2)
-            release.set(); baseline.result(5)
+            baseline=pool.submit(refresh.refresh_data,self.config)
+            manual=pool.submit(refresh.refresh_data,self.config)
+            for waiting in (baseline,manual):
+                with self.assertRaises(TimeoutError): waiting.result(.05)
+            release.set(); first.result(5)
+            self.assertEqual([r['status'] for r in baseline.result(5)['results']],['updated','updated'])
+            manual.result(5)
         self.run_morning()
         with patch.object(refresh,'download_csv',side_effect=AssertionError('duplicate request')):
             refresh.refresh_data(self.config)
         self.assertEqual(len(self.calls),2)
+        self.assertEqual(sum('/SP1.csv' in url for url in self.calls),1)
 
     def test_unknown_stale_disabled_offslot_and_missing_cap_never_download(self):
         policy = {**morning.POLICY,'enabled':True}
