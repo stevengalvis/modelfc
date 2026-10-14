@@ -8,7 +8,7 @@ from unittest.mock import patch
 from modelfc import corner_prospective_read as reader
 from modelfc import corner_opportunities as evidence
 from modelfc.providers import oddspapi as provider
-from modelfc.recorded_offers import upcoming_captures
+from modelfc.recorded_offers import upcoming_captures, project_shortlist
 from tests import test_corner_recommendations_api as current
 from tests import test_oddspapi as recorded
 
@@ -139,6 +139,75 @@ class ShortlistTests(unittest.TestCase):
         response = self.client.get('/api/v1/recommendations?view=shortlist')
         self.assertEqual(response.status_code, 503)
         self.assertNotIn(str(self.state), response.text)
+
+    def test_probability_filter_and_ranking_precede_pagination_and_preserve_value_mode(self):
+        f = self.fixture
+        f.data.publish([f.data.selection('fanduel', 125, line=line, direction=direction)
+                        for line in (4.5, 5, 5.5, 6, 6.5, 7, 7.5, 8, 8.5, 9, 9.5, 10)
+                        for direction in ('UNDER', 'OVER')], availability=f.data.available())
+        before = f.data.snapshot()
+        best = self.board('&limit=100')['offers']
+        self.assertEqual(best, self.board('&limit=100&ranking=best_value')['offers'])
+        expected = sorted((row for row in best if row['model_probability'] >= .65),
+                          key=lambda row: -row['model_probability'])
+        self.assertGreater(len(expected), 5)
+        self.assertLess(len(expected), len(best))
+        for limit in (1, 5, 10, 100):
+            board = self.board(f'&ranking=higher_probability&limit={limit}')
+            self.assertEqual(board['offers'], expected[:limit])
+            self.assertEqual(board['total'], len(expected))
+        identity = lambda rows: [(row['line'], row['direction']) for row in rows]
+        self.assertLess(identity(best).index((7., 'UNDER')), identity(best).index((4.5, 'OVER')))
+        self.assertGreater(identity(expected).index((7., 'UNDER')), identity(expected).index((4.5, 'OVER')))
+        self.assertEqual(f.data.snapshot(), before)
+        f.data.publish([], minutes=2, availability=f.data.available(status='BOOKMAKER_UNUSABLE'))
+        self.assertEqual(self.board('&ranking=higher_probability')['offers'], [])
+
+    def test_actual_win_threshold_is_inclusive_and_does_not_use_nonpush_probability(self):
+        self.many_lines()
+        now = self.fixture.as_of
+        inventory = reader._inventory(self.state, now=now, include_recorded=True, upcoming_only=True)
+        # Projection-only fixture: preserve eligibility/price selection, vary win mass.
+        for view in inventory['recorded'].values():
+            for target in view['targets']:
+                for offer in target['offers']:
+                    if offer['direction'] == 'UNDER':
+                        offer['model_probability'] = .65 if offer['line'] == 10.5 else .64
+                        offer['push_probability'] = .1
+                        offer['decisive_model_probability'] = offer['model_probability'] / .9
+        best = project_shortlist(inventory, now=now, limit=100)
+        self.assertEqual(best['total'], 6)
+        high = project_shortlist(inventory, now=now, limit=5, ranking='higher_probability')
+        self.assertEqual(high['total'], 1)
+        self.assertEqual(high['offers'][0]['model_probability'], .65)
+        self.assertEqual(high['offers'][0]['line'], 10.5)
+        for view in inventory['recorded'].values():
+            view['targets'].reverse()
+            for target in view['targets']:
+                target['offers'].reverse()
+        self.assertEqual(high, project_shortlist(inventory, now=now, limit=5, ranking='higher_probability'))
+        for view in inventory['recorded'].values():
+            for target in view['targets']:
+                for offer in target['offers']:
+                    offer['model_probability'] = .7
+        tied = project_shortlist(inventory, now=now, limit=100, ranking='higher_probability')
+        self.assertEqual([o['target_id'] for o in tied['offers']], [o['target_id'] for o in best['offers']])
+        for view in inventory['recorded'].values():
+            for target in view['targets']:
+                for offer in target['offers']:
+                    offer['model_probability'] = .649999
+        empty = project_shortlist(inventory, now=now, limit=5, ranking='higher_probability')
+        self.assertEqual((empty['offers'], empty['total']), ([], 0))
+
+    def test_probability_mode_keeps_stale_labels_excludes_kickoff_and_rejects_bad_query(self):
+        self.fixture.publish_pair()
+        self.fixture.clock.now.return_value = recorded.NOW + timedelta(minutes=10)
+        rows = self.board('&ranking=higher_probability')['offers']
+        self.assertEqual(rows[0]['status'], 'PRICE_NEEDS_RECHECKING')
+        self.assertFalse(rows[0]['current_recommendation'])
+        self.assertEqual(self.client.get('/api/v1/recommendations?view=shortlist&ranking=unknown').status_code, 422)
+        self.fixture.clock.now.return_value = reader._time(self.fixture.prediction['fixture']['kickoff_at'])
+        self.assertEqual(self.board('&ranking=higher_probability')['total'], 0)
 
     def test_selection_bound_recency_and_ties_are_deterministic(self):
         now = recorded.NOW

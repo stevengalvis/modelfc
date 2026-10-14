@@ -135,7 +135,9 @@ def upcoming_captures(predictions, *, now, fixture_id=None):
         raise LedgerError("INVALID_PROSPECTIVE_RECORD") from None
 
 
-def project_shortlist(inventory, *, now, limit):
+def project_shortlist(inventory, *, now, limit, ranking="best_value"):
+    if ranking not in {"best_value", "higher_probability"}:
+        raise ValueError("Invalid shortlist ranking")
     public = project(inventory, now=now)
     # Relax exactly one UI constraint. All actual engine flags remain unchanged;
     # unknown/unavailable, invalid, unqualified and nonpositive EV stay excluded.
@@ -147,4 +149,9 @@ def project_shortlist(inventory, *, now, limit):
                  for f in public['fixtures'] if f['status'] == 'UPCOMING' for o in f['offers']}
     ranked = [available[key] for offer in best_recommendations(candidates)
               if (key := (offer['prediction_id'], offer['target_id'], offer['bookmaker'])) in available]
+    if ranking == "higher_probability":
+        # Actual win mass, not win probability conditional on a non-push outcome.
+        # Stable sorting retains the established value ranking and deterministic ties.
+        ranked = sorted((offer for offer in ranked if offer['model_probability'] >= 0.65),
+                        key=lambda offer: -offer['model_probability'])
     return {'as_of_utc': public['as_of_utc'], 'offers': ranked[:limit], 'total': len(ranked), 'limit': limit}
