@@ -282,7 +282,7 @@ class DeployWorkflowTest(unittest.TestCase):
                  if line.startswith(("    needs:", "    if:"))]
         self.assertEqual(gates, [
             "if: github.event_name == 'push' && github.ref == 'refs/heads/main'",
-            "needs: [test, frontend]",
+            "needs: [test, frontend, release_offline]",
         ])
 
     def test_production_settings_and_diagnostic_removal(self):

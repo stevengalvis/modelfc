@@ -178,8 +178,12 @@ def resolve(event, api):
     return number, current_head(api.call('/pulls/' + str(number)), number)
 
 
-def transport(number, sha):
+def transport(number, sha, *, release=False):
     """One bounded SSH invocation; fixed user/command, pinned host and dedicated key."""
+    if not SHA.fullmatch(sha) or (release and number is not None):
+        raise Rejected
+    command = (f'validate-offline-release {REPOSITORY} {sha}' if release
+               else f'validate-offline {REPOSITORY} {number} {sha}')
     encoded_value = os.environ.pop('VALIDATOR_SSH_KEY_BASE64', '')
     if not encoded_value:
         raise TransportRejected('KEY_SECRET_MISSING')
@@ -236,7 +240,7 @@ def transport(number, sha):
                     '-o', 'ConnectTimeout=15', '-o', 'ServerAliveInterval=15',
                     '-o', 'ServerAliveCountMax=4', '-i', str(private),
                     'modelfc-validator-automation@' + host,
-                    f'validate-offline {REPOSITORY} {number} {sha}']
+                    command]
             try:
                 result = subprocess.run(args, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                                         stderr=subprocess.DEVNULL, env=env, timeout=420)

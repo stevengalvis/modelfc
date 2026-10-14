@@ -248,3 +248,10 @@ Any future LIVE automation requires an independent authorization/budget design.
 - [GitHub collaborator permission mapping and metadata permission](https://docs.github.com/en/rest/collaborators/collaborators#get-repository-permissions-for-a-user)
 - [GitHub exact-SHA commit statuses and required permission](https://docs.github.com/en/rest/commits/statuses#create-a-commit-status)
 - [OpenSSH forced command, SSH_ORIGINAL_COMMAND and restrict](https://man.openbsd.org/sshd.8#AUTHORIZED_KEYS_FILE_FORMAT)
+
+## Prepared release follow-on
+
+See [exact-release OFFLINE acceptance](RELEASE_OFFLINE_ACCEPTANCE.md) for the separate
+release command, versioned evidence and deployment gate. It requires separately
+approved installation; this document's original PR-command setup is not a release
+protocol upgrade.
