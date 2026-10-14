@@ -9,6 +9,7 @@ import json
 from datetime import datetime, timedelta
 
 from modelfc.corner_market_intelligence import best_recommendations, rank_supported_offers
+from modelfc.ledger_storage import LedgerError
 
 
 def time(value):
@@ -116,19 +117,22 @@ def fixture_id_for(key):
 
 def upcoming_captures(predictions, *, now, fixture_id=None):
     """Select by recency before enriching any odds, targets, outcomes or research."""
-    latest = {}
-    for prediction in predictions:
-        key = fixture_key(prediction)
-        if time(key[3]) <= now or time(prediction['created_at_utc']) > now:
-            continue
-        if fixture_id is not None and fixture_id_for(key) != fixture_id:
-            continue
-        previous = latest.get(key)
-        if previous is None or (time(prediction['created_at_utc']), prediction['prediction_id']) > (
-                time(previous['created_at_utc']), previous['prediction_id']):
-            latest[key] = prediction
-    keys = sorted(latest, key=lambda k: (time(k[3]), k))[:FIXTURE_LIMIT]
-    return [latest[key] for key in keys]
+    try:
+        latest = {}
+        for prediction in predictions:
+            key = fixture_key(prediction)
+            if time(key[3]) <= now or time(prediction['created_at_utc']) > now:
+                continue
+            if fixture_id is not None and fixture_id_for(key) != fixture_id:
+                continue
+            previous = latest.get(key)
+            if previous is None or (time(prediction['created_at_utc']), prediction['prediction_id']) > (
+                    time(previous['created_at_utc']), previous['prediction_id']):
+                latest[key] = prediction
+        keys = sorted(latest, key=lambda k: (time(k[3]), k))[:FIXTURE_LIMIT]
+        return [latest[key] for key in keys]
+    except (AttributeError, KeyError, TypeError, ValueError, OverflowError):
+        raise LedgerError("INVALID_PROSPECTIVE_RECORD") from None
 
 
 def project_shortlist(inventory, *, now, limit):

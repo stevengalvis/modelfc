@@ -1,5 +1,7 @@
 """Saved-price shortlist uses real immutable fixtures and never provider HTTP."""
 from datetime import timedelta
+import copy
+import json
 import unittest
 from unittest.mock import patch
 
@@ -101,6 +103,26 @@ class ShortlistTests(unittest.TestCase):
             self.assertEqual(reader.read_alternatives(self.state, fixture_id)['fixtures'], [])
         self.assertTrue(reader.read_recorded_offers(self.state)['fixtures'])
         self.assertEqual(self.fixture.data.snapshot(), before)
+
+    def test_hash_consistent_invalid_timestamps_return_sanitized_integrity_errors(self):
+        self.fixture.publish_pair()
+        fixture_id = self.board()['offers'][0]['fixture_id']
+        path = self.state/'predictions'/f"{self.fixture.prediction['prediction_id']}.json"
+        original = json.loads(path.read_bytes())
+        for field in ('kickoff_at', 'created_at_utc'):
+            for value in ('not-a-time', '2026-10-14T12:00:00', None):
+                with self.subTest(field=field, value=value):
+                    record = copy.deepcopy(original)
+                    target = record['fixture'] if field == 'kickoff_at' else record
+                    target[field] = value
+                    record['record_hash'] = evidence._canonical_hash({k:v for k,v in record.items() if k != 'record_hash'})
+                    path.write_text(json.dumps(record))
+                    for view in ('shortlist', 'alternatives&fixture_id='+fixture_id):
+                        response = self.client.get('/api/v1/recommendations?view='+view)
+                        self.assertEqual(response.status_code, 409, response.text)
+                        self.assertEqual(response.headers['Cache-Control'], 'no-store')
+                        self.assertNotIn(str(self.state), response.text)
+        path.write_text(json.dumps(original))
 
     def test_absent_state_remains_empty_without_creating_files(self):
         absent = self.fixture.data.capture.root/'no-shortlist-state'
