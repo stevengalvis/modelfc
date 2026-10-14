@@ -1,0 +1,11 @@
+# PROPOSAL ONLY: no installer/deploy step enables or copies this unit.
+[Unit]
+Description=Conditional ModelFC morning CSV opportunity
+[Timer]
+OnCalendar=*-*-* 06:00:00 UTC
+AccuracySec=1s
+RandomizedDelaySec=0
+Persistent=false
+Unit=modelfc-morning-refresh.service
+[Install]
+WantedBy=timers.target

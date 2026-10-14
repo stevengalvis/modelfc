@@ -13,6 +13,7 @@ CONFIG = Path('/etc/modelfc/corner_data.json')
 HISTORY = Path('/var/lib/modelfc/history')
 STATE = Path('/var/lib/modelfc/state')
 SETTLEMENT_CONFIG = Path('/etc/modelfc/research-settlement.json')
+MORNING_CONFIG = Path('/etc/modelfc/morning-refresh.json')
 
 
 def protected(path, owner, *, directory=False):
@@ -34,7 +35,9 @@ def settlement_enabled():
     return value['enabled']
 
 
-def launch(*, settlement=False):
+def launch(*, settlement=False, morning=False):
+    if settlement and morning:
+        raise ValueError("invalid launcher mode")
     # getcwd uses the physical directory selected by systemd, not $PWD/current.
     release = Path.cwd()
     match = re.fullmatch(r'([0-9a-f]{40})-[0-9a-f]{12}', release.name)
@@ -75,27 +78,32 @@ def launch(*, settlement=False):
         raise ValueError('research settlement disabled')
     if settlement:
         protected(release / 'src/modelfc/research_settlement.py', owner)
+    if morning:
+        protected(MORNING_CONFIG, 0)
+        protected(release / 'src/modelfc/morning_refresh.py', owner)
     env = {'PATH': '/usr/bin:/bin', 'HOME': '/nonexistent', 'LANG': 'C.UTF-8',
            'PYTHONPATH': str(release / 'src'), 'PYTHONNOUSERSITE': '1',
            'PYTHONDONTWRITEBYTECODE': '1'}
     if settlement:
         env['MODELFC_EVIDENCE_ACL_USER'] = 'modelfc-api'
-    record = {'event': 'modelfc_research_settlement_start' if settlement else 'modelfc_refresh_start', 'release': str(release), 'sha': match[1],
+    record = {'event': 'modelfc_research_settlement_start' if settlement else 'modelfc_morning_refresh_start' if morning else 'modelfc_refresh_start', 'release': str(release), 'sha': match[1],
               'interpreter': str(python), 'import_path': str(release / 'src'),
               'uid': os.getuid(), 'gid': os.getgid(), 'config': str(CONFIG)}
     print(json.dumps(record, sort_keys=True, separators=(',', ':')), file=sys.stderr, flush=True)
     arguments = (['--config', str(CONFIG), '--state-dir', str(STATE), '--enabled'] if settlement else
         ['--config', str(CONFIG), '--validator-read-user', 'modelfc-validator',
          '--public-history-read-user', 'modelfc-api'] + (['--retain-result-evidence'] if enabled else []))
-    module = 'modelfc.research_settlement' if settlement else 'modelfc.corner_refresh'
+    if morning:
+        arguments += ['--state-dir', str(STATE), '--policy', str(MORNING_CONFIG)]
+    module = 'modelfc.research_settlement' if settlement else 'modelfc.morning_refresh' if morning else 'modelfc.corner_refresh'
     os.execve(str(python), [str(python), '-B', '-P', '-s', '-m', module, *arguments], env)
 
 
 def main():
     try:
-        if sys.argv[1:] not in ([], ['--research-settlement']):
+        if sys.argv[1:] not in ([], ['--research-settlement'], ['--morning-refresh']):
             raise ValueError('invalid launcher arguments')
-        launch(settlement=bool(sys.argv[1:]))
+        launch(settlement=sys.argv[1:] == ['--research-settlement'], morning=sys.argv[1:] == ['--morning-refresh'])
     except (OSError, ValueError, KeyError):
         print('REFRESH_LAUNCH_FAILED', file=sys.stderr)
         raise SystemExit(1) from None

@@ -23,25 +23,31 @@ from modelfc.refresh_result_evidence import load, LIMIT
 from modelfc import btts_outcomes, research_outcomes
 
 
-def evidence(config, *, as_of):
+def evidence(config, *, as_of=None):
     history = config.directory
     refresh = history / 'data/corner-refresh'
     # Copy and verify all evidence under the existing history publication lock.
     with existing_read_lock(refresh / 'refresh.lock'):
+        as_of = as_of or datetime.now(timezone.utc)
         report = _json(read(refresh / 'status.json', 1024 * 1024))
-        checked = timestamp(report['checked_at'])
-        _require(checked <= as_of and (as_of - checked).total_seconds() <= 86400,
-                 'REFRESH_EVIDENCE_STALE')
         rows = report['results']
         _require(isinstance(rows, list) and all(isinstance(r, dict) for r in rows)
             and {r['league'] for r in rows} == set(config.leagues)
             and len(rows) == len(config.leagues) and 'E1' in config.leagues,
             'REFRESH_NOT_SUCCESSFUL')
         row = next(r for r in rows if r['league'] == 'E1')
+        reported = timestamp(report['checked_at'])
+        checked = timestamp(row.get('checked_at', report['checked_at']))
+        _require(checked <= reported <= as_of, 'REFRESH_EVIDENCE_STALE')
+        _require(checked <= as_of and (as_of - checked).total_seconds() <= 86400,
+                 'REFRESH_EVIDENCE_STALE')
         # Overall refresh health remains nonzero for other leagues. Only E1's
         # own successful publication may authorize this E1-only consumer.
         _require(row['status'] in ('updated', 'unchanged') and row['stale'] is False,
                  'REFRESH_NOT_SUCCESSFUL')
+        if 'result_availability' in row or 'settlement_eligibility' in row:
+            _require(row.get('settlement_eligibility') == 'VERIFIED_FINAL_SCORES',
+                     'REFRESH_CALENDAR_CONFLICT_OR_UNVERIFIED')
         _require(isinstance(row.get('result_evidence'), dict) and row['result_evidence'].get('status') == 'RETAINED', 'REFRESH_EVIDENCE_UNAVAILABLE')
         pin = row['result_evidence']['sha256']
         metadata, raw = load(refresh, pin, as_of=as_of)
@@ -81,16 +87,18 @@ def run(config, state, *, enabled=False, as_of=None):
         write_new_record(root / (receipt['run_id'] + '-started.json'), {**receipt, 'status': 'STARTED'})
         _sync_root(root); _sync_root(state)
         try:
-            metadata, raw, pin = evidence(config, as_of=observed)
+            metadata, raw, pin = evidence(config, as_of=as_of)
+            evaluated = as_of or datetime.now(timezone.utc)
+            receipt['evaluated_at_utc'] = evaluated.isoformat()
             receipt['evidence_sha256'] = pin
             receipt['source'] = metadata
             receipt['eligibility_scope'] = 'E1_SUCCESSFUL_PUBLICATION'
             receipt.update(research_outcomes.sweep(state, lambda fixture:
                 btts_outcomes.csv_bytes_evidence(raw, metadata['filename'], metadata['file_sha256'],
-                    metadata['retrieved_at_utc'], fixture), as_of=observed,
+                    metadata['retrieved_at_utc'], fixture), as_of=evaluated,
                 reconcile=True, include_bookmaker=True))
         except (ValueError, OSError, KeyError, TypeError, StopIteration) as error:
-            reasons = {'REFRESH_EVIDENCE_STALE', 'REFRESH_NOT_SUCCESSFUL', 'REFRESH_EVIDENCE_UNAVAILABLE',
+            reasons = {'REFRESH_CALENDAR_CONFLICT_OR_UNVERIFIED', 'REFRESH_EVIDENCE_STALE', 'REFRESH_NOT_SUCCESSFUL', 'REFRESH_EVIDENCE_UNAVAILABLE',
                        'INVALID_REFRESH_EVIDENCE', 'SAVED_RESULT_PROVENANCE_REJECTED'}
             receipt['reason'] = str(error) if str(error) in reasons else 'REFRESH_OR_SETTLEMENT_REJECTED'
         receipt['finished_at_utc'] = datetime.now(timezone.utc).isoformat()

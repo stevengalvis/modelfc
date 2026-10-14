@@ -227,7 +227,7 @@ def saved(url,**kwargs):
  with open(os.environ['SYNTHETIC_CSV']+'.requests','a') as log: log.write(url+'\\n')
  if not url.endswith('/E1.csv'): raise OSError('synthetic unrelated league failure')
  return Response()
-urllib.request.urlopen=saved
+urllib.request.build_opener=lambda *handlers: type('SavedOpener',(),{'open':staticmethod(saved)})()
 ''')
         env={**os.environ,'SYNTHETIC_CSV':str(payload_path), 'PYTHONPATH':os.pathsep.join((str(guard),str(Path('src').resolve())))}
         refreshed=subprocess.run([sys.executable,'-m','modelfc.corner_refresh','--config',str(self.config_file),'--retain-result-evidence'],env=env,capture_output=True,text=True,timeout=30)
@@ -291,3 +291,33 @@ urllib.request.urlopen=saved
             result = self.run_settlement()
             self.assertTrue(all(r['status'] in {'UNRESOLVED','CONFLICT'} for r in result['markets']))
             self.assertFalse((self.state/'btts-outcomes').exists())
+
+    def test_settlement_waiting_for_refresh_evaluates_after_publication_lock(self):
+        from concurrent.futures import ThreadPoolExecutor
+        import threading
+        entered=threading.Event()
+        original=automatic.existing_read_lock
+        def entering(path):
+            entered.set()
+            return original(path)
+        payload=self.payload
+        class Response:
+            status=200;headers={}
+            def __enter__(self): return self
+            def __exit__(self,*args): pass
+            def read(self,limit): return payload
+            def geturl(self): return 'https://www.football-data.co.uk/mmz4281/2627/E1.csv'
+        with patch.object(automatic,'existing_read_lock',side_effect=entering),ThreadPoolExecutor(max_workers=1) as pool:
+            with refresh.refresh_lock(self.refresh_state):
+                running=pool.submit(self.run_settlement)
+                self.assertTrue(entered.wait(3))  # Receipt/start time exists before this publication.
+                with patch.object(refresh,'urlopen',return_value=Response()):
+                    row=refresh.refresh_league(self.config,'E1',date(2026,10,13),self.refresh_state,retain_result_evidence=True)
+                checked=datetime.now(timezone.utc).isoformat();row['checked_at']=checked
+                refresh.atomic_write(self.refresh_state/'status.json',json.dumps({
+                    'checked_at':checked,'season':'2627','max_age_days':14,'results':[row]}).encode())
+            result=running.result(10)
+        self.assertEqual(result['status'],'COMPLETE',result)
+        self.assertLess(result['started_at_utc'],checked)
+        self.assertGreaterEqual(result['evaluated_at_utc'],checked)
+        self.assertEqual(result['provider_requests'],0)

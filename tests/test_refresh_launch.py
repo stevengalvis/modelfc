@@ -196,3 +196,37 @@ launcher.launch()
         self.assertIn('OnSuccess=modelfc-research-settlement.service',
                       (ROOT/'deploy/modelfc-corner-refresh.service.d/research-settlement.conf').read_text())
         self.assertNotIn('OnSuccess=', (ROOT/'deploy/modelfc-corner-refresh.service').read_text())
+
+    def test_morning_mode_pins_source_and_passes_readonly_calendar_state(self):
+        control=self.config.parent/'morning-refresh.json'
+        control.write_text('{"version":1,"enabled":false,"competition":"E1","morning_utc":"06:00"}')
+        (self.a/'src/modelfc/morning_refresh.py').touch()
+        original=launcher.protected
+        def protected(path,owner,**kwargs):
+            return original(path,os.getuid() if path==control else owner,**kwargs)
+        with patch.object(launcher,'MORNING_CONFIG',control),patch.object(launcher,'protected',side_effect=protected), patch.object(Path,'cwd',return_value=self.a),patch.object(os,'execve') as execute,redirect_stderr(StringIO()):
+            launcher.launch(morning=True)
+            _,argv,env=execute.call_args.args
+            self.assertEqual(argv[5],'modelfc.morning_refresh')
+            self.assertEqual(argv[-4:],['--state-dir',str(launcher.STATE),'--policy',str(control)])
+            self.assertNotIn('MODELFC_EVIDENCE_ACL_USER',env)
+            with self.assertRaises(ValueError): launcher.launch(morning=True,settlement=True)
+        unit=(ROOT/'deploy/proposals/modelfc-morning-refresh.service.in').read_text()
+        self.assertIn('TemporaryFileSystem=/var/lib/modelfc/state:ro,mode=0700,uid=@RUNTIME_UID@,gid=@RUNTIME_GID@',unit)
+        self.assertIn('BindReadOnlyPaths=/var/lib/modelfc/state/odds-calendar',unit)
+        self.assertIn('BindReadOnlyPaths=/var/lib/modelfc/state/prospective/runner.lock',unit)
+        timer=(ROOT/'deploy/proposals/modelfc-morning-refresh.timer').read_text()
+        self.assertIn('OnCalendar=*-*-* 06:00:00 UTC',timer)
+        self.assertIn('Persistent=false',timer)
+        self.assertNotIn('18:',timer)
+
+    def test_morning_unit_renderer_requires_verified_numeric_nonroot_identity(self):
+        command=[sys.executable,str(ROOT/'ops/vps/render_morning_unit.py')]
+        result=subprocess.run([*command,'--runtime-uid','1234','--runtime-gid','1235'],capture_output=True,text=True,timeout=10)
+        self.assertEqual(result.returncode,0,result.stderr)
+        self.assertIn('TemporaryFileSystem=/var/lib/modelfc/state:ro,mode=0700,uid=1234,gid=1235',result.stdout)
+        self.assertNotIn('@RUNTIME_',result.stdout)
+        for value in ('0','-1','modelfc-runtime','1234,mode=0777'):
+            invalid=subprocess.run([*command,'--runtime-uid',value,'--runtime-gid','1235'],capture_output=True,text=True,timeout=10)
+            self.assertNotEqual(invalid.returncode,0)
+            self.assertEqual(invalid.stdout,'')
