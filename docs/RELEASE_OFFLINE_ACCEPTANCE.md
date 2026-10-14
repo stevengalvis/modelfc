@@ -90,6 +90,9 @@ The known `/root/dev/modelfc` checkout supplies its existing origin credentials.
 `fetch` updates Git objects/FETCH_HEAD only: there is no checkout, reset, stash,
 branch change, dependency installation or modification of working-tree files.
 The root-owned staging directory is newly created and retained for rollback.
+Root tar extraction can preserve group-writable Git archive modes despite the
+shell umask. Remove group/other write bits from this new temporary staging tree
+before validation; this does not change the installed validator or its policy.
 
 ```bash
 (
@@ -103,6 +106,7 @@ The root-owned staging directory is newly created and retained for rollback.
   stage="$(mktemp -d /root/modelfc-pr159.XXXXXXXX)"
   git -C /root/dev/modelfc archive "$source_sha" -- ops/vps | tar -x -C "$stage"
   printf '%s\n' "$source_sha" > "$stage/ops/vps/STAGED_SHA"
+  chmod -R go-w -- "$stage"
   candidate_sha="$(git -C /root/dev/modelfc ls-remote origin refs/heads/main | awk '$2 == "refs/heads/main" {print $1}')"
   [[ "$candidate_sha" =~ ^[0-9a-f]{40}$ ]]
   printf 'RETAIN_STAGE=%s\n' "$stage"

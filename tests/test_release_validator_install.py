@@ -5,6 +5,7 @@ import io
 import json
 import os
 from pathlib import Path
+import subprocess
 import tempfile
 import unittest
 from unittest.mock import Mock, patch
@@ -12,6 +13,34 @@ from unittest.mock import Mock, patch
 from tests.test_offline_automation import load, OPS, SHA, report
 installer = load('install_release_validator')
 policy = load('release_evidence')
+
+
+class StagingTests(unittest.TestCase):
+    def test_documented_staging_removes_archive_write_bits_without_changing_bytes(self):
+        repo = OPS.parent.parent
+        doc = (repo / 'docs/RELEASE_OFFLINE_ACCEPTANCE.md').read_text()
+        command = next(line.strip() for line in doc.splitlines()
+                       if line.strip().startswith('chmod -R '))
+        self.assertEqual(command, 'chmod -R go-w -- "$stage"')
+        archive = subprocess.check_output([
+            'git', '-C', str(repo), '-c', 'tar.umask=0002', 'archive',
+            'HEAD', '--', 'ops/vps/validate_pr.py'])
+        with tempfile.TemporaryDirectory() as temporary:
+            stage = Path(temporary)
+            # -p reproduces root tar's default mode preservation for nonroot CI too.
+            subprocess.run(['tar', '-xp', '-C', str(stage)], input=archive, check=True)
+            payload = stage / 'ops/vps/validate_pr.py'
+            before = payload.read_bytes()
+            self.assertTrue((stage / 'ops').stat().st_mode & 0o020)
+            self.assertTrue(payload.stat().st_mode & 0o020)
+            subprocess.run(['bash', '-c', command], check=True,
+                           env={**os.environ, 'stage': str(stage)})
+            for path in (stage, *stage.rglob('*')):
+                self.assertFalse(path.stat().st_mode & 0o022, str(path))
+            self.assertEqual(payload.read_bytes(), before)
+            self.assertEqual(stage.stat().st_mode & 0o777, 0o700)
+            self.assertEqual((stage / 'ops').stat().st_mode & 0o777, 0o755)
+            self.assertEqual(payload.stat().st_mode & 0o777, 0o644)
 
 
 class InstallTests(unittest.TestCase):
