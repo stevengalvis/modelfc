@@ -1,5 +1,26 @@
 # Last-known corner offers on Recommendations
 
+## Backend-first shortlist ranking API
+
+The optional `view=shortlist&ranking=higher_probability` query retains every
+existing shortlist qualification/value check and requires actual modeled win
+probability `model_probability >= 0.65`. Pushes do not count as wins; conditional
+non-push probability is not used. Empty qualifying sets remain empty.
+Filtering precedes `total` and pagination. Results sort by actual win probability,
+then retain existing value ordering and deterministic ties.
+
+Omitted `ranking` and explicit `ranking=best_value` preserve existing behavior,
+with no additional probability threshold. Best-book and latest-capture selection,
+past-fixture exclusion, stale-price labels and provider behavior remain unchanged.
+Invalid ranking values return HTTP 422.
+
+This backend-only change is split from PR #157. The entire `web/` tree remains
+identical to main, so independent Vercel deployment keeps the existing frontend.
+After separately approved merge and deployment, verify the actual serving SHA
+and read-only higher-probability API behavior before approving the frontend-only
+release. Promotion alone does not establish API adoption. Keep combined PR #157
+unmerged until it is refreshed as frontend-only against the verified backend.
+
 Split from reviewed PR143 head `581e94d850b7d99a0c20e9e50f3900b591e090dc`.
 The backend-first PR contains this contract, API implementation and API tests;
 its entire `web/` tree is unchanged from main. The frontend described below
