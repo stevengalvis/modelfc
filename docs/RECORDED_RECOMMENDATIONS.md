@@ -1,5 +1,30 @@
 # Last-known corner offers on Recommendations
 
+## Shortlist ranking modes
+
+The Recommendations page defaults to **Higher probability**. It keeps all saved
+shortlist qualification/value checks and requires `model_probability >= 0.65`.
+This is actual modeled win probability: a push is not a win. It is not
+`decisive_model_probability` (win probability conditional on a non-push), and
+neither estimate is a proven historical hit rate. Empty qualifying sets remain
+empty; no lower-probability choices are substituted.
+
+`view=shortlist&ranking=higher_probability` filters the complete bounded shortlist
+before computing `total` and applying `limit`. It sorts by actual win probability,
+then preserves the existing value ordering and deterministic ties. **Best value**
+uses `ranking=best_value` with the unchanged ranking and no added probability
+minimum. Omitting `ranking` retains the existing API behavior for older clients.
+Best-book selection, latest-capture selection, past-fixture exclusion, stale-price
+labels and provider behavior are unchanged.
+
+The page initially requests five choices and retains scroll loading in batches
+of five, capped at 100. Changing modes aborts the old request, resets the list and
+pagination, and preserves focus on the ranking selector. The frontend rejects
+higher-probability responses containing sub-65% choices or probability/value
+ordering inversions. Deploy and verify the backend ranking query before promoting
+this frontend; an older backend can ignore unknown query parameters. This PR
+prepares code only and does not authorize deployment or configuration changes.
+
 Split from reviewed PR143 head `581e94d850b7d99a0c20e9e50f3900b591e090dc`.
 The backend-first PR contains this contract, API implementation and API tests;
 its entire `web/` tree is unchanged from main. The frontend described below

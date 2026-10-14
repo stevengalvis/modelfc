@@ -1,3 +1,4 @@
+import type { ShortlistRanking } from "./types";
 import { decodeShortlist } from "./shortlist";
 import { decodeBttsPerformance, emptyBttsPerformance } from "./btts-performance";
 import { decodeRecordedOffers } from "./recorded-offers";
@@ -188,13 +189,15 @@ export function createApiClient(
         : await requestJson<unknown>(baseUrl!, "/capabilities", { signal });
       return decodeCapabilities(value);
     },
-    async shortlist(limit = 5, signal?: AbortSignal) {
+    async shortlist(limit = 5, signal?: AbortSignal, ranking: ShortlistRanking = "best_value") {
       checkConfiguration();
       signal?.throwIfAborted();
-      const offers = mockRecordedOffers.fixtures.flatMap(f => f.offers.map(o => ({ ...o, fixture_id: f.fixture_id })));
+      let offers = mockRecordedOffers.fixtures.flatMap(f => f.offers.map(o => ({ ...o, fixture_id: f.fixture_id })));
+      if (ranking === "higher_probability") offers = offers.filter(o => o.model_probability !== null && o.model_probability >= 0.65)
+        .sort((a, b) => b.model_probability! - a.model_probability! || b.expected_profit! - a.expected_profit!);
       return decodeShortlist(mode === "mock" ? structuredClone({ as_of_utc: mockRecordedOffers.as_of_utc,
         offers: offers.slice(0, limit), total: offers.length, limit })
-        : await requestJson<unknown>(baseUrl!, `/recommendations?view=shortlist&limit=${limit}`, { signal, cache: "no-store" }));
+        : await requestJson<unknown>(baseUrl!, `/recommendations?view=shortlist&limit=${limit}&ranking=${ranking}`, { signal, cache: "no-store" }), ranking);
     },
     async alternatives(fixtureId: string, signal?: AbortSignal) {
       checkConfiguration();

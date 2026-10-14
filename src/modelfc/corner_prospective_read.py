@@ -749,7 +749,7 @@ def read_recorded_offers(state_dir: str | Path) -> dict[str, Any]:
     return project(_inventory(state_dir, now=now, include_recorded=True), now=now)
 
 
-def read_shortlist(state_dir: str | Path, *, limit: int = 5) -> dict[str, Any]:
+def read_shortlist(state_dir: str | Path, *, limit: int = 5, ranking: str = "best_value") -> dict[str, Any]:
     """Rank saved qualifying prices; age alone requests a recheck, never hides value.
 
     One bounded locked snapshot, latest capture per upcoming fixture. Observations
@@ -759,7 +759,7 @@ def read_shortlist(state_dir: str | Path, *, limit: int = 5) -> dict[str, Any]:
     from modelfc.recorded_offers import project_shortlist
     now = datetime.now(timezone.utc)
     return project_shortlist(_inventory(state_dir, now=now, include_recorded=True,
-                                       upcoming_only=True), now=now, limit=limit)
+                                       upcoming_only=True), now=now, limit=limit, ranking=ranking)
 
 
 def read_alternatives(state_dir: str | Path, fixture_id: str) -> dict[str, Any]:

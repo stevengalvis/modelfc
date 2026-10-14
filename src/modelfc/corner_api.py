@@ -671,11 +671,12 @@ def create_app(
     def get_recommendations(response: Response,
                             view: Literal["current", "recorded", "shortlist", "alternatives"] = "current",
                             limit: int = Query(5, ge=1, le=100),
+                            ranking: Literal["best_value", "higher_probability"] = "best_value",
                             fixture_id: str | None = Query(None, pattern=r"^[0-9a-f]{64}$")):
         response.headers["Cache-Control"] = "no-store"
         try:
             if view == "shortlist":
-                return read_shortlist(state, limit=limit)
+                return read_shortlist(state, limit=limit, ranking=ranking)
             if view == "alternatives":
                 if fixture_id is None:
                     return JSONResponse(status_code=422, content={"error": {"code": "FIXTURE_REQUIRED"}},
