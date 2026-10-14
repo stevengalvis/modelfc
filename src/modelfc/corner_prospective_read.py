@@ -334,6 +334,7 @@ def _contains_prospective_records(state: Path) -> bool:
 def _locked_inventory(
     state: Path, *, now: datetime, detail_id: str | None = None,
     include_recommendations: bool = False, include_recorded: bool = False,
+    upcoming_only: bool = False, fixture_id: str | None = None,
 ) -> dict[str, Any]:
     _state_directory(state, "predictions")
     targets_dir = _state_directory(state, "prediction-targets")
@@ -354,7 +355,11 @@ def _locked_inventory(
     # opportunity reference below.
 
     research = None
-    if include_recorded:
+    if upcoming_only:
+        from modelfc.recorded_offers import upcoming_captures
+        predictions = upcoming_captures(predictions, now=now, fixture_id=fixture_id)
+        research = []
+    elif include_recorded:
         from modelfc.recorded_offers import display_keys, fixture_key
         from modelfc.research_predictions import display_identities
         identities = display_identities(state)
@@ -557,7 +562,8 @@ def _locked_inventory(
 
 def _inventory(state_dir: str | Path, *, now: datetime | None = None,
                detail_id: str | None = None, include_recommendations: bool = False,
-               include_recorded: bool = False) -> dict[str, Any]:
+               include_recorded: bool = False, upcoming_only: bool = False,
+               fixture_id: str | None = None) -> dict[str, Any]:
     state = Path(state_dir)
     if not state.exists():
         return _empty_inventory()
@@ -574,7 +580,8 @@ def _inventory(state_dir: str | Path, *, now: datetime | None = None,
     with existing_read_lock(runner_lock):
         with ledger_read_lock(state):
             return _locked_inventory(state, now=now, detail_id=detail_id,
-                                     include_recommendations=include_recommendations, include_recorded=include_recorded)
+                                     include_recommendations=include_recommendations, include_recorded=include_recorded,
+                                     upcoming_only=upcoming_only, fixture_id=fixture_id)
 
 
 def read_recommendations(state_dir: str | Path) -> list[dict[str, Any]]:
@@ -740,3 +747,23 @@ def read_recorded_offers(state_dir: str | Path) -> dict[str, Any]:
     from modelfc.recorded_offers import project
     now = datetime.now(timezone.utc)
     return project(_inventory(state_dir, now=now, include_recorded=True), now=now)
+
+
+def read_shortlist(state_dir: str | Path, *, limit: int = 5) -> dict[str, Any]:
+    """Rank saved qualifying prices; age alone requests a recheck, never hides value.
+
+    One bounded locked snapshot, latest capture per upcoming fixture. Observations
+    and intelligence are loaded once per fixture and reused for ranking/projection.
+    No cross-request cache: new availability evidence is respected on the next read.
+    """
+    from modelfc.recorded_offers import project_shortlist
+    now = datetime.now(timezone.utc)
+    return project_shortlist(_inventory(state_dir, now=now, include_recorded=True,
+                                       upcoming_only=True), now=now, limit=limit)
+
+
+def read_alternatives(state_dir: str | Path, fixture_id: str) -> dict[str, Any]:
+    from modelfc.recorded_offers import project
+    now = datetime.now(timezone.utc)
+    return project(_inventory(state_dir, now=now, include_recorded=True,
+                              upcoming_only=True, fixture_id=fixture_id), now=now)
