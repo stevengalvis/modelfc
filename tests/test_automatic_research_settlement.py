@@ -227,7 +227,7 @@ def saved(url,**kwargs):
  with open(os.environ['SYNTHETIC_CSV']+'.requests','a') as log: log.write(url+'\\n')
  if not url.endswith('/E1.csv'): raise OSError('synthetic unrelated league failure')
  return Response()
-urllib.request.urlopen=saved
+urllib.request.build_opener=lambda *handlers: type('SavedOpener',(),{'open':staticmethod(saved)})()
 ''')
         env={**os.environ,'SYNTHETIC_CSV':str(payload_path), 'PYTHONPATH':os.pathsep.join((str(guard),str(Path('src').resolve())))}
         refreshed=subprocess.run([sys.executable,'-m','modelfc.corner_refresh','--config',str(self.config_file),'--retain-result-evidence'],env=env,capture_output=True,text=True,timeout=30)

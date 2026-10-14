@@ -13,7 +13,11 @@ import pwd
 import re
 import subprocess
 from tempfile import NamedTemporaryFile
-from urllib.request import urlopen
+from urllib.request import build_opener, HTTPRedirectHandler
+from urllib.error import HTTPError
+import hashlib
+
+from modelfc import refresh_attempts
 
 from modelfc.corner_data import CornerDataConfig, load_data_config
 from modelfc.providers.football_data import load_corner_observations
@@ -27,12 +31,26 @@ def current_season(today: date) -> str:
     return f"{start % 100:02d}{(start + 1) % 100:02d}"
 
 
+class DeliveryFailure(OSError):
+    """No complete source body was delivered."""
+
+
+class NoRedirect(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        raise HTTPError(req.full_url, code, 'redirect refused: one GET ceiling', headers, fp)
+
+
+def urlopen(url, timeout):
+    # No redirects, HEAD, conditional cache, or application retries.
+    return build_opener(NoRedirect()).open(url, timeout=timeout)
+
+
 def download_csv(url: str, *, metadata: dict | None = None) -> bytes:
     requested = datetime.now(timezone.utc).isoformat()
     with urlopen(url, timeout=45) as response:
         # No conditional-cache substitution: a 304 is not acquisition of bytes.
         # Never mint a new retrieval timestamp for a retained old CSV.
-        if metadata is not None and response.status != 200:
+        if getattr(response, "status", 200) != 200:
             raise ValueError("result evidence requires an HTTP 200 acquisition")
         payload = response.read(MAX_DOWNLOAD_BYTES + 1)
         if metadata is not None:
@@ -146,7 +164,12 @@ def refresh_league(config: CornerDataConfig, league: str, today: date, state: Pa
     target = config.directory / f"{league}_{season}.csv"
     url = f"https://www.football-data.co.uk/mmz4281/{season}/{league}.csv"
     acquisition = {} if retain_result_evidence and league == "E1" else None
-    payload = download_csv(url, metadata=acquisition) if acquisition is not None else download_csv(url)
+    try:
+        payload = download_csv(url, metadata=acquisition) if acquisition is not None else download_csv(url)
+    except HTTPError:
+        raise
+    except (OSError, HTTPException) as error:
+        raise DeliveryFailure(str(error)) from error
     with NamedTemporaryFile(dir=config.directory, suffix=".csv") as staging:
         staging.write(payload)
         staging.flush()
@@ -156,7 +179,7 @@ def refresh_league(config: CornerDataConfig, league: str, today: date, state: Pa
     missing = previous.keys() - incoming.keys()
     if missing:
         raise ValueError(f"download would remove {len(missing)} existing corner fixtures; kept local file")
-    changed = old_bytes != payload
+    changed = old_bytes is None or hashlib.sha256(old_bytes).digest() != hashlib.sha256(payload).digest()
     if public_history_read_user is not None and public_history_read_user != "modelfc-api":
         raise ValueError("invalid public history reader")
     if public_history_read_user is not None and league == "E1":
@@ -182,7 +205,6 @@ def refresh_league(config: CornerDataConfig, league: str, today: date, state: Pa
     retained = None
     if acquisition is not None:
         try:
-            import hashlib
             from modelfc.refresh_result_evidence import retain
             acquisition.update(filename=target.name, file_sha256=hashlib.sha256(payload).hexdigest())
             retained = {'status': 'RETAINED', 'sha256': retain(state, acquisition, payload)}
@@ -193,6 +215,7 @@ def refresh_league(config: CornerDataConfig, league: str, today: date, state: Pa
     return {
         **({"result_evidence": retained} if retained is not None else {}),
         "league": league, "file": str(target), "source": url,
+        "file_sha256": hashlib.sha256(payload).hexdigest(),
         "status": "updated" if changed else "unchanged",
         "matches": len(incoming), "added": len(incoming.keys() - previous.keys()),
         "corrected": sum(incoming[key] != previous[key] for key in incoming.keys() & previous.keys()),
@@ -202,22 +225,76 @@ def refresh_league(config: CornerDataConfig, league: str, today: date, state: Pa
 
 
 def refresh_data(config: CornerDataConfig, today: date | None = None,
-                 *, validator_read_user: str | None = None, public_history_read_user: str | None = None, retain_result_evidence: bool = False) -> dict:
+                 *, validator_read_user: str | None = None, public_history_read_user: str | None = None,
+                 retain_result_evidence: bool = False, selection=None, trigger="baseline-or-manual", assess_result=None) -> dict:
     today = today or datetime.now(timezone.utc).date()
     config.directory.mkdir(parents=True, exist_ok=True)
     state = config.directory / "data" / "corner-refresh"
     with refresh_lock(state):
-        results = []
-        for league in config.leagues:
+        capped = refresh_attempts.enabled(state)
+        # Selection executes under publication lock, immediately before reserve.
+        selected = tuple(selection() if selection else config.leagues)
+        if len(set(selected)) != len(selected) or not set(selected) <= set(config.leagues):
+            raise ValueError("invalid refresh league selection")
+        if selection and not capped:
+            raise ValueError("morning dispatch requires shared daily attempt cap")
+        previous = {}
+        if (state / "status.json").exists():
             try:
-                results.append(refresh_league(config, league, today, state, validator_read_user=validator_read_user, public_history_read_user=public_history_read_user,
-                    **({"retain_result_evidence": True} if retain_result_evidence else {})))
-            except (OSError, ValueError, csv.Error, HTTPException) as error:
-                results.append({"league": league, "status": "failed", "error": str(error)})
+                saved = json.loads((state / "status.json").read_text())
+                if saved.get('season') == current_season(today):
+                    previous = {r['league']: {**r, 'checked_at': r.get('checked_at', saved['checked_at'])}
+                                for r in saved['results']}
+            except (OSError, ValueError, KeyError, TypeError, AttributeError):
+                # A broken summary cannot prevent baseline recovery. Unselected
+                # leagues remain explicitly unknown; never synthesize provenance.
+                previous = {}
+        results, invocation = [], []
+        for league in config.leagues:
+            if league not in selected:
+                results.append(previous.get(league, {"league": league, "status": "unknown"}))
+                invocation.append({"league": league, "status": "NOT_SELECTED"})
+                continue
+            terminal, reserved = refresh_attempts.reserve(state, league, trigger) if capped else (None, True)
+            if not reserved:
+                if terminal.exists():
+                    completed = json.loads(terminal.read_text())
+                    saved_result = completed['result']
+                    if completed['league'] != league or saved_result['league'] != league:
+                        raise ValueError('conflicting attempt receipt')
+                else:
+                    saved_result = {"league": league, "status": "failed", "error": "RESERVED_WITHOUT_TERMINAL_RECEIPT; no retry"}
+                results.append(saved_result)
+                invocation.append({"league": league, "status": "DAILY_CAP_CONSUMED"})
+                continue
+            try:
+                row = refresh_league(config, league, today, state, validator_read_user=validator_read_user,
+                    public_history_read_user=public_history_read_user,
+                    **({"retain_result_evidence": True} if retain_result_evidence else {}))
+                delivery = "VALIDATED_SOURCE_RESPONSE"
+                if assess_result:
+                    row.update(assess_result(league))
+            except HTTPError as error:
+                row = {"league": league, "status": "failed", "error": str(error)}
+                delivery = "HTTP_RESPONSE_REJECTED"
+            except DeliveryFailure as error:
+                row = {"league": league, "status": "failed", "error": str(error)}
+                delivery = "DELIVERY_FAILED"
+            except (OSError, HTTPException) as error:
+                row = {"league": league, "status": "failed", "error": str(error)}
+                delivery = "PUBLICATION_FAILED"
+            except (ValueError, csv.Error) as error:
+                row = {"league": league, "status": "failed", "error": str(error)}
+                delivery = "SOURCE_OR_PUBLICATION_REJECTED"
+            row = {**row, "checked_at": datetime.now(timezone.utc).isoformat()}
+            if terminal:
+                refresh_attempts.finish(terminal, {"league": league, "delivery": delivery, "result": row})
+            results.append(row)
+            invocation.append({"league": league, "status": delivery})
         report = {
             "checked_at": datetime.now(timezone.utc).isoformat(),
             "season": current_season(today), "max_age_days": config.max_age_days,
-            "results": results,
+            "results": results, "invocation": invocation,
         }
         atomic_write(state / "status.json", (json.dumps(report, indent=2) + "\n").encode())
     return report
@@ -227,6 +304,10 @@ def format_report(report: dict, today: date, max_age_days: int) -> tuple[str, bo
     lines = [f"Last refresh attempt: {report['checked_at']}"]
     unhealthy = False
     for item in report["results"]:
+        if item["status"] == "unknown":
+            lines.append(f"{item['league']}: UNKNOWN: no saved refresh result")
+            unhealthy = True
+            continue
         if item["status"] == "failed":
             lines.append(f"{item['league']}: FAILED: {item['error']}")
             unhealthy = True

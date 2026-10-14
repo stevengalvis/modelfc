@@ -29,15 +29,17 @@ def evidence(config, *, as_of):
     # Copy and verify all evidence under the existing history publication lock.
     with existing_read_lock(refresh / 'refresh.lock'):
         report = _json(read(refresh / 'status.json', 1024 * 1024))
-        checked = timestamp(report['checked_at'])
-        _require(checked <= as_of and (as_of - checked).total_seconds() <= 86400,
-                 'REFRESH_EVIDENCE_STALE')
         rows = report['results']
         _require(isinstance(rows, list) and all(isinstance(r, dict) for r in rows)
             and {r['league'] for r in rows} == set(config.leagues)
             and len(rows) == len(config.leagues) and 'E1' in config.leagues,
             'REFRESH_NOT_SUCCESSFUL')
         row = next(r for r in rows if r['league'] == 'E1')
+        reported = timestamp(report['checked_at'])
+        checked = timestamp(row.get('checked_at', report['checked_at']))
+        _require(checked <= reported <= as_of, 'REFRESH_EVIDENCE_STALE')
+        _require(checked <= as_of and (as_of - checked).total_seconds() <= 86400,
+                 'REFRESH_EVIDENCE_STALE')
         # Overall refresh health remains nonzero for other leagues. Only E1's
         # own successful publication may authorize this E1-only consumer.
         _require(row['status'] in ('updated', 'unchanged') and row['stale'] is False,

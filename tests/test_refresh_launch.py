@@ -196,3 +196,26 @@ launcher.launch()
         self.assertIn('OnSuccess=modelfc-research-settlement.service',
                       (ROOT/'deploy/modelfc-corner-refresh.service.d/research-settlement.conf').read_text())
         self.assertNotIn('OnSuccess=', (ROOT/'deploy/modelfc-corner-refresh.service').read_text())
+
+    def test_morning_mode_pins_source_and_passes_readonly_calendar_state(self):
+        control=self.config.parent/'morning-refresh.json'
+        control.write_text('{"version":1,"enabled":false,"competition":"E1","morning_utc":"06:00"}')
+        (self.a/'src/modelfc/morning_refresh.py').touch()
+        original=launcher.protected
+        def protected(path,owner,**kwargs):
+            return original(path,os.getuid() if path==control else owner,**kwargs)
+        with patch.object(launcher,'MORNING_CONFIG',control),patch.object(launcher,'protected',side_effect=protected), patch.object(Path,'cwd',return_value=self.a),patch.object(os,'execve') as execute,redirect_stderr(StringIO()):
+            launcher.launch(morning=True)
+            _,argv,env=execute.call_args.args
+            self.assertEqual(argv[5],'modelfc.morning_refresh')
+            self.assertEqual(argv[-4:],['--state-dir',str(launcher.STATE),'--policy',str(control)])
+            self.assertNotIn('MODELFC_EVIDENCE_ACL_USER',env)
+            with self.assertRaises(ValueError): launcher.launch(morning=True,settlement=True)
+        unit=(ROOT/'deploy/proposals/modelfc-morning-refresh.service').read_text()
+        self.assertIn('TemporaryFileSystem=/var/lib/modelfc/state:ro',unit)
+        self.assertIn('BindReadOnlyPaths=/var/lib/modelfc/state/odds-calendar',unit)
+        self.assertIn('BindReadOnlyPaths=/var/lib/modelfc/state/prospective/runner.lock',unit)
+        timer=(ROOT/'deploy/proposals/modelfc-morning-refresh.timer').read_text()
+        self.assertIn('OnCalendar=*-*-* 06:00:00 UTC',timer)
+        self.assertIn('Persistent=false',timer)
+        self.assertNotIn('18:',timer)
