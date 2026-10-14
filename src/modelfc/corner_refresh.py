@@ -224,6 +224,14 @@ def refresh_league(config: CornerDataConfig, league: str, today: date, state: Pa
     }
 
 
+def preserve_settlement_block(row, prior):
+    """Publication/transport failure is not adjudication of known final scores."""
+    if prior.get('settlement_eligibility') in ('FINAL_SCORE_CONFLICT', 'CALENDAR_UNVERIFIED'):
+        return {**row, **{key: prior[key] for key in ('settlement_eligibility',
+            'final_score_conflicts', 'calendar_sha256', 'calendar_retrieved_at_utc') if key in prior}}
+    return row
+
+
 def refresh_data(config: CornerDataConfig, today: date | None = None,
                  *, validator_read_user: str | None = None, public_history_read_user: str | None = None,
                  retain_result_evidence: bool = False, selection=None, trigger="baseline-or-manual", assess_result=None) -> dict:
@@ -270,10 +278,11 @@ def refresh_data(config: CornerDataConfig, today: date | None = None,
                     retained = previous.get(league, {})
                     if retained.get('checked_at') == saved_result.get('checked_at') and retained.get('file_sha256') == saved_result.get('file_sha256'):
                         saved_result = retained
-                    if assess_result and saved_result['status'] in ('updated', 'unchanged'):
-                        saved_result = {**saved_result, **assess_result(league)}
                 else:
                     saved_result = {"league": league, "status": "failed", "error": "RESERVED_WITHOUT_TERMINAL_RECEIPT; no retry"}
+                saved_result = preserve_settlement_block(saved_result, previous.get(league, {}))
+                if assess_result and saved_result['status'] in ('updated', 'unchanged'):
+                    saved_result = {**saved_result, **assess_result(league)}
                 results.append(saved_result)
                 invocation.append({"league": league, "status": "DAILY_CAP_CONSUMED"})
                 continue
@@ -282,12 +291,7 @@ def refresh_data(config: CornerDataConfig, today: date | None = None,
                     public_history_read_user=public_history_read_user,
                     **({"retain_result_evidence": True} if retain_result_evidence else {}))
                 delivery = "VALIDATED_SOURCE_RESPONSE"
-                prior = previous.get(league, {})
-                if prior.get('settlement_eligibility') in ('FINAL_SCORE_CONFLICT', 'CALENDAR_UNVERIFIED'):
-                    # A new GET alone cannot resolve an already known conflict.
-                    # Only a fresh calendar/publication assessment can clear it.
-                    row.update({key: prior[key] for key in ('settlement_eligibility',
-                        'final_score_conflicts', 'calendar_sha256', 'calendar_retrieved_at_utc') if key in prior})
+                row = preserve_settlement_block(row, previous.get(league, {}))
                 if assess_result:
                     row.update(assess_result(league))
             except HTTPError as error:
@@ -302,6 +306,8 @@ def refresh_data(config: CornerDataConfig, today: date | None = None,
             except (ValueError, csv.Error) as error:
                 row = {"league": league, "status": "failed", "error": str(error)}
                 delivery = "SOURCE_OR_PUBLICATION_REJECTED"
+            if row['status'] == 'failed':
+                row = preserve_settlement_block(row, previous.get(league, {}))
             row = {**row, "checked_at": datetime.now(timezone.utc).isoformat()}
             if terminal:
                 refresh_attempts.finish(terminal, {"league": league, "delivery": delivery, "result": row})

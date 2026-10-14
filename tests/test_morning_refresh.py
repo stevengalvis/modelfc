@@ -253,10 +253,20 @@ class MorningTests(unittest.TestCase):
             refresh.refresh_data(self.f.config)
         self.assertEqual(self.f.run_settlement()['reason'],'REFRESH_CALENDAR_CONFLICT_OR_UNVERIFIED')
         self.assertEqual(terminal.read_bytes(),original)
-        # Next-day baseline publication does not erase a known calendar conflict.
+        # Failed and interrupted days must not erase the known block either.
+        for day,error in ((1,OSError('delivery failure')),(2,KeyboardInterrupt())):
+            with patch.object(attempts,'datetime') as clock,patch.object(refresh,'download_csv',side_effect=error):
+                clock.now.return_value=datetime.now(timezone.utc)+timedelta(days=day)
+                if day==2:
+                    with self.assertRaises(KeyboardInterrupt): refresh.refresh_data(self.f.config)
+                failed=refresh.refresh_data(self.f.config)
+                self.assertEqual(failed['results'][0]['status'],'failed')
+                self.assertEqual(failed['results'][0]['settlement_eligibility'],'FINAL_SCORE_CONFLICT')
+            self.assertEqual(self.f.run_settlement()['status'],'REJECTED')
+        # A later successful baseline still cannot adjudicate the known conflict.
         self.calls.clear()
         with patch.object(attempts,'datetime') as clock,patch.object(refresh,'download_csv',side_effect=self.download):
-            clock.now.return_value=datetime.now(timezone.utc)+timedelta(days=1)
+            clock.now.return_value=datetime.now(timezone.utc)+timedelta(days=3)
             refresh.refresh_data(self.f.config)
         self.assertEqual(self.f.run_settlement()['status'],'REJECTED')
         self.assertEqual(len(self.calls),1)

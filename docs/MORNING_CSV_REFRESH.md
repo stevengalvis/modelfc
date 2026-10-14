@@ -68,7 +68,8 @@ cannot be validated after publication. Missing corner counts alone still permit
 BTTS settlement from consistent final goals. A capped retry re-assesses existing
 publication without another GET and preserves the block across baseline/manual
 replays; it never rewrites the immutable original attempt receipt. A later-day
-baseline GET alone cannot clear an already known conflict. A fresh verified
+baseline GET alone cannot clear an already known conflict; failed and interrupted
+refresh rows carry the block forward as well. A fresh verified
 morning assessment can clear it once published goals agree, even when no new GET
 is needed. Unknown calendar evidence leaves the prior block in place.
 Unchanged hashes skip CSV replacement; retained 200 responses preserve their
