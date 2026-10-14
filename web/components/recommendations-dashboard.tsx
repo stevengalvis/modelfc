@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "@/lib/api/client";
 import type { RecordedOffer, RecordedOfferStatus, ShortlistOffer } from "@/lib/api/types";
 
@@ -52,9 +52,10 @@ const elapsedSince = (tick: Clock, started: Clock) => Math.max(0, tick.mono - st
 
 // Retain the successful snapshot during refresh, failure and a stalled request.
 // Ages advance conservatively even across suspended tabs or wall-clock corrections.
-function useSavedRead<T>(load: (signal: AbortSignal) => Promise<T>) {
+function useSavedRead<T>(load: (signal: AbortSignal) => Promise<T>, pauseOnFailure = false) {
   const [snapshot, setSnapshot] = useState<{ data: T; started: Clock; elapsed: number } | null>(null);
   const [failed, setFailed] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [attempt, setAttempt] = useState(0);
   useEffect(() => {
     const advance = () => setSnapshot(old => old && ({ ...old, elapsed: Math.max(old.elapsed, elapsedSince(clock(), old.started)) }));
@@ -63,21 +64,37 @@ function useSavedRead<T>(load: (signal: AbortSignal) => Promise<T>) {
   }, []);
   useEffect(() => {
     const controller = new AbortController(), started = clock();
-    let pending = true;
+    let pending = true, requestFailed = false;
+    setLoading(true);
     const refresh = () => {
+      if (pauseOnFailure && requestFailed) return;
       setSnapshot(old => old && ({ ...old, elapsed: Math.max(old.elapsed, elapsedSince(clock(), old.started)) }));
       setAttempt(v => v + 1);
     };
-    const timer = window.setTimeout(() => { if (pending) setFailed(true); refresh(); }, 60_000);
+    const timer = window.setTimeout(() => {
+      if (pending) {
+        setFailed(true);
+        if (pauseOnFailure) {
+          requestFailed = true;
+          controller.abort();
+          setLoading(false);
+          return;
+        }
+      }
+      refresh();
+    }, 60_000);
     const resume = () => { if (document.visibilityState === "visible") refresh(); };
     window.addEventListener("focus", refresh);
     document.addEventListener("visibilitychange", resume);
     load(controller.signal).then(data => {
       if (!controller.signal.aborted) { setSnapshot({ data, started, elapsed: elapsedSince(clock(), started) }); setFailed(false); }
-    }).catch(() => { if (!controller.signal.aborted) setFailed(true); }).finally(() => { pending = false; });
+    }).catch(() => { if (!controller.signal.aborted) { requestFailed = true; setFailed(true); } }).finally(() => {
+      pending = false;
+      if (!controller.signal.aborted) setLoading(false);
+    });
     return () => { controller.abort(); window.clearTimeout(timer); window.removeEventListener("focus", refresh); document.removeEventListener("visibilitychange", resume); };
-  }, [load, attempt]);
-  return { data: snapshot?.data, elapsed: snapshot?.elapsed ?? 0, failed, retry: () => setAttempt(v => v + 1) };
+  }, [load, attempt, pauseOnFailure]);
+  return { data: snapshot?.data, elapsed: snapshot?.elapsed ?? 0, failed, loading, retry: () => setAttempt(v => v + 1) };
 }
 
 function Alternatives({ item }: { item: ShortlistOffer }) {
@@ -99,7 +116,38 @@ export function RecommendationsDashboard() {
   const [limit, setLimit] = useState(5);
   const [expanded, setExpanded] = useState<string | null>(null);
   const load = useCallback((signal: AbortSignal) => api.shortlist(limit, signal), [limit]);
-  const { data, elapsed, failed, retry } = useSavedRead(load);
+  const { data, elapsed, failed, loading, retry } = useSavedRead(load, limit > 5);
+  const sentinel = useRef<HTMLDivElement>(null);
+  const scrolled = useRef(false);
+  const requesting = useRef(false);
+  const hasMore = !!data && data.total > data.limit && data.limit < 100;
+  useEffect(() => {
+    requesting.current = false;
+    scrolled.current = false;
+  }, [data, failed]);
+  const loadMore = useCallback(() => {
+    if (!data || !hasMore || failed || loading || requesting.current || limit !== data.limit) return;
+    requesting.current = true;
+    scrolled.current = false;
+    setLimit(Math.min(100, data.limit + 5));
+  }, [data, hasMore, failed, loading, limit]);
+  useEffect(() => {
+    if (!hasMore || !sentinel.current || typeof IntersectionObserver === "undefined") return;
+    let nearBottom = false, active = true;
+    const onScroll = () => {
+      scrolled.current = true;
+      if (nearBottom) loadMore();
+    };
+    // A visible sentinel alone must not drain every batch on mount or after a read.
+    const observer = new IntersectionObserver(entries => {
+      if (!active) return;
+      nearBottom = entries.some(entry => entry.isIntersecting);
+      if (nearBottom && scrolled.current) loadMore();
+    }, { rootMargin: "200px 0px" });
+    observer.observe(sentinel.current);
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => { active = false; observer.disconnect(); window.removeEventListener("scroll", onScroll); };
+  }, [hasMore, loadMore]);
   const asOf = data ? Date.parse(data.as_of_utc) : 0;
   const offers = data?.offers.filter(o => Date.parse(o.kickoff_utc) > asOf + elapsed * 1000) ?? [];
   const selected = offers.find(o => o.fixture_id === expanded);
@@ -120,8 +168,14 @@ export function RecommendationsDashboard() {
         <button className="secondary-button" onClick={() => setExpanded(v => v === item.fixture_id ? null : item.fixture_id)}
           aria-expanded={expanded === item.fixture_id}>Bookmakers and alternate lines</button>
       </article>)}</div>
-      {data.total > data.limit && limit < 100 && <button className="secondary-button" onClick={() => setLimit(v => Math.min(100, v + 5))}>Show more qualifying choices</button>}
-      {data.total > 100 && limit === 100 && <p>Showing the top 100 qualifying choices. Full evidence remains in the forecast ledger.</p>}
+      {hasMore && <div ref={sentinel} aria-label="More qualifying choices">
+        {loading && <p role="status">Loading more qualifying choices…</p>}
+        <button className="secondary-button" disabled={loading} onClick={failed ? retry : loadMore}>
+          {failed ? "Retry loading qualifying choices" : "Show more qualifying choices"}
+        </button>
+      </div>}
+      {!hasMore && offers.length > 0 && data.total <= 100 && <p role="status">All qualifying choices loaded.</p>}
+      {data.total > 100 && data.limit === 100 && <p>Showing the top 100 qualifying choices. Full evidence remains in the forecast ledger.</p>}
       {selected && <><button onClick={() => setExpanded(null)}>Close alternatives</button><Alternatives key={selected.prediction_id} item={selected} /></>}
     </>}
   </div>;
