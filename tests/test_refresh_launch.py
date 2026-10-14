@@ -27,17 +27,21 @@ class RefreshLaunchTest(unittest.TestCase):
         self.config = self.root / 'etc/modelfc/corner_data.json'
         self.config.parent.mkdir(parents=True)
         self.config.write_text(json.dumps({'data_directory': str(launcher.HISTORY)}))
+        # A VPS may have settlement enabled; tests must never read its policy.
+        self.settlement_config = self.config.parent / 'research-settlement.json'
+        self.settlement_config.write_text('{"enabled":false}')
         self.a = self.make_release('a')
         self.b = self.make_release('b')
         for stub in (patch.object(launcher, 'RELEASES', self.releases),
                      patch.object(launcher, 'CONFIG', self.config),
+                     patch.object(launcher, 'SETTLEMENT_CONFIG', self.settlement_config),
                      patch.object(launcher.pwd, 'getpwnam', return_value=type('Account', (), {'pw_uid': os.getuid()})())):
             stub.start()
             self.addCleanup(stub.stop)
         # Production config checks root ownership; no production account required.
         original = launcher.protected
         def fixture_protected(path, owner, **kwargs):
-            return original(path, os.getuid() if path in (self.config, self.config.parent, self.config.parent.parent) else owner, **kwargs)
+            return original(path, os.getuid() if path in (self.config, self.settlement_config, self.config.parent, self.config.parent.parent) else owner, **kwargs)
         stub = patch.object(launcher, 'protected', side_effect=fixture_protected)
         stub.start()
         self.addCleanup(stub.stop)
@@ -97,11 +101,12 @@ launcher = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(launcher)
 launcher.RELEASES = pathlib.Path(os.environ['FIXTURE_RELEASES'])
 launcher.CONFIG = pathlib.Path(os.environ['FIXTURE_CONFIG'])
+launcher.SETTLEMENT_CONFIG = pathlib.Path(os.environ['FIXTURE_SETTLEMENT_CONFIG'])
 launcher.pwd.getpwnam = lambda name: type('Account', (), {'pw_uid': os.getuid()})()
 original = launcher.protected
 def fixture_protected(path, owner, **kwargs):
     config = launcher.CONFIG
-    if path in (config, config.parent, config.parent.parent):
+    if path in (config, launcher.SETTLEMENT_CONFIG, config.parent, config.parent.parent):
         owner = os.getuid()
     return original(path, owner, **kwargs)
 launcher.protected = fixture_protected
@@ -109,19 +114,43 @@ launcher.launch()
 """
         env = {'PATH': '/usr/bin:/bin', 'LANG': 'C.UTF-8',
                'LAUNCHER_SOURCE': str(ROOT / 'ops/vps/refresh_launch.py'),
-               'FIXTURE_RELEASES': str(self.releases), 'FIXTURE_CONFIG': str(self.config)}
-        result = subprocess.run([sys.executable, '-I', '-B', '-c', script], cwd=self.a,
-                                env=env, capture_output=True, text=True, timeout=15)
-        self.assertEqual(result.returncode, 0, result.stderr)
-        value = json.loads(result.stdout)
-        self.assertEqual(value, {'module': 'pinned-src', 'argv': [
-            '--config', str(self.config), '--validator-read-user', 'modelfc-validator', '--public-history-read-user', 'modelfc-api']})
-        record = json.loads(result.stderr)
-        self.assertEqual(record['release'], str(self.a))
-        self.assertEqual(record['sha'], 'a' * 40)
-        self.assertEqual(record['interpreter'], str(self.a / '.venv/bin/python'))
-        self.assertEqual(record['import_path'], str(self.a / 'src'))
-        self.assertNotIn('release-root-imported', result.stdout + result.stderr)
+               'FIXTURE_RELEASES': str(self.releases), 'FIXTURE_CONFIG': str(self.config),
+               'FIXTURE_SETTLEMENT_CONFIG': str(self.settlement_config)}
+        for enabled in (False, True):
+            self.settlement_config.write_text(json.dumps({'enabled': enabled}))
+            with self.subTest(enabled=enabled):
+                result = subprocess.run([sys.executable, '-I', '-B', '-c', script], cwd=self.a,
+                                        env=env, capture_output=True, text=True, timeout=15)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                value = json.loads(result.stdout)
+                self.assertEqual(value, {'module': 'pinned-src', 'argv': [
+                    '--config', str(self.config), '--validator-read-user', 'modelfc-validator', '--public-history-read-user', 'modelfc-api'] +
+                    (['--retain-result-evidence'] if enabled else [])})
+                record = json.loads(result.stderr)
+                self.assertEqual(record['release'], str(self.a))
+                self.assertEqual(record['sha'], 'a' * 40)
+                self.assertEqual(record['interpreter'], str(self.a / '.venv/bin/python'))
+                self.assertEqual(record['import_path'], str(self.a / 'src'))
+                self.assertNotIn('release-root-imported', result.stdout + result.stderr)
+
+    def test_settlement_policy_lookup_is_confined_to_fixture(self):
+        # Reject ambient policy access before any real host filesystem lookup.
+        lexists = os.path.lexists
+        def fixture_only(path):
+            self.assertEqual(path, self.settlement_config)
+            return lexists(path)
+        for enabled in (None, False, True):
+            with self.subTest(enabled=enabled):
+                if enabled is None:
+                    self.settlement_config.unlink()
+                else:
+                    self.settlement_config.write_text(json.dumps({'enabled': enabled}))
+                with patch.object(launcher.os.path, 'lexists', side_effect=fixture_only) as lookup, \
+                     patch.object(Path, 'cwd', return_value=self.a), \
+                     patch.object(os, 'execve') as execute, redirect_stderr(StringIO()):
+                    launcher.launch()
+                lookup.assert_called_once_with(self.settlement_config)
+                self.assertEqual('--retain-result-evidence' in execute.call_args.args[1], enabled is True)
 
     def test_invalid_release_marker_or_required_path_never_executes(self):
         with patch.object(Path, 'cwd', return_value=self.root), patch.object(os, 'execve') as execute:
