@@ -44,6 +44,9 @@ def evidence(config, *, as_of):
         # own successful publication may authorize this E1-only consumer.
         _require(row['status'] in ('updated', 'unchanged') and row['stale'] is False,
                  'REFRESH_NOT_SUCCESSFUL')
+        if 'result_availability' in row or 'settlement_eligibility' in row:
+            _require(row.get('settlement_eligibility') == 'VERIFIED_FINAL_SCORES',
+                     'REFRESH_CALENDAR_CONFLICT_OR_UNVERIFIED')
         _require(isinstance(row.get('result_evidence'), dict) and row['result_evidence'].get('status') == 'RETAINED', 'REFRESH_EVIDENCE_UNAVAILABLE')
         pin = row['result_evidence']['sha256']
         metadata, raw = load(refresh, pin, as_of=as_of)
@@ -92,7 +95,7 @@ def run(config, state, *, enabled=False, as_of=None):
                     metadata['retrieved_at_utc'], fixture), as_of=observed,
                 reconcile=True, include_bookmaker=True))
         except (ValueError, OSError, KeyError, TypeError, StopIteration) as error:
-            reasons = {'REFRESH_EVIDENCE_STALE', 'REFRESH_NOT_SUCCESSFUL', 'REFRESH_EVIDENCE_UNAVAILABLE',
+            reasons = {'REFRESH_CALENDAR_CONFLICT_OR_UNVERIFIED', 'REFRESH_EVIDENCE_STALE', 'REFRESH_NOT_SUCCESSFUL', 'REFRESH_EVIDENCE_UNAVAILABLE',
                        'INVALID_REFRESH_EVIDENCE', 'SAVED_RESULT_PROVENANCE_REJECTED'}
             receipt['reason'] = str(error) if str(error) in reasons else 'REFRESH_OR_SETTLEMENT_REJECTED'
         receipt['finished_at_utc'] = datetime.now(timezone.utc).isoformat()

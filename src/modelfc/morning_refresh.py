@@ -48,12 +48,14 @@ def run(config, state, policy, *, validator_read_user=None, public_history_read_
             history = corner_refresh.snapshot(target, 'E1', corner_refresh.current_season(now.date()), now.date()) if target.exists() else {}
             goals = {(m.match_date, m.home_team, m.away_team): (m.home_goals, m.away_goals)
                      for m in load_matches(target)} if target.exists() else {}
-            missing = sorted(m.fixture_id for m in calendar.matches
-                if m.status == 'FINISHED' and m.kickoff < calendar.retrieved_at <= now
-                and (m.key not in history or goals.get(m.key) != m.goals))
+            finished = [m for m in calendar.matches
+                        if m.status == 'FINISHED' and m.kickoff < calendar.retrieved_at <= now]
+            conflicts = sorted(m.fixture_id for m in finished if m.key in goals and goals[m.key] != m.goals)
+            missing = sorted(m.fixture_id for m in finished
+                             if m.key not in history or goals.get(m.key) != m.goals)
             decision.update(status='NEEDED' if missing else 'NOT_NEEDED',
                 reason='MISSING_FINISHED_TRAINING_RESULTS' if missing else 'HISTORY_PRESENT',
-                missing_training_fixture_ids=missing, calendar_sha256=calendar.bundle_sha256,
+                missing_training_fixture_ids=missing, final_score_conflicts=conflicts, calendar_sha256=calendar.bundle_sha256,
                 calendar_retrieved_at_utc=calendar.retrieved_at.isoformat())
             return ['E1'] if missing else []
         except (ValueError, OSError, KeyError, TypeError):
@@ -63,8 +65,12 @@ def run(config, state, policy, *, validator_read_user=None, public_history_read_
         before = dict(decision)
         select(False)  # Still under publication lock: did the successful response cover the need?
         remaining = decision.get('missing_training_fixture_ids') if decision['status'] != 'UNKNOWN' else None
+        eligibility = ('CALENDAR_UNVERIFIED' if decision['status'] == 'UNKNOWN' else
+                       'FINAL_SCORE_CONFLICT' if decision.get('final_score_conflicts') else 'VERIFIED_FINAL_SCORES')
+        conflicts = decision.get('final_score_conflicts', [])
         decision.clear(); decision.update(before)
-        return {'calendar_sha256': before.get('calendar_sha256'),
+        return {'settlement_eligibility': eligibility, 'final_score_conflicts': conflicts,
+                'calendar_sha256': before.get('calendar_sha256'),
                 'calendar_retrieved_at_utc': before.get('calendar_retrieved_at_utc'),
                 'remaining_training_fixture_ids': remaining,
                 'result_availability': 'RESULTS_PENDING_AT_SOURCE' if remaining else

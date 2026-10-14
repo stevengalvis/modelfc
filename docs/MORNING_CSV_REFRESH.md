@@ -62,7 +62,12 @@ are refused rather than followed; no HEAD, conditional cache, or blind retries.
 HTTP rejection, failed delivery, rejected source/publication and publication I/O
 failure are distinct from `VALIDATED_SOURCE_RESPONSE`. A valid response can still
 leave expected finished results missing: morning receipts explicitly say
-`RESULTS_PENDING_AT_SOURCE` with fixture IDs. This is not a network failure.
+`RESULTS_PENDING_AT_SOURCE` with fixture IDs. This is not a network failure. The morning assessment separately blocks settlement
+when published final goals conflict with the verified calendar or the calendar
+cannot be validated after publication. Missing corner counts alone still permit
+BTTS settlement from consistent final goals. A capped retry re-assesses existing
+publication without another GET and preserves the block across baseline/manual
+replays; it never rewrites the immutable original attempt receipt.
 Unchanged hashes skip CSV replacement; retained 200 responses preserve their
 actual byte-acquisition timestamps. No 304 response can create new provenance.
 Original immutable acquisition and outcome records are never rewritten.

@@ -204,6 +204,56 @@ class MorningTests(unittest.TestCase):
         self.assertIsNone(shown['last_refresh_at'])
         self.assertIn('REFRESH_STATUS_UNAVAILABLE',{w['code'] for w in shown['warnings']})
 
+    def test_conflicting_final_score_blocks_settlement_but_missing_corners_do_not(self):
+        original=self.f.immutable()
+        conflicting=self.f.payload.replace(b',2,1,H,6,3',b',2,0,H,6,3')
+        self.assertNotEqual(conflicting,self.f.payload)
+        class Response:
+            status=200;headers={}
+            def __enter__(self): return self
+            def __exit__(self,*args): pass
+            def read(self,limit): return conflicting
+            def geturl(self): return 'https://www.football-data.co.uk/mmz4281/2627/E1.csv'
+        with patch.object(refresh,'urlopen',return_value=Response()):
+            result=morning.run(self.f.config,self.f.state,{**morning.POLICY,'enabled':True},retain_result_evidence=True)
+        row=result['report']['results'][0]
+        self.assertEqual(row['settlement_eligibility'],'FINAL_SCORE_CONFLICT')
+        self.assertEqual(row['result_availability'],'RESULTS_PENDING_AT_SOURCE')
+        self.assertTrue(refresh.format_report(result['report'],datetime.now(timezone.utc).date(),14)[1])
+        self.assertEqual(self.f.run_settlement()['reason'],'REFRESH_CALENDAR_CONFLICT_OR_UNVERIFIED')
+        self.assertEqual(self.f.immutable(),original)
+        with patch.object(refresh,'download_csv',side_effect=AssertionError('no retry')):
+            refresh.refresh_data(self.f.config)
+        self.assertEqual(self.f.run_settlement()['status'],'REJECTED')
+        # New UTC day: corrected goals, corners still absent. No original bytes rewritten.
+        self.target.unlink()  # Fresh synthetic publication, never remove real known counts.
+        conflicting=self.f.payload.replace(b',6,3',b',,')
+        with patch.object(attempts,'datetime') as clock,patch.object(refresh,'urlopen',return_value=Response()):
+            clock.now.return_value=datetime.now(timezone.utc)+timedelta(days=1)
+            result=morning.run(self.f.config,self.f.state,{**morning.POLICY,'enabled':True},retain_result_evidence=True)
+        self.assertEqual(result['report']['results'][0]['settlement_eligibility'],'VERIFIED_FINAL_SCORES')
+        self.assertEqual(result['report']['results'][0]['result_availability'],'RESULTS_PENDING_AT_SOURCE')
+        settled=self.f.run_settlement()
+        self.assertEqual({r['market']:r['status'] for r in settled['markets']},{'BTTS':'RECORDED','CORNER':'UNRESOLVED'})
+        self.assertTrue(all(self.f.immutable()[k]==v for k,v in original.items()))
+
+    def test_capped_baseline_publication_is_reassessed_without_fetch(self):
+        self.cap.unlink()
+        self.f.refresh(self.f.payload.replace(b',2,1,H,6,3',b',2,0,H,6,3'))
+        self.cap.write_text('{"version":1,"enabled":true}')
+        # Reserve/replay this publication as a synthetic earlier baseline attempt.
+        saved=json.loads((self.f.refresh_state/'status.json').read_text())['results'][0]
+        with refresh.refresh_lock(self.f.refresh_state):
+            terminal,_=attempts.reserve(self.f.refresh_state,'E1','baseline-or-manual')
+            attempts.finish(terminal,{'league':'E1','delivery':'VALIDATED_SOURCE_RESPONSE','result':saved})
+        original=terminal.read_bytes()
+        with patch.object(refresh,'download_csv',side_effect=AssertionError('no duplicate')):
+            result=morning.run(self.f.config,self.f.state,{**morning.POLICY,'enabled':True},retain_result_evidence=True)
+            self.assertEqual(result['report']['results'][0]['settlement_eligibility'],'FINAL_SCORE_CONFLICT')
+            refresh.refresh_data(self.f.config)
+        self.assertEqual(self.f.run_settlement()['reason'],'REFRESH_CALENDAR_CONFLICT_OR_UNVERIFIED')
+        self.assertEqual(terminal.read_bytes(),original)
+
 
 class TransportTests(unittest.TestCase):
     def test_redirect_has_zero_second_requests(self):

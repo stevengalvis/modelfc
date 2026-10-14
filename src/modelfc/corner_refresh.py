@@ -264,6 +264,11 @@ def refresh_data(config: CornerDataConfig, today: date | None = None,
                     saved_result = completed['result']
                     if completed['league'] != league or saved_result['league'] != league:
                         raise ValueError('conflicting attempt receipt')
+                    retained = previous.get(league, {})
+                    if retained.get('checked_at') == saved_result.get('checked_at') and retained.get('file_sha256') == saved_result.get('file_sha256'):
+                        saved_result = retained
+                    if assess_result and saved_result['status'] in ('updated', 'unchanged'):
+                        saved_result = {**saved_result, **assess_result(league)}
                 else:
                     saved_result = {"league": league, "status": "failed", "error": "RESERVED_WITHOUT_TERMINAL_RECEIPT; no retry"}
                 results.append(saved_result)
@@ -314,6 +319,9 @@ def format_report(report: dict, today: date, max_age_days: int) -> tuple[str, bo
             lines.append(f"{item['league']}: FAILED: {item['error']}")
             unhealthy = True
             continue
+        if item.get('settlement_eligibility') in ('FINAL_SCORE_CONFLICT', 'CALENDAR_UNVERIFIED'):
+            lines.append(f"{item['league']}: settlement blocked: {item['settlement_eligibility']}")
+            unhealthy = True
         age = (today - date.fromisoformat(item["latest_match"])).days
         stale = age > max_age_days
         unhealthy |= stale
