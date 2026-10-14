@@ -1,3 +1,4 @@
+import { decodeShortlist } from "./shortlist";
 import { decodeBttsPerformance, emptyBttsPerformance } from "./btts-performance";
 import { decodeRecordedOffers } from "./recorded-offers";
 import { mockRecordedOffers } from "./mock-recorded-offers";
@@ -186,6 +187,21 @@ export function createApiClient(
       const value = mode === "mock" ? structuredClone(mockCapabilities)
         : await requestJson<unknown>(baseUrl!, "/capabilities", { signal });
       return decodeCapabilities(value);
+    },
+    async shortlist(limit = 5, signal?: AbortSignal) {
+      checkConfiguration();
+      signal?.throwIfAborted();
+      const offers = mockRecordedOffers.fixtures.flatMap(f => f.offers.map(o => ({ ...o, fixture_id: f.fixture_id })));
+      return decodeShortlist(mode === "mock" ? structuredClone({ as_of_utc: mockRecordedOffers.as_of_utc,
+        offers: offers.slice(0, limit), total: offers.length, limit })
+        : await requestJson<unknown>(baseUrl!, `/recommendations?view=shortlist&limit=${limit}`, { signal, cache: "no-store" }));
+    },
+    async alternatives(fixtureId: string, signal?: AbortSignal) {
+      checkConfiguration();
+      signal?.throwIfAborted();
+      return decodeRecordedOffers(mode === "mock" ? structuredClone({ ...mockRecordedOffers,
+        fixtures: mockRecordedOffers.fixtures.filter(f => f.fixture_id === fixtureId) })
+        : await requestJson<unknown>(baseUrl!, `/recommendations?view=alternatives&fixture_id=${encodeURIComponent(fixtureId)}`, { signal, cache: "no-store" }));
     },
     async recordedOffers(signal?: AbortSignal) {
       checkConfiguration();
