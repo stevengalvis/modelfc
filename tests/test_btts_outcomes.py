@@ -112,8 +112,7 @@ sys.meta_path.insert(0, Block())
                       self.content.replace('A,D,', 'D,A,'),
                       self.content.replace('E1,20', 'E0,20'),
                       self.content + self.content.splitlines()[1]+'\n',
-                      self.content.replace(',HC,AC', ',HC,AC,Status').replace(',5,4\n', ',5,4,ABANDONED\n'),
-                      self.content.replace(',5,4\n', ',,4\n')):
+                      self.content.replace(',HC,AC', ',HC,AC,Status').replace(',5,4\n', ',5,4,ABANDONED\n')):
             with self.subTest(value=value):
                 self.write_csv(value)
                 code, receipt = self.csv_cli()

@@ -158,3 +158,41 @@ launcher.launch()
         timer = (ROOT / 'deploy/modelfc-corner-refresh.timer').read_text()
         self.assertIn('OnCalendar=Mon,Thu *-*-* 06:00:00 UTC', timer)
         self.assertIn('Persistent=true', timer)
+
+    def test_opt_in_capture_and_separate_offline_consumer(self):
+        control = self.config.parent/'research-settlement.json'
+        control.write_text('{"enabled":true}')
+        (self.a/'src/modelfc/research_settlement.py').touch()
+        original = launcher.protected
+        def protected(path, owner, **kwargs):
+            return original(path, os.getuid() if path == control else owner, **kwargs)
+        with patch.object(launcher, 'SETTLEMENT_CONFIG', control), patch.object(launcher, 'protected', side_effect=protected), \
+             patch.object(Path, 'cwd', return_value=self.a), patch.object(os, 'execve') as execute, redirect_stderr(StringIO()):
+            launcher.launch()
+            self.assertEqual(execute.call_args.args[1][-1], '--retain-result-evidence')
+            launcher.launch(settlement=True)
+            _, argv, env = execute.call_args.args
+            self.assertEqual(argv[5:], ['modelfc.research_settlement','--config',str(self.config),
+                                       '--state-dir',str(launcher.STATE),'--enabled'])
+            self.assertEqual(env['MODELFC_EVIDENCE_ACL_USER'], 'modelfc-api')
+            self.assertFalse(any('TOKEN' in key or 'KEY' in key for key in env))
+            control.write_text('{"enabled":false}')
+            with self.assertRaisesRegex(ValueError, 'disabled'): launcher.launch(settlement=True)
+            launcher.launch()
+            self.assertNotIn('--retain-result-evidence', execute.call_args.args[1])
+            control.write_text('{"enabled":"true"}')
+            with self.assertRaises(ValueError): launcher.launch(settlement=True)
+            launcher.launch()
+            self.assertNotIn('--retain-result-evidence', execute.call_args.args[1])
+
+    def test_settlement_unit_is_offline_separate_and_no_new_timer(self):
+        unit = (ROOT/'deploy/modelfc-research-settlement.service').read_text()
+        for item in ('PrivateNetwork=yes', 'RestrictAddressFamilies=AF_UNIX', 'User=modelfc-runtime',
+                     'ReadWritePaths=/var/lib/modelfc/state', 'ReadOnlyPaths=/srv/modelfc /etc/modelfc /var/lib/modelfc/history',
+                     '--research-settlement', 'TimeoutStartSec=10min', 'KillMode=control-group'):
+            self.assertIn(item, unit)
+        self.assertNotIn('LoadCredential=', unit)
+        self.assertFalse((ROOT/'deploy/modelfc-research-settlement.timer').exists())
+        self.assertIn('OnSuccess=modelfc-research-settlement.service',
+                      (ROOT/'deploy/modelfc-corner-refresh.service.d/research-settlement.conf').read_text())
+        self.assertNotIn('OnSuccess=', (ROOT/'deploy/modelfc-corner-refresh.service').read_text())

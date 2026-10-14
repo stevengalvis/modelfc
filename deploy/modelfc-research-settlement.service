@@ -1,0 +1,35 @@
+[Unit]
+Description=Settle ModelFC research outcomes from validated retained CSV evidence
+ConditionPathExists=/etc/modelfc/research-settlement.json
+After=modelfc-corner-refresh.service
+
+[Service]
+Type=oneshot
+User=modelfc-runtime
+Group=modelfc-runtime
+WorkingDirectory=/srv/modelfc/current
+ExecStart=/usr/bin/python3 -I -B /usr/local/libexec/modelfc-refresh-launch.py --research-settlement
+UMask=0077
+StandardInput=null
+UnsetEnvironment=ODDSPAPI_API_KEY SPORTMONKS_API_TOKEN FOOTBALL_DATA_API_KEY GITHUB_TOKEN GH_TOKEN SSH_AUTH_SOCK PYTHONPATH PYTHONHOME LD_PRELOAD LD_LIBRARY_PATH LD_AUDIT
+TimeoutStartSec=10min
+TimeoutStopSec=30
+KillMode=control-group
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+PrivateNetwork=yes
+RestrictAddressFamilies=AF_UNIX
+ReadOnlyPaths=/srv/modelfc /etc/modelfc /var/lib/modelfc/history
+ReadWritePaths=/var/lib/modelfc/state
+InaccessiblePaths=-/var/lib/modelfc-deploy -/run/modelfc-acquisition
+InaccessiblePaths=-/etc/modelfc-validator -/var/lib/modelfc-validator
+InaccessiblePaths=-/opt/modelfc-deploy -/opt/modelfc-validator
+InaccessiblePaths=-/etc/modelfc/credentials -/root/modelfc-state -/root
+InaccessiblePaths=-/var/lib/modelfc/history/data/corner-refresh/backups
+CapabilityBoundingSet=
+RestrictSUIDSGID=yes
+
+# No timer or enablement target. Install the opt-in refresh drop-in separately.

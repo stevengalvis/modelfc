@@ -102,8 +102,8 @@ def _csv_result(source, fixture, as_of):
         and datetime.strptime(row["Date"], "%d/%m/%Y").date() == local.date()
         and row["Time"] == local.strftime("%H:%M")
         and kickoff.second == kickoff.microsecond == 0, "RESULT_IDENTITY_CONFLICT")
-    # Preserve the existing complete-result cohort, including complete corner fields.
-    _require(all(re.fullmatch(r"[0-9]+", row[k]) for k in ("FTHG", "FTAG", "HC", "AC")),
+    # BTTS requires final goals, independently of optional corner statistics.
+    _require(all(re.fullmatch(r"[0-9]+", row[k]) for k in ("FTHG", "FTAG")),
              "RESULT_NOT_AVAILABLE")
     home, away = int(row["FTHG"]), int(row["FTAG"])
     _require(row["FTR"] == ("H" if home > away else "A" if home < away else "D"),
@@ -115,8 +115,13 @@ def csv_evidence(path, sha256, retrieved_at, fixture):
     # Lazy import keeps CSV-only operation independent of Sportmonks modules.
     from modelfc.pinned_evidence import read_pinned
     raw = read_pinned(path, sha256, 2_000_000)
+    return csv_bytes_evidence(raw, Path(path).name, sha256, retrieved_at, fixture)
+
+
+def csv_bytes_evidence(raw, filename, sha256, retrieved_at, fixture):
+    _require(hashlib.sha256(raw).hexdigest() == sha256, "INVALID_BTTS_SOURCE")
     reader = csv.DictReader(StringIO(raw.decode("utf-8-sig"), newline=""), strict=True)
-    _require(set(CSV_FIELDS) <= set(reader.fieldnames or ())
+    _require((set(CSV_FIELDS) - {"HC", "AC"}) <= set(reader.fieldnames or ())
         and len(reader.fieldnames) == len(set(reader.fieldnames)), "INVALID_BTTS_SOURCE")
     local = timestamp(fixture["kickoff_utc"]).astimezone(ZoneInfo("Europe/London"))
     candidates = []
@@ -131,8 +136,8 @@ def csv_evidence(path, sha256, retrieved_at, fixture):
     _require(len(candidates) <= 1, "RESULT_IDENTITY_CONFLICT")
     _require(len(candidates) == 1, "RESULT_NOT_AVAILABLE")
     number, row = candidates[0]
-    retained = {k: row[k] for k in CSV_FIELDS}
-    source = {"provider": "football-data.co.uk", "filename": Path(path).name,
+    retained = {k: row.get(k, "") for k in CSV_FIELDS}
+    source = {"provider": "football-data.co.uk", "filename": filename,
               "file_sha256": sha256, "row_number": number, "row": retained,
               "row_sha256": digest(retained), "retrieved_at_utc": retrieved_at}
     _csv_result(source, fixture, datetime.now(timezone.utc))
@@ -199,7 +204,7 @@ def _load(path, forecasts):
         raise OutcomeError("INVALID_BTTS_OUTCOME") from None
 
 
-def settle(state_dir, forecast_id, source, *, select_earliest=False):
+def settle(state_dir, forecast_id, source, *, select_earliest=False, reconcile=False):
     """One immutable outcome per exact fixture; identical evidence reuses it."""
     state = Path(state_dir)
     forecasts = inventory(state)
@@ -234,7 +239,7 @@ def settle(state_dir, forecast_id, source, *, select_earliest=False):
         path = directory / f"{outcome_id}.json"
         if path.exists():
             previous = _load(path, forecasts)
-            _require(previous["result"] == result and previous["source"] == source,
+            _require(previous["result"] == result and (reconcile or previous["source"] == source),
                      "RESULT_CONFLICT")
             _sync_directories(directory, state)
             return previous, False

@@ -65,9 +65,10 @@ time are kept. The full file remains private operator evidence.
 The CSV join requires one exact home/away/date row and matching London-local kickoff
 minute (including DST); missing Time and the ambiguous repeated autumn hour are not guessed. All rows must belong to E1.
 Full-time goals must be nonnegative integer strings and FTR must agree with them.
-Consistent with the existing completed-result cohort, both full-time corner fields
-must also be complete nonnegative integers; they are eligibility checks only and
-never written to corner records. Blank/incomplete scores, duplicate rows, explicit
+CSV BTTS eligibility requires valid final goals and FTR, independently of corner
+counts. Missing HC/AC values or columns do not block BTTS; research corner outcomes
+still require both complete nonnegative corner counts. Existing saved outcomes
+remain immutable. Blank/incomplete scores, duplicate rows, explicit
 nonfinal status, postponed/abandoned records or mismatched identities are rejected.
 A complete authoritative FTR/score row is the CSV final-state attestation; V1 does
 not acquire an independent calendar for CSV. Missing or suspect evidence must wait

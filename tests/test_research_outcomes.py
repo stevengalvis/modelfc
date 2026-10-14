@@ -92,7 +92,7 @@ sys.meta_path.insert(0,Block())
             self.assertEqual(first,self.snapshot())
 
     def test_missing_incomplete_nonfinal_and_duplicate_results_stay_unresolved(self):
-        for text in (self.content.splitlines()[0]+'\n',self.content.replace(',6,3',',,3'),
+        for text in (self.content.splitlines()[0]+'\n',
                      self.content.replace(',2,1,H',',,1,H')):
             self.csv.write_text(text);code,receipt=self.csv_cli()
             self.assertEqual(code,0,receipt)
