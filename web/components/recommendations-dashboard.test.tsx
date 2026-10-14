@@ -11,7 +11,7 @@ const fresh = () => { const v = data(); v.as_of_utc = "2026-10-10T13:04:59Z";
 beforeEach(() => { vi.spyOn(api, "shortlist").mockResolvedValue(data());
   vi.spyOn(api, "alternatives").mockResolvedValue(structuredClone(mockRecordedOffers));
   vi.spyOn(api, "recommendations"); vi.spyOn(api, "recordedOffers"); });
-afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks(); });
+afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 describe("saved-price shortlist", () => {
   it("keeps old qualifying prices with timestamps without history or alternatives requests", async () => {
     render(<RecommendationsDashboard />); await screen.findByRole("article");
@@ -30,6 +30,89 @@ describe("saved-price shortlist", () => {
     fireEvent.click(screen.getByText("Show more qualifying choices")); await act(async()=>{});
     expect(api.shortlist).toHaveBeenLastCalledWith(10,expect.any(AbortSignal));
     expect(screen.getAllByRole("article")).toHaveLength(6);
+  });
+  function observe() {
+    let notify: IntersectionObserverCallback;
+    const disconnect = vi.fn();
+    vi.stubGlobal("IntersectionObserver", vi.fn(function(callback: IntersectionObserverCallback) {
+      notify = callback;
+      return { observe: vi.fn(), disconnect };
+    }));
+    return { enter: () => act(() => notify([{ isIntersecting: true } as IntersectionObserverEntry], {} as IntersectionObserver)), disconnect };
+  }
+  function page(total = 12, limit = 5): Shortlist {
+    const v = data();
+    return { ...v, total, limit, offers: Array.from({ length: Math.min(total, limit) }, (_, i) =>
+      ({ ...v.offers[0], target_id: String(i).padStart(32, "0"), line: 10.5 + i })) };
+  }
+  it("waits for scrolling, loads bounded batches and guards repeated observer events in flight", async () => {
+    const observer = observe();
+    let finish!: (value: Shortlist) => void;
+    vi.mocked(api.shortlist).mockResolvedValueOnce(page()).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    const { unmount } = render(<RecommendationsDashboard />); await screen.findAllByRole("article");
+    observer.enter(); expect(api.shortlist).toHaveBeenCalledTimes(1);
+    fireEvent.scroll(window); observer.enter(); observer.enter();
+    expect(api.shortlist).toHaveBeenCalledTimes(2);
+    expect(api.shortlist).toHaveBeenLastCalledWith(10, expect.any(AbortSignal));
+    expect(screen.getByText("Loading more qualifying choices…")).toBeInTheDocument();
+    expect(screen.getAllByRole("article")).toHaveLength(5);
+    await act(async () => finish(page(12, 10)));
+    expect(screen.getAllByRole("article")).toHaveLength(10);
+    observer.enter(); expect(api.shortlist).toHaveBeenCalledTimes(2);
+    expect(api.alternatives).not.toHaveBeenCalled();
+    unmount(); expect(observer.disconnect).toHaveBeenCalled();
+  });
+  it("stops loading after exhaustion without duplicating the prefix", async () => {
+    const observer = observe();
+    vi.mocked(api.shortlist).mockResolvedValueOnce(page(6)).mockResolvedValueOnce(page(6, 10));
+    render(<RecommendationsDashboard />); await screen.findAllByRole("article");
+    fireEvent.scroll(window); observer.enter(); await act(async () => {});
+    expect(screen.getAllByRole("article")).toHaveLength(6);
+    expect(screen.getByText("All qualifying choices loaded.")).toBeInTheDocument();
+    fireEvent.scroll(window); observer.enter();
+    expect(api.shortlist).toHaveBeenCalledTimes(2);
+    expect(screen.queryByText("Show more qualifying choices")).not.toBeInTheDocument();
+  });
+  it("retains the prefix on errors and requires explicit retry of the same batch", async () => {
+    vi.useFakeTimers();
+    const observer = observe();
+    vi.mocked(api.shortlist).mockResolvedValueOnce(page(6)).mockRejectedValueOnce(new Error("offline")).mockResolvedValueOnce(page(6, 10));
+    render(<RecommendationsDashboard />); await act(async () => {});
+    fireEvent.scroll(window); observer.enter(); await act(async () => {});
+    expect(screen.getAllByRole("article")).toHaveLength(5);
+    expect(screen.getByRole("alert")).toBeInTheDocument();
+    observer.enter(); fireEvent.scroll(window); fireEvent.focus(window);
+    await act(async () => { await vi.advanceTimersByTimeAsync(120_000); });
+    expect(api.shortlist).toHaveBeenCalledTimes(2);
+    fireEvent.click(screen.getByText("Retry loading qualifying choices")); await act(async () => {});
+    expect(api.shortlist).toHaveBeenLastCalledWith(10, expect.any(AbortSignal));
+    expect(screen.getAllByRole("article")).toHaveLength(6);
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+  it("aborts a stalled incremental read and waits for a manual retry", async () => {
+    vi.useFakeTimers();
+    const observer = observe();
+    vi.mocked(api.shortlist).mockResolvedValueOnce(page(6)).mockImplementationOnce(() => new Promise(() => {})).mockResolvedValueOnce(page(6, 10));
+    render(<RecommendationsDashboard />); await act(async () => {});
+    fireEvent.scroll(window); observer.enter(); await act(async () => {});
+    const signal = vi.mocked(api.shortlist).mock.calls[1][1];
+    await act(async () => { await vi.advanceTimersByTimeAsync(120_000); });
+    expect(signal?.aborted).toBe(true);
+    expect(api.shortlist).toHaveBeenCalledTimes(2);
+    expect(screen.getAllByRole("article")).toHaveLength(5);
+    fireEvent.click(screen.getByText("Retry loading qualifying choices")); await act(async () => {});
+    expect(screen.getAllByRole("article")).toHaveLength(6);
+  });
+  it("stops at the bounded 100-choice limit", async () => {
+    vi.mocked(api.shortlist).mockImplementation(async limit => page(105, limit));
+    render(<RecommendationsDashboard />); await screen.findAllByRole("article");
+    for (let limit = 10; limit <= 100; limit += 5) {
+      fireEvent.click(screen.getByText("Show more qualifying choices")); await act(async () => {});
+    }
+    expect(screen.getAllByRole("article")).toHaveLength(100);
+    expect(screen.getByText(/Showing the top 100 qualifying choices/)).toBeInTheDocument();
+    expect(screen.queryByText("Show more qualifying choices")).not.toBeInTheDocument();
+    expect(api.shortlist).toHaveBeenCalledTimes(20);
   });
   it("fetches and mounts alternatives only while open and aborts when closed", async()=>{
     render(<RecommendationsDashboard />); await screen.findByRole("article");
