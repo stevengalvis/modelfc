@@ -40,6 +40,15 @@ jobs:
       - name: Report deployment outcome without changing deployment result
         if: always()
         env:
+          DEPLOYMENT_STATUS_OUTPUT: ${{ runner.temp }}/deployment-status.json
           GITHUB_TOKEN: ${{ github.token }}
           DEPLOYMENT_REPORT_FILE: ${{ runner.temp }}/deployment-status-artifact/modelfc-deployment-report.json
         run: python3 -I ops/github/deployment_status.py
+      - name: Preserve bounded deployment and publication evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: deployment-status-${{ github.event.workflow_run.id }}-${{ github.event.workflow_run.run_attempt }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/deployment-status.json
+          if-no-files-found: error
+          retention-days: 7
