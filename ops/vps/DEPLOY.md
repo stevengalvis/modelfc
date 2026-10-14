@@ -131,6 +131,36 @@ and [comment permissions](https://docs.github.com/en/rest/issues/comments#create
 After merge the workflow becomes eligible automatically; first real deployment
 reporting acceptance is still required. No deployment is executed by this PR.
 
+## Bounded runner failure evidence
+
+The deployment step finalizes sanitized evidence on ordinary exits, including
+missing transport configuration, key rejection, temporary-file failure, nonzero
+SSH exit and malformed controller output. Its report retains the existing field
+schema and adds only fixed runner failure reasons. The publisher accepts those
+reasons only with FAIL, null previous/final SHA and all verification fields unset;
+it cannot interpret a runner failure as controller or serving-release proof.
+An invalid requested SHA is emitted as null and rejected as authoritative evidence.
+The publisher still obtains SHA, run ID and attempt independently from GitHub and
+uses only the artifact from that exact source run/attempt.
+
+A valid controller FAIL is preserved even if SSH exits nonzero. A nonzero exit
+with missing, invalid or success-shaped output becomes SSH_NONZERO_EXIT: this does
+not distinguish a connection failure from a remote command failure or establish
+whether remote activation happened. No retry is performed. Invalid output with
+zero SSH exit becomes INVALID_DEPLOYMENT_REPORT. Raw stdout is limited to 8 KiB
+on the Linux runner and parsing reads at most 4097 bytes, accepting at most 4096;
+raw stderr is discarded. Duplicate JSON keys, inconsistent success fields and
+out-of-bound test counts are rejected. Raw output, exception text and keys never
+enter artifacts or summaries. Temporary raw output and key files are removed.
+
+Sanitized artifact replacement is atomic and best effort, preserving deployment
+success/failure independently of storage or publication failure. The existing
+8-KiB publisher output limit and seven-day artifact retention remain unchanged.
+Abrupt runner termination, cancellation, unavailable Python or unwritable artifact
+storage may still prevent an artifact; missing evidence stays UNVERIFIED. This
+source change does not repair or determine the outcome of a historical failed
+SSH invocation, install a host component or change permissions.
+
 ## Durable deployment evidence and independent publication
 
 The status publisher writes an internally constructed schema-v1 JSON result to

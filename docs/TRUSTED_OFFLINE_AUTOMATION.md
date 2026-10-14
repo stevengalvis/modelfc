@@ -9,21 +9,52 @@ install/update the validator, rebuild its image, or deploy application code.
 
 For routine use after installation and successful initial end-to-end acceptance:
 
-1. Open or update a same-repository PR.
-2. Wait for normal GitHub CI to pass.
-3. As an authorized maintainer, post a new PR comment containing exactly
-   `/validate-offline`, with no whitespace or arguments.
-4. GitHub resolves the PR's current exact head SHA itself, then runs the trusted
-   installed OFFLINE validator against that SHA.
+1. Open or update a non-draft, same-repository PR targeting `main`.
+2. Successful completion of the `Tests` PR workflow automatically requests OFFLINE
+   validation. No agent or maintainer comment is required.
+3. GitHub resolves and rechecks the current exact head, then invokes the existing
+   installed validator through the dedicated forced-command SSH identity.
 
-The **Trusted OFFLINE** commit status applies only to that SHA. If the PR head
-changes, wait for CI and post the command again. This command never triggers LIVE.
+The **Trusted OFFLINE** commit status still applies only to that SHA. Stacked PRs,
+forks, drafts, closed PRs, failed CI, missing/ambiguous PR metadata, and stale CI
+heads are ineligible. Turning a draft ready after CI requires a fresh CI completion
+or the existing authorized manual command. The workflow must first reach `main`;
+this PR cannot activate its own privileged orchestration.
 
 ## Maintainer workflow and trust boundary
 
-PR CI → comment `/validate-offline` → trusted default-branch workflow resolves
-current head → restricted forced-command SSH → installed OFFLINE validator →
-independently checked exact-SHA commit status.
+Successful PR CI → trusted default-branch workflow → current exact-head recheck →
+restricted forced-command SSH → installed OFFLINE validator → independently checked
+exact-SHA commit status. `workflow_run` accepts only completed successful `Tests`
+pull-request runs with the expected workflow path and same-repository source.
+No CI artifacts or candidate scripts are consumed by the trusted runner.
+
+Duplicate delivery of the same CI attempt is suppressed by a separate
+**Trusted OFFLINE request** status, written before pending/SSH. This is an invocation
+receipt, **not a validation gate**. Its deterministic digest binds candidate SHA,
+trusted orchestration commit, CI run/attempt, host, host key and dedicated key
+fingerprint. Existing permissions suffice; no actions-read or comment-write scope
+is added. Per-PR concurrency serializes manual and automatic requests. A full
+100-status response fails closed rather than assuming an older receipt is absent.
+A receipt whose invocation fails or is interrupted is not automatically retried;
+use an explicitly authorized manual command after investigating. A new CI attempt
+is a distinct request. Historical unversioned PASS statuses are not reused.
+
+The installed report does **not** attest the installed validator revision, image
+or effective configuration. Accordingly this change does not claim revision-bound
+cross-run evidence reuse. That requires a separately reviewed report/protocol
+extension and installed-validator acceptance; no host changes are included here.
+The trusted orchestration revision in the receipt is not an installed revision.
+
+This is pre-merge PR automation, not validation of the eventual merge commit or a
+post-deployment smoke check. The installed controller rejects closed PRs and only
+fetches open PR heads. Exact merged-release validation therefore remains blocked
+on that controller contract, and actual API serving proof remains UNVERIFIED.
+Deployment ordering, merge gates, publisher failures, and PRs #155/#157 are unchanged.
+No deployment retry, provider request, model call, installation or permission
+expansion is introduced.
+
+The existing manual fallback remains available:
 
 The comment must be exactly `/validate-offline`: no leading/trailing spaces,
 newlines, arguments or additional text. Only newly created PR comments qualify.
@@ -35,7 +66,7 @@ GitHub maps maintain to write, triage to read; read collaborators are rejected.
 An API error or missing/malformed authorization data fails closed. No username,
 repository, PR number, SHA or mode is accepted from comment text.
 
-`issue_comment` runs default-branch workflow code. Checkout is pinned to the trusted
+`issue_comment` and `workflow_run` run default-branch workflow code. Checkout is pinned to the trusted
 `github.sha` event commit, never the candidate PR; checkout credentials are not
 persisted. The helper additionally requires this workflow's main-branch reference,
 repository and event. It runs only trusted stdlib helper code, without installing
@@ -217,3 +248,10 @@ Any future LIVE automation requires an independent authorization/budget design.
 - [GitHub collaborator permission mapping and metadata permission](https://docs.github.com/en/rest/collaborators/collaborators#get-repository-permissions-for-a-user)
 - [GitHub exact-SHA commit statuses and required permission](https://docs.github.com/en/rest/commits/statuses#create-a-commit-status)
 - [OpenSSH forced command, SSH_ORIGINAL_COMMAND and restrict](https://man.openbsd.org/sshd.8#AUTHORIZED_KEYS_FILE_FORMAT)
+
+## Prepared release follow-on
+
+See [exact-release OFFLINE acceptance](RELEASE_OFFLINE_ACCEPTANCE.md) for the separate
+release command, versioned evidence and deployment gate. It requires separately
+approved installation; this document's original PR-command setup is not a release
+protocol upgrade.

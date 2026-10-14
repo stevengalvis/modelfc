@@ -51,7 +51,7 @@ class DeployWorkflowTest(unittest.TestCase):
         return value
 
     def exercise(self, encoded, *, accepted=False, report=None, ssh_status=0, fail_mktemp=0,
-                 fail_report_copy=False):
+                 fail_report_copy=False, raw_report=None, overrides=None):
         with tempfile.TemporaryDirectory(prefix="deploy-workflow-run-") as directory:
             root = Path(directory)
             binary = root / "bin"
@@ -60,11 +60,12 @@ class DeployWorkflowTest(unittest.TestCase):
             files.mkdir()
             ssh = binary / "ssh"
             ssh.write_text(f"#!{sys.executable}\n" + textwrap.dedent('''\
-                import hashlib, json, os, pathlib, stat, sys
+                import hashlib, json, os, pathlib, resource, stat, sys
                 args = sys.argv[1:]
                 key = pathlib.Path(args[args.index('-i') + 1])
                 hosts = pathlib.Path(next(a.split('=', 1)[1] for a in args if a.startswith('UserKnownHostsFile=')))
                 event = dict(args=args, mode=stat.S_IMODE(key.stat().st_mode),
+                             file_limit=resource.getrlimit(resource.RLIMIT_FSIZE)[0],
                              key_matches=hashlib.sha256(key.read_bytes()).hexdigest() == os.environ['TEST_KEY_DIGEST'],
                              secret_in_environment='DEPLOY_KEY_BASE64' in os.environ,
                              hosts_match=hosts.read_text() == 'fixture-host-pin\\n')
@@ -107,6 +108,9 @@ class DeployWorkflowTest(unittest.TestCase):
                    "TEST_MKTEMP_COUNT": str(root / "mktemp-count"), "TEST_MKTEMP_FAIL": str(fail_mktemp),
                    "TEST_REPORT": json.dumps(self.report() if report is None else report),
                    "TEST_LEAK_CANARY": self.encoded + self.public.decode() + "UNRELATED_SECRET_CANARY"}
+            if raw_report is not None:
+                env["TEST_REPORT"] = raw_report
+            env.update(overrides or {})
             result = subprocess.run(["bash", "--noprofile", "--norc", str(script)],
                                     capture_output=True, text=True, env=env, cwd=root, timeout=30)
             events = [json.loads(line) for line in event_file.read_text().splitlines()] if event_file.exists() else []
@@ -120,6 +124,7 @@ class DeployWorkflowTest(unittest.TestCase):
             self.report_copy = json.loads(report_copy.read_text()) if report_copy.is_file() else None
             for event in events:
                 self.assertEqual(event["mode"], 0o600)
+                self.assertEqual(event["file_limit"], 8192)
                 self.assertTrue(event["key_matches"])
                 self.assertTrue(event["hosts_match"])
                 self.assertFalse(event["secret_in_environment"])
@@ -136,7 +141,8 @@ class DeployWorkflowTest(unittest.TestCase):
     def assert_rejected(self, value):
         result, events = self.exercise(value)
         self.assertEqual(result.returncode, 1)
-        self.assertEqual(result.stdout, '{"status":"FAIL","reason":"DEPLOY_KEY_INVALID"}\n')
+        self.assertEqual(json.loads(result.stdout), self.failure("DEPLOY_KEY_INVALID"))
+        self.assertEqual(self.report_copy, self.failure("DEPLOY_KEY_INVALID"))
         self.assertEqual(result.stderr, "")
         self.assertEqual(events, [])
 
@@ -187,7 +193,7 @@ class DeployWorkflowTest(unittest.TestCase):
     def test_ssh_failure_is_sanitized_and_cleans_temporary_files(self):
         result, events = self.exercise(self.encoded, accepted=True, ssh_status=255)
         self.assertEqual(result.returncode, 1)
-        self.assertEqual(json.loads(result.stdout), dict(status="FAIL", reason="SSH_TRANSPORT_FAILED"))
+        self.assertEqual(json.loads(result.stdout), self.failure("SSH_NONZERO_EXIT"))
         self.assertEqual(len(events), 1)
 
     def test_report_rejection_is_sanitized_and_cleans_temporary_files(self):
@@ -196,20 +202,64 @@ class DeployWorkflowTest(unittest.TestCase):
             with self.subTest(fields=list(changes)):
                 result, events = self.exercise(self.encoded, accepted=True, report={**self.report("OK"), **changes})
                 self.assertEqual(result.returncode, 1)
-                self.assertEqual(json.loads(result.stdout), dict(status="FAIL", reason="INVALID_DEPLOYMENT_REPORT"))
+                self.assertEqual(json.loads(result.stdout), self.failure("INVALID_DEPLOYMENT_REPORT"))
                 self.assertEqual(len(events), 1)
 
     def test_partial_temporary_file_creation_is_cleaned(self):
-        for allocation in (2, 3):
+        for allocation in (1, 2, 3):
             with self.subTest(allocation=allocation):
                 result, events = self.exercise(self.encoded, accepted=True, fail_mktemp=allocation)
                 self.assertEqual(result.returncode, 1)
                 self.assertEqual(events, [])
+                self.assertEqual(self.report_copy, self.failure("DEPLOY_TEMPFILE_FAILED"))
 
-    def test_reviewed_report_validator_is_byte_for_byte_unchanged(self):
-        validator = textwrap.dedent(self.workflow.split("<<'PY'\n", 1)[1].split("\n          PY", 1)[0])
-        self.assertEqual(hashlib.sha256(validator.encode()).hexdigest(),
-                         "fadcf98154e70863f4a847ed0f798d9bbfa9392c9de4924bee5cc2310de46393")
+    def failure(self, reason):
+        return dict(status="FAIL", requested_sha=SHA, previous_sha=None, final_sha=None,
+                    fetch_verified=False, release_created=False, dependency_sync="NOT_ATTEMPTED",
+                    tests_status="NOT_RUN", tests_run=0, promotion_status="NOT_ATTEMPTED",
+                    state_boundary_enforced=False, reason=reason)
+
+    def test_nonzero_ssh_preserves_valid_controller_failure_but_never_success(self):
+        failure = {**self.report("OK"), "status": "FAIL", "reason": "TESTS_FAILED",
+                   "tests_status": "FAIL", "promotion_status": "NOT_ATTEMPTED"}
+        for value in (failure, self.report("OK"), self.report(), self.report("SUPERSEDED")):
+            with self.subTest(status=value["status"], reason=value["reason"]):
+                result, events = self.exercise(self.encoded, accepted=True, report=value, ssh_status=1)
+                expected = failure if value == failure else self.failure("SSH_NONZERO_EXIT")
+                self.assertEqual(result.returncode, 1)
+                self.assertEqual(json.loads(result.stdout), expected)
+                self.assertEqual(self.report_copy, expected)
+                self.assertEqual(len(events), 1)
+
+    def test_missing_transport_config_is_saved_without_invoking_ssh(self):
+        for changes in ({"DEPLOY_HOST": ""}, {"DEPLOY_HOST_KEY": ""}):
+            result, events = self.exercise(self.encoded, accepted=True, overrides=changes)
+            self.assertEqual(result.returncode, 1)
+            self.assertEqual(events, [])
+            self.assertEqual(self.report_copy, self.failure("DEPLOY_CONFIG_INVALID"))
+
+    def test_invalid_sha_never_becomes_authoritative_evidence(self):
+        result, events = self.exercise(self.encoded, accepted=True, overrides={"EXPECTED_SHA": "bad"})
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(events, [])
+        self.assertEqual(self.report_copy, {**self.failure("DEPLOY_CONFIG_INVALID"), "requested_sha": None})
+
+    def test_raw_output_is_bounded_strict_and_never_echoed(self):
+        cases = ("", "UNRELATED_SECRET_CANARY", "x" * 12000, "[]", "[" * 1500 + "]" * 1500,
+                 json.dumps(self.report("OK"))[:-1] + ',"status":"PASS"}',
+                 json.dumps({**self.report("OK"), "tests_run": 1000001}),
+                 json.dumps({**self.report("OK"), "reason": "TESTS_FAILED"}),
+                 json.dumps({**self.report("OK"), "status": "FAIL"}))
+        for raw in cases:
+            for code in (0, 1, 255):
+                with self.subTest(length=len(raw), ssh_status=code):
+                    result, events = self.exercise(self.encoded, accepted=True, raw_report=raw, ssh_status=code)
+                    self.assertEqual(result.returncode, 1)
+                    self.assertEqual(len(events), 1)
+                    self.assertIn(self.report_copy["reason"], {"SSH_NONZERO_EXIT", "INVALID_DEPLOYMENT_REPORT"})
+                    self.assertEqual(self.report_copy, self.failure(self.report_copy["reason"]))
+                    self.assertLessEqual(len(json.dumps(self.report_copy)), 4096)
+                    self.assertEqual(json.loads(result.stdout), self.report_copy)
 
     def test_best_effort_report_copy_preserves_all_exit_codes_and_output(self):
         failure = {**self.report("OK"), "status": "FAIL", "reason": "TESTS_FAILED",
@@ -232,7 +282,7 @@ class DeployWorkflowTest(unittest.TestCase):
                  if line.startswith(("    needs:", "    if:"))]
         self.assertEqual(gates, [
             "if: github.event_name == 'push' && github.ref == 'refs/heads/main'",
-            "needs: [test, frontend]",
+            "needs: [test, frontend, release_offline]",
         ])
 
     def test_production_settings_and_diagnostic_removal(self):
