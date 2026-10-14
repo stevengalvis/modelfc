@@ -136,7 +136,20 @@ def verify_remote(pr, sha, token):
     validate_pr_metadata(json.loads(body), REPOSITORY, sha)
 
 
-def export_source(run, pr, sha, token):
+def verify_release(sha, token):
+    """Only the current canonical main tip is an eligible release request."""
+    status, body = read_url(f"https://api.github.com/repos/{REPOSITORY}/git/ref/heads/main",
+                           {"Authorization": "Bearer " + token, "User-Agent": "ModelFC-validator"})
+    if status != 200:
+        raise Failure("SOURCE_ERROR")
+    value = json.loads(body)
+    if (value.get("ref") != "refs/heads/main"
+            or value.get("object", {}).get("type") != "commit"
+            or value.get("object", {}).get("sha") != sha):
+        raise Failure("WRONG_SHA")
+
+
+def export_source(run, pr, sha, token, *, release=False):
     gitdir = run / "git"
     command(["git", "init", "--bare", str(gitdir)])
     env = dict(os.environ, GIT_TERMINAL_PROMPT="0", GIT_CONFIG_NOSYSTEM="1",
@@ -145,7 +158,7 @@ def export_source(run, pr, sha, token):
                GIT_CONFIG_VALUE_0="Authorization: Basic " + base64.b64encode(("x-access-token:" + token).encode()).decode())
     base = ["git", "--git-dir", str(gitdir), "-c", "core.hooksPath=/dev/null"]
     command(base + ["fetch", "--depth=1", "https://github.com/" + REPOSITORY + ".git",
-                    f"refs/pull/{pr}/head"], env=env)
+                    "refs/heads/main" if release else f"refs/pull/{pr}/head"], env=env)
     if command(base + ["rev-parse", "FETCH_HEAD"]).decode().strip() != sha:
         raise Failure("WRONG_SHA")
     # Export only Python subject code. No PR ops/, workflows, dependencies or .git.
@@ -412,7 +425,7 @@ def abandoned():
             command(["podman", "rm", "--force", "--time=2", name])
 
 
-def worker(config, run, pr, sha, mode="offline"):
+def worker(config, run, pr, sha, mode="offline", *, release=False):
     if mode not in {"offline", "live"}:
         raise Failure("INVALID_CONFIGURATION")
     trusted_mode = mode.upper()
@@ -421,9 +434,17 @@ def worker(config, run, pr, sha, mode="offline"):
         token = Path(config["github_token_file"]).read_text().strip()
         if not token:
             raise Failure("INVALID_CONFIGURATION")
-        verify_remote(pr, sha, token)
+        if release:
+            if mode != "offline" or pr is not None:
+                raise Failure("INVALID_CONFIGURATION")
+            verify_release(sha, token)
+        else:
+            verify_remote(pr, sha, token)
         run.mkdir(mode=0o700)
-        export_source(run, pr, sha, token)
+        if release:
+            export_source(run, pr, sha, token, release=True)
+        else:
+            export_source(run, pr, sha, token)
         if mode == "live":
             secret = Path(config["provider_key_file"]).read_text().strip()
             if not secret:
@@ -483,7 +504,7 @@ def worker(config, run, pr, sha, mode="offline"):
     return report
 
 
-def service_command(run, repository, pr, sha, mode="offline"):
+def service_command(run, repository, pr, sha, mode="offline", *, release=False):
     script = str(TRUSTED / "validate_pr.py")
     return ["systemd-run", "--user", "--quiet", "--wait", "--pipe", "--collect",
             "--unit=" + PREFIX + run.name, "--property=RuntimeMaxSec=300",
@@ -492,13 +513,15 @@ def service_command(run, repository, pr, sha, mode="offline"):
             "--property=UMask=0077", "--property=StandardError=null",
             f"--property=ExecStopPost=/usr/bin/python3 -I {script} --cleanup {run.name}",
             "/usr/bin/python3", "-I", script, "--worker", run.name,
-            "--repository", repository, "--pr", str(pr), "--sha", sha, "--mode", mode]
+            "--repository", repository, *(["--release"] if release else ["--pr", str(pr)]),
+            "--sha", sha, "--mode", mode]
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--repository")
     parser.add_argument("--pr", type=int)
+    parser.add_argument("--release", action="store_true")
     parser.add_argument("--sha", default="")
     parser.add_argument("--mode", choices=("offline", "live"), default="offline")
     parser.add_argument("--worker", help=argparse.SUPPRESS)
@@ -507,12 +530,22 @@ def main():
     trusted_mode = args.mode.upper()
     report = blank_report(args.sha if re.fullmatch(r"[0-9a-f]{40}", args.sha) else "",
                           mode=trusted_mode)
+    release_binding = None
     try:
         config = configuration(args.mode)
         if args.cleanup:
             cleanup(RUNS / args.cleanup)
             return
-        request_identity(args.repository, args.pr, args.sha)
+        if args.release:
+            if args.pr is not None or args.mode != "offline":
+                raise Failure("INVALID_CONFIGURATION")
+            request_identity(args.repository, 1, args.sha)
+            for name in ("release_evidence.py", "offline_report.py", "validate_offline_ssh.py"):
+                root_owned(TRUSTED / name)
+            from release_evidence import binding, envelope, validate_envelope, cached_release, save_success
+            release_binding = binding(config, TRUSTED, root_owned)
+        else:
+            request_identity(args.repository, args.pr, args.sha)
         if args.worker:
             run = RUNS / args.worker
             if not re.fullmatch(r"[0-9a-f]{32}", args.worker):
@@ -524,15 +557,25 @@ def main():
                 except BlockingIOError:
                     raise Failure("BUSY") from None
                 abandoned()
-                report = worker(config, run, args.pr, args.sha, args.mode)
+                if args.release:
+                    report = cached_release(config, run, args.sha, release_binding,
+                                            runs=RUNS, verify=verify_release,
+                                            execute=lambda: worker(config, run, None, args.sha, release=True),
+                                            current_binding=lambda: binding(config, TRUSTED, root_owned))
+                else:
+                    report = worker(config, run, args.pr, args.sha, args.mode)
         else:
             run = RUNS / uuid.uuid4().hex
             try:
-                raw = command(service_command(run, args.repository, args.pr, args.sha, args.mode), timeout=360)
+                raw = command(service_command(run, args.repository, args.pr, args.sha, args.mode,
+                                              release=args.release), timeout=360)
                 secret = (Path(config["provider_key_file"]).read_text().strip()
                           if args.mode == "live" else "")
                 token = Path(config["github_token_file"]).read_text().strip()
-                report = checked_report(json.loads(raw), args.sha, (secret, token), trusted_mode)
+                if args.release:
+                    report = validate_envelope(raw, args.sha, release_binding)["report"]
+                else:
+                    report = checked_report(json.loads(raw), args.sha, (secret, token), trusted_mode)
             except Exception as error:
                 reason = str(error) if (isinstance(error, Failure) or
                     isinstance(error, ValueError) and str(error) == "SECURITY_ERROR") else "INVALID_REPORT"
@@ -551,7 +594,25 @@ def main():
         report.update(result="FAIL", reason=str(error) if isinstance(error, Failure) else "INVALID_CONFIGURATION")
         if report["reason"] == "SECURITY_ERROR":
             report["credential_leakage_check"] = False
-    print(json.dumps(report))
+    if release_binding is not None:
+        try:
+            if binding(config, TRUSTED, root_owned) != release_binding:
+                raise ValueError("INVALID_CONFIGURATION")
+            if not args.worker and report["result"] == "PASS":
+                # Never persist worker output before systemd exit/ExecStopPost and
+                # the parent's final cleanup have succeeded. A busy cache writer
+                # is optional: acceptance remains valid without caching it.
+                with (RUNS / "validation.lock").open("a") as lock:
+                    try:
+                        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    except BlockingIOError:
+                        pass
+                    else:
+                        save_success(report, release_binding, RUNS)
+            report = envelope(report, release_binding)
+        except Exception:
+            report = blank_report(args.sha, reason="INVALID_CONFIGURATION")
+    print(json.dumps(report, sort_keys=True))
 
 
 if __name__ == "__main__":

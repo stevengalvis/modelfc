@@ -7,10 +7,15 @@ import subprocess
 import sys
 
 REQUEST = re.compile(r'validate-offline stevengalvis/modelfc ([1-9][0-9]{0,9}) ([0-9a-f]{40})')
+RELEASE_REQUEST = re.compile(r'validate-offline-release stevengalvis/modelfc ([0-9a-f]{40})')
 CONTROLLER = '/opt/modelfc-validator/validate_pr.py'
 
 
 def controller_arguments(original):
+    release = RELEASE_REQUEST.fullmatch(original)
+    if release:
+        return ['/usr/bin/python3', '-I', CONTROLLER, '--repository', 'stevengalvis/modelfc',
+                '--release', '--sha', release[1], '--mode', 'offline']
     match = REQUEST.fullmatch(original)
     if not match:
         raise ValueError('INVALID_REQUEST')

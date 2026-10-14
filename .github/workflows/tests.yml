@@ -71,9 +71,45 @@ jobs:
           NEXT_PUBLIC_MODELFC_API_MODE: mock
         run: npm run build
 
-  deploy:
+  release_offline:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: [test, frontend]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    permissions:
+      contents: read
+    concurrency:
+      group: modelfc-release-offline
+      cancel-in-progress: false
+    steps:
+      - name: Checkout trusted default-branch push commit
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          repository: stevengalvis/modelfc
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Require installed exact-release OFFLINE acceptance
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          RELEASE_OFFLINE_OUTPUT: ${{ runner.temp }}/release-offline.json
+          VALIDATOR_SSH_KEY_BASE64: ${{ secrets.MODELFC_VALIDATOR_AUTOMATION_SSH_KEY_BASE64 }}
+          VALIDATOR_HOST: ${{ vars.MODELFC_VALIDATOR_HOST }}
+          VALIDATOR_HOST_KEY: ${{ vars.MODELFC_VALIDATOR_HOST_KEY }}
+          VALIDATOR_KEY_FINGERPRINT: ${{ vars.MODELFC_VALIDATOR_AUTOMATION_KEY_FINGERPRINT }}
+        run: python3 -I ops/vps/github_release_validation.py
+      - name: Preserve bounded exact-release evidence
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-offline-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/release-offline.json
+          if-no-files-found: ignore
+          retention-days: 7
+
+  deploy:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [test, frontend, release_offline]
     runs-on: ubuntu-latest
     permissions:
       contents: read

@@ -40,6 +40,18 @@ def report(reason="OK"):
     return value
 
 
+class ReleaseGateReportingTests(unittest.TestCase):
+    def test_failed_release_gate_is_not_reported_as_attempted_activation(self):
+        jobs = [dict(name=name, status="completed", conclusion=state) for name, state in
+                (("test", "success"), ("frontend", "success"), ("release_offline", "failure"),
+                 ("deploy", "skipped"))]
+        result = reporting.deployment_evidence({**run(), "conclusion": "failure"}, jobs, None)
+        self.assertEqual(result["stage"], "RELEASE_OFFLINE")
+        self.assertEqual(result["status"], "FAILED")
+        self.assertIsNone(result["controller_selected_sha"])
+        self.assertEqual(result["serving_health"], "UNVERIFIED")
+
+
 class FakeGitHub:
     def __init__(self):
         self.run = run()

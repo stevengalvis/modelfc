@@ -254,7 +254,7 @@ def conclusions(jobs):
     result = {}
     for job in jobs:
         name = job.get("name")
-        if name not in {"test", "frontend", "deploy"}:
+        if name not in {"test", "frontend", "deploy", "release_offline"}:
             continue
         if name in result or job.get("status") != "completed" or job.get("conclusion") not in CONCLUSIONS:
             raise Rejected
@@ -277,6 +277,8 @@ def deployment_evidence(run, jobs, report):
         stage = "WORKFLOW_NOT_SUCCESSFUL"
     elif backend != "success" or frontend != "success":
         stage = "CI_UNVERIFIED"
+    elif states.get("release_offline") is not None and states["release_offline"] != "success":
+        stage = "RELEASE_OFFLINE"
     elif deploy != "success":
         stage = "VPS_ACTIVATION"
         if report and report["status"] == "FAIL":
