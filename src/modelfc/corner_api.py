@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 from typing import Any, Literal
 
-from fastapi import FastAPI, Request, Response
+from fastapi import FastAPI, Query, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -20,7 +20,8 @@ from modelfc.corner_analysis import MAX_MARKETS_PER_ANALYSIS, CornerMarketReques
 from modelfc.corner_analysis_store import analyze_and_store, load_analysis
 from modelfc.corner_capabilities import public_api_capabilities
 from modelfc.corner_prospective_read import (
-    read_opportunities, read_opportunity, read_performance, read_predictions, read_recommendations, read_recorded_offers,
+    read_opportunities, read_opportunity, read_performance, read_predictions,
+    read_recommendations, read_recorded_offers, read_shortlist, read_alternatives,
 )
 from modelfc.ledger_storage import LedgerError, LedgerStorageUnavailable
 from modelfc.btts_research import BttsResearchResponse, read_btts_research
@@ -78,6 +79,20 @@ class RecordedOfferResponse(RecommendationResponse):
     status: Literal["RECENT_QUALIFYING", "PRICE_NEEDS_RECHECKING", "QUOTE_UNAVAILABLE",
                     "NO_QUALIFYING_EDGE", "VALUE_UNVERIFIED", "REVIEW_REQUIRED", "HISTORICAL"]
     opportunity_id: str | None
+
+
+class ShortlistOfferResponse(RecommendationResponse):
+    fixture_id: str
+    status: Literal["RECENT_QUALIFYING", "PRICE_NEEDS_RECHECKING"]
+    current_recommendation: bool
+    opportunity_id: str | None
+
+
+class ShortlistResponse(StrictModel):
+    as_of_utc: str
+    offers: list[ShortlistOfferResponse]
+    total: int = Field(ge=0)
+    limit: int = Field(ge=1, le=100)
 
 
 class RecordedForecastResponse(StrictModel):
@@ -652,10 +667,20 @@ def create_app(
         error.headers["Cache-Control"] = "no-store"
         return error
 
-    @app.get("/api/v1/recommendations", response_model=list[RecommendationResponse] | RecordedOffersResponse)
-    def get_recommendations(response: Response, view: Literal["current", "recorded"] = "current"):
+    @app.get("/api/v1/recommendations", response_model=list[RecommendationResponse] | RecordedOffersResponse | ShortlistResponse)
+    def get_recommendations(response: Response,
+                            view: Literal["current", "recorded", "shortlist", "alternatives"] = "current",
+                            limit: int = Query(5, ge=1, le=100),
+                            fixture_id: str | None = Query(None, pattern=r"^[0-9a-f]{64}$")):
         response.headers["Cache-Control"] = "no-store"
         try:
+            if view == "shortlist":
+                return read_shortlist(state, limit=limit)
+            if view == "alternatives":
+                if fixture_id is None:
+                    return JSONResponse(status_code=422, content={"error": {"code": "FIXTURE_REQUIRED"}},
+                                        headers={"Cache-Control": "no-store"})
+                return read_alternatives(state, fixture_id)
             return read_recorded_offers(state) if view == "recorded" else read_recommendations(state)
         except LedgerError as error:
             result = _public_read_error(error)
