@@ -62,6 +62,8 @@ def run(config, state, policy, *, validator_read_user=None, public_history_read_
             return []
 
     def assess(league):
+        if league != 'E1' or decision['status'] in ('UNKNOWN', 'OUTSIDE_SLOT'):
+            return {}
         before = dict(decision)
         select(False)  # Still under publication lock: did the successful response cover the need?
         remaining = decision.get('missing_training_fixture_ids') if decision['status'] != 'UNKNOWN' else None

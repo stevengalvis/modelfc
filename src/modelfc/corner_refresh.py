@@ -254,7 +254,10 @@ def refresh_data(config: CornerDataConfig, today: date | None = None,
         results, invocation = [], []
         for league in config.leagues:
             if league not in selected:
-                results.append(previous.get(league, {"league": league, "status": "unknown"}))
+                retained = previous.get(league, {"league": league, "status": "unknown"})
+                if assess_result and retained['status'] in ('updated', 'unchanged'):
+                    retained = {**retained, **assess_result(league)}
+                results.append(retained)
                 invocation.append({"league": league, "status": "NOT_SELECTED"})
                 continue
             terminal, reserved = refresh_attempts.reserve(state, league, trigger) if capped else (None, True)
@@ -279,6 +282,12 @@ def refresh_data(config: CornerDataConfig, today: date | None = None,
                     public_history_read_user=public_history_read_user,
                     **({"retain_result_evidence": True} if retain_result_evidence else {}))
                 delivery = "VALIDATED_SOURCE_RESPONSE"
+                prior = previous.get(league, {})
+                if prior.get('settlement_eligibility') in ('FINAL_SCORE_CONFLICT', 'CALENDAR_UNVERIFIED'):
+                    # A new GET alone cannot resolve an already known conflict.
+                    # Only a fresh calendar/publication assessment can clear it.
+                    row.update({key: prior[key] for key in ('settlement_eligibility',
+                        'final_score_conflicts', 'calendar_sha256', 'calendar_retrieved_at_utc') if key in prior})
                 if assess_result:
                     row.update(assess_result(league))
             except HTTPError as error:

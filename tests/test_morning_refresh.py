@@ -253,6 +253,17 @@ class MorningTests(unittest.TestCase):
             refresh.refresh_data(self.f.config)
         self.assertEqual(self.f.run_settlement()['reason'],'REFRESH_CALENDAR_CONFLICT_OR_UNVERIFIED')
         self.assertEqual(terminal.read_bytes(),original)
+        # Next-day baseline publication does not erase a known calendar conflict.
+        self.calls.clear()
+        with patch.object(attempts,'datetime') as clock,patch.object(refresh,'download_csv',side_effect=self.download):
+            clock.now.return_value=datetime.now(timezone.utc)+timedelta(days=1)
+            refresh.refresh_data(self.f.config)
+        self.assertEqual(self.f.run_settlement()['status'],'REJECTED')
+        self.assertEqual(len(self.calls),1)
+        with patch.object(refresh,'download_csv',side_effect=AssertionError('no unnecessary GET')):
+            assessed=morning.run(self.f.config,self.f.state,{**morning.POLICY,'enabled':True})
+        self.assertEqual(assessed['status'],'NOT_NEEDED')
+        self.assertEqual(assessed['report']['results'][0]['settlement_eligibility'],'VERIFIED_FINAL_SCORES')
 
 
 class TransportTests(unittest.TestCase):
