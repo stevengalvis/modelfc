@@ -13,6 +13,7 @@ SHA = re.compile(r"[0-9a-f]{40}")
 MARKER = "<!-- zeno-production-deployment:v1"
 STAMP = re.compile(re.escape(MARKER) + r" run=(\d+) attempt=(\d+) sha=([0-9a-f]{40}) -->")
 MAX_REPORT = 4096
+MAX_OUTPUT = 8192
 MAX_API = 2 * 1024 * 1024
 MAX_ERROR = 16 * 1024
 REASONS = frozenset({"OK", "ALREADY_CURRENT", "SUPERSEDED", "INVALID_REQUEST",
@@ -25,7 +26,8 @@ FIELDS = frozenset({"status", "requested_sha", "previous_sha", "final_sha", "fet
 CONCLUSIONS = frozenset({"success", "failure", "cancelled", "skipped", "timed_out",
                         "neutral", "action_required", "startup_failure", "stale"})
 STAGES = frozenset({"INPUT_VALIDATION", "EVENT_VALIDATION", "RUN_LOOKUP", "RUN_VALIDATION",
-                   "PR_ASSOCIATION", "JOBS_LOOKUP", "JOBS_VALIDATION", "COMMENT_LOOKUP", "COMMENT_WRITE"})
+                   "PR_ASSOCIATION", "JOBS_LOOKUP", "JOBS_VALIDATION", "COMMENT_LOOKUP", "COMMENT_WRITE",
+                   "OUTPUT_WRITE"})
 CAUSES = frozenset({"REJECTED", "API_ACCESS_DENIED", "API_NOT_FOUND", "API_RATE_LIMITED",
                    "API_HTTP_FAILED", "API_RESPONSE_INVALID", "API_TRANSPORT_FAILED",
                    "API_VALIDATION_OR_SPAM", "API_INTEGRATION_ACCESS_DENIED"})
@@ -252,7 +254,7 @@ def conclusions(jobs):
     return result
 
 
-def render(run, number, jobs, report):
+def deployment_evidence(run, jobs, report):
     run_id, attempt, sha = run_identity(run)
     states = conclusions(jobs)
     backend, frontend, deploy = (states.get(k) for k in ("test", "frontend", "deploy"))
@@ -278,18 +280,80 @@ def render(run, number, jobs, report):
     elif report and report["status"] == "PASS" and report["reason"] == "ALREADY_CURRENT":
         # The early return checks physical HEAD but does not recheck the protected marker.
         result, stage = "UNVERIFIED", "ALREADY_CURRENT_NOT_REVERIFIED"
+    return {"status": result, "stage": stage,
+            "repository_tests": {"backend": backend or "UNVERIFIED",
+                                 "frontend": frontend or "UNVERIFIED"},
+            "controller_job": deploy or "UNVERIFIED",
+            "controller_selected_sha": None if verified == "UNVERIFIED" else verified,
+            "serving_sha": None, "serving_health": "UNVERIFIED",
+            "installed_components": "UNVERIFIED"}
+
+
+def empty_result():
+    return {"schema_version": 1, "source": None, "deployment": {
+        "status": "UNVERIFIED", "stage": "EVIDENCE_UNAVAILABLE",
+        "repository_tests": {"backend": "UNVERIFIED", "frontend": "UNVERIFIED"},
+        "controller_job": "UNVERIFIED", "controller_selected_sha": None,
+        "serving_sha": None, "serving_health": "UNVERIFIED",
+        "installed_components": "UNVERIFIED"},
+        "reporting": {"outcome": "NOT_ATTEMPTED", "stage": None,
+                      "cause": None, "http_status": None}}
+
+
+def summary(result):
+    evidence = result["deployment"]
+    source = result["source"]
+    reporting = result["reporting"]
+    lines = ["Deployment evidence: " + evidence["status"],
+             "Stage: " + evidence["stage"],
+             "Controller-selected SHA: `" + (evidence["controller_selected_sha"] or "UNVERIFIED") + "`",
+             "Physical serving SHA / health / installed components: UNVERIFIED",
+             "Repository tests: backend=" + evidence["repository_tests"]["backend"] +
+             ", frontend=" + evidence["repository_tests"]["frontend"],
+             "Reporting: " + reporting["outcome"]]
+    if reporting["stage"]:
+        lines.append("Reporting failure: " + reporting["stage"] + "/" + reporting["cause"] +
+                     (" HTTP_STATUS=" + str(reporting["http_status"]) if reporting["http_status"] else ""))
+    if source:
+        lines.extend(["Requested SHA: `" + source["sha"] + "`",
+                      "[Detailed workflow evidence](" + source["url"] + ")"])
+    return "\n\n".join(lines) + "\n"
+
+
+def save_result(result):
+    """Only internally constructed, bounded evidence is written, never raw API data."""
+    raw = json.dumps(result, sort_keys=True, allow_nan=False) + "\n"
+    body = summary(result)
+    if len(raw.encode()) > MAX_OUTPUT or len(body.encode()) > MAX_OUTPUT:
+        raise Rejected
+    output = os.environ.get("DEPLOYMENT_STATUS_OUTPUT")
+    if output:
+        path = Path(output)
+        temporary = path.with_suffix(".tmp")
+        temporary.write_text(raw, encoding="utf-8")
+        temporary.replace(path)
+    if os.environ.get("GITHUB_STEP_SUMMARY"):
+        Path(os.environ["GITHUB_STEP_SUMMARY"]).write_text(body, encoding="utf-8")
+
+
+def render(run, number, jobs, report):
+    run_id, attempt, sha = run_identity(run)
+    evidence = deployment_evidence(run, jobs, report)
+    verified = evidence["controller_selected_sha"] or "UNVERIFIED"
+    backend, frontend = (evidence["repository_tests"][k] for k in ("backend", "frontend"))
     url = f"https://github.com/{REPOSITORY}/actions/runs/{run_id}/attempts/{attempt}"
-    body = (f"{MARKER} run={run_id} attempt={attempt} sha={sha} -->\n"
-            f"Production deployment: {result}\n\n"
+    return (f"{MARKER} run={run_id} attempt={attempt} sha={sha} -->\n"
+            f"Production deployment: {evidence['status']}\n\n"
             f"* PR: #{number}\n* Attempted SHA: `{sha}`\n"
-            f"* Actual deployed SHA: `{verified}`\n* Stage: {stage}\n"
+            f"* Controller-selected SHA: `{verified}`\n"
+            "* Physical serving SHA / health / installed components: UNVERIFIED\n"
+            f"* Stage: {evidence['stage']}\n"
             f"* Workflow: [run {run_id}, attempt {attempt}]({url})\n"
-            f"* Backend tests: {backend.upper() if backend else 'UNVERIFIED'}\n"
-            f"* Frontend tests: {frontend.upper() if frontend else 'UNVERIFIED'}\n"
-            f"* VPS activation: {'PASSED' if result == 'SUCCESS' else 'NOT VERIFIED SUCCESSFUL'}\n")
-    if verified != "UNVERIFIED":
-        body += "\nSHA verified by the controller at deployment completion; this is not a live status probe.\n"
-    return body
+            f"* Backend tests: {backend.upper()}\n"
+            f"* Frontend tests: {frontend.upper()}\n"
+            f"* VPS activation: {'PASSED' if evidence['status'] == 'SUCCESS' else 'NOT VERIFIED SUCCESSFUL'}\n"
+            "\nController evidence records release selection at deployment completion; "
+            "it does not verify physical API adoption or current health.\n")
 
 
 def comment_records(api, number):
@@ -340,7 +404,7 @@ def validated_jobs(value):
     return value["jobs"]
 
 
-def observe(event, api, report_file):
+def observe(event, api, report_file, *, result=None, persist=None):
     if (event.get("action") != "completed"
             or event.get("repository", {}).get("full_name") != REPOSITORY):
         raise Rejected
@@ -349,19 +413,29 @@ def observe(event, api, report_file):
     run = checked("RUN_LOOKUP", api.call, prefix)
     if checked("RUN_VALIDATION", run_identity, run) != (run_id, attempt, sha):
         raise ReportingFailed("RUN_VALIDATION")
+    if result is None:
+        result = empty_result()
+    result["source"] = {"run_id": run_id, "attempt": attempt, "sha": sha,
+                        "url": f"https://github.com/{REPOSITORY}/actions/runs/{run_id}/attempts/{attempt}"}
+    # Collect deployment evidence before PR lookup or comment publication can fail.
+    jobs = checked("JOBS_LOOKUP", api.call, prefix + "/jobs?per_page=100")
+    jobs = checked("JOBS_VALIDATION", validated_jobs, jobs)
+    report = read_report(report_file, sha)
+    result["deployment"] = checked("JOBS_VALIDATION", deployment_evidence, run, jobs, report)
+    if persist:
+        checked("OUTPUT_WRITE", persist, result)
     pr = checked("PR_ASSOCIATION", merged_pr, api, sha)
     if pr is None:
         return "NO_MERGED_PR"
     number, author = pr
-    # The attempt endpoint avoids mixing jobs/artifacts from a later rerun.
-    jobs = checked("JOBS_LOOKUP", api.call, prefix + "/jobs?per_page=100")
-    jobs = checked("JOBS_VALIDATION", validated_jobs, jobs)
-    body = checked("JOBS_VALIDATION", render, run, number, jobs, read_report(report_file, sha))
+    body = checked("JOBS_VALIDATION", render, run, number, jobs, report)
     return publish(api, number, body, run_id, attempt, author)
 
 
 def main():
     stage = "INPUT_VALIDATION"
+    result = empty_result()
+    failed = False
     try:
         event_path = Path(os.environ["GITHUB_EVENT_PATH"])
         raw = event_path.read_bytes()
@@ -369,19 +443,30 @@ def main():
             raise Rejected
         stage = "EVENT_VALIDATION"
         outcome = observe(strict_json(raw), GitHub(os.environ["GITHUB_TOKEN"]),
-                          os.environ["DEPLOYMENT_REPORT_FILE"])
+                          os.environ["DEPLOYMENT_REPORT_FILE"], result=result, persist=save_result)
+        result["reporting"]["outcome"] = outcome
         print("::notice::Deployment status reporting: " + outcome)
     except ReportingFailed as error:
+        failed = True
+        result["reporting"] = {"outcome": "FAILED", "stage": error.stage,
+                               "cause": error.cause, "http_status": error.http_status}
         status = "" if error.http_status is None else " HTTP_STATUS=" + str(error.http_status)
         print("::warning::Deployment status reporting failed: " + error.stage + "/" + error.cause + status +
               "; original deployment result unchanged.")
-        return 1
     except Exception:
+        failed = True
+        result["reporting"] = {"outcome": "FAILED", "stage": stage,
+                               "cause": "REJECTED", "http_status": None}
         # Never print exception text, API bodies, artifacts, paths or secrets.
         print("::warning::Deployment status reporting failed: " + stage +
               "/REJECTED; original deployment result unchanged.")
-        return 1
-    return 0
+    try:
+        save_result(result)
+    except Exception:
+        print("::warning::Deployment status reporting failed: OUTPUT_WRITE/REJECTED; "
+              "original deployment result unchanged.")
+        failed = True
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":

@@ -97,7 +97,7 @@ policy or live API acceptance.
 
 Reporting policy:
 
-| Evidence | Comment result | Deployed SHA |
+| Evidence | Comment result | Controller-selected SHA |
 | --- | --- | --- |
 | Successful original workflow/jobs plus strict controller `PASS / OK` | SUCCESS | Exact requested SHA, verified at deployment completion |
 | Backend or frontend failure | FAILED, BACKEND_TESTS or FRONTEND_TESTS | UNVERIFIED |
@@ -130,6 +130,59 @@ References: GitHub's [workflow_run completion semantics](https://docs.github.com
 and [comment permissions](https://docs.github.com/en/rest/issues/comments#create-an-issue-comment).
 After merge the workflow becomes eligible automatically; first real deployment
 reporting acceptance is still required. No deployment is executed by this PR.
+
+## Durable deployment evidence and independent publication
+
+The status publisher writes an internally constructed schema-v1 JSON result to
+`DEPLOYMENT_STATUS_OUTPUT` and a short `GITHUB_STEP_SUMMARY` before PR association
+or comment publication. It updates both with the final reporting outcome. Each
+output is limited to 8 KiB; JSON replacement is atomic. Raw API bodies, arbitrary
+artifact fields, private state, paths and credentials are never copied into them.
+No SSH, provider request, deployment retry or application import is added.
+
+The JSON has four top-level fields:
+
+- `schema_version`: 1.
+- `source`: authoritative source run ID, attempt, SHA and one attempt-specific
+  workflow URL, or null when run identity could not be verified.
+- `deployment`: status/stage, repository backend/frontend job conclusions,
+  controller job conclusion and controller-selected SHA when verified by the
+  existing PASS/OK contract. `serving_sha` stays null; `serving_health` and
+  `installed_components` stay UNVERIFIED. Controller selection is not proof that
+  the running API adopted the release. Repository tests do not establish actual
+  host identity, mounts or installed helper versions.
+- `reporting`: outcome and, on failure, the fixed stage/cause and numeric HTTP
+  status. Deployment failure and publication failure are independent. A successful
+  publication of failed deployment evidence does not turn that deployment green.
+
+PR lookup/comment failure leaves collected deployment evidence intact and returns
+nonzero from the publisher. Early input/API failure produces an UNVERIFIED result.
+A direct push without a merged PR still gets durable evidence and NO_MERGED_PR.
+The existing comment marker, unchanged-delivery no-op and older-attempt guard stay
+in place. The comment now labels the controller-selected SHA explicitly.
+
+An always-run artifact step uploads only `deployment-status.json`, named
+`deployment-status-<source-run>-<source-attempt>-<publisher-attempt>`, retained for
+seven days. Missing output or upload failure is visible; neither is suppressed.
+Cancellation or runner loss can still prevent final persistence/upload; missing
+artifacts and NOT_ATTEMPTED are never evidence of successful publication. A file
+written before interruption may contain deployment evidence with reporting still
+NOT_ATTEMPTED. Output-write failure itself fails the publisher. The original Tests
+workflow and its deployment result are not changed by this observer.
+
+Use the attempt URL for detailed logs, and the existing canonical PR comment once
+publication succeeds. Link that report from Linear instead of duplicating it.
+Do not rerun deployment or unchanged test suites to repair publication.
+
+Historical source run 38488060644, attempt 1, succeeded with controller PASS/OK and
+1,578 tests. Publisher 38488711699/job 115608536654 downloaded its matching artifact
+then received COMMENT_WRITE/API_INTEGRATION_ACCESS_DENIED HTTP 403. This proves an
+integration-access rejection; it does not identify the underlying permission or
+policy. The effective token already had Issues-write. This change preserves that
+failure independently and does not change permissions or claim to fix the denial.
+Any authorization adjustment or external write acceptance remains separately
+approved. No installed host component or October 15 scheduled-cycle verification
+is changed by this reporting work.
 
 ## One-time VPS installation after review and merge
 

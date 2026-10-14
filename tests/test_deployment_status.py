@@ -115,7 +115,7 @@ class DeploymentStatusTests(unittest.TestCase):
                                            'workflow_run':actual},api,self.file),'REPORTED')
         self.assertEqual(writes[0][0],'/issues/121/comments')
         self.assertIn('Production deployment: SUCCESS',writes[0][1]['body'])
-        self.assertIn('Actual deployed SHA: `'+actual_sha+'`',writes[0][1]['body'])
+        self.assertIn('Controller-selected SHA: `'+actual_sha+'`',writes[0][1]['body'])
         self.assertIn('@stevengalvis',writes[0][1]['body'])
         self.assertIn('/actions/runs/38015226038/attempts/1',writes[0][1]['body'])
 
@@ -130,7 +130,7 @@ class DeploymentStatusTests(unittest.TestCase):
         self.assertEqual(self.observe(), "REPORTED")
         body = self.body()
         self.assertIn("Production deployment: SUCCESS", body)
-        self.assertIn("Actual deployed SHA: `" + SHA + "`", body)
+        self.assertIn("Controller-selected SHA: `" + SHA + "`", body)
         self.assertIn("/actions/runs/100/attempts/2", body)
         self.assertIn("Backend tests: SUCCESS", body)
         self.assertIn("Frontend tests: SUCCESS", body)
@@ -147,7 +147,7 @@ class DeploymentStatusTests(unittest.TestCase):
                 body = self.body()
                 self.assertIn("Production deployment: FAILED", body)
                 self.assertIn("Stage: " + stage, body)
-                self.assertIn("Actual deployed SHA: `UNVERIFIED`", body)
+                self.assertIn("Controller-selected SHA: `UNVERIFIED`", body)
 
     def test_host_failure_never_claims_previous_sha_remains_active(self):
         for reason in ("TESTS_FAILED", "PROMOTION_FAILED", "FINAL_SHA_MISMATCH"):
@@ -158,7 +158,7 @@ class DeploymentStatusTests(unittest.TestCase):
                 self.observe()
                 body = self.body()
                 self.assertIn("Stage: VPS_" + reason, body)
-                self.assertIn("Actual deployed SHA: `UNVERIFIED`", body)
+                self.assertIn("Controller-selected SHA: `UNVERIFIED`", body)
                 self.assertNotIn("b" * 40, body)
 
     def test_cancelled_and_unreachable_vps(self):
@@ -171,7 +171,7 @@ class DeploymentStatusTests(unittest.TestCase):
                 self.observe()
                 body = self.body()
                 self.assertIn("Production deployment: FAILED", body)
-                self.assertIn("Actual deployed SHA: `UNVERIFIED`", body)
+                self.assertIn("Controller-selected SHA: `UNVERIFIED`", body)
                 self.assertIn("Stage: " + ("CANCELLED" if conclusion == "cancelled" else "VPS_ACTIVATION"), body)
 
     def test_already_current_and_superseded_are_not_verified_promotions(self):
@@ -182,7 +182,7 @@ class DeploymentStatusTests(unittest.TestCase):
                 self.observe()
                 body = self.body()
                 self.assertIn("Production deployment: " + result, body)
-                self.assertIn("Actual deployed SHA: `UNVERIFIED`", body)
+                self.assertIn("Controller-selected SHA: `UNVERIFIED`", body)
 
     def test_malformed_secret_like_reports_cannot_supply_success_or_leak(self):
         cases = [SECRET, json.dumps({**report(), "reason": SECRET}),
@@ -203,7 +203,7 @@ class DeploymentStatusTests(unittest.TestCase):
                 self.observe()
                 body = self.body()
                 self.assertNotIn("Production deployment: SUCCESS", body)
-                self.assertIn("Actual deployed SHA: `UNVERIFIED`", body)
+                self.assertIn("Controller-selected SHA: `UNVERIFIED`", body)
 
     def test_missing_symlink_hardlink_fifo_directory_report_is_unverified(self):
         target = Path(self.directory.name) / "target"
@@ -217,7 +217,7 @@ class DeploymentStatusTests(unittest.TestCase):
                 elif kind == "fifo": os.mkfifo(self.file)
                 elif kind == "directory": self.file.mkdir()
                 self.observe()
-                self.assertIn("Actual deployed SHA: `UNVERIFIED`", self.body())
+                self.assertIn("Controller-selected SHA: `UNVERIFIED`", self.body())
                 if self.file.is_dir(): self.file.rmdir()
                 else: self.file.unlink(missing_ok=True)
 
@@ -492,6 +492,162 @@ class DeploymentStatusTests(unittest.TestCase):
         self.assertNotIn("Production deployment: SUCCESS", self.body())
         self.assertIn("Stage: WORKFLOW_NOT_SUCCESSFUL", self.body())
 
+    def durable_main(self):
+        root = Path(self.directory.name)
+        event_file = root / "event.json"
+        event_file.write_text(json.dumps(self.event))
+        output_file, summary_file = root / "status.json", root / "summary.md"
+        with patch.dict(os.environ, {"GITHUB_EVENT_PATH": str(event_file),
+                    "GITHUB_TOKEN": SECRET, "DEPLOYMENT_REPORT_FILE": str(self.file),
+                    "DEPLOYMENT_STATUS_OUTPUT": str(output_file),
+                    "GITHUB_STEP_SUMMARY": str(summary_file)}), \
+             patch.object(reporting, "GitHub", return_value=self.api), \
+             patch("sys.stdout", new_callable=io.StringIO) as output:
+            code = reporting.main()
+        raw, body = output_file.read_text(), summary_file.read_text()
+        self.assertLessEqual(len(raw.encode()), reporting.MAX_OUTPUT)
+        self.assertLessEqual(len(body.encode()), reporting.MAX_OUTPUT)
+        for text in (raw, body, output.getvalue()):
+            self.assertNotIn(SECRET, text)
+        return code, json.loads(raw), body
+
+    def test_durable_evidence_precedes_comment_write_and_survives_real_403(self):
+        original = self.api.call
+        before = []
+        def denied(path, data=None, **kwargs):
+            if data is not None:
+                before.append(json.loads((Path(self.directory.name) / "status.json").read_text()))
+                self.assertIn("Reporting: NOT_ATTEMPTED",
+                              (Path(self.directory.name) / "summary.md").read_text())
+                raise reporting.http_failure(HTTPError(SECRET, 403, SECRET, {},
+                    io.BytesIO(b'{"message":"Resource not accessible by integration"}')))
+            return original(path, data, **kwargs)
+        self.api.call = denied
+        code, result, body = self.durable_main()
+        self.assertEqual(code, 1)
+        self.assertEqual(len(before), 1)
+        self.assertEqual(before[0]["deployment"], result["deployment"])
+        self.assertEqual(result["deployment"]["status"], "SUCCESS")
+        self.assertEqual(result["deployment"]["controller_selected_sha"], SHA)
+        self.assertIsNone(result["deployment"]["serving_sha"])
+        self.assertEqual(result["deployment"]["serving_health"], "UNVERIFIED")
+        self.assertEqual(result["reporting"], {"outcome": "FAILED", "stage": "COMMENT_WRITE",
+            "cause": "API_INTEGRATION_ACCESS_DENIED", "http_status": 403})
+        self.assertIn("Reporting: FAILED", body)
+        self.assertEqual(body.count("https://"), 1)
+        self.assertEqual(result["source"]["url"],
+                         "https://github.com/stevengalvis/modelfc/actions/runs/100/attempts/2")
+
+    def test_durable_deployment_failure_is_independent_of_successful_publication(self):
+        self.api.run["conclusion"] = "failure"
+        self.api.jobs[-1]["conclusion"] = "failure"
+        self.file.write_text(json.dumps(report("TESTS_FAILED")))
+        code, result, body = self.durable_main()
+        self.assertEqual(code, 0)  # Publisher succeeded; original deployment remains failed.
+        self.assertEqual(result["reporting"]["outcome"], "REPORTED")
+        self.assertEqual(result["deployment"]["status"], "FAILED")
+        self.assertEqual(result["deployment"]["stage"], "VPS_TESTS_FAILED")
+        self.assertIn("Deployment evidence: FAILED", body)
+
+    def test_durable_no_pr_and_association_failure_keep_deployment_evidence(self):
+        for fail in (False, True):
+            self.api = FakeGitHub()
+            if fail:
+                self.api.fail = "/pulls/"
+            else:
+                self.api.associated = []
+            code, result, body = self.durable_main()
+            self.assertEqual(code, int(fail))
+            self.assertEqual(result["deployment"]["status"], "SUCCESS")
+            self.assertEqual(result["reporting"]["outcome"], "FAILED" if fail else "NO_MERGED_PR")
+            self.assertEqual(self.api.writes, [])
+
+    def test_durable_early_failure_and_wrong_attempt_do_not_claim_evidence(self):
+        for mode in ("lookup", "attempt", "jobs"):
+            self.api = FakeGitHub()
+            if mode == "lookup": self.api.fail = "/actions/"
+            elif mode == "attempt": self.api.run["run_attempt"] = 3
+            else: self.api.jobs.append(self.api.jobs[0])
+            code, result, body = self.durable_main()
+            self.assertEqual(code, 1)
+            self.assertEqual(result["deployment"]["status"], "UNVERIFIED")
+            self.assertIsNone(result["deployment"]["controller_selected_sha"])
+            self.assertIsNone(result["deployment"]["serving_sha"])
+            self.assertEqual(self.api.writes, [])
+            if mode != "jobs": self.assertIsNone(result["source"])
+
+    def test_durable_missing_or_unverified_reports_never_certify_serving_release(self):
+        for reason in (None, "ALREADY_CURRENT", "SUPERSEDED", "malformed"):
+            self.api = FakeGitHub()
+            if reason is None: self.file.unlink(missing_ok=True)
+            elif reason == "malformed": self.file.write_text(SECRET)
+            else: self.file.write_text(json.dumps(report(reason)))
+            code, result, body = self.durable_main()
+            self.assertEqual(code, 0)
+            self.assertNotEqual(result["deployment"]["status"], "SUCCESS")
+            self.assertIsNone(result["deployment"]["controller_selected_sha"])
+            self.assertIsNone(result["deployment"]["serving_sha"])
+            self.assertEqual(result["deployment"]["installed_components"], "UNVERIFIED")
+
+    def test_durable_duplicate_and_late_attempt_keep_existing_comment(self):
+        self.observe()
+        body = self.body()
+        for newer, outcome in ((False, "COMMENT_UNCHANGED"), (True, "OLDER_RESULT_KEPT")):
+            self.api.comments = [dict(id=99, body=body.replace("attempt=2", "attempt=3") if newer else body,
+                                     user={"login": "github-actions[bot]", "type": "Bot"})]
+            self.api.writes.clear()
+            code, result, summary = self.durable_main()
+            self.assertEqual(code, 0)
+            self.assertEqual(result["reporting"]["outcome"], outcome)
+            self.assertEqual(self.api.writes, [])
+
+    def test_output_failure_prevents_publication_and_remains_visible(self):
+        original = reporting.save_result
+        calls = []
+        def fail_once(result):
+            calls.append(1)
+            if len(calls) == 1: raise OSError(SECRET)
+            return original(result)
+        with patch.object(reporting, "save_result", side_effect=fail_once):
+            code, result, body = self.durable_main()
+        self.assertEqual(code, 1)
+        self.assertEqual(self.api.writes, [])
+        self.assertEqual(result["deployment"]["status"], "SUCCESS")
+        self.assertEqual(result["reporting"]["stage"], "OUTPUT_WRITE")
+
+    def test_final_output_failure_keeps_prepublication_evidence_and_fails_job(self):
+        original = reporting.save_result
+        calls = []
+        def fail_final(result):
+            calls.append(1)
+            if len(calls) == 2: raise OSError(SECRET)
+            return original(result)
+        with patch.object(reporting, "save_result", side_effect=fail_final):
+            code, result, body = self.durable_main()
+        self.assertEqual(code, 1)
+        self.assertEqual(len(self.api.writes), 1)
+        self.assertEqual(result["deployment"]["status"], "SUCCESS")
+        self.assertEqual(result["reporting"]["outcome"], "NOT_ATTEMPTED")
+
+    def test_rejected_event_persists_only_sanitized_unknown_result(self):
+        self.event["workflow_run"]["head_sha"] = SECRET
+        code, result, body = self.durable_main()
+        self.assertEqual(code, 1)
+        self.assertIsNone(result["source"])
+        self.assertEqual(result["deployment"]["status"], "UNVERIFIED")
+        self.assertEqual(result["reporting"]["stage"], "EVENT_VALIDATION")
+        self.assertEqual(self.api.writes, [])
+
+    def test_output_bound_rejection_preserves_last_complete_file(self):
+        path = Path(self.directory.name) / "status.json"
+        with patch.dict(os.environ, {"DEPLOYMENT_STATUS_OUTPUT": str(path), "GITHUB_STEP_SUMMARY": ""}):
+            reporting.save_result(reporting.empty_result())
+            previous = path.read_bytes()
+            oversized = reporting.empty_result()
+            oversized["deployment"]["stage"] = "X" * reporting.MAX_OUTPUT
+            with self.assertRaises(reporting.Rejected): reporting.save_result(oversized)
+        self.assertEqual(path.read_bytes(), previous)
+
     def test_privileged_workflow_is_default_branch_push_only_no_secrets_or_ssh(self):
         source = (ROOT / ".github/workflows/deployment-status.yml").read_text()
         for value in ("workflow_run:", "types: [completed]", "branches: [main]",
@@ -505,6 +661,12 @@ class DeploymentStatusTests(unittest.TestCase):
         for forbidden in ("secrets.", "ssh ", "head_sha }}", "statuses: write", "contents: write",
                           "pull_request_target", "workflow_dispatch"):
             self.assertNotIn(forbidden, source)
+        preserved = source.split("      - name: Preserve bounded deployment", 1)[1]
+        self.assertIn("if: always()", preserved)
+        self.assertNotIn("continue-on-error", preserved)
+        self.assertIn("if-no-files-found: error", preserved)
+        self.assertIn("deployment-status-${{ github.event.workflow_run.id }}-${{ github.event.workflow_run.run_attempt }}-${{ github.run_attempt }}", preserved)
+        self.assertIn("DEPLOYMENT_STATUS_OUTPUT:", source)
         # Output copy/upload are isolated from the original deployment gate and controller.
         deploy = (ROOT / ".github/workflows/tests.yml").read_text()
         upload = deploy.split("      - name: Publish sanitized deployment report", 1)[1]
