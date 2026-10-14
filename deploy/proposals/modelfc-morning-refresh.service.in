@@ -1,4 +1,4 @@
-# PROPOSAL ONLY: requires separate calendar mount/access acceptance.
+# TEMPLATE ONLY: render verified runtime UID/GID; separate host acceptance required.
 [Unit]
 Description=Conditional ModelFC E1 morning CSV refresh
 Wants=network-online.target
@@ -28,7 +28,7 @@ InaccessiblePaths=-/var/lib/modelfc-deploy -/run/modelfc-acquisition
 InaccessiblePaths=-/etc/modelfc-validator -/var/lib/modelfc-validator
 InaccessiblePaths=-/opt/modelfc-deploy -/opt/modelfc-validator
 InaccessiblePaths=-/root/modelfc-state
-TemporaryFileSystem=/var/lib/modelfc/state:ro
+TemporaryFileSystem=/var/lib/modelfc/state:ro,mode=0700,uid=@RUNTIME_UID@,gid=@RUNTIME_GID@
 BindReadOnlyPaths=/var/lib/modelfc/state/odds-calendar
 BindReadOnlyPaths=/var/lib/modelfc/state/prospective/runner.lock
 CapabilityBoundingSet=

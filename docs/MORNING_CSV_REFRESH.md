@@ -85,7 +85,21 @@ The current history-only refresh service intentionally cannot read private state
 The **new** morning service proposal needs only read/traverse access to
 `state/odds-calendar` (including retained bundles/latest pointer) and read access
 to `state/prospective/runner.lock`. It masks the rest of state with a read-only
-empty mount and binds these two paths read-only. It retains runtime identity,
+empty mount and binds these two paths read-only. The `.service.in` file is a
+**template, not an installable unit**: the tmpfs root must have `mode=0700` and
+numeric UID/GID matching the host's `modelfc-runtime` user/group. Otherwise the
+existing calendar reader correctly rejects root-owned state. After resolving and
+verifying those identities on the approved host, render only to a disposable file:
+
+```sh
+python3 ops/vps/render_morning_unit.py --runtime-uid <verified-uid> --runtime-gid <verified-gid> > /tmp/modelfc-morning-refresh.service
+systemd-analyze verify /tmp/modelfc-morning-refresh.service
+```
+
+The renderer only prints text; it never installs a unit, resolves remote accounts,
+changes ownership, mounts anything or activates a service. Never substitute IDs
+from a different host. Validate mounted parent ownership as part of acceptance.
+ It retains runtime identity,
 credential removal and history-only write scope. It does not need forecasts,
 outcomes or private model state. Existing ownership/ACLs and systemd bind-mount
 behavior must be verified separately; any necessary access expansion requires
