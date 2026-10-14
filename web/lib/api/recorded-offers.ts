@@ -17,9 +17,9 @@ function forecast(v: unknown, asOf: number, kickoff: number): v is RecordedForec
     : v.prediction_type === "CORNER" && v.btts_yes_probability === null && nonnegative(v.expected_home_corners) && nonnegative(v.expected_away_corners);
 }
 const offerFields = ["prediction_id", "target_id", "competition", "provider", "provider_fixture_id", "kickoff_utc", "home_team", "away_team", "market_type", "team_side", "team", "direction", "line", "bookmaker", "american_odds", "decimal_odds", "retrieved_at_utc", "observation_age_seconds", "availability_checked_at_utc", "model_probability", "push_probability", "decisive_model_probability", "sportsbook_implied_probability", "no_vig_market_probability", "no_vig_probability_edge", "expected_profit", "qualified", "policy_version", "status", "current_recommendation", "opportunity_id"];
-function offer(v: unknown, fixture: RecordedFixture, asOf: number): v is RecordedOffer {
+export function offer(v: unknown, fixture: Pick<RecordedFixture, "selected_prediction_id" | "competition" | "home_team" | "away_team" | "kickoff_utc" | "status">, asOf: number): v is RecordedOffer {
   if (!record(v) || !exact(v, offerFields) || v.prediction_id !== fixture.selected_prediction_id || !id(v.target_id)
-    || !["competition", "home_team", "away_team", "kickoff_utc"].every(k => v[k] === fixture[k as keyof RecordedFixture])
+    || !["competition", "home_team", "away_team", "kickoff_utc"].every(k => v[k] === fixture[k as keyof typeof fixture])
     || !["provider", "provider_fixture_id", "bookmaker", "policy_version"].every(k => nonempty(v[k]))
     || v.market_type !== "TEAM_TOTAL" || !["HOME", "AWAY"].includes(v.team_side as string)
     || v.team !== (v.team_side === "HOME" ? fixture.home_team : fixture.away_team)

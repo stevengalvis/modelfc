@@ -16,10 +16,11 @@ describe("site modes", () => {
   it("renders live recommendations empty without demo offers or Analyze navigation", async () => {
     vi.stubEnv("NEXT_PUBLIC_MODELFC_API_MODE", "live");
     vi.stubEnv("NEXT_PUBLIC_MODELFC_API_URL", "https://api.example.test/api/v1");
-    vi.stubGlobal("fetch", vi.fn().mockImplementation((url: string) => Promise.resolve(new Response(JSON.stringify(url.includes("view=recorded") ? {as_of_utc: "2026-10-13T13:00:00Z", fixtures: []} : []), { status: 200 }))));
+    vi.stubGlobal("fetch", vi.fn().mockImplementation((url: string) => Promise.resolve(new Response(JSON.stringify(url.includes("view=shortlist") ? {as_of_utc: "2026-10-13T13:00:00Z", offers: [], total: 0, limit: 5} : []), { status: 200 }))));
     const { default: Recommendations } = await import("./recommendations/page");
     render(<Recommendations />);
-    await screen.findByText("No upcoming recorded fixtures");
+    await screen.findByText("No qualifying upcoming choices at saved prices.");
+    expect(fetch).toHaveBeenCalledWith("https://api.example.test/api/v1/recommendations?view=shortlist&limit=5", expect.objectContaining({cache:"no-store"}));
     expect(screen.getByText("Live API")).toBeInTheDocument();
     expect(screen.queryByText("Mock data")).not.toBeInTheDocument();
     expect(screen.queryByText(/Demo West Ham/)).not.toBeInTheDocument();

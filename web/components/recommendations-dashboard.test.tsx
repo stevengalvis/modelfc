@@ -1,223 +1,73 @@
-import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { api } from "@/lib/api/client";
 import { mockRecordedOffers } from "@/lib/api/mock-recorded-offers";
+import type { Shortlist } from "@/lib/api/types";
 import { RecommendationsDashboard } from "./recommendations-dashboard";
-
-const data = () => structuredClone(mockRecordedOffers);
+const data = (): Shortlist => ({ as_of_utc: mockRecordedOffers.as_of_utc, limit: 5, total: 1,
+  offers: mockRecordedOffers.fixtures.flatMap(f => f.offers.map(o => ({ ...o, fixture_id: f.fixture_id }))) });
 const fresh = () => { const v = data(); v.as_of_utc = "2026-10-10T13:04:59Z";
-  Object.assign(v.fixtures[0].offers[0], { observation_age_seconds: 299, status: "RECENT_QUALIFYING", current_recommendation: true }); return v; };
-beforeEach(() => { vi.spyOn(api, "recommendations").mockResolvedValue([]); });
+  Object.assign(v.offers[0], { observation_age_seconds: 299, status: "RECENT_QUALIFYING", current_recommendation: true }); return v; };
+beforeEach(() => { vi.spyOn(api, "shortlist").mockResolvedValue(data());
+  vi.spyOn(api, "alternatives").mockResolvedValue(structuredClone(mockRecordedOffers));
+  vi.spyOn(api, "recommendations"); vi.spyOn(api, "recordedOffers"); });
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks(); });
-
-describe("recorded Recommendations", () => {
-  it("keeps polling current offers when the recorded read never settles", async () => {
-    vi.useFakeTimers();
-    const recorded = vi.spyOn(api, "recordedOffers").mockImplementation(() => new Promise(() => {}));
-    const { mockRecommendations } = await import("@/lib/api/mock-recommendations");
-    vi.mocked(api.recommendations).mockResolvedValue(structuredClone(mockRecommendations));
-    const { unmount } = render(<RecommendationsDashboard />);
-    await act(async () => {});
-    const firstSignal = recorded.mock.calls[0][0];
-    for (let minute = 1; minute <= 6; minute++) {
-      await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
-      expect(api.recommendations).toHaveBeenCalledTimes(minute + 1);
-    }
-    expect(firstSignal?.aborted).toBe(true);
-    expect(screen.getByText("Recently checked · qualifying")).toBeInTheDocument();
-    expect(screen.getByText("Saved offers could not be refreshed")).toBeInTheDocument();
-    unmount();
-    expect(recorded.mock.calls.at(-1)?.[0]?.aborted).toBe(true);
-    await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
-    expect(api.recommendations).toHaveBeenCalledTimes(7);
-  });
-  it("surfaces both deadline failures while retrying and clears them on recovery", async () => {
-    vi.useFakeTimers();
-    vi.mocked(api.recommendations).mockImplementation(() => new Promise(() => {}));
-    vi.spyOn(api, "recordedOffers").mockImplementation(() => new Promise(() => {}));
-    render(<RecommendationsDashboard />); await act(async () => {});
-    await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
-    await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
-    expect(screen.getByText("Current recommendations could not be refreshed.")).toBeInTheDocument();
-    expect(screen.getByText("Saved offers could not be refreshed")).toBeInTheDocument();
-    expect(screen.queryByText("Loading current recommendations…")).not.toBeInTheDocument();
-    expect(screen.queryByText("Loading recorded offers…")).not.toBeInTheDocument();
-    expect(api.recommendations).toHaveBeenCalledTimes(3);
-    vi.mocked(api.recommendations).mockResolvedValue([]);
-    vi.mocked(api.recordedOffers).mockResolvedValue(data());
-    await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
-    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-    expect(screen.getByText("No current recommendations")).toBeInTheDocument();
-    expect(screen.getByRole("article")).toBeInTheDocument();
-  });
-  it("resets age only for fresh responses after a backward wall-clock correction", async () => {
-    vi.useFakeTimers(); vi.setSystemTime(new Date("2026-10-10T13:04:59Z"));
-    vi.spyOn(performance, "now").mockReturnValue(100);
-    const recorded = vi.spyOn(api, "recordedOffers").mockResolvedValueOnce(fresh()).mockImplementation(() => new Promise(() => {}));
-    render(<RecommendationsDashboard />); await act(async () => {});
-    vi.setSystemTime(new Date("2026-10-10T15:00:00Z"));
-    fireEvent(window, new Event("focus")); await act(async () => {});
-    expect(screen.getByText("Kicked-off / historical fixtures (1)")).toBeInTheDocument();
-    vi.setSystemTime(new Date("2026-10-10T13:04:59Z"));
-    const { mockRecommendations } = await import("@/lib/api/mock-recommendations");
-    vi.mocked(api.recommendations).mockResolvedValue(structuredClone(mockRecommendations));
-    fireEvent(window, new Event("focus")); await act(async () => {});
-    const feed = screen.getByRole("region", {name:"Current recommendations across all forecast cohorts"});
-    expect(within(feed).getByText("Recently checked · qualifying")).toBeInTheDocument();
-    // Fresh current data must not reset retained recorded history's age.
-    expect(screen.getByText("Kicked-off / historical fixtures (1)")).toBeInTheDocument();
-    recorded.mockResolvedValue(fresh());
-    fireEvent(window, new Event("focus")); await act(async () => {});
-    expect(screen.queryByText("Kicked-off / historical fixtures (1)")).not.toBeInTheDocument();
-    expect(within(screen.getByRole("article")).getByText("Recently checked · qualifying")).toBeInTheDocument();
-  });
-  it("distinguishes a pending current feed from a successful empty feed with saved cards", async () => {
-    let resolve!: (items: []) => void;
-    vi.mocked(api.recommendations).mockImplementation(() => new Promise(done => { resolve = done; }));
-    vi.spyOn(api, "recordedOffers").mockResolvedValue(data());
-    render(<RecommendationsDashboard />);
-    await screen.findByRole("article");
-    expect(screen.getByText("Loading current recommendations…")).toBeInTheDocument();
-    expect(screen.queryByText("No current recommendations")).not.toBeInTheDocument();
-    await act(async () => { resolve([]); });
-    expect(screen.getByText("No current recommendations")).toBeInTheDocument();
-    expect(screen.queryByText("Loading current recommendations…")).not.toBeInTheDocument();
-  });
-  it("ages through system sleep on focus even if monotonic time pauses and refresh hangs", async () => {
-    vi.useFakeTimers(); vi.setSystemTime(new Date("2026-10-10T13:04:59Z"));
-    vi.spyOn(performance, "now").mockReturnValue(100);
-    vi.spyOn(api, "recordedOffers").mockResolvedValueOnce(fresh()).mockImplementation(() => new Promise(() => {}));
-    render(<RecommendationsDashboard />); await act(async () => {});
-    expect(screen.getByText("Recently checked · qualifying")).toBeInTheDocument();
-    vi.setSystemTime(new Date("2026-10-10T15:00:00Z"));
-    fireEvent(window, new Event("focus")); await act(async () => {});
-    expect(screen.queryByText("Recently checked · qualifying")).not.toBeInTheDocument();
-    expect(screen.getByText("Kicked-off / historical fixtures (1)")).toBeInTheDocument();
-    // A backwards wall-clock adjustment cannot make retained quotes current again.
-    vi.setSystemTime(new Date("2026-10-10T13:04:59Z"));
-    await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
-    expect(screen.getByText("Kicked-off / historical fixtures (1)")).toBeInTheDocument();
-  });
-  it("preserves current offers from earlier cohorts independently of recorded selection", async () => {
-    const { mockRecommendations } = await import("@/lib/api/mock-recommendations");
-    const older = structuredClone(mockRecommendations[0]);
-    older.prediction_id = "a".repeat(64);
-    older.competition = "E0";
-    older.kickoff_utc = "2026-10-11T16:30:00Z";
-    older.observation_age_seconds = 0;
-    vi.mocked(api.recommendations).mockResolvedValue([older]);
-    vi.spyOn(api, "recordedOffers").mockResolvedValue(data());
-    render(<RecommendationsDashboard />);
-    const feed = screen.getByRole("region", {name: "Current recommendations across all forecast cohorts"});
-    await within(feed).findByText(`Frozen forecast ${older.prediction_id}`);
-    expect(within(feed).getByText("Recently checked · qualifying")).toBeInTheDocument();
-    expect(within(feed).getByText(/E0 · Kickoff/)).toBeInTheDocument();
-    expect(within(feed).getByText("11 Oct 2026, 16:30:00 UTC")).toHaveAttribute("dateTime", older.kickoff_utc);
-    expect(within(feed).getByRole("link", {name: "Recorded forecast evidence"})).toHaveAttribute("href", `/predictions#prediction-${older.prediction_id}`);
-    expect(await screen.findByRole("article")).toBeInTheDocument();
-  });
-  it("keeps the current feed visible when recorded history fails and clears it on current-read failure", async () => {
-    const { mockRecommendations } = await import("@/lib/api/mock-recommendations");
-    vi.mocked(api.recommendations).mockResolvedValue(structuredClone(mockRecommendations));
-    vi.spyOn(api, "recordedOffers").mockRejectedValue(new Error("unavailable"));
-    render(<RecommendationsDashboard />);
-    const feed = screen.getByRole("region", {name: "Current recommendations across all forecast cohorts"});
-    await within(feed).findByText("Recently checked · qualifying");
-    vi.mocked(api.recommendations).mockRejectedValue(new Error("private"));
-    fireEvent(window, new Event("focus"));
-    await within(feed).findByRole("alert");
-    expect(within(feed).queryByText("Recently checked · qualifying")).not.toBeInTheDocument();
-  });
-  it("expires current-feed offers locally without hiding their recorded cards", async () => {
-    vi.useFakeTimers();
-    const { mockRecommendations } = await import("@/lib/api/mock-recommendations");
-    vi.mocked(api.recommendations).mockResolvedValue([{...mockRecommendations[0], observation_age_seconds:299}]);
-    vi.spyOn(api, "recordedOffers").mockResolvedValue(data());
-    render(<RecommendationsDashboard />); await act(async () => {});
-    const feed = screen.getByRole("region", {name: "Current recommendations across all forecast cohorts"});
-    expect(within(feed).getByText("Recently checked · qualifying")).toBeInTheDocument();
-    await act(async () => { await vi.advanceTimersByTimeAsync(2000); });
-    expect(within(feed).queryByText("Recently checked · qualifying")).not.toBeInTheDocument();
-    expect(screen.getByRole("article")).toBeInTheDocument();
-  });
-  it("keeps stale prices/value visible with timestamp and evidence links", async () => {
-    vi.spyOn(api, "recordedOffers").mockResolvedValue(data());
-    render(<RecommendationsDashboard />);
-    const card = await screen.findByRole("article");
-    expect(within(card).getByRole("heading", { name: "Demo West Ham vs Demo QPR" })).toBeInTheDocument();
-    expect(within(card).getByText("Price needs rechecking")).toBeInTheDocument();
-    expect(within(card).getByText("FanDuel · −105")).toBeInTheDocument();
-    expect(within(card).getByText(/20m 0s/)).toBeInTheDocument();
-    expect(within(card).getByText("Expected value at quote")).toBeInTheDocument();
-    expect(within(card).getByRole("link", {name: "Recorded forecast evidence"})).toHaveAttribute("href", "/predictions#prediction-"+data().fixtures[0].selected_prediction_id);
-    expect(screen.getByText(/does not fetch sportsbook odds/)).toBeInTheDocument();
-  });
-  it("downgrades a recently checked quote locally after five minutes without hiding it", async () => {
-    vi.useFakeTimers(); vi.spyOn(api, "recordedOffers").mockResolvedValue(fresh());
-    render(<RecommendationsDashboard />); await act(async () => {});
-    expect(screen.getByText("Recently checked · qualifying")).toBeInTheDocument();
-    await act(async () => { await vi.advanceTimersByTimeAsync(2000); });
+describe("saved-price shortlist", () => {
+  it("keeps old qualifying prices with timestamps without history or alternatives requests", async () => {
+    render(<RecommendationsDashboard />); await screen.findByRole("article");
     expect(screen.getByText("Price needs rechecking")).toBeInTheDocument();
+    expect(screen.getByText(/Age 20m/)).toBeInTheDocument();
+    expect(api.shortlist).toHaveBeenCalledWith(5, expect.any(AbortSignal));
+    expect(api.alternatives).not.toHaveBeenCalled(); expect(api.recordedOffers).not.toHaveBeenCalled(); expect(api.recommendations).not.toHaveBeenCalled();
+  });
+  it("loads more than five choices from one fixture on demand", async () => {
+    const v=data(); v.total=6;
+    const rows=Array.from({length:6},(_,i)=>({...v.offers[0],target_id:String(i).padStart(32,"0"),line:10.5+i}));
+    v.offers=rows.slice(0,5);
+    vi.mocked(api.shortlist).mockResolvedValueOnce(v).mockResolvedValue({...v,offers:rows,limit:10});
+    render(<RecommendationsDashboard />); await screen.findAllByRole("article");
+    expect(screen.getAllByRole("article")).toHaveLength(5);
+    fireEvent.click(screen.getByText("Show more qualifying choices")); await act(async()=>{});
+    expect(api.shortlist).toHaveBeenLastCalledWith(10,expect.any(AbortSignal));
+    expect(screen.getAllByRole("article")).toHaveLength(6);
+  });
+  it("fetches and mounts alternatives only while open and aborts when closed", async()=>{
+    render(<RecommendationsDashboard />); await screen.findByRole("article");
+    expect(screen.queryByRole("region",{name:"Alternative bookmakers and lines"})).not.toBeInTheDocument();
+    fireEvent.click(screen.getByText("Bookmakers and alternate lines"));
+    await screen.findByRole("region",{name:"Alternative bookmakers and lines"});
+    expect(api.alternatives).toHaveBeenCalledTimes(1);
+    const signal=vi.mocked(api.alternatives).mock.calls[0][1];
+    fireEvent.click(screen.getByText("Close alternatives")); expect(signal?.aborted).toBe(true);
+    expect(screen.queryByRole("region",{name:"Alternative bookmakers and lines"})).not.toBeInTheDocument();
+  });
+  it("preserves choices through stalled refreshes and retries every minute",async()=>{
+    vi.useFakeTimers(); vi.mocked(api.shortlist).mockResolvedValueOnce(data()).mockImplementation(()=>new Promise(()=>{}));
+    const {unmount}=render(<RecommendationsDashboard />); await act(async()=>{});
+    await act(async()=>{await vi.advanceTimersByTimeAsync(60_000);});
     expect(screen.getByRole("article")).toBeInTheDocument();
+    const stalled=vi.mocked(api.shortlist).mock.calls[1][1];
+    await act(async()=>{await vi.advanceTimersByTimeAsync(60_000);});
+    expect(stalled?.aborted).toBe(true); expect(screen.getByRole("alert")).toBeInTheDocument();
+    expect(screen.getByRole("article")).toBeInTheDocument(); expect(api.shortlist).toHaveBeenCalledTimes(3);
+    unmount(); expect(vi.mocked(api.shortlist).mock.calls.at(-1)?.[1]?.aborted).toBe(true);
   });
-  it("retains cards during pending refresh and failure without advertising current eligibility", async () => {
-    vi.useFakeTimers(); let fail!: (e: Error) => void;
-    const get = vi.spyOn(api, "recordedOffers").mockResolvedValueOnce(fresh()).mockImplementationOnce(() => new Promise((_, reject) => { fail = reject; }));
-    render(<RecommendationsDashboard />); await act(async () => {});
-    await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
-    expect(get).toHaveBeenCalledTimes(2); expect(screen.getByRole("article")).toBeInTheDocument();
-    await act(async () => { fail(new Error("private failure")); });
-    expect(screen.getByRole("alert")).toHaveTextContent("Showing the previous read");
-    expect(screen.queryByText(/private failure/)).not.toBeInTheDocument();
-    expect(screen.getByText("Price needs rechecking")).toBeInTheDocument();
-  });
-  it("moves a fixture to historical at kickoff without discarding the quote", async () => {
-    vi.useFakeTimers(); const v = data(); v.as_of_utc = "2026-10-10T13:59:59Z";
-    v.fixtures[0].offers[0].observation_age_seconds = 3599;
-    vi.spyOn(api, "recordedOffers").mockResolvedValue(v);
-    render(<RecommendationsDashboard />); await act(async () => {});
-    await act(async () => { await vi.advanceTimersByTimeAsync(2000); });
-    expect(screen.getByText("Kicked-off / historical fixtures (1)")).toBeInTheDocument();
-    expect(screen.queryByText("Historical quote · kickoff passed")).not.toBeInTheDocument();
-    const history = screen.getByText("Kicked-off / historical fixtures (1)").closest("details")!;
-    await act(async () => { history.open = true; fireEvent(history, new Event("toggle")); });
-    expect(screen.getByText("Historical quote · kickoff passed")).toBeInTheDocument();
-    await act(async () => { history.open = false; fireEvent(history, new Event("toggle")); });
+  it("ages beyond five minutes without disappearing and excludes kickoff locally",async()=>{
+    vi.useFakeTimers(); vi.setSystemTime(new Date("2026-10-10T13:04:59Z"));
+    vi.mocked(api.shortlist).mockResolvedValueOnce(fresh()).mockImplementation(()=>new Promise(()=>{}));
+    render(<RecommendationsDashboard />); await act(async()=>{});
+    await act(async()=>{await vi.advanceTimersByTimeAsync(2000);});
+    expect(screen.getByText("Price needs rechecking")).toBeInTheDocument(); expect(screen.getByRole("article")).toBeInTheDocument();
+    vi.setSystemTime(new Date("2026-10-10T14:00:00Z")); fireEvent(window,new Event("focus")); await act(async()=>{});
     expect(screen.queryByRole("article")).not.toBeInTheDocument();
-    expect(screen.getByRole("link", {name: "Open the full forecast ledger"})).toHaveAttribute("href", "/predictions");
-    expect(screen.getByText("No upcoming recorded fixtures")).toBeInTheDocument();
+    vi.setSystemTime(new Date("2026-10-10T13:04:59Z")); fireEvent(window,new Event("focus")); await act(async()=>{});
+    expect(screen.queryByRole("article")).not.toBeInTheDocument();
   });
-  it("groups multiple books and lines in one fixture with expanded detail", async () => {
-    const v = data(); const base = v.fixtures[0].offers[0];
-    v.fixtures[0].offers = [base, {...base, bookmaker: "DraftKings"}, ...[1,2,3].map(n => ({...base, line: base.line+n, target_id: String(n).repeat(32)}))];
-    vi.spyOn(api, "recordedOffers").mockResolvedValue(v);
-    render(<RecommendationsDashboard />);
-    await screen.findByRole("article");
-    expect(screen.getAllByRole("article")).toHaveLength(1);
-    expect(screen.getByText("All 5 recorded offers · bookmakers and lines")).toBeInTheDocument();
-    expect(screen.getByText("DraftKings · −105")).toBeInTheDocument();
-  });
-  it.each([['QUOTE_UNAVAILABLE', 'Quote unavailable at last check'], ['NO_QUALIFYING_EDGE', 'No qualifying edge'], ['VALUE_UNVERIFIED', 'Value comparison incomplete']])("labels %s separately", async (status, label) => {
-    const v = fresh(); Object.assign(v.fixtures[0].offers[0], {status, current_recommendation:false});
-    vi.spyOn(api, "recordedOffers").mockResolvedValue(v);
-    render(<RecommendationsDashboard />); await screen.findByText(label);
-  });
-  it("shows forecast-only fixtures and labels BTTS as research", async () => {
-    const v = data(); v.fixtures[0].offers = []; v.fixtures[0].selected_prediction_id = null;
-    v.fixtures[0].forecasts.push({...v.fixtures[0].forecasts[0], prediction_id:'f'.repeat(64), prediction_type:'BTTS', research_only:true, btts_yes_probability:0.61, expected_home_corners:null, expected_away_corners:null});
-    vi.spyOn(api, "recordedOffers").mockResolvedValue(v);
-    render(<RecommendationsDashboard />);
-    await screen.findByText(/No recorded corner odds/);
-    expect(screen.getByText("BTTS research · not a recommendation")).toBeInTheDocument();
-    expect(screen.getByText("BTTS Yes probability: 61.0%")).toBeInTheDocument();
-    expect(screen.queryByText("Recently checked · qualifying")).not.toBeInTheDocument();
-  });
-  it("refreshes on focus, cleans up timers and handles initial errors", async () => {
-    const get = vi.spyOn(api, "recordedOffers").mockRejectedValueOnce(new Error('private')).mockResolvedValue(data());
-    const view = render(<RecommendationsDashboard />);
-    await screen.findByRole('alert'); fireEvent.click(screen.getByRole('button', {name:'Retry'}));
-    await screen.findByRole('article'); fireEvent(window, new Event('focus')); await act(async()=>{});
-    expect(get).toHaveBeenCalledTimes(3); view.unmount(); fireEvent(window, new Event('focus'));
-    expect(get).toHaveBeenCalledTimes(3);
+  it("retains previous data on failure, marks recheck and recovers",async()=>{
+    vi.mocked(api.shortlist).mockResolvedValueOnce(fresh()).mockRejectedValueOnce(new Error("offline")).mockResolvedValue(data());
+    render(<RecommendationsDashboard />); await screen.findByRole("article");
+    fireEvent(window,new Event("focus")); await screen.findByRole("alert");
+    expect(screen.getByText("Price needs rechecking")).toBeInTheDocument(); expect(screen.getByRole("article")).toBeInTheDocument();
+    fireEvent.click(screen.getByText("Retry")); await act(async()=>{}); expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 });
