@@ -12,6 +12,11 @@ describe("shortlist contract",()=>{
     {kickoff_utc:"2026-10-10T13:20:00Z"},{private_path:"secret"}])("rejects invalid row %j",change=>{
     const v=data(); Object.assign(v.offers[0],change); expect(()=>decodeShortlist(v)).toThrow();
   });
+  it.each(["model_probability", "push_probability", "decisive_model_probability",
+    "sportsbook_implied_probability", "no_vig_market_probability"])("rejects missing %s even with claimed positive EV",field=>{
+    const v=data();Object.assign(v.offers[0],{[field]:null,expected_profit:99});
+    expect(()=>decodeShortlist(v)).toThrow();
+  });
   it("rejects duplicate targets/books and invalid counts",()=>{
     const v=data();v.offers.push({...v.offers[0],bookmaker:"other"});v.total=2;expect(()=>decodeShortlist(v)).toThrow();
     expect(()=>decodeShortlist({...data(),limit:101})).toThrow();expect(()=>decodeShortlist({...data(),total:3})).toThrow();

@@ -1,6 +1,6 @@
 import { ModelFCApiError } from "./errors";
 import { offer } from "./recorded-offers";
-import { record, timestamp, nonempty } from "./prospective";
+import { record, timestamp, nonempty, probability } from "./prospective";
 import type { Shortlist } from "./types";
 
 export function decodeShortlist(value: unknown): Shortlist {
@@ -16,7 +16,9 @@ export function decodeShortlist(value: unknown): Shortlist {
       const { fixture_id: _, ...row } = v;
       const fixture = { selected_prediction_id: v.prediction_id, competition: v.competition as string,
         home_team: v.home_team as string, away_team: v.away_team as string, kickoff_utc: v.kickoff_utc as string, status: "UPCOMING" as const };
-      return offer(row, fixture, Date.parse(value.as_of_utc as string)) && row.qualified
+      return ["model_probability", "push_probability", "decisive_model_probability",
+        "sportsbook_implied_probability", "no_vig_market_probability"].every(k => probability(row[k]))
+        && offer(row, fixture, Date.parse(value.as_of_utc as string)) && row.qualified
         && row.expected_profit !== null && row.expected_profit > 0 && row.american_odds >= -200
         && row.no_vig_probability_edge !== null && row.no_vig_probability_edge >= 0.05 - 1e-12
         && row.availability_checked_at_utc !== null
