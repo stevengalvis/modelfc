@@ -16,7 +16,9 @@ MAX_REPORT = 4096
 MAX_OUTPUT = 8192
 MAX_API = 2 * 1024 * 1024
 MAX_ERROR = 16 * 1024
-REASONS = frozenset({"OK", "ALREADY_CURRENT", "SUPERSEDED", "INVALID_REQUEST",
+RUNNER_FAILURES = frozenset({"DEPLOY_CONFIG_INVALID", "DEPLOY_TEMPFILE_FAILED", "DEPLOY_KEY_INVALID",
+                             "SSH_NONZERO_EXIT", "INVALID_DEPLOYMENT_REPORT"})
+REASONS = RUNNER_FAILURES | frozenset({"OK", "ALREADY_CURRENT", "SUPERSEDED", "INVALID_REQUEST",
     "DEPLOYMENT_BUSY", "STATE_BOUNDARY_FAILED", "SOURCE_INVALID", "FETCH_FAILED",
     "SHA_NOT_ON_MAIN", "ACTIVE_SHA_NOT_ON_MAIN", "DEPENDENCY_SYNC_FAILED", "TESTS_FAILED",
     "FINAL_SHA_MISMATCH", "PROMOTION_FAILED", "INTERNAL_ERROR", "STORAGE_LIMIT_FAILED"})
@@ -216,6 +218,12 @@ def read_report(path, sha):
                 or any(value[k] is not None and (type(value[k]) is not str or not SHA.fullmatch(value[k]))
                        for k in ("previous_sha", "final_sha"))):
             raise Rejected
+        if value["reason"] in RUNNER_FAILURES and value != dict(
+                status="FAIL", requested_sha=sha, previous_sha=None, final_sha=None,
+                fetch_verified=False, release_created=False, dependency_sync="NOT_ATTEMPTED",
+                tests_status="NOT_RUN", tests_run=0, promotion_status="NOT_ATTEMPTED",
+                state_boundary_enforced=False, reason=value["reason"]):
+            raise Rejected
         if value["status"] == "PASS":
             if value["state_boundary_enforced"] is not True or value["final_sha"] != sha:
                 raise Rejected
@@ -238,7 +246,7 @@ def read_report(path, sha):
         elif value["reason"] in {"OK", "ALREADY_CURRENT", "SUPERSEDED"}:
             raise Rejected
         return value
-    except (OSError, ValueError, TypeError, KeyError, Rejected):
+    except (OSError, ValueError, TypeError, KeyError, RecursionError, Rejected):
         return None
 
 

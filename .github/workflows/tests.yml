@@ -92,14 +92,120 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]
-          [[ -n "$DEPLOY_HOST" && -n "$DEPLOY_HOST_KEY" ]]
           umask 077
           key_file='' hosts_file='' report_file=''
-          trap 'rm -f "$key_file" "$hosts_file" "$report_file"' EXIT
+          failure_reason=DEPLOY_CONFIG_INVALID
+          finish() {
+            original_status=$?
+            trap - EXIT
+            set +e
+            unset DEPLOY_KEY_BASE64
+            python3 - "$report_file" "${EXPECTED_SHA:-}" "$failure_reason" "$original_status" <<'PY'
+          import json
+          import sys
+          import os
+          import re
+          import tempfile
+          from pathlib import Path
+
+          def pairs(items):
+              result = {}
+              for key, value in items:
+                  if key in result:
+                      raise ValueError
+                  result[key] = value
+              return result
+
+          raw_path, sha, stage, original_status = sys.argv[1:]
+          original_status = int(original_status)
+          reason = stage
+          try:
+              if stage != "INVALID_DEPLOYMENT_REPORT":
+                  raise ValueError
+              reason = "SSH_NONZERO_EXIT" if original_status else stage
+              with open(raw_path, "rb") as source:
+                  raw = source.read(4097)
+              if len(raw) > 4096:
+                  raise ValueError
+              value = json.loads(raw, object_pairs_hook=pairs)
+              fields = {"status", "requested_sha", "previous_sha", "final_sha", "fetch_verified",
+                        "release_created", "dependency_sync", "tests_status", "tests_run",
+                        "promotion_status", "state_boundary_enforced", "reason"}
+              reasons = {"OK", "ALREADY_CURRENT", "SUPERSEDED", "INVALID_REQUEST",
+                         "DEPLOYMENT_BUSY", "STATE_BOUNDARY_FAILED", "SOURCE_INVALID",
+                         "FETCH_FAILED", "SHA_NOT_ON_MAIN", "ACTIVE_SHA_NOT_ON_MAIN",
+                         "DEPENDENCY_SYNC_FAILED", "TESTS_FAILED", "FINAL_SHA_MISMATCH",
+                         "PROMOTION_FAILED", "INTERNAL_ERROR", "STORAGE_LIMIT_FAILED"}
+              if (type(value) is not dict or set(value) != fields or value["status"] not in {"PASS", "FAIL", "SUPERSEDED"}
+                  or value["requested_sha"] != sys.argv[2] or value["reason"] not in reasons
+                  or value["promotion_status"] not in {"NOT_ATTEMPTED", "PROMOTED",
+                                                      "ALREADY_CURRENT", "SUPERSEDED"}
+                  or value["dependency_sync"] not in {"NOT_ATTEMPTED", "INSTALLED"}
+                  or value["tests_status"] not in {"NOT_RUN", "PASS", "FAIL"}
+                  or type(value["tests_run"]) is not int or not 0 <= value["tests_run"] <= 1000000
+                  or any(type(value[k]) is not bool for k in
+                         ("fetch_verified", "release_created", "state_boundary_enforced"))
+                  or any(value[k] is not None and
+                         (type(value[k]) is not str or len(value[k]) != 40 or
+                          any(c not in "0123456789abcdef" for c in value[k]))
+                         for k in ("previous_sha", "final_sha"))):
+                  raise ValueError
+              if value["status"] == "PASS" and value["final_sha"] != sys.argv[2]:
+                  raise ValueError
+              if value["status"] == "PASS" and value["reason"] == "OK" and (
+                  value["tests_status"] != "PASS" or value["tests_run"] <= 0
+                  or value["promotion_status"] != "PROMOTED"
+                  or value["release_created"] is not True or value["fetch_verified"] is not True
+                  or value["dependency_sync"] != "INSTALLED"):
+                  raise ValueError
+              if value["status"] == "PASS" and value["reason"] == "ALREADY_CURRENT" and (
+                  value["promotion_status"] != "ALREADY_CURRENT" or value["tests_status"] != "NOT_RUN"
+                  or value["tests_run"] != 0 or value["release_created"] is not False):
+                  raise ValueError
+              if value["status"] == "SUPERSEDED" and (
+                  value["reason"] != "SUPERSEDED" or value["fetch_verified"] is not True
+                  or value["promotion_status"] != "SUPERSEDED" or value["final_sha"] is None):
+                  raise ValueError
+              if value["status"] in {"PASS", "SUPERSEDED"} and value["state_boundary_enforced"] is not True:
+                  raise ValueError
+              if (value["status"] == "PASS" and value["reason"] not in {"OK", "ALREADY_CURRENT"}
+                  or value["status"] == "FAIL" and value["reason"] in {"OK", "ALREADY_CURRENT", "SUPERSEDED"}
+                  or original_status and value["status"] != "FAIL"):
+                  raise ValueError
+          except (OSError, ValueError, KeyError, TypeError, RecursionError):
+              value = dict(status="FAIL", requested_sha=sha if re.fullmatch("[0-9a-f]{40}", sha) else None,
+                           previous_sha=None, final_sha=None, fetch_verified=False, release_created=False,
+                           dependency_sync="NOT_ATTEMPTED", tests_status="NOT_RUN", tests_run=0,
+                           promotion_status="NOT_ATTEMPTED", state_boundary_enforced=False, reason=reason)
+          sanitized = json.dumps(value, sort_keys=True) + "\n"
+          print(sanitized, end="")
+          # Best effort atomic copy: publication must not alter deployment success/failure.
+          temporary = None
+          try:
+              with tempfile.NamedTemporaryFile(mode="w", dir=os.environ["RUNNER_TEMP"], delete=False) as output:
+                  temporary = output.name
+                  output.write(sanitized)
+              os.replace(temporary, Path(os.environ["RUNNER_TEMP"]) / "modelfc-deployment-report.json")
+          except (OSError, KeyError):
+              pass
+          finally:
+              if temporary:
+                  try: os.unlink(temporary)
+                  except OSError: pass
+          sys.exit(0 if not original_status and value["status"] in {"PASS", "SUPERSEDED"} else 1)
+          PY
+            result=$?
+            rm -f "$key_file" "$hosts_file" "$report_file"
+            exit "$result"
+          }
+          trap finish EXIT
+          [[ "${EXPECTED_SHA:-}" =~ ^[0-9a-f]{40}$ ]]
+          [[ -n "${DEPLOY_HOST:-}" && -n "${DEPLOY_HOST_KEY:-}" ]]
+          failure_reason=DEPLOY_TEMPFILE_FAILED
           key_file="$(mktemp)"
           hosts_file="$(mktemp)"
           report_file="$(mktemp)"
+          failure_reason=DEPLOY_KEY_INVALID
           python3 - "$key_file" <<'KEY_PY'
           import base64
           import os
@@ -128,75 +234,19 @@ jobs:
                       != "SHA256:IpHgSvswGdBNFT6ETalX+2rGwbhdfItuXkDS4JSN1LE"):
                   raise ValueError
           except Exception:
-              print('{"status":"FAIL","reason":"DEPLOY_KEY_INVALID"}')
               sys.exit(1)
           KEY_PY
           unset DEPLOY_KEY_BASE64
           printf '%s\n' "$DEPLOY_HOST_KEY" > "$hosts_file"
-          if ! ssh -T -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+          failure_reason=INVALID_DEPLOYMENT_REPORT
+          ssh_status=0
+          # Bound raw local capture; an interrupted SSH still leaves remote outcome unknown.
+          { (ulimit -f 8 && exec ssh -T -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
             -o UserKnownHostsFile="$hosts_file" -o ForwardAgent=no \
             -o ConnectTimeout=15 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 \
             -o ClearAllForwardings=yes -i "$key_file" \
-            "modelfc-deploy@$DEPLOY_HOST" "deploy stevengalvis/modelfc $EXPECTED_SHA" > "$report_file" 2>/dev/null; then
-            printf '%s\n' '{"status":"FAIL","reason":"SSH_TRANSPORT_FAILED"}'
-            exit 1
-          fi
-          # Best-effort copy of already sanitized output, preserving Python's exit code.
-          {
-          python3 - "$report_file" "$EXPECTED_SHA" <<'PY'
-          import json
-          import sys
-          from pathlib import Path
-
-          try:
-              value = json.loads(Path(sys.argv[1]).read_text())
-              fields = {"status", "requested_sha", "previous_sha", "final_sha", "fetch_verified",
-                        "release_created", "dependency_sync", "tests_status", "tests_run",
-                        "promotion_status", "state_boundary_enforced", "reason"}
-              reasons = {"OK", "ALREADY_CURRENT", "SUPERSEDED", "INVALID_REQUEST",
-                         "DEPLOYMENT_BUSY", "STATE_BOUNDARY_FAILED", "SOURCE_INVALID",
-                         "FETCH_FAILED", "SHA_NOT_ON_MAIN", "ACTIVE_SHA_NOT_ON_MAIN",
-                         "DEPENDENCY_SYNC_FAILED", "TESTS_FAILED", "FINAL_SHA_MISMATCH",
-                         "PROMOTION_FAILED", "INTERNAL_ERROR", "STORAGE_LIMIT_FAILED"}
-              if (set(value) != fields or value["status"] not in {"PASS", "FAIL", "SUPERSEDED"}
-                  or value["requested_sha"] != sys.argv[2] or value["reason"] not in reasons
-                  or value["promotion_status"] not in {"NOT_ATTEMPTED", "PROMOTED",
-                                                      "ALREADY_CURRENT", "SUPERSEDED"}
-                  or value["dependency_sync"] not in {"NOT_ATTEMPTED", "INSTALLED"}
-                  or value["tests_status"] not in {"NOT_RUN", "PASS", "FAIL"}
-                  or type(value["tests_run"]) is not int or value["tests_run"] < 0
-                  or any(type(value[k]) is not bool for k in
-                         ("fetch_verified", "release_created", "state_boundary_enforced"))
-                  or any(value[k] is not None and
-                         (type(value[k]) is not str or len(value[k]) != 40 or
-                          any(c not in "0123456789abcdef" for c in value[k]))
-                         for k in ("previous_sha", "final_sha"))):
-                  raise ValueError
-              if value["status"] == "PASS" and value["final_sha"] != sys.argv[2]:
-                  raise ValueError
-              if value["status"] == "PASS" and value["reason"] == "OK" and (
-                  value["tests_status"] != "PASS" or value["tests_run"] <= 0
-                  or value["promotion_status"] != "PROMOTED"
-                  or value["release_created"] is not True or value["fetch_verified"] is not True
-                  or value["dependency_sync"] != "INSTALLED"):
-                  raise ValueError
-              if value["status"] == "PASS" and value["reason"] == "ALREADY_CURRENT" and (
-                  value["promotion_status"] != "ALREADY_CURRENT" or value["tests_status"] != "NOT_RUN"
-                  or value["tests_run"] != 0 or value["release_created"] is not False):
-                  raise ValueError
-              if value["status"] == "SUPERSEDED" and (
-                  value["reason"] != "SUPERSEDED" or value["fetch_verified"] is not True
-                  or value["promotion_status"] != "SUPERSEDED" or value["final_sha"] is None):
-                  raise ValueError
-              if value["status"] in {"PASS", "SUPERSEDED"} and value["state_boundary_enforced"] is not True:
-                  raise ValueError
-              print(json.dumps(value, sort_keys=True))
-              sys.exit(0 if value["status"] in {"PASS", "SUPERSEDED"} else 1)
-          except (OSError, ValueError, KeyError, TypeError):
-              print('{"status":"FAIL","reason":"INVALID_DEPLOYMENT_REPORT"}')
-              sys.exit(1)
-          PY
-          } | { tee "$RUNNER_TEMP/modelfc-deployment-report.json" 2>/dev/null || true; }
+            "modelfc-deploy@$DEPLOY_HOST" "deploy stevengalvis/modelfc $EXPECTED_SHA" ) > "$report_file" 2>/dev/null || ssh_status=$?; } 2>/dev/null
+          exit "$ssh_status"
 
       - name: Publish sanitized deployment report
         if: always()

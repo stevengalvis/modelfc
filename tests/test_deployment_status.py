@@ -549,6 +549,34 @@ class DeploymentStatusTests(unittest.TestCase):
         self.assertEqual(result["deployment"]["stage"], "VPS_TESTS_FAILED")
         self.assertIn("Deployment evidence: FAILED", body)
 
+    def test_runner_failure_evidence_remains_bound_and_unverified_despite_publication_failure(self):
+        for reason in reporting.RUNNER_FAILURES:
+            with self.subTest(reason=reason):
+                self.api = FakeGitHub()
+                self.api.run["conclusion"] = "failure"
+                self.api.jobs[-1]["conclusion"] = "failure"
+                self.api.fail = "/issues/"
+                value = dict(status="FAIL", requested_sha=SHA, previous_sha=None, final_sha=None,
+                             fetch_verified=False, release_created=False, dependency_sync="NOT_ATTEMPTED",
+                             tests_status="NOT_RUN", tests_run=0, promotion_status="NOT_ATTEMPTED",
+                             state_boundary_enforced=False, reason=reason)
+                self.file.write_text(json.dumps(value))
+                code, result, body = self.durable_main()
+                self.assertEqual(code, 1)
+                self.assertEqual(result["source"]["sha"], SHA)
+                self.assertEqual(result["source"]["run_id"], 100)
+                self.assertEqual(result["source"]["attempt"], 2)
+                self.assertEqual(result["deployment"]["stage"], "VPS_" + reason)
+                self.assertEqual(result["deployment"]["status"], "FAILED")
+                self.assertIsNone(result["deployment"]["serving_sha"])
+                self.assertIsNone(result["deployment"]["controller_selected_sha"])
+                self.assertEqual(result["deployment"]["serving_health"], "UNVERIFIED")
+                self.assertEqual(result["reporting"]["outcome"], "FAILED")
+                for changes in ({"requested_sha": "b" * 40}, {"final_sha": SHA},
+                                {"fetch_verified": True}, {"status": "PASS"}, {"tests_run": 1}):
+                    self.file.write_text(json.dumps({**value, **changes}))
+                    self.assertIsNone(reporting.read_report(self.file, SHA))
+
     def test_durable_no_pr_and_association_failure_keep_deployment_evidence(self):
         for fail in (False, True):
             self.api = FakeGitHub()
