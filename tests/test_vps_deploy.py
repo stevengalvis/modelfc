@@ -2050,8 +2050,10 @@ class IsolatedBoundaryTest(unittest.TestCase):
                                     ({"requested_sha": "b" * 40}, False)):
             with self.subTest(fields=patch_fields):
                 file.write_text(json.dumps({**report, **patch_fields}))
-                process = subprocess.run([sys.executable, "-c", script, str(file), self.sha],
-                                         capture_output=True, text=True)
+                process = subprocess.run([sys.executable, "-c", script, str(file), self.sha,
+                                          "INVALID_DEPLOYMENT_REPORT", "0"],
+                                         capture_output=True, text=True,
+                                         env={**os.environ, "RUNNER_TEMP": str(self.root)})
                 self.assertEqual(process.returncode, 0 if valid else 1)
 
     def test_ssh_request_is_fixed(self):
