@@ -152,6 +152,7 @@ def install(source_sha):
                 manifest['files'][name] = None
         saved = backup / 'manifest.json'
         saved.write_text(json.dumps(manifest, sort_keys=True))
+        os.chmod(saved, 0o600)
         sync_file(saved)
         directory_fd = os.open(backup, os.O_RDONLY | os.O_DIRECTORY)
         try:

@@ -81,6 +81,14 @@ class InstallTests(unittest.TestCase):
         self.assertFalse((self.dest / 'release_evidence.py').exists())
         self.assertEqual(self.config.read_text(), '{"image":"unchanged"}')
 
+    def test_backup_manifest_is_private_even_with_permissive_operator_umask(self):
+        original = os.umask(0o002)
+        try:
+            backup = self.install()
+        finally:
+            os.umask(original)
+        self.assertEqual((backup / 'manifest.json').stat().st_mode & 0o777, 0o600)
+
     def test_wrong_stage_hash_or_harness_never_changes_installation(self):
         for name in ('STAGED_SHA', 'validate_pr.py', 'validate_capture.py'):
             path = self.source / name

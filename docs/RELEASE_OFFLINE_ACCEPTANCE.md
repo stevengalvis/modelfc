@@ -94,6 +94,7 @@ The root-owned staging directory is newly created and retained for rollback.
 ```bash
 (
   set -euo pipefail
+  umask 077
   test "$(id -u)" -eq 0
   source_sha='REPLACE_WITH_FRESHLY_REVIEWED_HEAD'
   [[ "$source_sha" =~ ^[0-9a-f]{40}$ ]]
