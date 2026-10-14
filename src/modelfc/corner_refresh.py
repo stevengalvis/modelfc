@@ -226,9 +226,9 @@ def refresh_league(config: CornerDataConfig, league: str, today: date, state: Pa
 
 def preserve_settlement_block(row, prior):
     """Publication/transport failure is not adjudication of known final scores."""
-    if prior.get('settlement_eligibility') in ('FINAL_SCORE_CONFLICT', 'CALENDAR_UNVERIFIED'):
+    if prior.get('settlement_eligibility') in ('FINAL_SCORE_CONFLICT', 'CALENDAR_UNVERIFIED', 'UNVERIFIED_FINAL_STATES'):
         return {**row, **{key: prior[key] for key in ('settlement_eligibility',
-            'final_score_conflicts', 'calendar_sha256', 'calendar_retrieved_at_utc') if key in prior}}
+            'final_score_conflicts', 'unverified_result_keys', 'calendar_sha256', 'calendar_retrieved_at_utc') if key in prior}}
     return row
 
 
@@ -334,7 +334,7 @@ def format_report(report: dict, today: date, max_age_days: int) -> tuple[str, bo
             lines.append(f"{item['league']}: FAILED: {item['error']}")
             unhealthy = True
             continue
-        if item.get('settlement_eligibility') in ('FINAL_SCORE_CONFLICT', 'CALENDAR_UNVERIFIED'):
+        if item.get('settlement_eligibility') in ('FINAL_SCORE_CONFLICT', 'CALENDAR_UNVERIFIED', 'UNVERIFIED_FINAL_STATES'):
             lines.append(f"{item['league']}: settlement blocked: {item['settlement_eligibility']}")
             unhealthy = True
         age = (today - date.fromisoformat(item["latest_match"])).days

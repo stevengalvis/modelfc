@@ -21,7 +21,21 @@ class MorningTests(unittest.TestCase):
         self.addCleanup(self.fixture.doCleanups)
         self.f = self.fixture.fixture
         self.now = self.fixture.now
-        self.fixture.calendar()
+        from modelfc import odds_calendar
+        from tests.test_history_completeness import bundle, raw
+        value=bundle();value['retrieved_at']=self.now.isoformat()
+        calendar=json.loads(value['payload'])
+        for row in calendar['matches']:
+            names=(row['homeTeam']['name'],row['awayTeam']['name'])
+            if names==('Source West Ham','Source QPR'):
+                row['status']='FINISHED';row['score']['fullTime']={'home':2,'away':1}
+            elif names==('Source QPR','Source West Ham'):
+                row['utcDate']='2026-10-10T14:00:00Z';row['status']='FINISHED'
+                row['score']['fullTime']={'home':0,'away':0}
+        calendar['resultSet']['played']=sum(r['status']=='FINISHED' for r in calendar['matches'])
+        value['payload']=json.dumps(calendar)
+        odds_calendar.publish(self.f.state,raw(value),as_of=self.now)
+        self.f.payload=self.f.payload.replace(b'Other,Another',b'QPR,West Ham')
         self.config = CornerDataConfig(self.f.history, ('E1', 'SP1'), 14)
         self.cap = self.f.refresh_state / attempts.MARKER
         self.cap.write_text(json.dumps({'version': 1, 'enabled': True}))
@@ -274,6 +288,39 @@ class MorningTests(unittest.TestCase):
             assessed=morning.run(self.f.config,self.f.state,{**morning.POLICY,'enabled':True})
         self.assertEqual(assessed['status'],'NOT_NEEDED')
         self.assertEqual(assessed['report']['results'][0]['settlement_eligibility'],'VERIFIED_FINAL_SCORES')
+
+    def test_nonfinal_or_unmapped_csv_results_cannot_authorize_settlement(self):
+        from modelfc import odds_calendar
+        original=self.f.immutable()
+        self.cap.unlink();self.f.refresh()
+        self.cap.write_text('{"version":1,"enabled":true}')
+        source=json.loads(odds_calendar.retained(self.f.state))
+        for index,status in enumerate(('TIMED','SCHEDULED','IN_PLAY','PAUSED','SUSPENDED','POSTPONED','CANCELLED'),1):
+            value=json.loads(json.dumps(source));calendar=json.loads(value['payload'])
+            row=next(r for r in calendar['matches'] if r['utcDate']=='2026-10-09T12:00:00Z')
+            row['status']=status;row['score']['fullTime']={'home':None,'away':None}
+            calendar['resultSet']['played']=sum(r['status']=='FINISHED' for r in calendar['matches'])
+            value['payload']=json.dumps(calendar);now=self.now+timedelta(seconds=index)
+            value['retrieved_at']=now.isoformat();self.time.now.return_value=now
+            odds_calendar.publish(self.f.state,json.dumps(value).encode(),as_of=now)
+            with patch.object(refresh,'download_csv',side_effect=AssertionError('no GET for unverified result')):
+                result=morning.run(self.f.config,self.f.state,{**morning.POLICY,'enabled':True})
+            self.assertEqual(result['report']['results'][0]['settlement_eligibility'],'UNVERIFIED_FINAL_STATES',status)
+            self.assertEqual(self.f.run_settlement()['status'],'REJECTED',status)
+            self.assertEqual(self.f.immutable(),original)
+        # Exact fixture identity is required in both directions, not just for forecast teams.
+        now=self.now+timedelta(seconds=8);source['retrieved_at']=now.isoformat();self.time.now.return_value=now
+        odds_calendar.publish(self.f.state,json.dumps(source).encode(),as_of=now)
+        self.target.unlink();self.cap.unlink()
+        self.f.refresh(self.f.payload.replace(b'QPR,West Ham',b'Unknown,Another'))
+        self.cap.write_text('{"version":1,"enabled":true}')
+        with patch.object(refresh,'download_csv',return_value=self.f.payload.replace(b'QPR,West Ham',b'Unknown,Another')):
+            result=morning.run(self.f.config,self.f.state,{**morning.POLICY,'enabled':True})
+        row=result['report']['results'][0]
+        self.assertEqual(row['settlement_eligibility'],'UNVERIFIED_FINAL_STATES')
+        self.assertIn('Unknown',{r['home_team'] for r in row['unverified_result_keys']})
+        self.assertEqual(self.f.run_settlement()['status'],'REJECTED')
+        self.assertEqual(self.f.immutable(),original)
 
 
 class TransportTests(unittest.TestCase):

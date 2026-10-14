@@ -51,11 +51,15 @@ def run(config, state, policy, *, validator_read_user=None, public_history_read_
             finished = [m for m in calendar.matches
                         if m.status == 'FINISHED' and m.kickoff < calendar.retrieved_at <= now]
             conflicts = sorted(m.fixture_id for m in finished if m.key in goals and goals[m.key] != m.goals)
+            finished_keys = {m.key for m in finished}
+            unverified = [{'date': key[0].isoformat(), 'home_team': key[1], 'away_team': key[2]}
+                          for key in sorted(goals) if key not in finished_keys]
             missing = sorted(m.fixture_id for m in finished
                              if m.key not in history or goals.get(m.key) != m.goals)
             decision.update(status='NEEDED' if missing else 'NOT_NEEDED',
                 reason='MISSING_FINISHED_TRAINING_RESULTS' if missing else 'HISTORY_PRESENT',
-                missing_training_fixture_ids=missing, final_score_conflicts=conflicts, calendar_sha256=calendar.bundle_sha256,
+                missing_training_fixture_ids=missing, final_score_conflicts=conflicts,
+                unverified_result_keys=unverified, calendar_sha256=calendar.bundle_sha256,
                 calendar_retrieved_at_utc=calendar.retrieved_at.isoformat())
             return ['E1'] if missing else []
         except (ValueError, OSError, KeyError, TypeError):
@@ -68,10 +72,13 @@ def run(config, state, policy, *, validator_read_user=None, public_history_read_
         select(False)  # Still under publication lock: did the successful response cover the need?
         remaining = decision.get('missing_training_fixture_ids') if decision['status'] != 'UNKNOWN' else None
         eligibility = ('CALENDAR_UNVERIFIED' if decision['status'] == 'UNKNOWN' else
+                       'UNVERIFIED_FINAL_STATES' if decision.get('unverified_result_keys') else
                        'FINAL_SCORE_CONFLICT' if decision.get('final_score_conflicts') else 'VERIFIED_FINAL_SCORES')
         conflicts = decision.get('final_score_conflicts', [])
+        unverified = decision.get('unverified_result_keys', [])
         decision.clear(); decision.update(before)
         return {'settlement_eligibility': eligibility, 'final_score_conflicts': conflicts,
+                'unverified_result_keys': unverified,
                 'calendar_sha256': before.get('calendar_sha256'),
                 'calendar_retrieved_at_utc': before.get('calendar_retrieved_at_utc'),
                 'remaining_training_fixture_ids': remaining,

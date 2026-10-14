@@ -63,7 +63,8 @@ HTTP rejection, failed delivery, rejected source/publication and publication I/O
 failure are distinct from `VALIDATED_SOURCE_RESPONSE`. A valid response can still
 leave expected finished results missing: morning receipts explicitly say
 `RESULTS_PENDING_AT_SOURCE` with fixture IDs. This is not a network failure. The morning assessment separately blocks settlement
-when published final goals conflict with the verified calendar or the calendar
+when published final goals conflict with the verified calendar, any published
+result lacks an exact calendar fixture in FINISHED state, or the calendar
 cannot be validated after publication. Missing corner counts alone still permit
 BTTS settlement from consistent final goals. A capped retry re-assesses existing
 publication without another GET and preserves the block across baseline/manual
