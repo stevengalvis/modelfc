@@ -2,14 +2,21 @@ name: Trusted OFFLINE validation
 on:
   issue_comment:
     types: [created]
+  workflow_run:
+    workflows: [Tests]
+    types: [completed]
 permissions: {}
 jobs:
   validate:
     if: >-
       github.repository == 'stevengalvis/modelfc' &&
-      github.event.issue.pull_request &&
+      ((github.event_name == 'workflow_run' &&
+        github.event.workflow_run.event == 'pull_request' &&
+        github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.head_repository.full_name == 'stevengalvis/modelfc') ||
+       (github.event.issue.pull_request &&
       github.event.comment.body == '/validate-offline' &&
-      contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)
+      contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)))
     runs-on: ubuntu-24.04
     timeout-minutes: 12
     permissions:
@@ -17,7 +24,7 @@ jobs:
       pull-requests: read
       statuses: write
     concurrency:
-      group: trusted-offline-pr-${{ github.event.issue.number }}
+      group: trusted-offline-pr-${{ github.event.issue.number || github.event.workflow_run.pull_requests[0].number || github.event.workflow_run.id }}
       cancel-in-progress: false
     steps:
       - name: Checkout trusted default-branch event commit only

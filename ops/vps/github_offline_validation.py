@@ -2,6 +2,7 @@
 import argparse
 import base64
 import binascii
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -108,7 +109,66 @@ def current_head(pr, number):
         raise Rejected from None
 
 
+def automatic_identity(event, api):
+    """Use only GitHub's completed CI metadata; never read a PR artifact or script."""
+    try:
+        run = event['workflow_run']
+        prs = run['pull_requests']
+        if (event['action'] != 'completed'
+                or event['repository']['full_name'] != REPOSITORY
+                or event['repository']['default_branch'] != 'main'
+                or run['name'] != 'Tests' or run['path'] != '.github/workflows/tests.yml'
+                or run['event'] != 'pull_request' or run['status'] != 'completed'
+                or run['conclusion'] != 'success'
+                or run['head_repository']['full_name'] != REPOSITORY
+                or type(run['id']) is not int or run['id'] < 1
+                or type(run['run_attempt']) is not int or run['run_attempt'] < 1
+                or len(prs) != 1):
+            raise Rejected
+        number = prs[0]['number']
+        if type(number) is not int or not 1 <= number <= 9999999999:
+            raise Rejected
+        pr = api.call('/pulls/' + str(number))
+        sha = current_head(pr, number)
+        if (sha != run['head_sha'] or sha != prs[0]['head']['sha']
+                or pr.get('draft') is not False or pr['base']['ref'] != 'main'):
+            raise Rejected
+        return number, sha
+    except (KeyError, TypeError, AttributeError):
+        raise Rejected from None
+
+
+def request_marker(event, sha):
+    """Deduplicate delivery of a CI attempt, not unversioned validator evidence.
+
+    The installed report has no revision/configuration attestation, so historical
+    PASS reports must not be treated as equivalent validation evidence.
+    """
+    revision = os.environ.get('GITHUB_SHA', '')
+    if not SHA.fullmatch(revision):
+        raise Rejected
+    run = event['workflow_run']
+    identity = [sha, revision, run['id'], run['run_attempt']]
+    identity += [os.environ.get(key, '') for key in
+                 ('VALIDATOR_HOST', 'VALIDATOR_HOST_KEY', 'VALIDATOR_KEY_FINGERPRINT')]
+    digest = hashlib.sha256(json.dumps(identity, separators=(',', ':')).encode()).hexdigest()
+    return 'OFFLINE CI request ' + digest
+
+
+def already_requested(api, sha, marker):
+    # A bounded page may miss older requests: fail closed rather than rerun them.
+    statuses = api.call('/commits/' + sha + '/statuses?per_page=100')
+    if type(statuses) is not list or len(statuses) >= 100:
+        raise Rejected
+    return any(s.get('context') == CONTEXT + ' request'
+               and s.get('description') == marker
+               and s.get('creator', {}).get('login') == 'github-actions[bot]'
+               for s in statuses)
+
+
 def resolve(event, api):
+    if 'workflow_run' in event:
+        return automatic_identity(event, api)
     number, user = event_identity(event)
     permission = api.call('/collaborators/' + user['login'] + '/permission')
     # GitHub maps maintain to write and triage to read. Check immutable user ID too.
@@ -198,6 +258,14 @@ def execute(event, expected_sha, api, remote=transport):
     number, sha = resolve(event, api)
     if not SHA.fullmatch(expected_sha) or sha != expected_sha:
         raise Rejected
+    if 'workflow_run' in event:
+        marker = request_marker(event, sha)
+        if already_requested(api, sha, marker):
+            print('CI attempt already requested; existing result unchanged')
+            return 'duplicate'
+        # Record before SSH: failures/timeouts are never implicitly retried.
+        api.call('/statuses/' + sha, {'state': 'success', 'context': CONTEXT + ' request',
+                                     'description': marker})
     api.status(sha, 'pending', 'Installed OFFLINE validation running')
     state, description = 'error', 'OFFLINE transport or timeout failure'
     try:
@@ -233,13 +301,15 @@ def main():
     parser.add_argument('phase', choices=('resolve', 'execute'))
     args = parser.parse_args()
     try:
-        if (os.environ.get('GITHUB_EVENT_NAME') != 'issue_comment'
+        if (os.environ.get('GITHUB_EVENT_NAME') not in {'issue_comment', 'workflow_run'}
                 or os.environ.get('GITHUB_REPOSITORY') != REPOSITORY
                 or os.environ.get('GITHUB_REF') != 'refs/heads/main'
                 or os.environ.get('GITHUB_WORKFLOW_REF') != REPOSITORY +
                 '/.github/workflows/trusted-offline.yml@refs/heads/main'):
             raise Rejected
         event = json.loads(Path(os.environ['GITHUB_EVENT_PATH']).read_text())
+        if ('workflow_run' in event) != (os.environ['GITHUB_EVENT_NAME'] == 'workflow_run'):
+            raise Rejected
         api = GitHub(os.environ['GITHUB_TOKEN'])
         if args.phase == 'resolve':
             _, sha = resolve(event, api)
@@ -249,7 +319,7 @@ def main():
         else:
             state = execute(event, os.environ['RESOLVED_SHA'], api)
             print('Trusted OFFLINE status: ' + state)
-            return 0 if state == 'success' else 1
+            return 0 if state in {'success', 'duplicate'} else 1
         return 0
     except Exception:
         print('OFFLINE request rejected or GitHub operation failed')
