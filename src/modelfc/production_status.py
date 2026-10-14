@@ -53,19 +53,34 @@ def _refresh(report_path: Path, now: datetime, max_age_days: int) -> dict[str, A
     if report_path.is_symlink() or not report_path.is_file():
         raise ValueError("missing refresh report")
     report = json.loads(report_path.read_text(encoding="utf-8"))
-    if (not isinstance(report, dict) or set(report) != {"checked_at", "season", "max_age_days", "results"}
+    if (not isinstance(report, dict) or set(report) not in ({"checked_at", "season", "max_age_days", "results"},
+                {"checked_at", "season", "max_age_days", "results", "invocation"})
             or type(report["max_age_days"]) is not int or report["max_age_days"] != max_age_days
             or not isinstance(report["results"], list)):
         raise ValueError("invalid refresh report")
+    if 'invocation' in report:
+        entries = report['invocation']
+        if (not isinstance(entries, list) or any(not isinstance(item, dict)
+                or set(item) != {'league', 'status'} or not isinstance(item['league'], str)
+                or not isinstance(item['status'], str) or item['status'] not in {'NOT_SELECTED', 'DAILY_CAP_CONSUMED',
+                    'VALIDATED_SOURCE_RESPONSE', 'HTTP_RESPONSE_REJECTED', 'DELIVERY_FAILED',
+                    'PUBLICATION_FAILED', 'SOURCE_OR_PUBLICATION_REJECTED'} for item in entries)):
+            raise ValueError('invalid refresh invocation')
     checked = _utc(report["checked_at"])
     if (checked > now or not isinstance(report["season"], str)
             or not re.fullmatch(r"[0-9]{4}", report["season"])):
         raise ValueError("invalid refresh report")
     matches = [item for item in report["results"] if isinstance(item, dict) and item.get("league") == "E1"]
-    if len(matches) != 1 or matches[0].get("status") not in ("updated", "unchanged", "failed"):
+    if len(matches) != 1 or matches[0].get("status") not in ("updated", "unchanged", "failed", "unknown"):
         raise ValueError("invalid E1 refresh report")
-    return {"state": "ERROR" if matches[0]["status"] == "failed" else "OK",
-            "last_attempt_at_utc": checked.isoformat(), "e1_result": matches[0]["status"].upper()}
+    row = matches[0]
+    if row['status'] == 'unknown':
+        return {'state': 'UNVERIFIED', 'last_attempt_at_utc': None, 'e1_result': 'UNKNOWN'}
+    attempted = _utc(row.get('checked_at', report['checked_at']))
+    if attempted > checked:
+        raise ValueError('invalid E1 refresh timestamp')
+    return {"state": "ERROR" if row["status"] == "failed" else "OK",
+            "last_attempt_at_utc": attempted.isoformat(), "e1_result": row["status"].upper()}
 
 
 def _prospective(control_path: Path, now: datetime) -> tuple[dict[str, Any], dict[str, Any]]:

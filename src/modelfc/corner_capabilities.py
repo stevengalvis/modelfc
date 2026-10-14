@@ -108,9 +108,11 @@ def _competition_capability(
         return result
 
     refresh = _refresh_result(report, code)
-    if refresh is not None and isinstance(report.get("checked_at"), str):
-        result["last_refresh_at"] = report["checked_at"]
-    if refresh is None:
+    if refresh is not None and refresh.get('status') != 'unknown':
+        attempted = refresh.get('checked_at', report.get('checked_at'))
+        if isinstance(attempted, str):
+            result["last_refresh_at"] = attempted
+    if refresh is None or refresh.get('status') == 'unknown':
         result["warnings"].append(_warning(
             "REFRESH_STATUS_UNAVAILABLE",
             "No validated refresh attempt is recorded for this competition.",

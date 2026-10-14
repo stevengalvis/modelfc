@@ -172,6 +172,38 @@ class MorningTests(unittest.TestCase):
         self.assertEqual({r['status'] for r in replay['markets']},{'REUSED'})
         self.assertEqual(self.f.immutable(),immutable)
 
+    def test_selective_reports_feed_production_status_and_capabilities(self):
+        from modelfc.production_status import _refresh
+        from modelfc.corner_capabilities import api_capabilities
+        # First baseline records both leagues; later E1-only refresh preserves SP1 time.
+        self.cap.unlink()
+        with patch.object(refresh,'download_csv',side_effect=self.download):
+            first=refresh.refresh_data(self.config)
+        self.cap.write_text('{"version":1,"enabled":true}')
+        self.f.config_file.write_text(json.dumps({'data_directory':str(self.f.history),'leagues':['E1','SP1'],'max_age_days':14}))
+        # Retained legacy rows also keep their original report time on migration.
+        first['results'][1].pop('checked_at')
+        first.pop('invocation')
+        (self.f.refresh_state/'status.json').write_text(json.dumps(first))
+        with patch.object(refresh,'download_csv',side_effect=self.download):
+            current=refresh.refresh_data(self.config,selection=lambda:['E1'])
+        now=datetime.now(timezone.utc)
+        projection=_refresh(self.f.refresh_state/'status.json',now,14)
+        self.assertEqual(projection['state'],'OK')
+        self.assertEqual(projection['last_attempt_at_utc'],current['results'][0]['checked_at'])
+        capabilities=api_capabilities(self.f.config_file,today=now.date(),min_history=1,min_venue_history=1)
+        shown=next(row for row in capabilities['competitions'] if row['code']=='SP1')
+        self.assertEqual(shown['last_refresh_at'],first['checked_at'])
+        self.assertNotEqual(shown['last_refresh_at'],current['checked_at'])
+        self.assertEqual(shown['last_refresh_status'],'SUCCEEDED')
+        current['results'][0]={'league':'E1','status':'unknown'}
+        (self.f.refresh_state/'status.json').write_text(json.dumps(current))
+        self.assertEqual(_refresh(self.f.refresh_state/'status.json',now,14),
+            {'state':'UNVERIFIED','last_attempt_at_utc':None,'e1_result':'UNKNOWN'})
+        shown=api_capabilities(self.f.config_file,today=now.date())['competitions'][0]
+        self.assertIsNone(shown['last_refresh_at'])
+        self.assertIn('REFRESH_STATUS_UNAVAILABLE',{w['code'] for w in shown['warnings']})
+
 
 class TransportTests(unittest.TestCase):
     def test_redirect_has_zero_second_requests(self):
