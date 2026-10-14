@@ -81,7 +81,10 @@ Original immutable acquisition and outcome records are never rewritten.
 their original per-league checked timestamp and provenance (legacy report time
 is carried forward once). Unknown or failed/stale leagues continue to produce
 unhealthy refresh status. E1 settlement uses E1's own original report timestamp,
-not the selective invocation time; its existing 24-hour evidence bound and exact
+not the selective invocation time. Default settlement evaluation time is captured
+after acquiring the history lock, so a consumer queued behind refresh does not
+misclassify that publication as future evidence; explicit offline `as_of` remains
+unchanged. Its existing 24-hour evidence bound and exact
 published hash checks remain. No other league can falsely freshen E1 evidence.
 
 ## Separate host approval and disposable acceptance

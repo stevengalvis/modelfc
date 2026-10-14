@@ -23,11 +23,12 @@ from modelfc.refresh_result_evidence import load, LIMIT
 from modelfc import btts_outcomes, research_outcomes
 
 
-def evidence(config, *, as_of):
+def evidence(config, *, as_of=None):
     history = config.directory
     refresh = history / 'data/corner-refresh'
     # Copy and verify all evidence under the existing history publication lock.
     with existing_read_lock(refresh / 'refresh.lock'):
+        as_of = as_of or datetime.now(timezone.utc)
         report = _json(read(refresh / 'status.json', 1024 * 1024))
         rows = report['results']
         _require(isinstance(rows, list) and all(isinstance(r, dict) for r in rows)
@@ -86,13 +87,15 @@ def run(config, state, *, enabled=False, as_of=None):
         write_new_record(root / (receipt['run_id'] + '-started.json'), {**receipt, 'status': 'STARTED'})
         _sync_root(root); _sync_root(state)
         try:
-            metadata, raw, pin = evidence(config, as_of=observed)
+            metadata, raw, pin = evidence(config, as_of=as_of)
+            evaluated = as_of or datetime.now(timezone.utc)
+            receipt['evaluated_at_utc'] = evaluated.isoformat()
             receipt['evidence_sha256'] = pin
             receipt['source'] = metadata
             receipt['eligibility_scope'] = 'E1_SUCCESSFUL_PUBLICATION'
             receipt.update(research_outcomes.sweep(state, lambda fixture:
                 btts_outcomes.csv_bytes_evidence(raw, metadata['filename'], metadata['file_sha256'],
-                    metadata['retrieved_at_utc'], fixture), as_of=observed,
+                    metadata['retrieved_at_utc'], fixture), as_of=evaluated,
                 reconcile=True, include_bookmaker=True))
         except (ValueError, OSError, KeyError, TypeError, StopIteration) as error:
             reasons = {'REFRESH_CALENDAR_CONFLICT_OR_UNVERIFIED', 'REFRESH_EVIDENCE_STALE', 'REFRESH_NOT_SUCCESSFUL', 'REFRESH_EVIDENCE_UNAVAILABLE',
