@@ -58,8 +58,10 @@ tests keep their existing meaning and execution frequency.
    `/opt/modelfc-deploy/api_readiness.py`, the exact reviewed dispatcher patch, and
    this single proposed grant, only if needed for privileged proc inspection:
 
-   `modelfc-deploy ALL=(root) NOPASSWD: NOSETENV: /usr/bin/python3 -I /opt/modelfc-deploy/api_readiness.py`
+   `modelfc-deploy ALL=(root) NOPASSWD: NOSETENV: /usr/bin/python3 -I -B /opt/modelfc-deploy/api_readiness.py`
 
+   Both the exact grant and dispatcher invocation must include `-I -B`: isolated
+   mode alone does not suppress standard-library bytecode-cache writes.
    No wildcard/extra argv, shell, restart/service-control grant, new key or credential
    access. The dispatcher must accept only the fixed readiness operation and bounded
    SHA/nonce request. Validate malformed input/EOF, permissions, wrong PID/release,
