@@ -28,6 +28,7 @@ jobs:
       - name: Accept exact bytes with real systemd and kernel state
         run: |
           sudo -n /usr/bin/env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin LANG=C GITHUB_ACTIONS=true \
+            /usr/bin/unshare --mount --propagation private -- \
             /usr/bin/python3 -I -B "$GITHUB_WORKSPACE/ops/ci/readiness_systemd.py" \
             --source "$GITHUB_WORKSPACE" --deps "$RUNNER_TEMP/readiness-venv" --sha "$TARGET_SHA" \
             > "$RUNNER_TEMP/readiness-systemd-report.json"

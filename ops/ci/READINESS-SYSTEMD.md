@@ -44,3 +44,10 @@ the helper/dispatcher on the VPS or enables Vercel deployment coordination.
 Hosted-image sudo includes may have safe 0644 modes. The harness does not modify
 those files: it checks root ownership/non-writability and full policy syntax,
 while enforcing exact root ownership/0440 mode on its own fragment with visudo.
+
+The hosted image may leave /opt writable for tool installation. The acceptance
+process enters a private mount namespace and binds a root-owned fixture directory
+over /opt there only. The real PID1 manager and /proc remain real and accessible;
+its service uses the separate fixed fixture launcher. No hosted-image ownership
+or mode is changed, and helper protected-ancestor checks remain intact. Cleanup
+unmounts the private bind and removes only its owned staging directory.

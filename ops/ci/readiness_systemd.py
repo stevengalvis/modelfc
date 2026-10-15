@@ -21,6 +21,8 @@ UNIT = Path('/etc/systemd/system/modelfc-corner-api.service')
 RULE = Path('/etc/sudoers.d/modelfc-readiness-ci')
 LAUNCH = Path('/usr/local/bin/modelfc-readiness-ci-launch.py')
 STATE = Path('/run/modelfc-readiness-ci.json')
+OPT = Path('/run/modelfc-readiness-opt')
+MOUNTED = False
 USERS = ('modelfc-deploy', 'modelfc-api')
 ENV = {'PATH': '/usr/sbin:/usr/bin:/sbin:/bin', 'LANG': 'C', 'HOME': '/nonexistent'}
 HELPER = '2c462f7b33bc605a9e45a2497d31522a4d332272f776e7d8ac51145d4dd1c5d0'
@@ -100,6 +102,7 @@ def known(path, expected):
 
 
 def cleanup():
+    global MOUNTED
     if not STATE.exists(): return
     require(not STATE.is_symlink() and STATE.stat().st_uid==0)
     state=json.loads(STATE.read_text()); require(state=={'schema':1,'fixture':'modelfc-readiness-ci'})
@@ -114,7 +117,9 @@ def cleanup():
         except KeyError: continue
         run(['/usr/sbin/userdel',user])
         run(['/usr/sbin/groupdel',user],check=False)
-    for path in (ROOT,CONTROL):
+    if MOUNTED:
+        run(['/usr/bin/umount','/opt']); MOUNTED=False
+    for path in (ROOT,OPT):
         if path.is_symlink(): raise ValueError('unexpected symlink')
         if path.exists(): shutil.rmtree(path)
     STATE.unlink()
@@ -188,18 +193,23 @@ def release(sha, deps):
 
 
 def accept(source, deps, sha, checks):
+    global MOUNTED
     require(os.geteuid()==0 and os.environ.get('GITHUB_ACTIONS')=='true')
     require(Path('/proc/1/comm').read_text().strip()=='systemd')
     require(Path('/run/systemd/system').is_dir())
     run(['/usr/bin/systemctl','show','--property=Version','--value'])
     require(Path('/sys/fs/cgroup/cgroup.controllers').is_file())
     checks.append('real_systemd_preflight')
-    for path in (ROOT,CONTROL,UNIT,RULE,LAUNCH,STATE): require(not path.exists() and not path.is_symlink())
+    for path in (ROOT,CONTROL,UNIT,RULE,LAUNCH,STATE,OPT): require(not path.exists() and not path.is_symlink())
     for user in USERS:
         try: pwd.getpwnam(user)
         except KeyError: continue
         raise ValueError('fixture account already exists')
+    require(os.readlink('/proc/self/ns/mnt')!=os.readlink('/proc/1/ns/mnt'))
     write(STATE,b'{"schema":1,"fixture":"modelfc-readiness-ci"}',0o600)
+    OPT.mkdir(mode=0o755)
+    run(['/usr/bin/mount','--bind',str(OPT),'/opt']); MOUNTED=True
+    checks.append('protected_installation_private_mount')
     for user in USERS:
         run(['/usr/sbin/useradd','--system','--user-group','--no-create-home','--home-dir','/nonexistent','--shell','/usr/sbin/nologin',user])
     ROOT.mkdir(mode=0o755); (ROOT/'releases').mkdir(mode=0o755); CONTROL.mkdir(mode=0o755)
