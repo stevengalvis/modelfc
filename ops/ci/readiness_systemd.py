@@ -1,6 +1,7 @@
 """Disposable GitHub VM acceptance only; real systemd/proc/sockets, fixture ASGI."""
 import argparse
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -135,6 +136,31 @@ def probe(sha, *, data=None, command=None, timeout=20):
     return result,value
 
 
+def diagnose(sha):
+    """Failure-only read-only checks from the exact installed helper; no mocks."""
+    result={}
+    path=CONTROL/'api_readiness.py'
+    known(path,HELPER)
+    spec=importlib.util.spec_from_file_location('installed_readiness_diagnostic',path)
+    helper=importlib.util.module_from_spec(spec); spec.loader.exec_module(helper)
+    safe={'wrong process','wrong entrypoint','invalid service boundary','not running',
+          'listener not owned by api','wrong current','invalid protected path',
+          'wrong marker','wrong detached HEAD','api not ready','helper mode','not installed helper'}
+    for label,call in (('installation',helper.installation_revision),
+                       ('release',lambda:helper.release(sha)),
+                       ('process',lambda:helper.process_identity(helper.release(sha))),
+                       ('http',helper.read_ready)):
+        try: call(); result[label]='PASS'
+        except Exception as error:
+            result[label]=str(error) if str(error) in safe else type(error).__name__
+    raw=run(['/usr/bin/systemctl','show',UNIT.name,'--no-pager','-p','ExecMainStatus','-p','ActiveState'],check=False).stdout.decode()
+    for line in raw.splitlines():
+        key,value=line.split('=',1)
+        if key=='ExecMainStatus' and value.isdecimal(): result[key]=int(value)
+        if key=='ActiveState' and value in {'active','inactive','failed','activating','deactivating'}: result[key]=value
+    return result
+
+
 def wait_ready(sha):
     until=time.monotonic()+20
     while time.monotonic()<until:
@@ -248,18 +274,21 @@ def main():
     if args.cleanup:
         cleanup(); print('{"cleanup":"PASS"}'); return 0
     require(args.source and args.deps and re.fullmatch('[0-9a-f]{40}',args.sha or ''))
-    checks=[]; status='FAIL'; stage='acceptance'; cleaned=False; failure=None
+    checks=[]; status='FAIL'; stage='acceptance'; cleaned=False; failure=None; diagnostic=None
     try:
         accept(args.source.resolve(),args.deps.resolve(),args.sha,checks)
         status='PASS'
     except (OSError,ValueError,KeyError,StopIteration,subprocess.SubprocessError,TimeoutError) as error:
         failure={'type':type(error).__name__,'errno':getattr(error,'errno',None)}
+        if 'fixture_release_prepared' in checks:
+            try: diagnostic=diagnose(args.sha)
+            except Exception: diagnostic={'status':'UNAVAILABLE'}
     finally:
         signal.alarm(0)
         try: cleanup(); cleaned=True
         except (OSError,ValueError,KeyError,subprocess.SubprocessError): status='FAIL'; stage='cleanup'
     print(json.dumps({'schema':1,'sha':args.sha,'status':status,'stage':stage,
-                      'checks':checks,'cleanup':cleaned,'failure':failure,'fixture':'real-systemd-uvicorn-synthetic-asgi'},sort_keys=True,separators=(',',':')))
+                      'checks':checks,'cleanup':cleaned,'failure':failure,'diagnostic':diagnostic,'fixture':'real-systemd-uvicorn-synthetic-asgi'},sort_keys=True,separators=(',',':')))
     return 0 if status=='PASS' and cleaned else 1
 
 
