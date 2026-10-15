@@ -36,9 +36,9 @@ check names and no raw commands, environment, journal or exception output. Reten
 is seven days. Job duration is measured from GitHub's job timestamps, not invented
 from simulated timings. Failure/absent manager never silently skips to a mocked pass.
 
-This PR is stacked on PR163 solely to reuse its exact baseline/patch fixtures.
-Before merging later, retarget onto main after PR163 merges and revalidate the final
-head. Neither this workflow nor successful fixture acceptance authorizes installing
+The baseline/patch fixtures are provided by merged PR163. This workflow is
+validated against main with the inactive consumer from PR162. Neither this
+workflow nor successful fixture acceptance authorizes installing
 the helper/dispatcher on the VPS or enables Vercel deployment coordination.
 
 Hosted-image sudo includes may have safe 0644 modes. The harness does not modify
