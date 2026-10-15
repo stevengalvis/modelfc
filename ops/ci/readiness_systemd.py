@@ -18,7 +18,7 @@ ROOT = Path('/srv/modelfc')
 CONTROL = Path('/opt/modelfc-deploy')
 UNIT = Path('/etc/systemd/system/modelfc-corner-api.service')
 RULE = Path('/etc/sudoers.d/modelfc-readiness-ci')
-LAUNCH = Path('/usr/local/libexec/modelfc-readiness-ci-launch.py')
+LAUNCH = Path('/usr/local/bin/modelfc-readiness-ci-launch.py')
 STATE = Path('/run/modelfc-readiness-ci.json')
 USERS = ('modelfc-deploy', 'modelfc-api')
 ENV = {'PATH': '/usr/sbin:/usr/bin:/sbin:/bin', 'LANG': 'C', 'HOME': '/nonexistent'}
@@ -54,7 +54,7 @@ Type=simple
 User=modelfc-api
 Group=modelfc-api
 WorkingDirectory=/srv/modelfc/current
-ExecStart=/usr/bin/python3 -I -B /usr/local/libexec/modelfc-readiness-ci-launch.py
+ExecStart=/usr/bin/python3 -I -B /usr/local/bin/modelfc-readiness-ci-launch.py
 NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes
@@ -202,6 +202,7 @@ def accept(source, deps, sha, checks):
         checks.append('sudo_denied_'+label)
     checks.append('sudo_exact_command_only')
     first=release(sha,deps); (ROOT/'current').symlink_to(first)
+    checks.append('fixture_release_prepared')
     write(LAUNCH,LAUNCHER.encode(),0o555); write(UNIT,SERVICE.encode(),0o644)
     run(['/usr/bin/systemctl','daemon-reload']); run(['/usr/bin/systemctl','start',UNIT.name])
     first_proof=wait_ready(sha)
@@ -247,18 +248,18 @@ def main():
     if args.cleanup:
         cleanup(); print('{"cleanup":"PASS"}'); return 0
     require(args.source and args.deps and re.fullmatch('[0-9a-f]{40}',args.sha or ''))
-    checks=[]; status='FAIL'; stage='acceptance'; cleaned=False
+    checks=[]; status='FAIL'; stage='acceptance'; cleaned=False; failure=None
     try:
         accept(args.source.resolve(),args.deps.resolve(),args.sha,checks)
         status='PASS'
-    except (OSError,ValueError,KeyError,StopIteration,subprocess.SubprocessError,TimeoutError):
-        pass
+    except (OSError,ValueError,KeyError,StopIteration,subprocess.SubprocessError,TimeoutError) as error:
+        failure={'type':type(error).__name__,'errno':getattr(error,'errno',None)}
     finally:
         signal.alarm(0)
         try: cleanup(); cleaned=True
         except (OSError,ValueError,KeyError,subprocess.SubprocessError): status='FAIL'; stage='cleanup'
     print(json.dumps({'schema':1,'sha':args.sha,'status':status,'stage':stage,
-                      'checks':checks,'cleanup':cleaned,'fixture':'real-systemd-uvicorn-synthetic-asgi'},sort_keys=True,separators=(',',':')))
+                      'checks':checks,'cleanup':cleaned,'failure':failure,'fixture':'real-systemd-uvicorn-synthetic-asgi'},sort_keys=True,separators=(',',':')))
     return 0 if status=='PASS' and cleaned else 1
 
 
