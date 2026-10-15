@@ -13,7 +13,8 @@ from modelfc import corner_prospective as runner
 from modelfc import corner_shadow_decisions as decisions
 from modelfc.corner_analysis_store import _canonical_hash
 from modelfc.ledger_storage import LedgerError
-from tests.test_corner_prospective import PilotTests
+# Import the module so unittest does not rediscover its TestCase here.
+from tests import test_corner_prospective as pilot
 
 
 class QualificationParityTests(unittest.TestCase):
@@ -47,14 +48,14 @@ class QualificationParityTests(unittest.TestCase):
 
 class DecisionEvidenceTests(unittest.TestCase):
     def setUp(self):
-        PilotTests.setUp(self)
+        pilot.PilotTests.setUp(self)
 
-    sleep = PilotTests.sleep
-    http = PilotTests.http
-    control = PilotTests.control
-    run_pilot = PilotTests.run_pilot
-    capture_paths = PilotTests.capture_paths
-    after_kickoff = PilotTests.after_kickoff
+    sleep = pilot.PilotTests.sleep
+    http = pilot.PilotTests.http
+    control = pilot.PilotTests.control
+    run_pilot = pilot.PilotTests.run_pilot
+    capture_paths = pilot.PilotTests.capture_paths
+    after_kickoff = pilot.PilotTests.after_kickoff
 
     def evidence(self):
         paths = list((self.state / 'shadow-decisions').rglob('*.json'))

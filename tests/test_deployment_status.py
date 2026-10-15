@@ -295,7 +295,7 @@ class DeploymentStatusTests(unittest.TestCase):
                                               "DEPLOYMENT_REPORT_FILE": str(self.file)}), \
                      patch.object(reporting, "GitHub", return_value=api), \
                      patch("sys.stdout", new_callable=io.StringIO) as output:
-                    self.assertEqual(reporting.main(), 1)
+                    self.assertEqual(reporting.main(publish_comments=True), 1)
                 self.assertEqual(output.getvalue(), "::warning::Deployment status reporting failed: " +
                                  stage + "/REJECTED; original deployment result unchanged.\n")
                 self.assertNotIn(SECRET, output.getvalue())
@@ -435,7 +435,7 @@ class DeploymentStatusTests(unittest.TestCase):
                      patch.object(reporting, "GitHub", return_value=api), \
                      patch.object(reporting, "build_opener", return_value=Opener()), \
                      patch("sys.stdout", new_callable=io.StringIO) as output:
-                    self.assertEqual(reporting.main(), 1)
+                    self.assertEqual(reporting.main(publish_comments=True), 1)
                 self.assertEqual(output.getvalue(), "::warning::Deployment status reporting failed: " +
                     "COMMENT_WRITE/" + cause + " HTTP_STATUS=" + str(code) +
                     "; original deployment result unchanged.\n")
@@ -471,7 +471,7 @@ class DeploymentStatusTests(unittest.TestCase):
                                          "DEPLOYMENT_REPORT_FILE":str(self.file)}), \
                  patch.object(reporting,"GitHub",return_value=self.api), \
                  patch("sys.stdout",new_callable=io.StringIO) as output:
-                self.assertEqual(reporting.main(),0)
+                self.assertEqual(reporting.main(publish_comments=True),0)
             self.assertEqual(output.getvalue(),"::notice::Deployment status reporting: " + outcome + "\n")
 
     def test_reporting_failure_does_not_change_original_workflow_contract(self):
@@ -504,7 +504,7 @@ class DeploymentStatusTests(unittest.TestCase):
         self.assertNotIn("Production deployment: SUCCESS", self.body())
         self.assertIn("Stage: WORKFLOW_NOT_SUCCESSFUL", self.body())
 
-    def durable_main(self):
+    def durable_main(self, *, publish_comments=True):
         root = Path(self.directory.name)
         event_file = root / "event.json"
         event_file.write_text(json.dumps(self.event))
@@ -515,7 +515,8 @@ class DeploymentStatusTests(unittest.TestCase):
                     "GITHUB_STEP_SUMMARY": str(summary_file)}), \
              patch.object(reporting, "GitHub", return_value=self.api), \
              patch("sys.stdout", new_callable=io.StringIO) as output:
-            code = reporting.main()
+            code = (reporting.main() if publish_comments is None else
+                    reporting.main(publish_comments=publish_comments))
         raw, body = output_file.read_text(), summary_file.read_text()
         self.assertLessEqual(len(raw.encode()), reporting.MAX_OUTPUT)
         self.assertLessEqual(len(body.encode()), reporting.MAX_OUTPUT)
@@ -678,6 +679,37 @@ class DeploymentStatusTests(unittest.TestCase):
         self.assertEqual(result["reporting"]["stage"], "EVENT_VALIDATION")
         self.assertEqual(self.api.writes, [])
 
+    def test_summary_only_skips_all_pr_access_and_keeps_truthful_evidence(self):
+        for deployment_failed in (False, True):
+            with self.subTest(deployment_failed=deployment_failed):
+                self.api = FakeGitHub()
+                self.api.pages = lambda path: self.fail("PR/comment lookup attempted")
+                original = self.api.call
+                def read_only(path, data=None, **kwargs):
+                    self.assertIsNone(data, "comment write attempted")
+                    self.assertTrue(path.startswith("/actions/runs/"))
+                    return original(path, data, **kwargs)
+                self.api.call = read_only
+                if deployment_failed:
+                    self.api.run["conclusion"] = "failure"
+                    self.api.jobs[-1]["conclusion"] = "failure"
+                    self.file.write_text(json.dumps(report("TESTS_FAILED")))
+                code, result, body = self.durable_main(publish_comments=False)
+                self.assertEqual(code, 0)
+                self.assertEqual(result["reporting"]["outcome"], "SUMMARY_ONLY")
+                self.assertEqual(result["deployment"]["status"],
+                                 "FAILED" if deployment_failed else "SUCCESS")
+                self.assertIn("Reporting: SUMMARY_ONLY", body)
+                self.assertEqual(self.api.writes, [])
+
+    def test_entrypoint_defaults_to_no_comment_publication(self):
+        self.api.pages = lambda path: self.fail("PR/comment lookup attempted")
+        code, result, body = self.durable_main(publish_comments=None)
+        self.assertEqual(code, 0)
+        self.assertEqual(result["reporting"]["outcome"], "SUMMARY_ONLY")
+        self.assertIn("Deployment evidence: SUCCESS", body)
+        self.assertEqual(self.api.writes, [])
+
     def test_output_bound_rejection_preserves_last_complete_file(self):
         path = Path(self.directory.name) / "status.json"
         with patch.dict(os.environ, {"DEPLOYMENT_STATUS_OUTPUT": str(path), "GITHUB_STEP_SUMMARY": ""}):
@@ -693,13 +725,13 @@ class DeploymentStatusTests(unittest.TestCase):
         for value in ("workflow_run:", "types: [completed]", "branches: [main]",
                       "github.event.workflow_run.event == 'push'", "ref: ${{ github.sha }}",
                       "persist-credentials: false", "actions: read", "contents: read",
-                      "pull-requests: read", "issues: write", "permissions: {}",
+                      "permissions: {}",
                       "cancel-in-progress: false", "continue-on-error: true",
                       "if: always()", "run-id: ${{ github.event.workflow_run.id }}",
                       "deployment-report-${{ github.event.workflow_run.run_attempt }}"):
             self.assertIn(value, source)
         for forbidden in ("secrets.", "ssh ", "head_sha }}", "statuses: write", "contents: write",
-                          "pull_request_target", "workflow_dispatch"):
+                          "pull_request_target", "workflow_dispatch", "issues: write", "pull-requests: read"):
             self.assertNotIn(forbidden, source)
         preserved = source.split("      - name: Preserve bounded deployment", 1)[1]
         self.assertIn("if: always()", preserved)
