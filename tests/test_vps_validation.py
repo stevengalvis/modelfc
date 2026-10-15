@@ -710,11 +710,16 @@ class RelayTests(unittest.TestCase):
 
     def test_empty_discovery_is_normal_and_other_404_is_error(self):
         fetch = Mock(return_value=(404, b'{"error":{"code":"FIXTURE_NOT_FOUND"}}'))
-        relay = controller.Relay(SECRET, fetch)
+        # This checks response classification; fake-clock tests cover pacing.
+        # Do not spend 2.1 seconds of the shared suite deadline sleeping here.
+        sleeper = Mock()
+        relay = controller.Relay(SECRET, fetch, sleeper)
         relay.get(self.query())
         self.assertIsNone(relay.failure)
         relay.get(self.query("markets"))
         self.assertEqual(relay.failure, "PROVIDER_MARKETS_NOT_FOUND")
+        self.assertEqual(fetch.call_count, 2)
+        sleeper.assert_called_once()
 
     def test_arbitrary_hosts_endpoints_filters_and_secret_echo_rejected(self):
         fetch = Mock(return_value=(200, b"[]"))
