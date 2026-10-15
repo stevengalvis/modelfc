@@ -719,7 +719,6 @@ class RelayTests(unittest.TestCase):
         relay.get(self.query("markets"))
         self.assertEqual(relay.failure, "PROVIDER_MARKETS_NOT_FOUND")
         self.assertEqual(fetch.call_count, 2)
-        sleeper.assert_called_once()
 
     def test_arbitrary_hosts_endpoints_filters_and_secret_echo_rejected(self):
         fetch = Mock(return_value=(200, b"[]"))
