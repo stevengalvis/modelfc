@@ -9,6 +9,7 @@ import re
 import secrets
 import shutil
 import signal
+import stat
 import subprocess
 import sys
 import time
@@ -185,14 +186,16 @@ def accept(source, deps, sha, checks):
     denied=run(['/usr/sbin/runuser','-u','modelfc-deploy','--','/usr/bin/sudo','-n','--']+FIXED,data=b'{}',check=False)
     require(denied.returncode!=0); checks.append('sudo_denied_without_grant')
     write(RULE,('modelfc-deploy ALL=(root) NOPASSWD: NOSETENV: '+' '.join(FIXED)+'\n').encode(),0o440)
-    run(['/usr/sbin/visudo','-cf',str(RULE)])
+    # Hosted image includes may use safe 0644 rather than visudo's default 0440.
+    # Validate complete syntax without changing image policy; enforce protected
+    # ownership/non-writability and exact default metadata on our own new rule.
+    run(['/usr/sbin/visudo','-c','-O','-P','-f',str(RULE)])
     checks.append('sudo_fragment_valid')
-    policy=run(['/usr/sbin/visudo','-c'],check=False)
-    if policy.returncode:
-        diagnostic=(policy.stdout+policy.stderr).decode('utf-8',errors='replace').lower()
-        for label,pattern in (('mode','(bad permissions|wrong mode|mode 0440)'),('owner','(bad owner|owned by)'),('syntax','syntax error'),('include','(unable to open|no such file)')):
-            if re.search(pattern,diagnostic): checks.append('runner_policy_error_'+label)
-        require(False)
+    for policy_path in [Path('/etc/sudoers'),*Path('/etc/sudoers.d').iterdir()]:
+        if policy_path.parent.name=='sudoers.d' and ('.' in policy_path.name or policy_path.name.endswith('~')): continue
+        metadata=policy_path.lstat()
+        require(stat.S_ISREG(metadata.st_mode) and metadata.st_uid==0 and not metadata.st_mode & 0o022)
+    run(['/usr/sbin/visudo','-c','-f','/etc/sudoers'])
     checks.append('sudo_complete_policy_valid')
     for label,args in (('extra_argv',FIXED+['extra']),('other_python',['/usr/bin/python3','-c','pass']),('service_control',['/usr/bin/systemctl','restart',UNIT.name])):
         require(run(['/usr/sbin/runuser','-u','modelfc-deploy','--','/usr/bin/sudo','-n','-l','--']+args,check=False).returncode!=0)

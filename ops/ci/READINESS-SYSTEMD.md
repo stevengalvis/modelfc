@@ -40,3 +40,7 @@ This PR is stacked on PR163 solely to reuse its exact baseline/patch fixtures.
 Before merging later, retarget onto main after PR163 merges and revalidate the final
 head. Neither this workflow nor successful fixture acceptance authorizes installing
 the helper/dispatcher on the VPS or enables Vercel deployment coordination.
+
+Hosted-image sudo includes may have safe 0644 modes. The harness does not modify
+those files: it checks root ownership/non-writability and full policy syntax,
+while enforcing exact root ownership/0440 mode on its own fragment with visudo.
