@@ -86,6 +86,30 @@ change belongs to this approval. Normal sudo auditing may record the invocation;
 Local tests do not prove actual sudo parsing, effective privileges, kernel proc
 access, SSH transport or the installed helper's identity observations.
 
+## Reproduce and verify the proposal archive locally
+
+From the reviewed PR checkout, run the following on a development machine only:
+
+```sh
+python3 -I -B ops/vps/patches/build_readiness_bundle.py /tmp/modelfc-readiness-proposal.zip
+mkdir /tmp/modelfc-readiness-proposal-check
+unzip -q /tmp/modelfc-readiness-proposal.zip -d /tmp/modelfc-readiness-proposal-check
+(cd /tmp/modelfc-readiness-proposal-check && sha256sum --strict --check SHA256SUMS)
+```
+
+Use fresh output paths; the generator refuses to overwrite an existing archive.
+It verifies the pinned baseline, patch and helper, applies the patch only in a
+local temporary directory and verifies the exact candidate hash. It never imports
+or executes controller/helper payloads. The archive contains the six payload files
+(`INSTALLATION.md`, original/candidate controller, patch, helper, sudo fragment)
+and a generated `SHA256SUMS` covering every payload exactly once. Entry order,
+timestamps, modes and uncompressed encoding are fixed for reproducible bytes.
+The generator prints the archive SHA-256 for recording with the reviewed commit.
+The manifest establishes byte integrity, not approval or authenticity by itself:
+start from the reviewed checkout and compare the pinned hashes above. No generated
+binary or self-referential manifest is committed. This procedure is packaging only;
+it neither installs files nor establishes real systemd acceptance.
+
 ## Installation procedure to approve, not a runnable installer
 
 Use a root-owned staging directory outside any checkout. Verify the bundle's
