@@ -186,9 +186,12 @@ def accept(source, deps, sha, checks):
     require(denied.returncode!=0); checks.append('sudo_denied_without_grant')
     write(RULE,('modelfc-deploy ALL=(root) NOPASSWD: NOSETENV: '+' '.join(FIXED)+'\n').encode(),0o440)
     run(['/usr/sbin/visudo','-cf',str(RULE)])
+    checks.append('sudo_fragment_valid')
     run(['/usr/sbin/visudo','-c'])
-    for args in (FIXED+['extra'],['/usr/bin/python3','-c','pass'],['/usr/bin/systemctl','restart',UNIT.name]):
+    checks.append('sudo_complete_policy_valid')
+    for label,args in (('extra_argv',FIXED+['extra']),('other_python',['/usr/bin/python3','-c','pass']),('service_control',['/usr/bin/systemctl','restart',UNIT.name])):
         require(run(['/usr/sbin/runuser','-u','modelfc-deploy','--','/usr/bin/sudo','-n','-l','--']+args,check=False).returncode!=0)
+        checks.append('sudo_denied_'+label)
     checks.append('sudo_exact_command_only')
     first=release(sha,deps); (ROOT/'current').symlink_to(first)
     write(LAUNCH,LAUNCHER.encode(),0o555); write(UNIT,SERVICE.encode(),0o644)
