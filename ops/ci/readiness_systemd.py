@@ -219,7 +219,7 @@ def accept(source, deps, sha, checks):
     write(CONTROL/'deploy_main.py',known(source/'tests/fixtures/vps/deploy_main_5c1b.py.txt',BASE),0o555)
     run(['/usr/bin/patch','--batch','--fuzz=0',str(CONTROL/'deploy_main.py')],data=(source/'ops/vps/patches/deploy-main-5c1b-readiness.patch').read_bytes())
     known(CONTROL/'deploy_main.py',CANDIDATE); (CONTROL/'deploy_main.py').chmod(0o555)
-    denied=run(['/usr/sbin/runuser','-u','modelfc-deploy','--','/usr/bin/sudo','-n','--']+FIXED,data=b'{}',check=False)
+    denied=run(['/usr/sbin/runuser','-u','modelfc-deploy','--','/usr/bin/sudo','-n','-l','--']+FIXED,check=False)
     require(denied.returncode!=0); checks.append('sudo_denied_without_grant')
     write(RULE,('modelfc-deploy ALL=(root) NOPASSWD: NOSETENV: '+' '.join(FIXED)+'\n').encode(),0o440)
     # Hosted image includes may use safe 0644 rather than visudo's default 0440.
@@ -233,6 +233,8 @@ def accept(source, deps, sha, checks):
         require(stat.S_ISREG(metadata.st_mode) and metadata.st_uid==0 and not metadata.st_mode & 0o022)
     run(['/usr/sbin/visudo','-c','-f','/etc/sudoers'])
     checks.append('sudo_complete_policy_valid')
+    require(run(['/usr/sbin/runuser','-u','modelfc-deploy','--','/usr/bin/sudo','-n','-l','--']+FIXED,check=False).returncode==0)
+    checks.append('sudo_exact_grant_authorized')
     for label,args in (('extra_argv',FIXED+['extra']),('other_python',['/usr/bin/python3','-c','pass']),('service_control',['/usr/bin/systemctl','restart',UNIT.name])):
         require(run(['/usr/sbin/runuser','-u','modelfc-deploy','--','/usr/bin/sudo','-n','-l','--']+args,check=False).returncode!=0)
         checks.append('sudo_denied_'+label)
