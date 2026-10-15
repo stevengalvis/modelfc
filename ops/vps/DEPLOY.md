@@ -21,6 +21,17 @@ runs for ordinary PR checks, connects to the VPS, or changes deployment gating,
 promotion, rollback, SSH arguments or exit codes. It does not trigger Trusted
 OFFLINE or LIVE validation.
 
+The reporting entrypoint now publishes only the bounded JSON artifact and GitHub
+job summary. It does not look up PRs or read/create/update PR comments; the job
+needs only `contents: read` and `actions: read`. This avoids the observed
+`COMMENT_WRITE/API_INTEGRATION_ACCESS_DENIED` 403 without expanding permissions.
+`Reporting: SUMMARY_ONLY` describes delivery, independently of the deployment's
+SUCCESS/FAILED/UNVERIFIED outcome. Evidence-validation and output failures still
+fail the reporter. The historical comment-publication helpers and regression
+coverage below remain available only through explicit Python calls; the workflow
+and CLI entrypoint do not enable them. Historical comment behavior documented
+below is not the current delivery path. Validator triggers are unchanged.
+
 The original deployment step best-effort copies its already sanitized JSON
 output to a seven-day artifact named by the workflow attempt. Failure to copy or
 upload it cannot change the deployment result. The reporter reads only that exact
