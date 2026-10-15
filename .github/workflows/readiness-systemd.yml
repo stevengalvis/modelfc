@@ -1,0 +1,54 @@
+name: Real systemd readiness acceptance
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  push:
+    branches: [main]
+permissions:
+  contents: read
+concurrency:
+  group: readiness-systemd-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('main-{0}', github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+jobs:
+  readiness-systemd:
+    name: Real systemd readiness acceptance
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      TARGET_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Prepare existing hash-locked Python runtime
+        run: |
+          /usr/bin/python3 -m venv --copies "$RUNNER_TEMP/readiness-venv"
+          "$RUNNER_TEMP/readiness-venv/bin/python" -m pip install --require-hashes --only-binary=:all: --no-cache-dir -r requirements-deploy.lock
+      - name: Accept exact bytes with real systemd and kernel state
+        run: |
+          sudo -n /usr/bin/env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin LANG=C GITHUB_ACTIONS=true \
+            /usr/bin/unshare --mount --propagation private -- \
+            /usr/bin/python3 -I -B "$GITHUB_WORKSPACE/ops/ci/readiness_systemd.py" \
+            --source "$GITHUB_WORKSPACE" --deps "$RUNNER_TEMP/readiness-venv" --sha "$TARGET_SHA" \
+            > "$RUNNER_TEMP/readiness-systemd-report.json"
+      - name: Always remove disposable fixtures
+        if: always()
+        run: |
+          if test -f "$GITHUB_WORKSPACE/ops/ci/readiness_systemd.py"; then
+            sudo -n /usr/bin/env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin LANG=C GITHUB_ACTIONS=true \
+              /usr/bin/python3 -I -B "$GITHUB_WORKSPACE/ops/ci/readiness_systemd.py" --cleanup
+          fi
+      - name: Show bounded sanitized result
+        if: always()
+        run: |
+          if test -f "$RUNNER_TEMP/readiness-systemd-report.json"; then
+            head -c 4096 "$RUNNER_TEMP/readiness-systemd-report.json"
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: readiness-systemd-${{ env.TARGET_SHA }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/readiness-systemd-report.json
+          if-no-files-found: error
+          retention-days: 7
