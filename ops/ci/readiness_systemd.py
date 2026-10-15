@@ -187,7 +187,12 @@ def accept(source, deps, sha, checks):
     write(RULE,('modelfc-deploy ALL=(root) NOPASSWD: NOSETENV: '+' '.join(FIXED)+'\n').encode(),0o440)
     run(['/usr/sbin/visudo','-cf',str(RULE)])
     checks.append('sudo_fragment_valid')
-    run(['/usr/sbin/visudo','-c'])
+    policy=run(['/usr/sbin/visudo','-c'],check=False)
+    if policy.returncode:
+        diagnostic=(policy.stdout+policy.stderr).decode('utf-8',errors='replace').lower()
+        for label,pattern in (('mode','(bad permissions|wrong mode|mode 0440)'),('owner','(bad owner|owned by)'),('syntax','syntax error'),('include','(unable to open|no such file)')):
+            if re.search(pattern,diagnostic): checks.append('runner_policy_error_'+label)
+        require(False)
     checks.append('sudo_complete_policy_valid')
     for label,args in (('extra_argv',FIXED+['extra']),('other_python',['/usr/bin/python3','-c','pass']),('service_control',['/usr/bin/systemctl','restart',UNIT.name])):
         require(run(['/usr/sbin/runuser','-u','modelfc-deploy','--','/usr/bin/sudo','-n','-l','--']+args,check=False).returncode!=0)
