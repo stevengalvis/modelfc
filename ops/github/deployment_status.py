@@ -414,7 +414,7 @@ def validated_jobs(value):
     return value["jobs"]
 
 
-def observe(event, api, report_file, *, result=None, persist=None):
+def observe(event, api, report_file, *, result=None, persist=None, publish_comments=True):
     if (event.get("action") != "completed"
             or event.get("repository", {}).get("full_name") != REPOSITORY):
         raise Rejected
@@ -434,6 +434,8 @@ def observe(event, api, report_file, *, result=None, persist=None):
     result["deployment"] = checked("JOBS_VALIDATION", deployment_evidence, run, jobs, report)
     if persist:
         checked("OUTPUT_WRITE", persist, result)
+    if not publish_comments:
+        return "SUMMARY_ONLY"
     pr = checked("PR_ASSOCIATION", merged_pr, api, sha)
     if pr is None:
         return "NO_MERGED_PR"
@@ -442,7 +444,7 @@ def observe(event, api, report_file, *, result=None, persist=None):
     return publish(api, number, body, run_id, attempt, author)
 
 
-def main():
+def main(*, publish_comments=False):
     stage = "INPUT_VALIDATION"
     result = empty_result()
     failed = False
@@ -453,7 +455,8 @@ def main():
             raise Rejected
         stage = "EVENT_VALIDATION"
         outcome = observe(strict_json(raw), GitHub(os.environ["GITHUB_TOKEN"]),
-                          os.environ["DEPLOYMENT_REPORT_FILE"], result=result, persist=save_result)
+                          os.environ["DEPLOYMENT_REPORT_FILE"], result=result, persist=save_result,
+                          publish_comments=publish_comments)
         result["reporting"]["outcome"] = outcome
         print("::notice::Deployment status reporting: " + outcome)
     except ReportingFailed as error:
