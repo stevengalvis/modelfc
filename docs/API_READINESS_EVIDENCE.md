@@ -97,3 +97,50 @@ check-name collisions and dispatch SHA binding. The documentation does not estab
 this project's entitlement, configuration or our access. No Vercel API/setting was
 changed or denied connector retried. Ordinary Git deployment still activates
 independently until the separate settings/acceptance steps above are complete.
+
+## Inactive runner consumer (ZEN-45 follow-up)
+
+`ops/github/readiness_consumer.py` adds an in-memory state machine only. No workflow
+imports it and it has no CLI, SSH command, HTTP client, status publisher or artifact
+reader. The installed helper remains unchanged. This is not an active release gate.
+
+A future trusted adapter must authenticate the exact main push workflow run and
+attempt, collect all four required job conclusions (`test`, `frontend`,
+`release_offline`, `deploy`) from that same attempt, and supply the approved
+installed-helper hash. The consumer rejects missing/skipped/failed prerequisites.
+Each session belongs to one repository/SHA/run/attempt. Each `begin` creates a fresh
+256-bit nonce and discards previous proof; `accept` consumes that challenge even
+when evidence is invalid. Failure cannot yield a final result. A later attempt may
+observe ordinary API rotation with a new challenge; the eventual adapter must
+classify permanent transport/configuration failures rather than retry them blindly.
+
+The consumer caps a session at 35 monotonic minutes and 71 attempts. The adapter
+must pace retries (proposed 30 seconds), enforce a <=20-second bounded authenticated
+read with at most 4096 bytes, close stdin after the bounded request, and stop at the
+remaining total deadline. The state machine checks elapsed time at each boundary;
+it cannot interrupt a blocked transport callback because it performs no transport.
+`finish` consumes the validated observation once, rechecks freshness and a freshly
+resolved main, and binds the result to the run/attempt. Only the future trusted
+adapter may immediately publish a check after this step. No persisted result or
+old same-SHA success is authorization for another deployment. Deployment-specific
+Vercel gating and its race/negative-case acceptance remain unresolved separately.
+
+### Minimum next installed-host evidence
+
+The available installed-controller hash documented above and in draft PR145 is
+historical; it is not proof of today's installed bytes. Before preparing a dispatch
+patch, an authorized operator needs only a read-only snapshot of:
+
+- `/opt/modelfc-deploy/deploy_main.py`: current bytes, SHA-256, owner/mode and
+  parent-path ownership/modes. Review the installed command dispatch and handoff.
+- The effective deploy identity forced-command restriction and relevant sudo rule
+  text, sanitized to omit key material, credentials and unrelated entries.
+- The fixed API unit's effective user/group, launcher/ExecStart, and relevant proc
+  access constraints; presence and owner/mode/hash of any installed readiness helper.
+
+Do not execute candidate code, install a helper, restart a service, alter a rule,
+or replace the installed controller to gather this evidence. No current snapshot
+is available in this checkout. Repository and historical fixtures are insufficient
+substitutes. After inspection, prepare a narrow exact-baseline patch, disposable
+acceptance and rollback; host installation, workflow wiring and Vercel changes each
+still need their separate approval described above.
