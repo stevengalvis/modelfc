@@ -1,5 +1,9 @@
 # Exact-release OFFLINE acceptance (prepared, not installed)
 
+Historical PR159 handoff: its four-file installer commands below are superseded
+for ZEN-48 by [the coordinated strategy installer plan](STRATEGY_VALIDATOR_INSTALLER_REVIEW.md).
+Do not run the historical commands for the five-file strategy transition.
+
 This follow-on adds an independent installed-harness gate to the existing merged
 release tests. It does not replace those tests, change models, prove actual API
 serving, or grant new credentials/permissions. Do not merge before the installation

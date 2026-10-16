@@ -70,14 +70,16 @@ new acceptance. Preserve and verify existing image/configuration bindings,
 credentials, host-key pin, ownership and modes; do not derive approval from values
 merely returned in a report.
 
-## Separate installer work required
+## Separate installer preparation
 
-The current `install_release_validator.py` is insufficient: it pins the old
+The pre-ZEN-48 `install_release_validator.py` is insufficient: it pins the old
 revision, replaces/backups only four files, requires the harness already to match
 `HARNESS`, and does not back up or replace that harness or manage the release cache.
 Do not run it on this checkout or simply change its hash constants.
 
-A bounded follow-up installer must have separately reviewed old/new byte pins,
+The [stacked installer preparation](STRATEGY_VALIDATOR_INSTALLER_REVIEW.md) implements
+the following requirements in source only, with synthetic tests. It still requires
+review and separate installation approval. The installer must have old/new byte pins,
 include the harness in the install/backup/rollback manifest, and quarantine the
 old cache under the validation lock before the new controller can read it.
 Preserve exact prior cache bytes and metadata, including absence. Validate all
@@ -86,7 +88,7 @@ and unchanged configuration after install/rollback. Retain idle checks and the
 process-lifetime lock, and test partial replacement failures and cache handling.
 No invocation may observe a partially replaced set of modules.
 
-Its acceptance flow must distinguish **PR head** from **main tip**. Existing
+Its acceptance flow must distinguish **PR head** from **main tip**. The original
 `check_acceptance` only sends `validate-offline-release`, and `verify_release`
 permits only canonical main. It cannot accept an unmerged PR171 head. Add a bounded
 PR-head acceptance step using the existing `validate-offline ... 171 <head>`
@@ -147,6 +149,7 @@ separate approval for a normal revert restoring the old five-file consumer revis
 then restore the matching old host/cache and validate the resulting current main
 SHA. Never rewrite history or reuse a stale receipt. Deployment remains held.
 
-No installation, cache operation, trust-pin/permission/credential change, merge or
-deployment was performed for this review. The follow-up installer, effective holds,
-installed acceptance and merge/deployment approvals remain pending. PR171 must wait.
+No installation, active cache/trust-pin/permission/credential change, merge or
+deployment was performed. Installer source preparation is available in the stacked
+review; its proposed pins are not active. Installer review, effective holds, installed
+acceptance and merge/deployment approvals remain pending. PR171 must wait.
