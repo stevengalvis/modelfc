@@ -22,6 +22,13 @@ from modelfc.recorded_offers import project_shortlist
 from modelfc.research_predictions import _sync_directories
 
 POLICY = "first-team-total-value-v1"
+# Immutable v1 semantics, deliberately independent of the live policy factory.
+QUALIFICATION_POLICY = {
+    "version": "team-total-no-vig-v1", "minimum_american_odds": -200,
+    "minimum_no_vig_edge": .05, "watchlist_no_vig_edge": -.05,
+    "edge_comparison_tolerance": 1e-12, "no_vig_price_source": "decimal_odds",
+    "decimal_american_odds_tolerance": .005,
+}
 DIRECTORY = "published-recommendations"
 VIEWS = ("best_value", "higher_probability")
 OFFER_FIELDS = (
@@ -76,11 +83,13 @@ def _records(state):
             published = _time(record["published_at_utc"])
             if (set(record) != {"schema_version", "policy_version", "publication_id",
                                 "published_at_utc", "forecast_created_at_utc", "offer",
-                                "ranking_views", "record_hash"}
+                                "ranking_views", "qualification_policy", "record_hash"}
                     or record["schema_version"] != 1 or record["policy_version"] != POLICY
                     or set(offer) != set(OFFER_FIELDS)
                     or record["record_hash"] != _canonical_hash(payload)
                     or record["publication_id"] != _identity(offer)
+                    or record["qualification_policy"] != QUALIFICATION_POLICY
+                    or offer["policy_version"] != record["qualification_policy"]["version"]
                     or path.stem != record["publication_id"]
                     or offer["market_type"] != "TEAM_TOTAL" or offer["team_side"] not in ("HOME", "AWAY")
                     or not (_time(record["forecast_created_at_utc"]) <= published < _time(offer["kickoff_utc"]))
@@ -116,6 +125,8 @@ def publish_locked(state_dir):
         for identity, offer in chosen.items():
             if identity in existing:
                 continue
+            if inventory["recorded"][offer["prediction_id"]]["qualification_policy"] != QUALIFICATION_POLICY:
+                raise LedgerError("UNSUPPORTED_PUBLICATION_POLICY")
             now = _now()
             forecast_at = predictions[offer["prediction_id"]]["created_at_utc"]
             kickoff = _time(offer["kickoff_utc"])
@@ -128,7 +139,8 @@ def publish_locked(state_dir):
             record = {"schema_version": 1, "policy_version": POLICY,
                       "publication_id": identity, "published_at_utc": now.isoformat(),
                       "forecast_created_at_utc": forecast_at,
-                      "offer": {k: offer[k] for k in OFFER_FIELDS}, "ranking_views": _views(offer)}
+                      "offer": {k: offer[k] for k in OFFER_FIELDS}, "ranking_views": _views(offer),
+                      "qualification_policy": dict(QUALIFICATION_POLICY)}
             record["offer"]["observation_age_seconds"] = (now - _time(offer["retrieved_at_utc"])).total_seconds()
             record["record_hash"] = _canonical_hash(record)
             directory = _state_directory(state, DIRECTORY)
@@ -191,7 +203,8 @@ def read(state_dir):
                             or _time(record["published_at_utc"]) > _now()):
                         raise ValueError
                     historical = get_market_intelligence(state, offer["prediction_id"],
-                                                         as_of=_time(record["published_at_utc"]))
+                                                         as_of=_time(record["published_at_utc"]),
+                                                         qualification_policy=record["qualification_policy"])
                     source_offers = [o for t in historical["targets"] for o in t["offers"]
                                      if o["target_id"] == offer["target_id"] and o["bookmaker"] == offer["bookmaker"]]
                     if len(source_offers) != 1:

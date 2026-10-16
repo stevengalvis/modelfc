@@ -141,6 +141,17 @@ class PublishedRecommendationTests(unittest.TestCase):
         self.assertEqual(summary["roi"], 0)
         self.assertIsNone(summary["win_rate"])
 
+    def test_live_policy_changes_cannot_requalify_frozen_publications(self):
+        from modelfc import corner_market_intelligence as intelligence
+        self.publish()
+        original = published.read(self.state)
+        with patch.object(intelligence, "current_qualification_policy", return_value={
+                **published.QUALIFICATION_POLICY, "version": "future-v2", "minimum_no_vig_edge": .99}), \
+                patch.object(intelligence, "qualification_decision", side_effect=AssertionError("live policy used")):
+            response = self.fx.client.get("/api/v1/prospective/performance?view=model_picks")
+            self.assertEqual(response.status_code, 200, response.text)
+            self.assertEqual(response.json(), original)
+
 
 if __name__ == "__main__":
     unittest.main()

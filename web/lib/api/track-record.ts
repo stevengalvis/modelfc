@@ -10,6 +10,7 @@ export interface TrackSummary {
 export interface Publication {
   publication_id: string; published_at_utc: string; forecast_created_at_utc: string;
   ranking_views: ShortlistRanking[]; offer: Recommendation & { opportunity_id: string };
+  qualification_policy: { version: string; minimum_american_odds: number; minimum_no_vig_edge: number };
   result: "WIN" | "LOSS" | "PUSH" | "PENDING"; profit_units: number | null;
 }
 export interface TrackRecord {
@@ -48,7 +49,10 @@ export function decodeTrackRecord(value: unknown): TrackRecord {
   for (const r of value.publications) {
     if (!record(r) || !hash(r.publication_id) || !timestamp(r.published_at_utc) || !timestamp(r.forecast_created_at_utc)
       || !record(r.offer) || typeof r.offer.opportunity_id !== "string" || !/^[0-9a-f]{32}$/.test(r.offer.opportunity_id)
-      || !Array.isArray(r.ranking_views)) return fail();
+      || !Array.isArray(r.ranking_views) || !record(r.qualification_policy)
+      || r.qualification_policy.version !== "team-total-no-vig-v1"
+      || r.qualification_policy.minimum_american_odds !== -200
+      || r.qualification_policy.minimum_no_vig_edge !== .05) return fail();
     const { opportunity_id: _, ...offer } = r.offer;
     try { decodeRecommendations([offer]); } catch { return fail(); }
     const o = offer as unknown as Recommendation;

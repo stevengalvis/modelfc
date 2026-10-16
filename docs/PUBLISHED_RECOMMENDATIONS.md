@@ -40,6 +40,11 @@ visible and publication does not assert a live executable price.
    The existing analysis view can prefer another high-probability line; this is
    deliberately not a separate published pick.
 
+Historical reads use the qualification policy snapshot stored with each pick and
+the immutable version-dispatched formula. Changes to live thresholds or policy
+versions never requalify a published pick. The v1 writer rejects an unrecognized
+live policy rather than publishing new semantics under the old policy identifier.
+
 ## Publication and reads
 
 `corner_prospective.run_once` invokes `publish_locked` while owning runner.lock.

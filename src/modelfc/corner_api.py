@@ -507,6 +507,7 @@ class PublishedPickResponse(StrictModel):
     forecast_created_at_utc: str
     offer: PublishedOfferResponse
     ranking_views: list[Literal["best_value", "higher_probability"]]
+    qualification_policy: dict[str, Any]
     record_hash: str
     result: Literal["WIN", "LOSS", "PUSH", "PENDING"]
     profit_units: float | None

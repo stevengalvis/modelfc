@@ -98,11 +98,20 @@
       "policy_version": "first-team-total-value-v1",
       "publication_id": "7c1c5e469063d33189bd6f8ef0583a300df7e8d717769da4881cc68cb5b00edd",
       "published_at_utc": "2026-09-20T02:00:30+00:00",
+      "qualification_policy": {
+        "decimal_american_odds_tolerance": 0.005,
+        "edge_comparison_tolerance": 1e-12,
+        "minimum_american_odds": -200,
+        "minimum_no_vig_edge": 0.05,
+        "no_vig_price_source": "decimal_odds",
+        "version": "team-total-no-vig-v1",
+        "watchlist_no_vig_edge": -0.05
+      },
       "ranking_views": [
         "best_value",
         "higher_probability"
       ],
-      "record_hash": "1a19b442be3b9b5204e808c0271cbfdc96505755f57b0b2bfc2c5154a5c6172f",
+      "record_hash": "68c5a372ae7878c7f03da4d4a4f6619764aa8c340667412c3b9a576a6c3dab94",
       "schema_version": 1,
       "result": "PENDING",
       "profit_units": null
