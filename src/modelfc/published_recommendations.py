@@ -111,7 +111,7 @@ def _views(offer):
     return ["best_value"] + (["higher_probability"] if offer["model_probability"] >= .65 else [])
 
 
-def publish_locked(state_dir):
+def publish_locked(state_dir, *, include_btts=True):
     """Called only by the live writer under runner.lock, never by reads/replay.
 
     No caller-supplied time. Clock sampled after source validation and checked
@@ -129,7 +129,8 @@ def publish_locked(state_dir):
         predictions = {p["prediction_id"]: p for p in inventory["predictions"]}
         chosen = {key: (value, predictions[value["prediction_id"]]["created_at_utc"])
                   for key, value in select(inventory, selection_time).items()}
-        chosen.update(btts.select(btts.records(state), selection_time))
+        if include_btts:
+            chosen.update(btts.select(btts.records(state), selection_time))
         events = {e["opportunity_id"] for e in inventory["opportunities"]}
         created = 0
         for identity, (offer, forecast_at) in chosen.items():

@@ -115,6 +115,25 @@ class PublishedBttsTests(unittest.TestCase):
                 outcomes.settle(self.state, digest(self.forecast), source(0,1))
             self.assertEqual(settled, self.report())
 
+    def test_no_pick_wins_only_when_at_least_one_team_does_not_score(self):
+        self.capture(prices={"fanduel": (1.2, 6.)}); self.publish()
+        self.now = published._time(self.forecast.fixture.kickoff_utc)+timedelta(hours=4)
+        row = dict(Div='E1', Date='31/12/2026', Time='15:00', HomeTeam='A', AwayTeam='D',
+                   FTHG='0', FTAG='1', FTR='A', HC='', AC='')
+        source = dict(provider='football-data.co.uk', filename='E1_2627.csv', file_sha256='b'*64,
+            row_number=2, row=row, row_sha256=digest(row), retrieved_at_utc=self.now.isoformat())
+        with patch.object(outcomes, 'utc_timestamp', return_value=self.now.isoformat()), \
+                patch.dict('sys.modules', {'modelfc.sportmonks_outcome_evidence': None}):
+            outcomes.settle(self.state, digest(self.forecast), source)
+            self.assertEqual(self.report()['summary']['profit_units'], 5)
+            self.assertEqual(self.report()['summary']['wins'], 1)
+
+    def test_higher_ev_side_wins_when_both_sides_qualify(self):
+        source = (self.capture(prices={"draftkings": (4., 4.)}),)
+        chosen = btts.select(source, self.now)
+        self.assertEqual(len(chosen), 1)
+        self.assertEqual(next(iter(chosen.values()))[0]['side'], 'YES')
+
     def test_crossed_kickoff_is_not_published(self):
         self.capture()
         kickoff = published._time(self.forecast.fixture.kickoff_utc)
