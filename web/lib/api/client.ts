@@ -1,5 +1,5 @@
 import type { ShortlistRanking } from "./types";
-import { decodeTrackRecord, emptyTrackRecord } from "./track-record";
+import { decodeTrackRecord, emptyTrackRecord, decodeStrategyPage } from "./track-record";
 import { decodeShortlist } from "./shortlist";
 import { decodeBttsPerformance, emptyBttsPerformance } from "./btts-performance";
 import { decodeRecordedOffers } from "./recorded-offers";
@@ -267,6 +267,24 @@ export function createApiClient(
       signal?.throwIfAborted();
       return decodePerformance(mode === "mock" ? structuredClone(mockPerformance)
         : await requestJson<unknown>(baseUrl!, "/prospective/performance", { signal }));
+    },
+    async strategyPicks(query: { strategy: ShortlistRanking; scope: "current" | "history"; market?: string; competition?: string; offset: number }, signal?: AbortSignal) {
+      checkConfiguration();
+      signal?.throwIfAborted();
+      const params = new URLSearchParams({view: "strategies", strategy: query.strategy, scope: query.scope, offset: String(query.offset), limit: "5"});
+      if (query.market) params.set("market", query.market);
+      if (query.competition) params.set("competition", query.competition);
+      const page = decodeStrategyPage(mode === "mock" ? {
+        ...emptyTrackRecord, policy_version:"independent-value-strategies-v1", strategy:query.strategy,
+        scope:query.scope, stake_dollars:2, simulated:true, summary_scope:"page", profit_dollars:0,
+        totals:emptyTrackRecord.summary, market_totals:[], total_profit_dollars:0,
+        total:0,offset:query.offset,limit:5,next_offset:null,
+      } : await requestJson<unknown>(baseUrl!, `/prospective/performance?${params}`, {signal,cache:"no-store"}));
+      if (page.strategy !== query.strategy || page.scope !== query.scope || page.offset !== query.offset || page.limit !== 5
+        || page.publications.some(r => query.market && r.offer.market_type !== query.market || query.competition && r.offer.competition !== query.competition)) {
+        throw new ModelFCApiError("Strategy response does not match the request.", "STRATEGY_CONTRACT_MISMATCH", false);
+      }
+      return page;
     },
     async trackRecord(signal?: AbortSignal) {
       checkConfiguration();

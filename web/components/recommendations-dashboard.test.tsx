@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { api } from "@/lib/api/client";
 import { mockRecordedOffers } from "@/lib/api/mock-recorded-offers";
 import type { Shortlist } from "@/lib/api/types";
-import { RecommendationsDashboard } from "./recommendations-dashboard";
+import { SavedPriceAnalysis as RecommendationsDashboard } from "./recommendations-dashboard";
 const data = (): Shortlist => ({ as_of_utc: mockRecordedOffers.as_of_utc, limit: 5, total: 1,
   offers: mockRecordedOffers.fixtures.flatMap(f => f.offers.map(o => ({ ...o, fixture_id: f.fixture_id }))) });
 const fresh = () => { const v = data(); v.as_of_utc = "2026-10-10T13:04:59Z";

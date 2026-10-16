@@ -568,6 +568,37 @@ class ModelPicksResponse(StrictModel):
     publications: list[PublishedPickResponse]
 
 
+class StrategyPickResponse(PublishedPickResponse):
+    schema_version: Literal[2]
+    strategy: Literal["best_value", "higher_probability"]
+    strategy_policy: Literal["independent-value-strategies-v1"]
+    policy_effective_at_utc: str
+    selection_id: str
+    simulated_stake_dollars: Literal[2]
+    profit_dollars: float | None
+
+
+class StrategyPageResponse(StrictModel):
+    policy_version: Literal["independent-value-strategies-v1"]
+    strategy: Literal["best_value", "higher_probability"]
+    scope: Literal["current", "history"]
+    stake_dollars: Literal[2]
+    simulated: Literal[True]
+    void_settlement_supported: Literal[False]
+    summary_scope: Literal["page"]
+    totals: PublishedSummaryResponse
+    market_totals: list[PublishedGroupResponse]
+    total_profit_dollars: float
+    summary: PublishedSummaryResponse
+    profit_dollars: float
+    by_league_market: list[PublishedGroupResponse]
+    publications: list[StrategyPickResponse]
+    total: int
+    offset: int
+    limit: int
+    next_offset: int | None
+
+
 def _error(code: str, message: str, status: int, *, retryable: bool = False) -> JSONResponse:
     return JSONResponse(status_code=status, content={"error": {
         "code": code, "message": message, "details": {},
@@ -783,12 +814,22 @@ def create_app(
 
     @app.get(
         "/api/v1/prospective/performance",
-        response_model=ProspectivePerformanceResponse | ModelPicksResponse,
+        response_model=ProspectivePerformanceResponse | ModelPicksResponse | StrategyPageResponse,
     )
     def get_prospective_performance(response: Response,
-                                   view: Literal["legacy", "model_picks"] = "legacy") -> dict[str, Any]:
+                                   view: Literal["legacy", "model_picks", "strategies"] = "legacy",
+                                   strategy: Literal["best_value", "higher_probability"] = "best_value",
+                                   scope: Literal["current", "history"] = "current",
+                                   market: Literal["TEAM_TOTAL", "BTTS"] | None = None,
+                                   competition: Literal["E1", "E0", "SP1"] | None = None,
+                                   offset: int = Query(0, ge=0, le=2000),
+                                   limit: int = Query(5, ge=1, le=20)) -> dict[str, Any]:
         response.headers["Cache-Control"] = "no-store"
         try:
+            if view == "strategies":
+                from modelfc.pick_strategies import read
+                return read(state, strategy=strategy, scope=scope, market=market,
+                            competition=competition, offset=offset, limit=limit)
             if view == "model_picks":
                 from modelfc.published_recommendations import read
                 return read(state)

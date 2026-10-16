@@ -66,7 +66,9 @@ class PublishedRecommendationTests(unittest.TestCase):
         self.assertEqual(summary["status"], "PARTIAL", summary)
         self.assertEqual(summary["provider_requests"], 0)
         acquisition.assert_called_once()
-        self.assertEqual(published.read(self.state)["summary"]["picks"], 1)
+        from modelfc.pick_strategies import read
+        self.assertEqual(read(self.state)["summary"]["picks"], 1)
+        self.assertEqual(published.read(self.state)["summary"]["picks"], 0)
 
     def test_exact_selection_and_best_book_are_deterministic(self):
         inventory = published._locked_inventory(self.state, now=self.now, include_recorded=True, upcoming_only=True)

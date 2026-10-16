@@ -2,7 +2,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { mockOpportunities, mockPerformance, mockPredictions } from "../lib/api/mock";
 import { api } from "../lib/api/client";
-import { PredictionsDashboard, PerformanceDashboard } from "./prospective-dashboard";
+import { PredictionsDashboard, ModelAccuracyDashboard as PerformanceDashboard } from "./prospective-dashboard";
 
 afterEach(() => { cleanup(); vi.restoreAllMocks(); window.history.replaceState(null, "", "/"); });
 describe("prospective dashboards", () => {
