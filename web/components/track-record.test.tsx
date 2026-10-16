@@ -30,3 +30,11 @@ it("shows unavailable separately from empty and permits retry", async () => {
   fireEvent.click(screen.getByText("Retry published record"));
   expect(await screen.findByText(/No published recommendations yet/)).toBeInTheDocument();
 });
+
+it("labels BTTS Yes separately from team corners", async () => {
+  const btts = (await import("../../tests/fixtures/btts_track_record.json")).default;
+  vi.spyOn(api, "trackRecord").mockResolvedValue(decodeTrackRecord(btts));
+  render(<PublishedTrackRecord />);
+  expect(await screen.findByText("Both teams to score: Yes")).toBeInTheDocument();
+  expect(screen.getByText(/E1 · Both teams to score · 1 published picks/)).toBeInTheDocument();
+});

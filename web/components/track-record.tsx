@@ -21,7 +21,7 @@ export function PublishedTrackRecord() {
   const rows = data?.publications.filter(r => r.ranking_views.includes(view)) ?? [];
   return <section className="panel ledger-panel" aria-label={TRACK_RECORD_LABEL}>
     <h2>{TRACK_RECORD_LABEL}</h2><p>{TRACK_RECORD_SUBTITLE}</p>
-    <p>One frozen selection per match and team-corner market. Best Value selects the line; the best eligible bookmaker supplies its saved price. Higher Probability is the subset with at least 65% modeled win probability. Overlapping views count once.</p>
+    <p>One frozen selection per match and market: each team’s corner total, or Championship BTTS Yes/No. Best Value selects the outcome; the best eligible bookmaker supplies its saved price. Higher Probability is the subset with at least 65% modeled win probability. Overlapping views count once.</p>
     {error ? <div role="alert"><p>Published recommendations could not be loaded. No result is inferred.</p><button onClick={() => { setError(false); setAttempt(n => n+1); }}>Retry published record</button></div>
       : !data ? <p role="status">Loading published recommendations…</p> : null}
     {data && summary && <>
@@ -35,11 +35,11 @@ export function PublishedTrackRecord() {
         <div><dt>Pending</dt><dd>{summary.pending}</dd></div><div><dt>Win rate, excluding pushes</dt><dd>{rate(summary.win_rate)}</dd></div>
         <div><dt>Profit, units</dt><dd>{summary.profit_units.toFixed(2)}</dd></div><div><dt>ROI on settled picks</dt><dd>{rate(summary.roi)}</dd></div></dl>
       <p>One hypothetical unit risked per published pick, at its original price. Pushes return the stake and remain in the ROI denominator. Missing results remain pending. Sportsbook void settlement is not available yet; these are not actual wager returns.</p>
-      {data.by_league_market.map(group => <p key={`${group.competition}:${group.market_type}`}>{group.competition} · Team corners · {group.summary.picks} published picks across both views, counted once</p>)}
+      {data.by_league_market.map(group => <p key={`${group.competition}:${group.market_type}`}>{group.competition} · {group.market_type === "BTTS" ? "Both teams to score" : "Team corners"} · {group.summary.picks} published picks across both views, counted once</p>)}
       {rows.length > 0 && <div className="performance-calibration"><table><caption>{MODEL_PICKS_LABEL} · published selections and original prices</caption>
         <thead><tr><th>Match / league</th><th>Selection</th><th>Book / odds</th><th>Publication / quote time (UTC)</th><th>Result</th><th>Profit (units)</th></tr></thead>
         <tbody>{rows.map(row => <tr key={row.publication_id}><td>{row.offer.home_team} vs {row.offer.away_team} · {row.offer.competition}</td>
-          <td>{row.offer.team} corners {row.offer.direction.toLowerCase()} {row.offer.line}</td>
+          <td>{row.offer.market_type === "BTTS" ? `Both teams to score: ${row.offer.side === "YES" ? "Yes" : "No"}` : `${row.offer.team} corners ${row.offer.direction.toLowerCase()} ${row.offer.line}`}</td>
           <td>{row.offer.bookmaker} {row.offer.american_odds > 0 ? "+" : ""}{row.offer.american_odds}</td>
           <td><time dateTime={row.published_at_utc}>{new Date(row.published_at_utc).toISOString()}</time><br /><time dateTime={row.offer.retrieved_at_utc}>{new Date(row.offer.retrieved_at_utc).toISOString()}</time></td>
           <td>{row.result}</td><td>{row.profit_units === null ? "—" : row.profit_units.toFixed(2)}</td></tr>)}</tbody>

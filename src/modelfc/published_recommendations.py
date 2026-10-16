@@ -1,4 +1,4 @@
-"""First-publication corner picks. No acquisition, model fitting or historical backfill.
+"""First-publication corner and Championship BTTS picks. No acquisition, model fitting or historical backfill.
 
 The existing prospective runner owns runner.lock before calling publish_locked.
 GET readers only acquire existing shared locks. Publication makes the immutable
@@ -9,6 +9,7 @@ import math
 from pathlib import Path
 import re
 
+from modelfc import published_btts as btts
 from modelfc.corner_analysis_store import _canonical_hash
 from modelfc.corner_market_intelligence import get_market_intelligence
 from modelfc.corner_opportunities import current_qualification_policy
@@ -55,7 +56,7 @@ def _fixture(offer):
 def _identity(offer):
     # No line, direction, bookmaker, prediction, retrieval or policy in identity:
     # all revisions compete for the same first-publication slot.
-    return _canonical_hash([*_fixture(offer), offer["market_type"], offer["team_side"]])
+    return _canonical_hash([*_fixture(offer), offer["market_type"], offer.get("team_side")])
 
 
 def select(inventory, now):
@@ -85,14 +86,15 @@ def _records(state):
             if (set(record) != {"schema_version", "policy_version", "publication_id",
                                 "published_at_utc", "forecast_created_at_utc", "offer",
                                 "ranking_views", "qualification_policy", "record_hash"}
-                    or record["schema_version"] != 1 or record["policy_version"] != POLICY
-                    or set(offer) != set(OFFER_FIELDS)
+                    or record["schema_version"] != 1 or record["policy_version"] != ("first-btts-value-v1" if offer["market_type"] == "BTTS" else POLICY)
+                    or (offer["market_type"] != "BTTS" and set(offer) != set(OFFER_FIELDS))
                     or record["record_hash"] != _canonical_hash(payload)
                     or record["publication_id"] != _identity(offer)
-                    or record["qualification_policy"] != QUALIFICATION_POLICY
+                    or record["qualification_policy"] != (btts.QUALIFICATION_POLICY if offer["market_type"] == "BTTS" else QUALIFICATION_POLICY)
                     or offer["policy_version"] != record["qualification_policy"]["version"]
                     or path.stem != record["publication_id"]
-                    or offer["market_type"] != "TEAM_TOTAL" or offer["team_side"] not in ("HOME", "AWAY")
+                    or not (offer["market_type"] == "BTTS" and offer.get("side") in ("YES", "NO")
+                            or offer["market_type"] == "TEAM_TOTAL" and offer["team_side"] in ("HOME", "AWAY"))
                     or not (_time(record["forecast_created_at_utc"]) <= published < _time(offer["kickoff_utc"]))
                     or not (_time(offer["retrieved_at_utc"]) <= _time(offer["availability_checked_at_utc"]) <= published)
                     or offer["american_odds"] < -200 or offer["expected_profit"] <= 0
@@ -123,27 +125,29 @@ def publish_locked(state_dir):
         inventory = _locked_inventory(state, now=_now(), include_recorded=True, upcoming_only=True)
         if any(view["qualification_policy"] != QUALIFICATION_POLICY for view in inventory["recorded"].values()):
             raise LedgerError("UNSUPPORTED_PUBLICATION_POLICY")
-        chosen = select(inventory, _now())
+        selection_time = _now()
         predictions = {p["prediction_id"]: p for p in inventory["predictions"]}
+        chosen = {key: (value, predictions[value["prediction_id"]]["created_at_utc"])
+                  for key, value in select(inventory, selection_time).items()}
+        chosen.update(btts.select(btts.records(state), selection_time))
         events = {e["opportunity_id"] for e in inventory["opportunities"]}
         created = 0
-        for identity, offer in chosen.items():
+        for identity, (offer, forecast_at) in chosen.items():
             if identity in existing:
                 continue
             now = _now()
-            forecast_at = predictions[offer["prediction_id"]]["created_at_utc"]
             kickoff = _time(offer["kickoff_utc"])
             if now >= kickoff:
                 continue
-            if (offer["opportunity_id"] not in events
+            if (offer["market_type"] != "BTTS" and offer["opportunity_id"] not in events
                     or _time(forecast_at) > now or _time(offer["retrieved_at_utc"]) > now
                     or _time(offer["availability_checked_at_utc"]) > now):
                 raise LedgerError("INVALID_PUBLICATION_CHRONOLOGY")
-            record = {"schema_version": 1, "policy_version": POLICY,
+            record = {"schema_version": 1, "policy_version": btts.POLICY if offer["market_type"] == "BTTS" else POLICY,
                       "publication_id": identity, "published_at_utc": now.isoformat(),
                       "forecast_created_at_utc": forecast_at,
-                      "offer": {k: offer[k] for k in OFFER_FIELDS}, "ranking_views": _views(offer),
-                      "qualification_policy": dict(QUALIFICATION_POLICY)}
+                      "offer": dict(offer) if offer["market_type"] == "BTTS" else {k: offer[k] for k in OFFER_FIELDS}, "ranking_views": _views(offer),
+                      "qualification_policy": dict(btts.QUALIFICATION_POLICY if offer["market_type"] == "BTTS" else QUALIFICATION_POLICY)}
             record["offer"]["observation_age_seconds"] = (now - _time(offer["retrieved_at_utc"])).total_seconds()
             record["record_hash"] = _canonical_hash(record)
             directory = _state_directory(state, DIRECTORY)
@@ -189,8 +193,14 @@ def read(state_dir):
             events = {e["opportunity_id"]: e for e in inventory["opportunities"]}
             predictions = {p["prediction_id"]: p for p in inventory["predictions"]}
             targets = inventory["targets"]
+            btts_source = btts.records(state) if any(r["offer"]["market_type"] == "BTTS" for r in records) else ()
             for record in records:
                 offer = record["offer"]
+                if offer["market_type"] == "BTTS":
+                    btts.validate(record, btts_source)
+                    result, profit = btts.result(record, state, btts_source, _now())
+                    rows.append({**record, "result": result, "profit_units": profit})
+                    continue
                 try:
                     event = events[offer["opportunity_id"]]
                     prediction = predictions[offer["prediction_id"]]
@@ -226,6 +236,6 @@ def read(state_dir):
         groups.append({"competition": competition, "market_type": market,
                        "summary": _summary([r for r in rows if r["offer"]["competition"] == competition
                                             and r["offer"]["market_type"] == market])})
-    return {"policy_version": POLICY, "void_settlement_supported": False,
+    return {"policy_version": "first-published-value-v2", "void_settlement_supported": False,
             "summary": _summary(rows), "by_view": {view: _summary([r for r in rows if view in r["ranking_views"]]) for view in VIEWS},
             "by_league_market": groups, "publications": rows}
