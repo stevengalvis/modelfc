@@ -75,6 +75,17 @@ class EvidenceAclTests(unittest.TestCase):
         self.assertFalse(self.path.exists())
         self.assertEqual(list(self.path.parent.iterdir()), [])
 
+    def test_published_picks_use_existing_readonly_evidence_grant(self):
+        target = self.state / "published-recommendations" / ("a" * 64 + ".json")
+        target.parent.mkdir()
+        with patch.dict(os.environ, {"MODELFC_EVIDENCE_ACL_USER": "modelfc-api"}), \
+                patch("modelfc.ledger_storage.pwd.getpwnam", return_value=type("User", (), {"pw_uid": 10001})()), \
+                patch("modelfc.ledger_storage.subprocess.run") as grant:
+            with ledger_lock(self.state) as lock_fd:
+                write_new_record(target, {"pick": True}, evidence_state=self.state, evidence_lock_fd=lock_fd)
+        self.assertTrue(target.exists())
+        self.assertTrue(all(call.args[0][2] in ("u:10001:--x", "u:10001:r-x", "u:10001:r--") for call in grant.call_args_list))
+
     def test_empty_prospective_state_needs_no_state_lock(self):
         self.assertFalse((self.state / ".lock").exists())
         self.assertEqual(read_predictions(self.state), [])

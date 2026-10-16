@@ -171,6 +171,7 @@ function RankedRecommendations({ ranking }: { ranking: ShortlistRanking }) {
   const selected = offers.find(o => o.fixture_id === expanded);
   return <>
     <p className="recorded-note">Saved data is checked every minute. This page does not request new sportsbook odds. Older qualifying quotes stay visible with a price-recheck label.</p>
+    <p className="recorded-note">Analysis choices and alternative lines; these are not the published pick record. <Link href="/performance">View published recommendations and results</Link></p>
     <p className="recorded-note">Latest capture per fixture, best qualifying bookmaker per target. Ranking covers up to 100 nearest upcoming fixtures. <Link href="/predictions">Forecast ledger and past fixtures</Link></p>
     {failed && <section className="panel ledger-message" role="alert"><h2>Shortlist could not be refreshed</h2>
       <p>{data ? "Showing the previous read. Prices need rechecking." : "Saved choices are unavailable."}</p><button onClick={retry}>Retry</button></section>}

@@ -658,23 +658,23 @@ def current_qualification_policy():
             "decimal_american_odds_tolerance": DECIMAL_AMERICAN_ODDS_TOLERANCE}
 
 
-def _prices_are_consistent(selection: dict[str, Any]) -> bool:
+def _prices_are_consistent(selection: dict[str, Any], *, tolerance: float | None = None) -> bool:
     profit, _ = american_odds_terms(selection["american_odds"])
     american_decimal = 1 + profit
     return math.isclose(
         selection["decimal_odds"], american_decimal, rel_tol=0.0,
-        abs_tol=DECIMAL_AMERICAN_ODDS_TOLERANCE,
+        abs_tol=DECIMAL_AMERICAN_ODDS_TOLERANCE if tolerance is None else tolerance,
     )
 
 
-def paired_price_terms(observation: dict[str, Any]):
+def paired_price_terms(observation: dict[str, Any], *, tolerance: float | None = None):
     """Yield unambiguous, consistent same-book Over/Under price pairs.
 
     Pair only within this observation; never borrow a side from another book,
     line or retrieval. Shared by evidence assessment and read-time views.
     """
     for _, sides in _paired_selections(observation):
-        if not all(_prices_are_consistent(selection) for selection in sides.values()):
+        if not all(_prices_are_consistent(selection, tolerance=tolerance) for selection in sides.values()):
             continue
         try:
             implied = {direction: 1 / selection["decimal_odds"]

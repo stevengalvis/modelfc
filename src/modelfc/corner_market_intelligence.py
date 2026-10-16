@@ -145,9 +145,9 @@ def best_recommendations(offers: Iterable[dict[str, Any]]) -> list[dict[str, Any
     return rank_supported_offers(selected)
 
 
-def _offer(prediction, observation, selection, decisions):
+def _offer(prediction, observation, selection, decisions, *, price_tolerance=None):
     target = evaluate_target(prediction, selection, observation["retrieved_at_utc"])
-    consistent = _prices_are_consistent(selection)
+    consistent = _prices_are_consistent(selection, tolerance=price_tolerance)
     supported = target["status"] == "SUPPORTED" and consistent
     decision = decisions.get(selection["selection_id"]) if supported else None
     value = None
@@ -198,6 +198,7 @@ def _validated_as_of(as_of, max_observation_age_seconds):
 def get_market_intelligence(
     state_dir: str | Path, prediction_id: str, *, as_of: datetime | None = None,
     max_observation_age_seconds: float = DEFAULT_MAX_OBSERVATION_AGE_SECONDS,
+    qualification_policy: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Compare latest stored offers, read-only, with optional pre-kickoff replay.
 
@@ -219,6 +220,7 @@ def get_market_intelligence(
     return market_intelligence_from_snapshot(
         prediction, prediction_observations(state_dir, prediction), as_of=as_of,
         max_observation_age_seconds=max_observation_age_seconds,
+        qualification_policy=qualification_policy,
     )
 
 
@@ -226,6 +228,7 @@ def market_intelligence_from_snapshot(
     prediction: dict[str, Any], observations: list[dict[str, Any]], *,
     as_of: datetime | None = None,
     max_observation_age_seconds: float = DEFAULT_MAX_OBSERVATION_AGE_SECONDS,
+    qualification_policy: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Derive the existing view from validated, chronologically ordered records.
 
@@ -233,7 +236,12 @@ def market_intelligence_from_snapshot(
     reads or writes storage; all predictions in a response can share one as_of.
     """
     as_of = _validated_as_of(as_of, max_observation_age_seconds)
-    policy = current_qualification_policy()
+    # Historical callers supply their immutable policy snapshot. Live callers
+    # retain the current entrypoint; archived semantics use version dispatch.
+    from modelfc.corner_opportunities import qualification_decision_for_policy
+    policy = dict(qualification_policy) if qualification_policy is not None else current_qualification_policy()
+    decide = qualification_decision_for_policy if qualification_policy is not None else qualification_decision
+    price_tolerance = policy["decimal_american_odds_tolerance"] if qualification_policy is not None else None
     observations = [item for item in observations if _timestamp(item["retrieved_at_utc"]) <= as_of]
     latest = {}
     if _timestamp(prediction["created_at_utc"]) <= as_of:
@@ -242,15 +250,15 @@ def market_intelligence_from_snapshot(
             if observed_at > as_of:
                 continue
             decisions = {}
-            for sides, implied, total in paired_price_terms(observation):
+            for sides, implied, total in paired_price_terms(observation, tolerance=price_tolerance):
                 for selection in sides.values():
                     target = evaluate_target(prediction, selection, observation["retrieved_at_utc"])
                     if target["status"] == "SUPPORTED":
-                        decisions[selection["selection_id"]] = qualification_decision(
+                        decisions[selection["selection_id"]] = decide(
                             selection, implied, total, target["decisive_model_probability"], policy,
                         )
             for selection in observation["selections"]:
-                offer = _offer(prediction, observation, selection, decisions)
+                offer = _offer(prediction, observation, selection, decisions, price_tolerance=price_tolerance)
                 key = (offer["target_id"], offer["bookmaker"])
                 order = (observed_at, offer["observation_id"], offer["selection_id"])
                 if key not in latest or order > latest[key][0]:
