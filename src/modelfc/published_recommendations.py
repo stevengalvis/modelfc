@@ -11,6 +11,7 @@ import re
 
 from modelfc.corner_analysis_store import _canonical_hash
 from modelfc.corner_market_intelligence import get_market_intelligence
+from modelfc.corner_opportunities import current_qualification_policy
 from modelfc.corner_prospective_read import (
     _locked_inventory, _state_directory, _time,
 )
@@ -116,8 +117,12 @@ def publish_locked(state_dir):
     """
     state = Path(state_dir)
     with ledger_lock(state) as lock_fd:
+        if current_qualification_policy() != QUALIFICATION_POLICY:
+            raise LedgerError("UNSUPPORTED_PUBLICATION_POLICY")
         existing = {r["publication_id"] for r in _records(state)}
         inventory = _locked_inventory(state, now=_now(), include_recorded=True, upcoming_only=True)
+        if any(view["qualification_policy"] != QUALIFICATION_POLICY for view in inventory["recorded"].values()):
+            raise LedgerError("UNSUPPORTED_PUBLICATION_POLICY")
         chosen = select(inventory, _now())
         predictions = {p["prediction_id"]: p for p in inventory["predictions"]}
         events = {e["opportunity_id"] for e in inventory["opportunities"]}
@@ -125,8 +130,6 @@ def publish_locked(state_dir):
         for identity, offer in chosen.items():
             if identity in existing:
                 continue
-            if inventory["recorded"][offer["prediction_id"]]["qualification_policy"] != QUALIFICATION_POLICY:
-                raise LedgerError("UNSUPPORTED_PUBLICATION_POLICY")
             now = _now()
             forecast_at = predictions[offer["prediction_id"]]["created_at_utc"]
             kickoff = _time(offer["kickoff_utc"])

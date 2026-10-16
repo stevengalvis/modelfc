@@ -1,5 +1,6 @@
 """Offline publication tests against real validated capture/outcome evidence."""
 from datetime import date, timedelta
+from dataclasses import replace
 import json
 import unittest
 from unittest.mock import patch
@@ -151,6 +152,39 @@ class PublishedRecommendationTests(unittest.TestCase):
             response = self.fx.client.get("/api/v1/prospective/performance?view=model_picks")
             self.assertEqual(response.status_code, 200, response.text)
             self.assertEqual(response.json(), original)
+
+    def test_rounded_pair_replays_with_frozen_price_tolerance(self):
+        from modelfc import corner_opportunities as opportunities
+        raw = self.fx.later_observation(line=4.5)
+        selections = tuple(replace(s, request=replace(s.request, american_odds=-150), decimal_odds=1.67)
+                           if s.request.side == "UNDER" else s for s in raw.selections)
+        observation, _ = opportunities.store_market_observation(self.state, replace(
+            raw, selections=selections, availability={"draftkings": {"status": "CORNERS_RETURNED"}}))
+        opportunities.assess_observation(self.state, self.fx.prediction, observation)
+        self.now = recorded.NOW + timedelta(minutes=2)
+        self.publish()
+        original = published.read(self.state)
+        self.assertEqual(original["publications"][0]["offer"]["decimal_odds"], 1.67)
+        with patch.object(opportunities, "DECIMAL_AMERICAN_ODDS_TOLERANCE", 0):
+            response = self.fx.client.get("/api/v1/prospective/performance?view=model_picks")
+            self.assertEqual(response.status_code, 200, response.text)
+            self.assertEqual(response.json(), original)
+
+    def test_policy_mismatch_rejects_before_selection_even_with_no_new_slots(self):
+        from modelfc import corner_market_intelligence as intelligence
+        changed = {**published.QUALIFICATION_POLICY, "minimum_no_vig_edge": .99}
+        for existing in (False, True):
+            if existing:
+                self.publish()
+            with self.subTest(existing=existing), \
+                    patch.object(intelligence, "current_qualification_policy", return_value=changed), \
+                    patch.object(published, "select", side_effect=AssertionError("selection ran")):
+                with self.assertRaisesRegex(LedgerError, "UNSUPPORTED_PUBLICATION_POLICY"):
+                    self.publish()
+        with patch.object(published, "current_qualification_policy", return_value=changed), \
+                patch.object(published, "_locked_inventory", side_effect=AssertionError("inventory ran")):
+            with self.assertRaisesRegex(LedgerError, "UNSUPPORTED_PUBLICATION_POLICY"):
+                self.publish()
 
 
 if __name__ == "__main__":

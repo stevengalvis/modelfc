@@ -145,9 +145,9 @@ def best_recommendations(offers: Iterable[dict[str, Any]]) -> list[dict[str, Any
     return rank_supported_offers(selected)
 
 
-def _offer(prediction, observation, selection, decisions):
+def _offer(prediction, observation, selection, decisions, *, price_tolerance=None):
     target = evaluate_target(prediction, selection, observation["retrieved_at_utc"])
-    consistent = _prices_are_consistent(selection)
+    consistent = _prices_are_consistent(selection, tolerance=price_tolerance)
     supported = target["status"] == "SUPPORTED" and consistent
     decision = decisions.get(selection["selection_id"]) if supported else None
     value = None
@@ -241,6 +241,7 @@ def market_intelligence_from_snapshot(
     from modelfc.corner_opportunities import qualification_decision_for_policy
     policy = dict(qualification_policy) if qualification_policy is not None else current_qualification_policy()
     decide = qualification_decision_for_policy if qualification_policy is not None else qualification_decision
+    price_tolerance = policy["decimal_american_odds_tolerance"] if qualification_policy is not None else None
     observations = [item for item in observations if _timestamp(item["retrieved_at_utc"]) <= as_of]
     latest = {}
     if _timestamp(prediction["created_at_utc"]) <= as_of:
@@ -249,7 +250,7 @@ def market_intelligence_from_snapshot(
             if observed_at > as_of:
                 continue
             decisions = {}
-            for sides, implied, total in paired_price_terms(observation):
+            for sides, implied, total in paired_price_terms(observation, tolerance=price_tolerance):
                 for selection in sides.values():
                     target = evaluate_target(prediction, selection, observation["retrieved_at_utc"])
                     if target["status"] == "SUPPORTED":
@@ -257,7 +258,7 @@ def market_intelligence_from_snapshot(
                             selection, implied, total, target["decisive_model_probability"], policy,
                         )
             for selection in observation["selections"]:
-                offer = _offer(prediction, observation, selection, decisions)
+                offer = _offer(prediction, observation, selection, decisions, price_tolerance=price_tolerance)
                 key = (offer["target_id"], offer["bookmaker"])
                 order = (observed_at, offer["observation_id"], offer["selection_id"])
                 if key not in latest or order > latest[key][0]:
