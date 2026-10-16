@@ -230,6 +230,9 @@ def install(source_sha):
         os.chmod(saved, 0o600)
         sync_file(saved)
         sync_directory(backup)
+        # Persist the backup's parent entry before destroying any rollback input.
+        # Syncing the backup alone does not make its new name crash-durable.
+        sync_directory(DEST)
         print(json.dumps({'backup': str(backup), 'source_sha': source_sha}), flush=True)
         try:
             require(cache_snapshot()[0] == cached)

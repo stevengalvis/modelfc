@@ -128,6 +128,75 @@ class InstallTests(unittest.TestCase):
             os.umask(original)
         self.assertEqual((backup / 'manifest.json').stat().st_mode & 0o777, 0o600)
 
+    def test_backup_is_durable_before_cache_removal_or_module_replacement(self):
+        cache = self.write_cache()
+        events = []
+        sync_file, sync_directory = installer.sync_file, installer.sync_directory
+        unlink, replace = Path.unlink, os.replace
+
+        def file_synced(path):
+            sync_file(path)
+            events.append(('file', path))
+
+        def directory_synced(path):
+            sync_directory(path)
+            events.append(('directory', path))
+
+        def require_durable_backup():
+            backups = list(self.dest.glob('.zen48-backup-*'))
+            self.assertEqual(len(backups), 1)
+            backup = backups[0]
+            backup_sync = events.index(('directory', backup))
+            self.assertIn(('directory', self.dest), events[backup_sync + 1:])
+            for name in (*('old-' + name for name in installer.FILES),
+                         'old-release-evidence.json', 'manifest.json'):
+                self.assertIn(('file', backup / name), events[:backup_sync])
+
+        def checked_unlink(path, *args, **kwargs):
+            if path == cache:
+                require_durable_backup()
+                events.append(('cache removal', path))
+            return unlink(path, *args, **kwargs)
+
+        def checked_replace(source, destination):
+            if Path(destination).parent == self.dest:
+                require_durable_backup()
+                events.append(('module replacement', Path(destination)))
+            return replace(source, destination)
+
+        with patch.object(installer, 'sync_file', side_effect=file_synced), \
+                patch.object(installer, 'sync_directory', side_effect=directory_synced), \
+                patch.object(Path, 'unlink', checked_unlink), \
+                patch.object(installer.os, 'replace', side_effect=checked_replace):
+            self.install()
+        self.assertEqual(sum(kind == 'cache removal' for kind, _ in events), 1)
+        self.assertEqual(sum(kind == 'module replacement' for kind, _ in events), len(installer.FILES))
+
+    def test_backup_parent_sync_failure_leaves_modules_and_cache_untouched(self):
+        sync_directory = installer.sync_directory
+        for has_cache in (False, True):
+            with self.subTest(has_cache=has_cache):
+                if has_cache:
+                    self.write_cache()
+                before = installer.cache_snapshot()
+                synced = []
+                def fail_parent(path):
+                    if path == self.dest:
+                        raise OSError('backup parent sync failed')
+                    sync_directory(path)
+                    synced.append(path)
+                with patch.object(installer, 'sync_directory', side_effect=fail_parent), \
+                        patch.object(installer.os, 'replace') as replace, \
+                        patch.object(installer, 'restore_locked') as restore:
+                    with self.assertRaisesRegex(OSError, 'backup parent sync failed'):
+                        self.install()
+                self.assertTrue(any(p.parent == self.dest for p in synced))
+                replace.assert_not_called()
+                restore.assert_not_called()
+                self.assertEqual(installer.cache_snapshot(), before)
+                for name, raw in self.original.items():
+                    self.assertEqual((self.dest / name).read_bytes(), raw)
+
     def test_wrong_stage_hash_or_harness_never_changes_installation(self):
         for name in ('STAGED_SHA', 'validate_pr.py', 'validate_capture.py'):
             path = self.source / name

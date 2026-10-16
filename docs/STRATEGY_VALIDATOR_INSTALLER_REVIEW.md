@@ -22,7 +22,10 @@ or new hashes, a busy validator or an orphan `release-evidence.tmp` stop install
 
 Under the existing idle/validation lock, it backs up the bounded private release
 cache with its bytes and metadata, then removes that cache from the active path
-before changing modules. No cache schema conversion is attempted. Rollback checks
+before changing modules. Before either mutation, it fsyncs all backup files and
+the manifest, then the backup directory, then its parent installation directory.
+Failure at that durability barrier leaves active files and cache untouched.
+No cache schema conversion is attempted. Rollback checks
 all module/cache backup hashes before replacing files, retains any new-format
 receipt for diagnosis, and restores the original cache or original absence.
 A partial failure rolls back when idle; otherwise it reports
