@@ -190,7 +190,9 @@ def read(state_dir):
     if directory.exists():
         with existing_read_lock(state / "prospective" / "runner.lock"), ledger_read_lock(state):
             records = _records(state)
-            inventory = _locked_inventory(state, now=_now())
+            # Published corners never reference research-only forecasts. BTTS outcomes
+            # are validated separately so absent optional provider code stays pending.
+            inventory = _locked_inventory(state, now=_now(), include_research=False)
             events = {e["opportunity_id"]: e for e in inventory["opportunities"]}
             predictions = {p["prediction_id"]: p for p in inventory["predictions"]}
             targets = inventory["targets"]
