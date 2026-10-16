@@ -6,6 +6,40 @@ also breaks validation. Keep the PR draft until a separately reviewed installer,
 coordinated maintenance window and installed acceptance are ready. This document
 is a source review and plan, not approval or evidence of host installation.
 
+## Runtime correction and unresolved image blocker
+
+The failed rollout restored the predecessor successfully. The image's baked
+`/trusted/validate_capture.py` remained old even though the host harness was new.
+PR171 now contains the controller correction; stacked PR172 must contain **exactly
+the same five payload files**, with matching installer pins. Installing a controller
+changed only in PR172 and then merging unchanged PR171 is invalid.
+
+The controller mounts only the fixed root-owned installed file
+`/opt/modelfc-validator/validate_capture.py` read-only onto that exact container
+path. It rejects symlinks, missing/nonregular/hardlinked files, non-root ownership,
+unsafe ancestors and any leaf mode other than 0555. It holds a verified read-only
+file descriptor under the existing process-lifetime validation/installer lock,
+rechecks inode/metadata/hash before and after launch, and never passes that descriptor
+(or the lock) into the container. A trusted command-line bootstrap checks the
+mounted device/inode/mode/link count/size/hash before any harness code runs, then
+compiles the **same bytes it checked**. A replacement in the launch gap fails
+closed; no unchecked reopen or baked-harness fallback is possible. Container UID
+mapping changes owner numbers, so ownership is checked on the host; inode and byte
+identity are checked again inside the container. Candidate/configuration paths
+cannot select the mount. No installation directory, configuration, cache or
+credential mount is added. Image pin, network isolation, read-only root filesystem,
+capabilities and resource restrictions are unchanged.
+
+**Activation remains blocked with the existing image.** The isolated actual-image
+probe reached the new strategy code but failed importing `pydantic`. Image
+`sha256:3ea9d3919aa47eef62861ec31e2464c3dcbf9353a1ccb327a37b72f96980d1b6`
+contains the stdlib-only predecessor runtime. A disposable offline-built fixture
+with Pydantic demonstrates the mount/strategy regression, but does not approve a
+new image or establish installed acceptance. Resolving runtime dependencies and
+reviewing the resulting immutable image/configuration binding requires separate
+scope and approval; do not install these artifacts against the unchanged image
+expecting strategy PASS. See [regression evidence](STRATEGY_VALIDATOR_RUNTIME_REGRESSION.md).
+
 ## Compatibility established from exact source
 
 Compared main `1f51047af65bba30e1684973a65e1e0154af1fab` (old) with
@@ -54,14 +88,14 @@ as an ordinary cache miss; rollback has the symmetric problem with a new cache.
 | --- | --- | --- |
 | `validate_capture.py` | `fa61840de404a8a8803b30a18b98b60acbaeba36b6445eb9cafcc1112028dfdd` | `aa267f63e456be3bb6332cfb151035ceb70ce736b950205703e50f38fc2b34e0` |
 | `offline_report.py` | `5607397a0ef2b5d81d216e149e89f8e26c09bf57bb85562ba9ebeedee0d4db0d` | `2616b66150ec1f8c822c721df117d173aa52ef33a9cb2a80370bfc5577ee855c` |
-| `validate_pr.py` (unchanged) | `2749f050a4b08fb9bcdebdb04228dcbb97c3fb6970669779c03a32b61099083f` | same |
+| `validate_pr.py` | `2749f050a4b08fb9bcdebdb04228dcbb97c3fb6970669779c03a32b61099083f` | `5e8f97ff86dfee7768220bf2dc721443772bfd32d4e41c685a847df7848f0739` |
 | `validate_offline_ssh.py` (unchanged) | `cc70e53486ce1041cf1d12670a6df82da51bc7ee872865bbc45b5d78933503b3` | same |
 | `release_evidence.py` (unchanged) | `5410348dd9f1c2c173bd266e60901a8f81ac783243d3d704c64f73d2539bf3f3` | same |
 
 Aggregate `release_evidence.revision`:
 
 - Old: `dfe3a140b771a2d7dc4d4542251ea729a4be8055ef980cd3f3c2b86830dd8dd5`
-- New: `48e81cb83c5dd2352978a83072ae5fa1d30625760f1635212c101dd0c06b17eb`
+- New: `41b43d035688b1c427f9ea42ddf96ddc95bcc7eba9836a4b165e2b08cf616dea`
 
 Recompute from the final reviewed artifact before approval, and compare installed
 bytes before and after the operation. Documentation-only commits do not change
@@ -97,18 +131,21 @@ Do not broaden host eligibility, change permissions, or bypass SHA checks.
 
 ## Safe rollout order — only after separate explicit approval
 
-1. Freeze the reviewed installer artifact and final PR head; confirm exact-head CI
+1. Resolve and separately review the runtime dependency/image blocker above.
+   Freeze the reviewed installer artifact and final PR head; confirm exact-head CI
    and the byte inventory. Obtain approval for the specific installation/cache
    operation and maintenance window. Establish an effective hold on new manual
    validation, automatic PR validation, main pushes/releases and production
-   deployment; drain or cancel queued/running old-event consumers and validators.
+   deployment; drain queued/running old-event consumers and validators. Workflows may remain
+   enabled with demonstrated coordination; an empty queue alone is insufficient.
    A lock alone does not prevent an old queued GitHub consumer from starting.
    If these holds cannot be demonstrated, **stop before installation**. No hold,
    workflow setting or permission has been changed by this PR.
 2. Under the idle lock, verify installed old bytes against the recorded revision.
    Back up all affected modules and cache with hashes/metadata; preserve config and
    image binding. Quarantine the active old cache, install the reviewed matched
-   harness/report set, and verify all five installed hashes and aggregate revision.
+   controller/harness/report set identical to final PR171, and verify all five
+   installed hashes and aggregate revision.
    Release the lock only after the complete set is verified; keep consumer holds.
 3. Before merge, use the separately reviewed new operator acceptance client through
    the existing pinned transport. Validate the still-open PR's exact latest head
@@ -149,7 +186,8 @@ separate approval for a normal revert restoring the old five-file consumer revis
 then restore the matching old host/cache and validate the resulting current main
 SHA. Never rewrite history or reuse a stale receipt. Deployment remains held.
 
-No installation, active cache/trust-pin/permission/credential change, merge or
-deployment was performed. Installer source preparation is available in the stacked
-review; its proposed pins are not active. Installer review, effective holds, installed
-acceptance and merge/deployment approvals remain pending. PR171 must wait.
+No production installation, cache operation, trust-pin/permission/credential
+change, merge or deployment was performed for this preparation. Installer source
+preparation is available in the stacked review; its proposed pins are not active.
+The image blocker, installer review, effective holds, installed acceptance and
+new activation/merge/deployment approvals remain pending. PR171 must wait.

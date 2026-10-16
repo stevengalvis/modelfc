@@ -513,6 +513,8 @@ class AcceptanceTests(unittest.TestCase):
         self.assertEqual(policy.digest(installer.FILES), installer.EXPECTED_REVISION)
         with patch.object(installer, 'root_owned'):
             installer.verify_files(OPS)
+        self.assertNotEqual(installer.FILES['validate_pr.py'],
+                            installer.PREVIOUS_FILES['validate_pr.py'])
         self.assertNotEqual(installer.FILES['validate_capture.py'],
                             installer.PREVIOUS_FILES['validate_capture.py'])
 

@@ -21,7 +21,7 @@ import sys
 import tempfile
 
 PREVIOUS_REVISION = 'dfe3a140b771a2d7dc4d4542251ea729a4be8055ef980cd3f3c2b86830dd8dd5'
-EXPECTED_REVISION = '48e81cb83c5dd2352978a83072ae5fa1d30625760f1635212c101dd0c06b17eb'
+EXPECTED_REVISION = '41b43d035688b1c427f9ea42ddf96ddc95bcc7eba9836a4b165e2b08cf616dea'
 PREVIOUS_FILES = {
     'validate_pr.py': '2749f050a4b08fb9bcdebdb04228dcbb97c3fb6970669779c03a32b61099083f',
     'validate_offline_ssh.py': 'cc70e53486ce1041cf1d12670a6df82da51bc7ee872865bbc45b5d78933503b3',
@@ -30,6 +30,7 @@ PREVIOUS_FILES = {
     'validate_capture.py': 'fa61840de404a8a8803b30a18b98b60acbaeba36b6445eb9cafcc1112028dfdd',
 }
 FILES = {**PREVIOUS_FILES,
+    'validate_pr.py': '5e8f97ff86dfee7768220bf2dc721443772bfd32d4e41c685a847df7848f0739',
     'validate_capture.py': 'aa267f63e456be3bb6332cfb151035ceb70ce736b950205703e50f38fc2b34e0',
     'offline_report.py': '2616b66150ec1f8c822c721df117d173aa52ef33a9cb2a80370bfc5577ee855c',
 }

@@ -12,7 +12,7 @@ import subprocess
 import sys
 import tarfile
 from tempfile import TemporaryDirectory
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 from urllib.parse import urlencode, urlsplit, parse_qs
@@ -43,6 +43,13 @@ class ControllerTests(unittest.TestCase):
         network = patch.object(controller, "read_url", side_effect=AssertionError("Live network forbidden"))
         network.start()
         self.addCleanup(network.stop)
+        # Routing tests use a transport double; file-identity/path/lock safety has
+        # separate real-filesystem and rootless-container regression coverage.
+        self.mount = SimpleNamespace(fd=42, source='/opt/modelfc-validator/validate_capture.py', identity=tuple(range(10)), verify=lambda: None)
+        mounted = patch.object(controller, 'pinned_harness',
+                               side_effect=lambda lock: __import__('contextlib').nullcontext(self.mount))
+        mounted.start()
+        self.addCleanup(mounted.stop)
 
     def metadata(self):
         return {"state": "open", "base": {"repo": {"full_name": controller.REPOSITORY}},
@@ -107,18 +114,21 @@ class ControllerTests(unittest.TestCase):
                         controller.export_source(run, 7, SHA, "token")
 
     def test_readonly_mounts_and_isolated_output(self):
-        args = controller.container_command(self.config, self.run, SHA)
+        args = controller.container_command(self.config, self.run, SHA, harness=self.mount)
         self.assertIn("--network=none", args)
         self.assertIn("--read-only", args)
         self.assertIn("--cap-drop=ALL", args)
         self.assertIn("--userns=keep-id", args)
         self.assertIn("--timeout=240", args)
+        for restriction in ("--pids-limit=64", "--memory=768m", "--cpus=1", "--security-opt=no-new-privileges", "--pull=never"):
+            self.assertIn(restriction, args)
         self.assertIn(str(self.run / "history") + ":/history:ro", args)
         self.assertIn(str(self.run / "subject") + ":/subject:ro", args)
         self.assertNotIn(str(self.run / "relay") + ":/relay:ro", args)
         self.assertEqual(args[-2:], ["--mode", "offline"])
         self.assertIn("/output:rw,size=64m,mode=1777", args)
-        self.assertIn("/trusted/validate_capture.py", args)
+        self.assertIn("/trusted/validate_capture.py", controller.HARNESS_BOOTSTRAP)
+        self.assertIn('type=bind,source=/opt/modelfc-validator/validate_capture.py,target=/trusted/validate_capture.py,ro', args)
         self.assertNotIn(str(self.run / "subject/ops/vps/validate_capture.py"), args)
         self.assertNotIn(SECRET, repr(args))
         self.assertNotIn("GITHUB_TOKEN", repr(args))
@@ -139,7 +149,7 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(args[-2:], ["--mode", "offline"])
 
     def test_live_mode_is_explicit_and_mounts_the_relay(self):
-        container = controller.container_command(self.config, self.run, SHA, "live")
+        container = controller.container_command(self.config, self.run, SHA, "live", harness=self.mount)
         service = controller.service_command(
             self.run, controller.REPOSITORY, 7, SHA, "live")
         self.assertIn(str(self.run / "relay") + ":/relay:ro", container)

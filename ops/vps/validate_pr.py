@@ -34,6 +34,7 @@ RUNS = Path("/var/lib/modelfc-validator/runs")
 REPOSITORY = "stevengalvis/modelfc"
 PREFIX = "modelfc-validation-"
 LABEL = "io.modelfc.validation=phase1"
+HARNESS = Path("/opt/modelfc-validator/validate_capture.py")
 LIVE_BUDGET = 3
 MAX_BODY = 8 * 1024 * 1024
 
@@ -383,7 +384,120 @@ def serving_relay(directory, relay):
         thread.join(timeout=35)
 
 
-def container_command(config, run, sha, mode="offline"):
+def _harness_metadata(info, *, directory=False):
+    if (info.st_uid != 0 or info.st_mode & 0o022
+            or not (stat.S_ISDIR(info.st_mode) if directory else stat.S_ISREG(info.st_mode))
+            or not directory and (stat.S_IMODE(info.st_mode) != 0o555 or info.st_nlink != 1)):
+        raise Failure("INVALID_CONFIGURATION")
+
+
+def _open_harness():
+    # Walk from / using directory descriptors: no symlink/ancestor substitution.
+    if HARNESS != TRUSTED / "validate_capture.py" or not HARNESS.is_absolute():
+        raise Failure("INVALID_CONFIGURATION")
+    parent = os.open("/", os.O_PATH | os.O_DIRECTORY | os.O_CLOEXEC)
+    try:
+        _harness_metadata(os.fstat(parent), directory=True)
+        for name in HARNESS.parts[1:-1]:
+            child = os.open(name, os.O_PATH | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                            dir_fd=parent)
+            os.close(parent)
+            parent = child
+            _harness_metadata(os.fstat(parent), directory=True)
+        fd = os.open(HARNESS.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC,
+                     dir_fd=parent)
+        try:
+            _harness_metadata(os.fstat(fd))
+        except BaseException:
+            os.close(fd)
+            raise
+        return fd
+    finally:
+        os.close(parent)
+
+
+def _harness_identity(fd):
+    info = os.fstat(fd)
+    _harness_metadata(info)
+    raw = os.pread(fd, 1_048_577, 0)
+    if len(raw) > 1_048_576 or len(raw) != info.st_size:
+        raise Failure("INVALID_CONFIGURATION")
+    return (info.st_dev, info.st_ino, info.st_uid, info.st_gid, info.st_mode,
+            info.st_nlink, info.st_size, info.st_mtime_ns, info.st_ctime_ns,
+            hashlib.sha256(raw).hexdigest())
+
+
+class HarnessMount:
+    def __init__(self, fd):
+        self.fd = fd
+        self.identity = _harness_identity(fd)
+        # Always the fixed installed file, never candidate/config-selected input.
+        self.source = str(HARNESS)
+
+    def verify(self):
+        if _harness_identity(self.fd) != self.identity:
+            raise Failure("INVALID_CONFIGURATION")
+        current = _open_harness()
+        try:
+            if _harness_identity(current) != self.identity:
+                raise Failure("INVALID_CONFIGURATION")
+        finally:
+            os.close(current)
+
+
+@contextmanager
+def pinned_harness(validation_lock):
+    # The worker and installer must serialize on the SAME existing lock inode.
+    # Re-locking this open description is idempotent; never open/create another lock.
+    if validation_lock is None:
+        raise Failure("INVALID_CONFIGURATION")
+    info = os.fstat(validation_lock.fileno())
+    path = (RUNS / "validation.lock").lstat()
+    if (not stat.S_ISREG(info.st_mode) or not stat.S_ISREG(path.st_mode)
+            or info.st_uid != os.geteuid() or info.st_mode & 0o077 or info.st_nlink != 1
+            or (info.st_dev, info.st_ino) != (path.st_dev, path.st_ino)):
+        raise Failure("INVALID_CONFIGURATION")
+    fcntl.flock(validation_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    fd = _open_harness()
+    try:
+        mounted = HarnessMount(fd)
+        mounted.verify()
+        yield mounted
+        mounted.verify()
+    finally:
+        os.close(fd)
+
+
+# Trusted command-line bootstrap; check the mounted inode before executing any
+# harness/candidate code. Compile the same bounded bytes that were hashed, rather
+# than reopening the path (which would introduce another replacement race).
+HARNESS_BOOTSTRAP = """import hashlib,json,os,stat,sys,types
+path='/trusted/validate_capture.py'
+expected=json.loads(sys.argv[1])
+fd=os.open(path,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK|os.O_CLOEXEC)
+try:
+    info=os.fstat(fd)
+    identity=[info.st_dev,info.st_ino,info.st_mode,info.st_nlink,info.st_size]
+    if identity!=expected[:-1] or not stat.S_ISREG(info.st_mode):
+        raise RuntimeError('INVALID_CONFIGURATION')
+    raw=os.read(fd,1048577)
+    if len(raw)!=info.st_size or hashlib.sha256(raw).hexdigest()!=expected[-1]:
+        raise RuntimeError('INVALID_CONFIGURATION')
+finally:
+    os.close(fd)
+code=compile(raw,path,'exec')
+sys.argv=[path]+sys.argv[2:]
+module=types.ModuleType('__main__')
+module.__file__=path
+module.__spec__=None
+module.__package__=None
+sys.modules['__main__']=module
+exec(code,module.__dict__)
+"""
+
+
+def container_command(config, run, sha, mode="offline", *, harness):
+    harness.verify()
     command = ["podman", "run", "--pull=never", "--name", PREFIX + run.name,
             "--label", LABEL, "--network=none", "--read-only", "--cap-drop=ALL",
             "--security-opt=no-new-privileges", "--userns=keep-id", "--http-proxy=false",
@@ -391,10 +505,13 @@ def container_command(config, run, sha, mode="offline"):
             "--log-driver=none",
             "--volume", f"{run / 'subject'}:/subject:ro",
             "--volume", f"{run / 'history'}:/history:ro",
+            "--mount", f"type=bind,source={harness.source},target=/trusted/validate_capture.py,ro",
             "--tmpfs", "/output:rw,size=64m,mode=1777",
             "--tmpfs", "/tmp:rw,size=32m,mode=1777",
             "--entrypoint", "python3", config["image"], "-I", "-B",
-            "/trusted/validate_capture.py", "--sha", sha, "--mode", mode]
+            "-c", HARNESS_BOOTSTRAP,
+            json.dumps([harness.identity[i] for i in (0, 1, 4, 5, 6, 9)]),
+            "--sha", sha, "--mode", mode]
     if mode == "live":
         insert = command.index("--tmpfs")
         command[insert:insert] = ["--volume", f"{run / 'relay'}:/relay:ro"]
@@ -425,7 +542,7 @@ def abandoned():
             command(["podman", "rm", "--force", "--time=2", name])
 
 
-def worker(config, run, pr, sha, mode="offline", *, release=False):
+def worker(config, run, pr, sha, mode="offline", *, release=False, validation_lock=None):
     if mode not in {"offline", "live"}:
         raise Failure("INVALID_CONFIGURATION")
     trusted_mode = mode.upper()
@@ -462,15 +579,23 @@ def worker(config, run, pr, sha, mode="offline", *, release=False):
         relay_context = serving_relay(run / "relay", relay) if relay else nullcontext()
         with relay_context:
             environment = {k: os.environ[k] for k in ("HOME", "PATH", "USER", "XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS") if k in os.environ}
-            with subprocess.Popen(container_command(config, run, sha, mode), env=environment,
-                                  stdout=subprocess.PIPE, stderr=subprocess.DEVNULL) as process:
-                raw = process.stdout.read(32769)
-                if len(raw) > 32768:
-                    process.kill()
-                    raise Failure("INVALID_REPORT")
-                status = process.wait(timeout=250)
-                if status:
-                    raise Failure("TIMEOUT" if status == 137 else "EXECUTION_ERROR")
+            with pinned_harness(validation_lock) as mounted:
+                args = container_command(config, run, sha, mode, harness=mounted)
+                with subprocess.Popen(args,
+                                      env=environment,
+                                      stdout=subprocess.PIPE, stderr=subprocess.DEVNULL) as process:
+                    try:
+                        mounted.verify()
+                        raw = process.stdout.read(32769)
+                        if len(raw) > 32768:
+                            raise Failure("INVALID_REPORT")
+                        status = process.wait(timeout=250)
+                        mounted.verify()
+                        if status:
+                            raise Failure("TIMEOUT" if status == 137 else "EXECUTION_ERROR")
+                    except BaseException:
+                        process.kill()
+                        raise
             value = json.loads(raw)
             reject_credentials(value, (secret, token))
             report = checked_report(value, sha, (secret, token), trusted_mode)
@@ -560,10 +685,11 @@ def main():
                 if args.release:
                     report = cached_release(config, run, args.sha, release_binding,
                                             runs=RUNS, verify=verify_release,
-                                            execute=lambda: worker(config, run, None, args.sha, release=True),
+                                            execute=lambda: worker(config, run, None, args.sha, release=True,
+                                                                   validation_lock=lock),
                                             current_binding=lambda: binding(config, TRUSTED, root_owned))
                 else:
-                    report = worker(config, run, args.pr, args.sha, args.mode)
+                    report = worker(config, run, args.pr, args.sha, args.mode, validation_lock=lock)
         else:
             run = RUNS / uuid.uuid4().hex
             try:

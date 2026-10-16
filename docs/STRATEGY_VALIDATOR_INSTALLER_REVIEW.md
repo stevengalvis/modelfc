@@ -1,16 +1,36 @@
 # ZEN-48 installer preparation — review only
 
-This stacked draft depends on PR171's harness and report contract. PR171 is
-preserved; this follow-up adds operator tooling and tests, not active installation.
+This stacked draft includes PR171's corrected controller, harness and report
+contract. Both five-file payloads now match exactly; this follow-up refreshes
+operator pins and tests, without active installation.
 Do not merge the stacked PR into PR171 merely to activate it. Review both, stage
 this follow-up's exact approved artifact for the separately approved operation,
-then coordinate PR171's merge as described below. After PR171 merges, retarget this
-installer-only follow-up to main for its own merge review. Neither merge is approved.
+then coordinate PR171's merge as described below. PR172 remains draft, unmerged and based on PR171. Any later retarget/merge
+requires separate review and approval; this preparation authorizes neither.
 
 The installer is not a member of `release_evidence.FILES`, so its proposed pins do
 not change the five-file payload revision from PR171. Its exact commit must still
 be included in operator approval. No Actions workflow, privilege, credential,
 permission, image, provider configuration or application source changes here.
+
+## Runtime correction and current blocker
+
+PR171 `b4088bdc13a2cafa7364d9e5b921b957e973f828` includes the controller's
+fixed installed-harness file mount and checked-byte bootstrap. PR172 integrates
+that branch without rewriting predecessor history or retargeting. Its installer
+now pins controller SHA-256
+`5e8f97ff86dfee7768220bf2dc721443772bfd32d4e41c685a847df7848f0739`
+and complete five-file revision
+`41b43d035688b1c427f9ea42ddf96ddc95bcc7eba9836a4b165e2b08cf616dea`.
+Predecessor pins remain unchanged, including the old controller. Both installed
+payload and eventual merged consumer must use this identical five-file set.
+
+The [actual-container regression](STRATEGY_VALIDATOR_RUNTIME_REGRESSION.md) found
+that the unchanged activation image lacks `pydantic`. Strategy acceptance FAILS
+on that image even after the mount correction. The dependency fixture's PASS is
+not approval for its image or installed acceptance. Stop before installation:
+resolving the dependency/image binding needs separately reviewed scope and new
+approval. No image/configuration changes are included here.
 
 ## Bounded changes and evidence
 
@@ -45,7 +65,8 @@ The [compatibility matrix and byte inventory](STRATEGY_VALIDATOR_ACTIVATION.md)
 remain authoritative: old/new reports reject each other, and release bindings must
 match exactly. There is no independent safe merge order without consumer holds.
 
-1. Review this installer artifact and PR171's latest head; approve the exact host
+1. Resolve and separately review the image dependency blocker above.
+   Review this installer artifact and PR171's latest head; approve the exact host
    installation/cache operation separately. Confirm installed predecessor hashes,
    approved image/config binding and a recoverable backup location. An unknown
    installed revision is a stop condition, not permission to re-pin it.
@@ -54,7 +75,10 @@ match exactly. There is no independent safe merge order without consumer holds.
    If a hold cannot be proven with existing authorized controls, stop and return
    for a specific decision; do not change permissions or bypass a gate.
 3. Stage the approved artifact using the existing root-owned staging procedure;
-   verify its commit and payload hashes. Write its exact commit to `STAGED_SHA`
+   verify its commit and payload hashes. Compare all five payload files against
+   the exact approved PR171 head (not just the harness/report). Require zero diff
+   and the expected aggregate revision before installing; a controller present
+   only in PR172 would break postmerge release binding. Write its exact commit to `STAGED_SHA`
    beside the installer. Do not use floating branch names as approval evidence.
 4. Only after explicit installation approval, the operator may run the prepared
    command below. It installs all five files and removes the old active cache,
@@ -87,8 +111,9 @@ python3 -I <reviewed-stage>/ops/vps/install_release_validator.py install \
    that merge SHA and successful GitHub release validation. A PR receipt cannot
    substitute for this. Resume PR consumers using new events, never old queued SHAs.
 7. Production deployment remains held until separately authorized. The stacked
-   installer PR can then be retargeted to main for review; it need not be merged
-   before its approved operator artifact is staged. No broad compatibility bridge
+   installer PR stays draft and unretargeted during this preparation; future
+   retargeting or merging needs separate approval. It need not be merged before
+   its separately approved operator artifact is staged. No broad compatibility bridge
    or weakening of exact report checks is proposed.
 
 ## Rollback and current authorization boundary
@@ -107,7 +132,7 @@ failed at authorization/resolution and skipped the installed validator. Source
 inspection shows `automatic_identity` requires a non-draft PR based on main;
 PR171 is draft and this installer PR is also stacked. These conditions already
 exclude automatic execution, without implying a permission or strategy failure.
-The unchanged host `validate_pr_metadata` allows an open same-repository PR with
+The existing host `validate_pr_metadata` allows an open same-repository PR with
 an exact current head; the proposed operator acceptance uses that existing path.
 Do not mark drafts ready or post retry comments merely to obtain a PASS. No
 permissions change is proposed. Installed validation is still outstanding.
