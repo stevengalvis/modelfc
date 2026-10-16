@@ -499,13 +499,39 @@ class PublishedOfferResponse(RecommendationResponse):
     opportunity_id: str
 
 
+class PublishedBttsOfferResponse(StrictModel):
+    competition: Literal["E1"]
+    provider: str
+    provider_fixture_id: str
+    home_team: str
+    away_team: str
+    kickoff_utc: str
+    market_type: Literal["BTTS"]
+    side: Literal["YES", "NO"]
+    forecast_id: str
+    comparison_id: str
+    observation_id: str
+    bookmaker: Literal["draftkings", "fanduel"]
+    american_odds: int
+    decimal_odds: float
+    model_probability: float
+    sportsbook_implied_probability: float
+    no_vig_market_probability: float
+    no_vig_probability_edge: float
+    expected_profit: float
+    retrieved_at_utc: str
+    availability_checked_at_utc: str
+    observation_age_seconds: float
+    policy_version: Literal["btts-paired-value-v1"]
+
+
 class PublishedPickResponse(StrictModel):
     schema_version: Literal[1]
-    policy_version: Literal["first-team-total-value-v1"]
+    policy_version: Literal["first-team-total-value-v1", "first-btts-value-v1"]
     publication_id: str
     published_at_utc: str
     forecast_created_at_utc: str
-    offer: PublishedOfferResponse
+    offer: PublishedOfferResponse | PublishedBttsOfferResponse
     ranking_views: list[Literal["best_value", "higher_probability"]]
     qualification_policy: dict[str, Any]
     record_hash: str
@@ -529,12 +555,12 @@ class PublishedSummaryResponse(StrictModel):
 
 class PublishedGroupResponse(StrictModel):
     competition: str
-    market_type: Literal["TEAM_TOTAL"]
+    market_type: Literal["TEAM_TOTAL", "BTTS"]
     summary: PublishedSummaryResponse
 
 
 class ModelPicksResponse(StrictModel):
-    policy_version: Literal["first-team-total-value-v1"]
+    policy_version: Literal["first-published-value-v2"]
     void_settlement_supported: Literal[False]
     summary: PublishedSummaryResponse
     by_view: dict[Literal["best_value", "higher_probability"], PublishedSummaryResponse]

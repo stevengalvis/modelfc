@@ -20,3 +20,17 @@ describe("published record contract", () => {
     }
   });
 });
+
+it("accepts saved BTTS odds and rejects duplicate slots, invalid EV and pushes", async () => {
+  const fixture = (await import("../../../tests/fixtures/btts_track_record.json")).default;
+  expect(decodeTrackRecord(fixture).summary.picks).toBe(1);
+  for (const mutate of [
+    (v: typeof fixture) => { v.publications.push(v.publications[0]); },
+    (v: typeof fixture) => { v.publications[0].offer.expected_profit = 0; },
+    (v: typeof fixture) => { v.publications[0].result = "PUSH"; },
+    (v: typeof fixture) => { v.publications[0].offer.no_vig_probability_edge = .04; },
+  ]) {
+    const copy = structuredClone(fixture); mutate(copy);
+    expect(() => decodeTrackRecord(copy)).toThrow();
+  }
+});

@@ -335,6 +335,7 @@ def _locked_inventory(
     state: Path, *, now: datetime, detail_id: str | None = None,
     include_recommendations: bool = False, include_recorded: bool = False,
     upcoming_only: bool = False, fixture_id: str | None = None,
+    include_research: bool = True,
 ) -> dict[str, Any]:
     _state_directory(state, "predictions")
     targets_dir = _state_directory(state, "prediction-targets")
@@ -354,7 +355,7 @@ def _locked_inventory(
     # of this prediction-facing view only through a validated prediction or
     # opportunity reference below.
 
-    research = None
+    research = None if include_research else []
     if upcoming_only:
         from modelfc.recorded_offers import upcoming_captures
         predictions = upcoming_captures(predictions, now=now, fixture_id=fixture_id)

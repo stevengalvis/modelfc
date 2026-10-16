@@ -7,7 +7,8 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator, model_validator
 
 from modelfc.corner_markets import american_odds_terms
-from modelfc.corner_opportunities import DECIMAL_AMERICAN_ODDS_TOLERANCE
+# Immutable btts-paired-decimal-v1 evidence semantics; independent of live corner policy.
+DECIMAL_AMERICAN_ODDS_TOLERANCE = .005
 
 Text = Annotated[str, StringConstraints(min_length=1, pattern=r"\S")]
 Digest = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]

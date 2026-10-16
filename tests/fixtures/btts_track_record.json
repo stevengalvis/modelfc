@@ -1,0 +1,114 @@
+{
+  "policy_version": "first-published-value-v2",
+  "void_settlement_supported": false,
+  "summary": {
+    "picks": 1,
+    "unique_fixtures": 1,
+    "settled": 0,
+    "wins": 0,
+    "losses": 0,
+    "pushes": 0,
+    "voids": 0,
+    "pending": 1,
+    "profit_units": 0.0,
+    "win_rate": null,
+    "roi": null
+  },
+  "by_view": {
+    "best_value": {
+      "picks": 1,
+      "unique_fixtures": 1,
+      "settled": 0,
+      "wins": 0,
+      "losses": 0,
+      "pushes": 0,
+      "voids": 0,
+      "pending": 1,
+      "profit_units": 0.0,
+      "win_rate": null,
+      "roi": null
+    },
+    "higher_probability": {
+      "picks": 1,
+      "unique_fixtures": 1,
+      "settled": 0,
+      "wins": 0,
+      "losses": 0,
+      "pushes": 0,
+      "voids": 0,
+      "pending": 1,
+      "profit_units": 0.0,
+      "win_rate": null,
+      "roi": null
+    }
+  },
+  "by_league_market": [
+    {
+      "competition": "E1",
+      "market_type": "BTTS",
+      "summary": {
+        "picks": 1,
+        "unique_fixtures": 1,
+        "settled": 0,
+        "wins": 0,
+        "losses": 0,
+        "pushes": 0,
+        "voids": 0,
+        "pending": 1,
+        "profit_units": 0.0,
+        "win_rate": null,
+        "roi": null
+      }
+    }
+  ],
+  "publications": [
+    {
+      "forecast_created_at_utc": "2026-09-21T11:58:00Z",
+      "offer": {
+        "american_odds": 120,
+        "availability_checked_at_utc": "2026-09-21T12:00:00+00:00",
+        "away_team": "D",
+        "bookmaker": "draftkings",
+        "comparison_id": "00fb61b59feadcd2ff0ccc95d15a3e3e66f40217b0d9044720ce50a65cc885ee",
+        "competition": "E1",
+        "decimal_odds": 2.2,
+        "expected_profit": 0.47479557293496866,
+        "forecast_id": "157c8c8604ab24a6ae566467b06149befe269aaa082514485db0e8e0e847e083",
+        "home_team": "A",
+        "kickoff_utc": "2026-12-31T15:00:00Z",
+        "market_type": "BTTS",
+        "model_probability": 0.6703616240613494,
+        "no_vig_market_probability": 0.4430379746835443,
+        "no_vig_probability_edge": 0.22732364937780508,
+        "observation_age_seconds": 30.0,
+        "observation_id": "6130f5d48e4526a4dd49fb600d121616cf93676ab6ae6ee5d4550ba889e60737",
+        "policy_version": "btts-paired-value-v1",
+        "provider": "test-provider",
+        "provider_fixture_id": "fixture-1",
+        "retrieved_at_utc": "2026-09-21T12:00:00+00:00",
+        "side": "YES",
+        "sportsbook_implied_probability": 0.45454545454545453
+      },
+      "policy_version": "first-btts-value-v1",
+      "publication_id": "357c0058568e80232f143b6ca9672c2953e93713051038ae7292116102d0b2a4",
+      "published_at_utc": "2026-09-21T12:00:30+00:00",
+      "qualification_policy": {
+        "decimal_american_odds_tolerance": 0.005,
+        "edge_comparison_tolerance": 1e-12,
+        "minimum_american_odds": -200,
+        "minimum_no_vig_edge": 0.05,
+        "no_vig_price_source": "decimal_odds",
+        "positive_ev_required": true,
+        "version": "btts-paired-value-v1"
+      },
+      "ranking_views": [
+        "best_value",
+        "higher_probability"
+      ],
+      "record_hash": "99a3540964e74fc55600b04258d639816ac1abb069ee7bef74526ece88d16e76",
+      "schema_version": 1,
+      "result": "PENDING",
+      "profit_units": null
+    }
+  ]
+}

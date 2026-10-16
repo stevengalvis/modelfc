@@ -87,3 +87,36 @@ backfill, provider request, new timer or host installation is needed for this
 publication step. This PR does not merge, deploy or run the collector against live
 providers. Published picks on the Recommendations landing page, broader markets,
 and void evidence are follow-ups; the existing analysis tools remain available.
+
+## Championship BTTS extension
+
+The aggregate feed now identifies `first-published-value-v2`; existing immutable
+corner records retain their original v1 policy and bytes. BTTS records use
+`first-btts-value-v1` and a frozen `btts-paired-value-v1` qualification snapshot.
+The same writer adds E1 BTTS without any additional provider calls or model fits.
+Only saved, validated paired Yes/No odds from the latest snapshot with AVAILABLE
+book coverage qualify. As for corners, age alone does not erase a saved offer;
+UNKNOWN/UNAVAILABLE newer coverage prevents old-price resurrection.
+
+Each side requires American odds >= -200, no-vig edge >= .05 (1e-12 tolerance)
+and positive EV. Paired probabilities and EV retain the existing BTTS decimal-price
+formula; American and decimal prices must agree within .005. Historical evidence
+uses the fixed v1 price tolerance independently of live corner settings.
+Choose best eligible decimal price per identical Yes/No selection, then rank by
+EV, edge, probability, decimal price descending, with forecast/side/book IDs,
+newest retrieval and immutable evidence IDs breaking ties. Exactly one Yes OR No
+can occupy a fixture's BTTS slot; subsequent prices, forecasts, policy changes
+and opposite-side signals cannot replace it. Higher Probability is membership
+of that same pick at probability >= .65. Market groups remain separate; overall
+counts never sum overlapping views. Research forecast metrics are unchanged.
+
+Reads reconstruct original publication eligibility and validate the source
+comparison. Settlements reuse the validated final-goal evidence and provider
+binding of `btts_outcomes`, paying one unit at original American odds. Missing
+results or an absent optional provider decoder remain PENDING. Corrupt/conflicting
+evidence remains an error. The existing BTTS outcome contract accepts identical
+results and rejects conflicting corrections (`RESULT_CONFLICT`); this extension
+does not invent a result replacement chain. Supporting corrected BTTS outcomes
+requires a separately reviewed evidence/version policy. No historical backfill,
+GET publication, provider request, league expansion, host installation or deployment
+is part of this change.
