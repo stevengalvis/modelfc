@@ -8,6 +8,7 @@ COUNTS = ('provider_request_count', 'scenario_request_count', 'selection_count',
           'prediction_count', 'target_count', 'opportunity_count')
 FLAGS = ('immutable_capture_verified', 'offline_replay_identical')
 COMPONENTS = {
+    'strategy_validation': {'PASS', 'FAIL', 'NOT_RUN'},
     'core_pipeline': {'PASS', 'FAIL', 'NOT_RUN'},
     'market_intelligence': {'PASS', 'FAIL', 'NOT_APPLICABLE', 'NOT_RUN'},
     'offline_replay': {'PASS', 'FAIL', 'NOT_RUN'},
@@ -23,7 +24,7 @@ REASONS = {
     'WRONG_SHA', 'REPOSITORY_MISMATCH', 'PR_NOT_OPEN', 'TIMEOUT',
     'REQUEST_BUDGET_EXCEEDED', 'CLEANUP_FAILED', 'BUSY', 'INVALID_CONFIGURATION',
     'SOURCE_ERROR', 'INVALID_REPORT', 'HISTORY_UNAVAILABLE', 'CLIENT_INTERFACE_CHANGED',
-    'OFFLINE_SCENARIO_INVALID', 'MARKET_INTELLIGENCE_FAILED',
+    'OFFLINE_SCENARIO_INVALID', 'MARKET_INTELLIGENCE_FAILED', 'STRATEGY_VALIDATION_FAILED',
 } | {f'PROVIDER_{endpoint}_{category}' for endpoint in ('FIXTURES', 'MARKETS', 'ODDS')
      for category in ('AUTH', 'NOT_FOUND', 'RATE_LIMIT', 'SERVER', 'MALFORMED', 'OTHER')}
 
@@ -69,12 +70,14 @@ def validate_report(raw, sha):
                     or v['prediction_count'] != 1 or v['target_count'] < 1)
                 or (v['offline_replay'] == 'PASS') != v['offline_replay_identical']
                 or v['offline_replay'] == 'PASS' and v['replay_api_request_count'] != 0
-                or v['market_intelligence'] in {'PASS', 'FAIL', 'NOT_APPLICABLE'} and (
+                or (v['strategy_validation'] in {'PASS', 'FAIL'}
+                    or v['market_intelligence'] in {'PASS', 'FAIL', 'NOT_APPLICABLE'}) and (
                     v['core_pipeline'] != 'PASS' or v['offline_replay'] != 'PASS')):
             raise ValueError
         if v['result'] == 'PASS' and (
                 v['cleanup_status'] != 'COMPLETE' or v['credential_leakage_check'] is not True
                 or v['core_pipeline'] != 'PASS' or v['offline_replay'] != 'PASS'
+                or v['strategy_validation'] != 'PASS'
                 or v['market_intelligence'] not in {'PASS', 'NOT_APPLICABLE'}
                 or v['scenario_request_count'] != 3 or v['supported_team_total_count'] < 1
                 or not v['capture_hash']):

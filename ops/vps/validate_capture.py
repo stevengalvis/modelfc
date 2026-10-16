@@ -30,7 +30,7 @@ REASONS = {
     "REQUEST_BUDGET_EXCEEDED", "CLEANUP_FAILED", "BUSY", "INVALID_CONFIGURATION",
     "SOURCE_ERROR", "INVALID_REPORT", "HISTORY_UNAVAILABLE",
     "CLIENT_INTERFACE_CHANGED",
-    "OFFLINE_SCENARIO_INVALID", "MARKET_INTELLIGENCE_FAILED",
+    "OFFLINE_SCENARIO_INVALID", "MARKET_INTELLIGENCE_FAILED", "STRATEGY_VALIDATION_FAILED",
 }
 REASONS.update(f"PROVIDER_{endpoint}_{category}"
                for endpoint in ("FIXTURES", "MARKETS", "ODDS")
@@ -41,6 +41,7 @@ COUNTS = ("provider_request_count", "scenario_request_count", "selection_count",
           "target_count", "opportunity_count")
 FLAGS = ("immutable_capture_verified", "offline_replay_identical")
 COMPONENTS = {
+    "strategy_validation": {"PASS", "FAIL", "NOT_RUN"},
     "core_pipeline": {"PASS", "FAIL", "NOT_RUN"},
     "market_intelligence": {"PASS", "FAIL", "NOT_APPLICABLE", "NOT_RUN"},
     "offline_replay": {"PASS", "FAIL", "NOT_RUN"},
@@ -93,7 +94,8 @@ def checked_report(value, sha, secret, expected_mode=None):
                 or value["provider_request_count"] != 0 or value["result"] == "BLOCKED"):
             raise ValueError("INVALID_REPORT")
     elif (value["provider_request_count"] > 3 or value["scenario_request_count"] != 0
-          or value["market_intelligence"] != "NOT_RUN"):
+          or value["market_intelligence"] != "NOT_RUN"
+          or value["strategy_validation"] != "NOT_RUN"):
         raise ValueError("INVALID_REPORT")
     if (value["result"] != "FAIL" and ("FAIL" in (value[k] for k in COMPONENTS)
             or value["cleanup_status"] == "FAILED" or value["credential_leakage_check"] is False)):
@@ -110,7 +112,8 @@ def checked_report(value, sha, secret, expected_mode=None):
             or value["provider_compatibility"] not in {"BLOCKED", "NOT_RUN"}
             or any(value[k] != "NOT_RUN" for k in ("core_pipeline", "offline_replay", "market_intelligence"))):
         raise ValueError("INVALID_REPORT")
-    if ((value["market_intelligence"] in {"PASS", "FAIL", "NOT_APPLICABLE"}
+    if ((value["strategy_validation"] in {"PASS", "FAIL"}
+            or value["market_intelligence"] in {"PASS", "FAIL", "NOT_APPLICABLE"}
             or value["provider_compatibility"] == "PASS")
             and (value["core_pipeline"] != "PASS" or value["offline_replay"] != "PASS")):
         raise ValueError("INVALID_REPORT")
@@ -124,6 +127,7 @@ def checked_report(value, sha, secret, expected_mode=None):
             if (value["provider_compatibility"] != "NOT_RUN"
                     or value["provider_request_count"] != 0
                     or value["scenario_request_count"] != 3
+                    or value["strategy_validation"] != "PASS"
                     or value["market_intelligence"] not in {"PASS", "NOT_APPLICABLE"}):
                 raise ValueError("INVALID_REPORT")
         elif value["provider_compatibility"] != "PASS" or value["provider_request_count"] != 3:
@@ -699,6 +703,207 @@ def market_intelligence_component(state, prediction, quotes, now):
     return "PASS"
 
 
+# Saved synthetic inputs reused from tests.test_btts_research; no model execution.
+STRATEGY_FORECAST = {'competition': 'E1',
+ 'fixture': {'competition': 'E1',
+             'provider': 'test-provider',
+             'provider_fixture_id': 'fixture-1',
+             'home_team': 'A',
+             'away_team': 'D',
+             'kickoff_utc': '2026-12-31T15:00:00Z'},
+ 'frozen_at_utc': '2026-09-21T11:58:00Z',
+ 'model_name': 'team-opponent-arithmetic-poisson-btts',
+ 'model_version': 'deepfc-arithmetic-btts-v1',
+ 'deepfc_source_commit': 'ecbae64d0684fceaad63d843e0b74ca54d21c0fc',
+ 'smoothing_matches': 5,
+ 'inputs': {'competition': 'E1',
+            'cutoff_date': '2026-09-21',
+            'latest_history_date': '2026-07-26',
+            'history_matches': 100,
+            'league_home_goals': 175,
+            'league_away_goals': 150,
+            'home_venue_matches': 25,
+            'home_goals_for': 50,
+            'home_goals_against': 25,
+            'away_venue_matches': 25,
+            'away_goals_for': 75,
+            'away_goals_against': 25,
+            'sources': [{'competition': 'E1',
+                         'filename': 'E1_2627.csv',
+                         'sha256': '7927270fe5c9ea4d9ce46ccc676ae83909bf35a890b8b9abfa72027b6207419d'}]},
+ 'home_expected_goals': 1.5416666666666665,
+ 'away_expected_goals': 1.9166666666666665,
+ 'yes_probability': 0.6703616240613494,
+ 'no_probability': 0.32963837593865064}
+STRATEGY_OBSERVATION = {'competition': 'E1',
+ 'fixture': {'competition': 'E1',
+             'provider': 'test-provider',
+             'provider_fixture_id': 'fixture-1',
+             'home_team': 'A',
+             'away_team': 'D',
+             'kickoff_utc': '2026-12-31T15:00:00Z'},
+ 'retrieved_at_utc': '2026-09-21T12:00:00+00:00',
+ 'selections': [{'competition': 'E1',
+                 'provider': 'test-provider',
+                 'provider_fixture_id': 'fixture-1',
+                 'market_type': 'BTTS',
+                 'period': 'FULL_MATCH',
+                 'bookmaker': 'draftkings',
+                 'side': 'YES',
+                 'american_odds': 120,
+                 'decimal_odds': 2.2,
+                 'retrieved_at_utc': '2026-09-21T12:00:00+00:00',
+                 'provider_quote_reference': '26d555844509d2e55325c390787bb5a892c4b7f885eab7e8b39fab9d10ac9a14',
+                 'changed_at_utc': None,
+                 'bookmaker_changed_at_utc': None},
+                {'competition': 'E1',
+                 'provider': 'test-provider',
+                 'provider_fixture_id': 'fixture-1',
+                 'market_type': 'BTTS',
+                 'period': 'FULL_MATCH',
+                 'bookmaker': 'draftkings',
+                 'side': 'NO',
+                 'american_odds': -133,
+                 'decimal_odds': 1.75,
+                 'retrieved_at_utc': '2026-09-21T12:00:00+00:00',
+                 'provider_quote_reference': '41b0afef31db241548d822e2b625708d184e9fa6c88cfbe3a4a6bf8ff9c7a374',
+                 'changed_at_utc': None,
+                 'bookmaker_changed_at_utc': None},
+                {'competition': 'E1',
+                 'provider': 'test-provider',
+                 'provider_fixture_id': 'fixture-1',
+                 'market_type': 'BTTS',
+                 'period': 'FULL_MATCH',
+                 'bookmaker': 'fanduel',
+                 'side': 'YES',
+                 'american_odds': -500,
+                 'decimal_odds': 1.2,
+                 'retrieved_at_utc': '2026-09-21T12:00:00+00:00',
+                 'provider_quote_reference': '7c65cd200f3652143448ea5db9d4fc5961ba9a33d301612aaa9e4e63c864260f',
+                 'changed_at_utc': None,
+                 'bookmaker_changed_at_utc': None},
+                {'competition': 'E1',
+                 'provider': 'test-provider',
+                 'provider_fixture_id': 'fixture-1',
+                 'market_type': 'BTTS',
+                 'period': 'FULL_MATCH',
+                 'bookmaker': 'fanduel',
+                 'side': 'NO',
+                 'american_odds': 500,
+                 'decimal_odds': 6.0,
+                 'retrieved_at_utc': '2026-09-21T12:00:00+00:00',
+                 'provider_quote_reference': '018f147303c2ce6dfd153a44eae0cc27f894a7c4e43d7a0667b322b0437cfe72',
+                 'changed_at_utc': None,
+                 'bookmaker_changed_at_utc': None}],
+ 'availability': [{'competition': 'E1', 'bookmaker': 'draftkings', 'status': 'AVAILABLE'},
+                  {'competition': 'E1', 'bookmaker': 'fanduel', 'status': 'AVAILABLE'}],
+ 'provider_snapshot_sha256': 'ac8d8342bbb2362d13f0a559a3621bb407011368895164b628a54f7fc33fc43c',
+ 'provider_metadata_sha256': 'cad5d1ef0023953da8d63bd2a4d67fcc925fca4c658f0011df19326428162e95'}
+
+
+def strategy_component(state):
+    """One disposable saved-data BTTS path; never imports candidate tests/ops."""
+    from unittest.mock import patch
+    from modelfc import published_recommendations as published, pick_strategies as strategies
+    from modelfc import btts_outcomes as outcomes
+    from modelfc.btts_model import BttsForecast
+    from modelfc.btts_market_data import BttsObservation
+    from modelfc.btts_research import record_btts_research, digest
+    from modelfc.corner_prospective import _lock
+    from modelfc.ledger_storage import LedgerError
+
+    forecast = BttsForecast.model_validate_json(json.dumps(STRATEGY_FORECAST))
+    observed = BttsObservation.model_validate_json(json.dumps(STRATEGY_OBSERVATION))
+    now = datetime(2026, 9, 21, 12, 0, 30, tzinfo=timezone.utc)
+
+    def files(directory):
+        return {str(p.relative_to(directory)): p.read_bytes()
+                for p in directory.rglob('*') if p.is_file()}
+
+    def publish():
+        with _lock(state):
+            return strategies.publish_locked(state)
+
+    def reports():
+        return [strategies.read(state, strategy=name, scope='history')
+                for name in ('best_value', 'higher_probability')]
+
+    def rejected(action, reason):
+        before = files(state)
+        try:
+            action()
+        except LedgerError as error:
+            assert reason in str(error)
+        else:
+            raise AssertionError('invalid evidence accepted')
+        assert files(state) == before
+
+    with patch.object(published, '_now', side_effect=lambda: now):
+        record_btts_research(state, forecast, observed)
+        with _lock(state):
+            assert published.publish_locked(state) == 1
+        legacy = files(state / published.DIRECTORY)
+        legacy_pending = published.read(state)
+        assert publish() == 2
+        first = reports()
+        best, high = [r['publications'][0] for r in first]
+        assert (best['offer']['side'], high['offer']['side']) == ('NO', 'YES')
+        assert best['offer']['model_probability'] < .65 <= high['offer']['model_probability']
+        assert best['selection_id'] != high['selection_id']
+        assert (best['offer']['american_odds'], high['offer']['american_odds']) == (500, 120)
+        assert published.read(state) == legacy_pending
+        immutable = files(state / strategies.DIRECTORY)
+        for report in first:
+            assert report['total'] == report['totals']['pending'] == 1
+            assert report['totals']['settled'] == 0 and report['totals']['roi'] is None
+            assert report['publications'][0]['profit_dollars'] is None
+        now += timedelta(minutes=5)
+        refreshed = observed.model_copy(update={
+            'retrieved_at_utc': now.isoformat(),
+            'provider_snapshot_sha256': digest('refresh'),
+            'selections': tuple(selection.model_copy(update={
+                'retrieved_at_utc': now.isoformat(), 'decimal_odds': 4., 'american_odds': 300})
+                for selection in observed.selections)})
+        record_btts_research(state, forecast, refreshed)
+        assert publish() == 0 and reports() == first
+        assert files(state / strategies.DIRECTORY) == immutable
+        now = published._time(forecast.fixture.kickoff_utc) + timedelta(hours=4)
+        assert publish() == 0  # No post-kickoff backfill.
+        assert all(strategies.read(state, strategy=name)['total'] == 0
+                   for name in ('best_value', 'higher_probability'))
+        assert all(r['totals']['pending'] == 1 for r in reports())
+        row = dict(Div='E1', Date='31/12/2026', Time='15:00', HomeTeam='A', AwayTeam='D',
+                   FTHG='2', FTAG='1', FTR='H', HC='', AC='')
+        def source(values):
+            return dict(provider='football-data.co.uk', filename='E1_2627.csv',
+                        file_sha256='a'*64, row_number=2, row=values,
+                        row_sha256=digest(values), retrieved_at_utc=now.isoformat())
+        with patch.object(outcomes, 'utc_timestamp', side_effect=lambda: now.isoformat()):
+            rejected(lambda: outcomes.settle(state, digest(forecast),
+                     source(dict(row, HomeTeam='Wrong'))), 'RESULT_IDENTITY_CONFLICT')
+            outcomes.settle(state, digest(forecast), source(row))
+            settled = reports()
+            for report, result, profit, roi in zip(settled, ('LOSS', 'WIN'), (-2., 2.4), (-1., 1.2)):
+                pick = report['publications'][0]
+                assert pick['result'] == result and pick['simulated_stake_dollars'] == 2
+                assert math.isclose(pick['profit_dollars'], profit)
+                assert math.isclose(report['total_profit_dollars'], profit)
+                assert math.isclose(report['totals']['roi'], roi)
+                assert report['totals']['settled'] == 1 and report['totals']['pending'] == 0
+            before = files(state)
+            outcomes.settle(state, digest(forecast), source(row))
+            assert files(state) == before and reports() == settled
+            rejected(lambda: outcomes.settle(state, digest(forecast),
+                     source(dict(row, FTHG='0', FTR='A'))), 'RESULT_CONFLICT')
+        before = files(state)
+        assert reports() == settled
+        assert published.read(state)['summary']['losses'] == 1
+        assert files(state) == before
+        assert files(state / published.DIRECTORY) == legacy
+        assert files(state / strategies.DIRECTORY) == immutable
+    return 'PASS'
+
+
 def run_capture(sha, snapshot=Path("/history"), output=Path("/output"), mode="OFFLINE"):
     mode = mode.upper()
     if mode not in {"OFFLINE", "LIVE"}:
@@ -864,6 +1069,13 @@ def run_capture(sha, snapshot=Path("/history"), output=Path("/output"), mode="OF
                 except BaseException:
                     report.update(result="FAIL", reason="MARKET_INTELLIGENCE_FAILED",
                                   market_intelligence="FAIL")
+                    return report
+            if mode == "OFFLINE":
+                try:
+                    report["strategy_validation"] = strategy_component(output / "strategy-state")
+                except BaseException:
+                    report.update(result="FAIL", reason="STRATEGY_VALIDATION_FAILED",
+                                  market_intelligence=market_component, strategy_validation="FAIL")
                     return report
             report.update(
                 result="PASS", reason="COMPLETE", market_intelligence=market_component,

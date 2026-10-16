@@ -8,7 +8,8 @@ The five source files named by `release_evidence.FILES` hash to installed revisi
 `dfe3a140b771a2d7dc4d4542251ea729a4be8055ef980cd3f3c2b86830dd8dd5`, matching
 `install_release_validator.EXPECTED_REVISION` and the merge-169 release OFFLINE
 receipt (Tests run 38907384709, release_offline job 116995227000, 2026-10-16
-13:25:16 UTC). No validator source or installed files change in this PR.
+13:25:16 UTC). These are the pre-ZEN-48 installed pins. ZEN-48 changes repository source only;
+installed files and trust pins remain unchanged.
 
 PR Trusted OFFLINE run 38914743074 reports success but does not expose a fresh
 installed-file hash in its public job log. Its PASS is not a new host-byte audit.
@@ -37,6 +38,35 @@ strategy selection, shared-pick identity, $2 conversion, activation/legacy isola
 BTTS strategy settlement, pagination, or UI behavior. Existing best-book/EV checks
 are relevant prerequisites, not substitute coverage of those features.
 
+## ZEN-48 staged source coverage (not installed acceptance)
+
+`validate_capture.strategy_component` now reuses the saved synthetic forecast and
+paired odds from `tests.test_btts_research`. A fixture-equivalence test prevents
+accidental drift. It runs in a separate disposable `strategy-state` directory;
+no candidate test module is imported by the trusted harness.
+
+One saved BTTS fixture checks independent NO Best Value / YES Higher Probability
+selection, the 65% threshold, two immutable publications, pending exclusions,
+changed-price refresh deduplication, no post-kickoff publication, saved-goal
+settlement, repeated settlement, original +500/+120 prices, and $2 flat stakes.
+The loss is -$2 / -100% ROI; the win is +$2.40 / +120% ROI. A real validated
+legacy publication remains byte-identical and readable through settlement.
+Mismatched fixture results and conflicting corrections must fail without writes.
+All strategy reads must leave state unchanged. Mutation tests ensure broken
+publication or dollar totals fail the component.
+
+The bounded report adds `strategy_validation: PASS|FAIL|NOT_RUN` and
+`STRATEGY_VALIDATION_FAILED`. OFFLINE PASS requires strategy PASS; missing,
+unknown or contradictory coverage is rejected. LIVE leaves it NOT_RUN. The
+existing core/replay counts still describe the corner scenario, not BTTS counts.
+There are no additional provider requests. The installed harness described above
+still has **no strategy coverage** until separately approved activation and exact
+installed-revision acceptance. See [activation handoff](STRATEGY_VALIDATOR_ACTIVATION.md).
+
+Shared-selection identity, favorite/underdog PUSH arithmetic, pagination, API/UI
+behavior, opaque legacy sentinel isolation and broader policy permutations remain
+covered by existing CI tests; the single BTTS scenario does not claim those checks.
+
 ## Where the new behavior is checked
 
 | Behavior | Repository coverage (CI) | Trusted OFFLINE coverage |
@@ -62,10 +92,8 @@ real cross-user ACL checks. Product policy edge cases and UI permutations belong
 there: they are inexpensive, deterministic, reviewed with the code, and do not
 require changing privileged validation infrastructure.
 
-No installed-validator update is required to cover this draft through CI. If a
-separate *trusted black-box assertion* for strategy behavior is desired, extend the
-trusted harness/report contract in a separately reviewed change, then explicitly
-approve installation and acceptance. Merely adding code to candidate `ops/` would
+Repository CI exercises the staged harness/report contract. A separately approved
+installed-validator update and acceptance are required for trusted strategy coverage. Merely adding code to candidate `ops/` would
 not update the installed harness. Do not label the present OFFLINE PASS as strategy
 acceptance or bypass the trusted boundary by running candidate tests as trusted code.
 

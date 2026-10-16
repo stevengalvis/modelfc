@@ -245,10 +245,10 @@ class ControllerTests(unittest.TestCase):
                 with self.subTest(result=result, mutation=mutation), self.assertRaisesRegex(ValueError, "INVALID_REPORT"):
                     harness.checked_report(dict(harness.blank_report(SHA, result, reason), **mutation), SHA, "")
         offline = harness.blank_report(SHA, "PASS", "COMPLETE")
-        offline.update(core_pipeline="PASS", offline_replay="PASS", market_intelligence="NOT_APPLICABLE",
+        offline.update(strategy_validation="PASS", core_pipeline="PASS", offline_replay="PASS", market_intelligence="NOT_APPLICABLE",
                        immutable_capture_verified=True, offline_replay_identical=True,
                        supported_team_total_count=1, prediction_count=1, target_count=1, capture_hash="d" * 64, scenario_request_count=3)
-        live = dict(offline, mode="LIVE", provider_compatibility="PASS", market_intelligence="NOT_RUN",
+        live = dict(offline, strategy_validation="NOT_RUN", mode="LIVE", provider_compatibility="PASS", market_intelligence="NOT_RUN",
                     scenario_request_count=0, provider_request_count=3)
         for mutation in ({"market_intelligence": "FAIL"}, {"core_pipeline": "FAIL"},
                          {"target_count": 0}, {"prediction_count": 0},
@@ -386,7 +386,7 @@ class ControllerTests(unittest.TestCase):
         from contextlib import nullcontext
         config = dict(self.config, provider_key_file=str(self.root / "does-not-exist"))
         child = harness.blank_report(SHA, "PASS", "COMPLETE")
-        child.update(core_pipeline="PASS", market_intelligence="NOT_APPLICABLE",
+        child.update(strategy_validation="PASS", core_pipeline="PASS", market_intelligence="NOT_APPLICABLE",
                      offline_replay="PASS", provider_compatibility="NOT_RUN",
                      supported_team_total_count=1, prediction_count=1, target_count=1, capture_hash="d" * 64,
                      immutable_capture_verified=True, offline_replay_identical=True, scenario_request_count=3)
@@ -469,6 +469,7 @@ class OfflineHarnessTests(unittest.TestCase):
                 patch.object(oddspapi, "configured_history_lock", oddspapi.configured_history_lock), \
                 patch.object(corner_analysis_store, "configured_history_lock", corner_analysis_store.configured_history_lock), \
                 patch.object(corner_analysis_store, "git_commit_sha", corner_analysis_store.git_commit_sha), \
+                patch.object(harness.socket.socket, "connect", side_effect=AssertionError("network forbidden")), \
                 patch.object(harness, "RelayConnection", side_effect=AssertionError("relay forbidden")), \
                 patch.object(oddspapi.time, "sleep"), \
                 patch.object(oddspapi, "build_opener", side_effect=AssertionError("provider HTTP forbidden")):
@@ -490,6 +491,7 @@ class OfflineHarnessTests(unittest.TestCase):
         self.assertEqual((report["result"], report["mode"]), ("PASS", "OFFLINE"), report)
         self.assertEqual(report["core_pipeline"], "PASS")
         self.assertEqual(report["market_intelligence"], "PASS")
+        self.assertEqual(report["strategy_validation"], "PASS")
         self.assertEqual(report["offline_replay"], "PASS")
         self.assertEqual(report["provider_compatibility"], "NOT_RUN")
         self.assertEqual(report["provider_request_count"], 0)
@@ -500,6 +502,28 @@ class OfflineHarnessTests(unittest.TestCase):
         self.assertGreater(report["opportunity_count"], 0)
         self.assertEqual(report["match_total_count"], report["gated_match_total_count"])
         self.assertEqual(harness.checked_report(report, SHA, "", "OFFLINE"), report)
+
+    def test_strategy_saved_inputs_reuse_existing_integration_fixture(self):
+        from tests.test_btts_research import forecast, observation
+        self.assertEqual(harness.STRATEGY_FORECAST, forecast().model_dump(mode='json'))
+        self.assertEqual(harness.STRATEGY_OBSERVATION, observation(
+            prices={'draftkings': (2.2, 1.75), 'fanduel': (1.2, 6.)}).model_dump(mode='json'))
+
+    def test_strategy_component_detects_broken_accounting_and_refresh(self):
+        from modelfc import pick_strategies as strategies
+        original = strategies.read
+        def broken(*args, **kwargs):
+            report = original(*args, **kwargs)
+            report['total_profit_dollars'] = 0
+            return report
+        for target, replacement in (('read', broken), ('publish_locked', lambda *_: 0)):
+            with self.subTest(target=target), patch.object(strategies, target, replacement):
+                report = self.run_offline()
+            self.assertEqual((report['result'], report['reason'], report['strategy_validation']),
+                             ('FAIL', 'STRATEGY_VALIDATION_FAILED', 'FAIL'))
+            self.assertEqual(report['core_pipeline'], 'PASS')
+            self.assertEqual(report['provider_request_count'], 0)
+            self.assertEqual(harness.checked_report(report, SHA, '', 'OFFLINE'), report)
 
     def test_older_source_without_market_intelligence_is_not_applicable(self):
         # Simulate an older exported source without the optional module. The

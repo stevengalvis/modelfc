@@ -66,7 +66,7 @@ def report():
     value.update({k: None for k in policy.TEXT})
     value.update(result='PASS', mode='OFFLINE', commit_sha=SHA, competition='E1',
                  cleanup_status='COMPLETE', reason='COMPLETE', credential_leakage_check=True,
-                 core_pipeline='PASS', market_intelligence='PASS', offline_replay='PASS',
+                 strategy_validation='PASS', core_pipeline='PASS', market_intelligence='PASS', offline_replay='PASS',
                  provider_compatibility='NOT_RUN', scenario_request_count=3,
                  prediction_count=1, target_count=2, supported_team_total_count=4,
                  capture_hash='c' * 64)
@@ -686,3 +686,20 @@ class WrapperTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class StrategyReportTests(unittest.TestCase):
+    def test_strategy_coverage_required_and_bounded(self):
+        value = report()
+        self.assertEqual(policy.validate_report(wire(value), SHA), value)
+        for mutation in ({'strategy_validation': 'NOT_RUN'}, {'strategy_validation': 'FAIL'},
+                         {'strategy_validation': 'NOT_APPLICABLE'}, {'strategy_validation': True}):
+            with self.subTest(mutation=mutation), self.assertRaisesRegex(ValueError, 'INVALID_REPORT'):
+                policy.validate_report(wire(value | mutation), SHA)
+        del value['strategy_validation']
+        with self.assertRaisesRegex(ValueError, 'INVALID_REPORT'):
+            policy.validate_report(wire(value), SHA)
+        failed = report() | dict(result='FAIL', reason='STRATEGY_VALIDATION_FAILED', strategy_validation='FAIL')
+        self.assertEqual(policy.validate_report(wire(failed), SHA), failed)
+        with self.assertRaisesRegex(ValueError, 'INVALID_REPORT'):
+            policy.validate_report(wire(failed | dict(core_pipeline='NOT_RUN')), SHA)
