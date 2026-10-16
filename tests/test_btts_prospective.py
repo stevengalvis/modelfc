@@ -246,7 +246,7 @@ class BttsProspectiveTests(unittest.TestCase):
                 result = self.run_once(market_data_type=source)
             self.assert_corner_success(result)
             files = {str(p.relative_to(self.pilot.state)): p.read_bytes() for p in self.pilot.state.rglob("*.json")
-                     if p.relative_to(self.pilot.state).parts[0] not in {"prospective", "btts-research"}}
+                     if p.relative_to(self.pilot.state).parts[0] not in {"prospective", "btts-research", "strategy-picks", "strategy-policies"}}
             cases.append((result, deepcopy(self.pilot.calls), files, self.pilot.control()))
         before, after = cases
         self.assertEqual(before[0]["provider_requests"], after[0]["provider_requests"])

@@ -583,7 +583,7 @@ def run_once(*, state_dir, data_config_path, market_data_type: type[MarketDataSo
                 _provider_work(path, control, Path(state_dir), data_config_path, summary, captured, market_data_type, release_sha)
                 # Publish once, at the real writer time, after evidence is saved.
                 # Inventory/replay and all GET handlers remain write-free.
-                from modelfc.published_recommendations import publish_locked
+                from modelfc.pick_strategies import publish_locked
                 publish_locked(state_dir, include_btts=summary["btts_research"]["status"] != "REVIEW")
             except RunnerError as error:
                 code = str(error)

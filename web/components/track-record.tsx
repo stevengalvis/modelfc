@@ -33,8 +33,8 @@ export function PublishedTrackRecord() {
         <div><dt>Unique fixtures</dt><dd>{summary.unique_fixtures}</dd></div>
         <div><dt>W–L–Push</dt><dd>{summary.wins}–{summary.losses}–{summary.pushes}</dd></div>
         <div><dt>Pending</dt><dd>{summary.pending}</dd></div><div><dt>Win rate, excluding pushes</dt><dd>{rate(summary.win_rate)}</dd></div>
-        <div><dt>Profit, units</dt><dd>{summary.profit_units.toFixed(2)}</dd></div><div><dt>ROI on settled picks</dt><dd>{rate(summary.roi)}</dd></div></dl>
-      <p>One hypothetical unit risked per published pick, at its original price. Pushes return the stake and remain in the ROI denominator. Missing results remain pending. Sportsbook void settlement is not available yet; these are not actual wager returns.</p>
+        <div><dt>Profit, units</dt><dd>{summary.profit_units.toFixed(2)} units / ${(summary.profit_units*2).toFixed(2)}</dd></div><div><dt>ROI on settled picks</dt><dd>{rate(summary.roi)}</dd></div></dl>
+      <p>Simulated flat $2 risked per published pick (one unit), at its original price. Pushes return the stake and remain in the ROI denominator. Missing results remain pending. Sportsbook void settlement is not available yet; these are not actual wager returns.</p>
       {data.by_league_market.map(group => <p key={`${group.competition}:${group.market_type}`}>{group.competition} · {group.market_type === "BTTS" ? "Both teams to score" : "Team corners"} · {group.summary.picks} published picks across both views, counted once</p>)}
       {rows.length > 0 && <div className="performance-calibration"><table><caption>{MODEL_PICKS_LABEL} · published selections and original prices</caption>
         <thead><tr><th>Match / league</th><th>Selection</th><th>Book / odds</th><th>Publication / quote time (UTC)</th><th>Result</th><th>Profit (units)</th></tr></thead>

@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { StrategyPicks } from "./strategy-picks";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "@/lib/api/client";
 import type { RecordedOffer, RecordedOfferStatus, ShortlistOffer, ShortlistRanking } from "@/lib/api/types";
@@ -112,11 +113,11 @@ function Alternatives({ item }: { item: ShortlistOffer }) {
   </section>;
 }
 
-export function RecommendationsDashboard() {
+export function SavedPriceAnalysis() {
   const [ranking, setRanking] = useState<ShortlistRanking>("higher_probability");
   // A new mode starts at five and aborts the old read instead of showing its snapshot.
   return <div className="workspace recommendations-workspace">
-    <header className="page-heading"><div><span className="eyebrow">Saved qualifying prices</span><h1>Recommendations</h1>
+    <header className="page-heading"><div><span className="eyebrow">Saved qualifying prices</span><h2>Saved-price analysis</h2>
       <p>Ranked upcoming choices at recorded prices. Recheck the price and availability before acting.</p></div></header>
     <label>Ranking <select value={ranking} onChange={event => setRanking(event.target.value as ShortlistRanking)}>
       <option value="higher_probability">Higher probability (65%+)</option>
@@ -198,4 +199,14 @@ function RankedRecommendations({ ranking }: { ranking: ShortlistRanking }) {
       {selected && <><button onClick={() => setExpanded(null)}>Close alternatives</button><Alternatives key={selected.prediction_id} item={selected} /></>}
     </>}
   </>;
+}
+
+export function RecommendationsDashboard() {
+  const [showAnalysis,setShowAnalysis]=useState(false);
+  return <div className="workspace recommendations-workspace">
+    <header className="page-heading"><h1>Recommendations</h1><p>Published current choices at saved prices.</p></header>
+    <StrategyPicks scope="current" />
+    <button onClick={()=>setShowAnalysis(v=>!v)}>{showAnalysis ? "Hide" : "Show"} alternative-price analysis</button>
+    {showAnalysis && <SavedPriceAnalysis />}
+  </div>;
 }

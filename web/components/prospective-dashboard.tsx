@@ -1,5 +1,6 @@
 "use client";
 import { PublishedTrackRecord } from "./track-record";
+import { StrategyPicks } from "./strategy-picks";
 
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api/client";
@@ -94,7 +95,7 @@ export function PredictionsDashboard() {
 const metric = (value: number | null) => value === null ? "—" : number(value);
 const rate = (value: number | null) => value === null ? "—" : percent(value);
 
-export function PerformanceDashboard() {
+export function ModelAccuracyDashboard() {
   const [data, setData] = useState<ProspectivePerformance | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -107,8 +108,7 @@ export function PerformanceDashboard() {
     return () => controller.abort();
   }, [attempt]);
   return <div className="workspace ledger-workspace">
-    <header className="page-heading"><div><p className="eyebrow">Prospective evidence</p><h1>Performance</h1><p>Frozen pre-kickoff forecasts, validated results, and market outcomes. Backend calculated.</p></div></header>
-    <PublishedTrackRecord />
+    <header className="page-heading"><div><p className="eyebrow">Prospective evidence</p><h2>Model Accuracy</h2><p>Frozen pre-kickoff forecasts, validated results, and market outcomes. Backend calculated.</p></div></header>
     <StateMessage loading={loading} error={error} retry={() => { setLoading(true); setError(null); setAttempt((value) => value + 1); }} />
     {data && <>{data.model_performance.settled_prediction_runs === 0 && <p className="panel ledger-message">Not enough settled evidence yet. Counts are shown; error and probability metrics will appear after results are validated.</p>}
       <section className="panel ledger-panel"><div className="section-title"><span>01</span><div><h2>Model quality</h2><p>Count error: actual − predicted · positive bias means underprediction</p></div></div>
@@ -123,5 +123,20 @@ export function PerformanceDashboard() {
       </section>
       <section className="panel ledger-panel"><div className="section-title"><span>03</span><div><h2>Legacy quote-event simulation</h2><p>All qualifying saved quotes, including repeated books, lines and observations. Separate from published recommendations and model accuracy. One hypothetical unit per settled event.</p></div></div><dl className="performance-grid"><div><dt>Settled opportunities</dt><dd>{data.opportunity_performance.settled_opportunities}</dd></div><div><dt>W-L-P</dt><dd>{data.opportunity_performance.wins}-{data.opportunity_performance.losses}-{data.opportunity_performance.pushes}</dd></div><div><dt>Decisive win rate</dt><dd>{rate(data.opportunity_performance.win_rate_excluding_pushes)}</dd></div><div><dt>Realized profit, units</dt><dd>{number(data.opportunity_performance.realized_profit_units)}</dd></div><div><dt>ROI on settled opportunities</dt><dd>{rate(data.opportunity_performance.roi_on_settled_opportunities)}</dd></div></dl><p className="ledger-meta">{data.opportunity_performance.total_opportunity_events} events · {data.opportunity_performance.unresolved_open_opportunities} unresolved</p></section>
     </>}
+  </div>;
+}
+
+export function PerformanceDashboard() {
+  const [tab,setTab]=useState("strategies");
+  return <div className="workspace ledger-workspace">
+    <h1>Performance</h1>
+    <div role="tablist" aria-label="Performance area">
+      <button role="tab" aria-selected={tab==="strategies"} onClick={()=>setTab("strategies")}>Strategy Results</button>
+      <button role="tab" aria-selected={tab==="accuracy"} onClick={()=>setTab("accuracy")}>Model Accuracy</button>
+      <button role="tab" aria-selected={tab==="legacy"} onClick={()=>setTab("legacy")}>Legacy subset picks</button>
+    </div>
+    {tab==="strategies" ? <><StrategyPicks scope="history" /><p>Closing-line value, drawdown and strategy benchmarks are not available. Model calibration belongs in Model Accuracy.</p></>
+      : tab==="accuracy" ? <ModelAccuracyDashboard />
+      : <><p>Historical policy: Higher Probability was a subset of Best Value. These frozen records are not part of the new independent-strategy cohort.</p><PublishedTrackRecord /></>}
   </div>;
 }

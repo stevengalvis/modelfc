@@ -53,7 +53,7 @@ function validSummary(value: unknown, rows: Publication[]) {
     && s.voids === 0 && s.pending === rows.length-settled && close(s.profit_units, profit)
     && close(s.win_rate, wins+losses ? wins/(wins+losses) : null) && close(s.roi, settled ? profit/settled : null);
 }
-export function decodeTrackRecord(value: unknown): TrackRecord {
+export function decodeTrackRecord(value: unknown, independent = false): TrackRecord {
   const fail = (): never => { throw new ModelFCApiError("Published recommendation record is unavailable or invalid.", "TRACK_RECORD_CONTRACT_MISMATCH", false); };
   if (!record(value) || !["first-team-total-value-v1", "first-published-value-v2"].includes(value.policy_version as string) || value.void_settlement_supported !== false
     || !Array.isArray(value.publications) || !record(value.by_view) || !Array.isArray(value.by_league_market)) return fail();
@@ -72,7 +72,11 @@ export function decodeTrackRecord(value: unknown): TrackRecord {
       try { decodeRecommendations([offer]); } catch { return fail(); }
     }
     const o = r.offer as unknown as PublishedOffer;
-    const views = ["best_value", ...(o.model_probability >= .65 ? ["higher_probability"] : [])];
+    const views = independent ? [r.strategy] : ["best_value", ...(o.model_probability >= .65 ? ["higher_probability"] : [])];
+    if (independent && (r.schema_version !== 2 || !["best_value", "higher_probability"].includes(r.strategy as string)
+      || r.strategy_policy !== "independent-value-strategies-v1" || !hash(r.selection_id)
+      || !timestamp(r.policy_effective_at_utc) || Date.parse(r.policy_effective_at_utc as string) > Date.parse(r.published_at_utc as string)
+      || r.strategy === "higher_probability" && o.model_probability < .65)) return fail();
     if (JSON.stringify(r.ranking_views) !== JSON.stringify(views) || o.american_odds < -200 || o.no_vig_probability_edge < .05-1e-12
       || Date.parse(r.forecast_created_at_utc as string) > Date.parse(r.published_at_utc as string)
       || Date.parse(o.availability_checked_at_utc) > Date.parse(r.published_at_utc as string)
@@ -117,4 +121,52 @@ function validBtts(v: Record<string, unknown>): boolean {
     && close(o.no_vig_probability_edge, o.model_probability-o.no_vig_market_probability)
     && o.retrieved_at_utc === o.availability_checked_at_utc
     && Date.parse(o.retrieved_at_utc) < Date.parse(o.kickoff_utc);
+}
+
+export interface StrategyPick extends Publication {
+  strategy: ShortlistRanking; strategy_policy: string; policy_effective_at_utc: string;
+  selection_id: string; simulated_stake_dollars: 2; profit_dollars: number | null;
+}
+export interface StrategyPage {
+  policy_version: string; strategy: ShortlistRanking; scope: "current" | "history";
+  stake_dollars: 2; simulated: true; summary_scope: "page"; summary: TrackSummary;
+  totals: TrackSummary; market_totals: TrackRecord["by_league_market"]; total_profit_dollars: number;
+  profit_dollars: number; by_league_market: TrackRecord["by_league_market"];
+  publications: StrategyPick[]; total: number; offset: number; limit: number; next_offset: number | null;
+}
+export function decodeStrategyPage(value: unknown): StrategyPage {
+  const fail = (): never => { throw new ModelFCApiError("Strategy results are unavailable or invalid.", "STRATEGY_CONTRACT_MISMATCH", false); };
+  if (!record(value) || value.policy_version !== "independent-value-strategies-v1"
+    || !["best_value", "higher_probability"].includes(value.strategy as string)
+    || !["current", "history"].includes(value.scope as string) || value.simulated !== true || value.stake_dollars !== 2
+    || value.summary_scope !== "page" || !Array.isArray(value.publications)
+    || !["total", "offset", "limit"].every(k => Number.isSafeInteger(value[k]) && Number(value[k]) >= 0)
+    || Number(value.limit) < 1 || Number(value.limit) > 20 || value.publications.length > Number(value.limit)
+    || value.publications.length > Number(value.total)) return fail();
+  if (!validAggregate(value.totals, Number(value.total)) || !finite(value.total_profit_dollars)
+    || !record(value.totals) || !close(value.total_profit_dollars, Number(value.totals.profit_units)*2)
+    || !Array.isArray(value.market_totals) || !value.market_totals.every(g => record(g) && validAggregate(g.summary))
+    || value.market_totals.reduce((n,g)=>n+g.summary.picks,0) !== value.total) return fail();
+  const report = decodeTrackRecord({...value, policy_version:"first-published-value-v2", by_view: {
+    best_value: value.strategy === "best_value" ? value.summary : blank,
+    higher_probability: value.strategy === "higher_probability" ? value.summary : blank,
+  }}, true);
+  for (const row of value.publications) {
+    if (row.strategy !== value.strategy || row.simulated_stake_dollars !== 2
+      || !close(row.profit_dollars, row.profit_units === null ? null : row.profit_units*2)) return fail();
+  }
+  const expected = Number(value.offset)+value.publications.length < Number(value.total)
+    ? Number(value.offset)+value.publications.length : null;
+  if (value.next_offset !== expected || !finite(value.profit_dollars) || !close(value.profit_dollars, report.summary.profit_units*2)) return fail();
+  return value as unknown as StrategyPage;
+}
+
+function validAggregate(v: unknown, count?: number): boolean {
+  if (!record(v) || !["picks","unique_fixtures","settled","wins","losses","pushes","pending","voids"].every(k=>Number.isSafeInteger(v[k]) && Number(v[k])>=0)
+    || !finite(v.profit_units) || !(v.roi===null || finite(v.roi)) || !(v.win_rate===null || finite(v.win_rate))) return false;
+  const s=v as unknown as TrackSummary;
+  return (count===undefined || s.picks===count) && s.voids===0 && s.unique_fixtures<=s.picks
+    && s.settled===s.wins+s.losses+s.pushes && s.picks===s.settled+s.pending
+    && close(s.roi,s.settled?s.profit_units/s.settled:null)
+    && close(s.win_rate,s.wins+s.losses?s.wins/(s.wins+s.losses):null);
 }

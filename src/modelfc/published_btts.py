@@ -50,7 +50,7 @@ def eligible(value):
         and value["expected_profit"] > 0)
 
 
-def select(source, now):
+def select(source, now, *, strategy="best_value"):
     # Like corner saved-price picks, age alone does not remove an otherwise latest,
     # available pair. Never resurrect an older pair after unavailable/unknown coverage.
     candidates = []
@@ -59,7 +59,7 @@ def select(source, now):
             continue
         for side in ("YES", "NO"):
             value = offer(comparison, side, now)
-            if eligible(value):
+            if eligible(value) and (strategy != "higher_probability" or value["model_probability"] >= .65):
                 candidates.append((value, comparison.frozen_at_utc))
     best = {}
     for value, frozen in sorted(candidates, key=lambda item: (-item[0]["decimal_odds"],
@@ -86,7 +86,7 @@ def validate(record, source):
     # Reconstruct at original publication time, including then-current availability,
     # both sides and all books. Subsequent quotes do not requalify or replace a pick.
     from modelfc.published_recommendations import _identity
-    original = select(source, published).get(_identity(value))
+    original = select(source, published, strategy=record.get("strategy", "best_value")).get(_identity(value))
     if original != (value, record["forecast_created_at_utc"]):
         raise LedgerError("INVALID_PUBLISHED_RECOMMENDATION")
 
