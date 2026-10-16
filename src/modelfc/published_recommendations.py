@@ -198,6 +198,8 @@ def read(state_dir):
             for record in records:
                 offer = record["offer"]
                 if offer["market_type"] == "BTTS":
+                    if _time(record["published_at_utc"]) > _now():
+                        raise LedgerError("INVALID_PUBLISHED_RECOMMENDATION")
                     btts.validate(record, btts_source)
                     result, profit = btts.result(record, state, btts_source, _now())
                     rows.append({**record, "result": result, "profit_units": profit})

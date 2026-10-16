@@ -127,6 +127,8 @@ class PublishedBttsTests(unittest.TestCase):
             outcomes.settle(self.state, digest(self.forecast), source)
             self.assertEqual(self.report()['summary']['profit_units'], 5)
             self.assertEqual(self.report()['summary']['wins'], 1)
+            with patch.object(outcomes, '_load', side_effect=ImportError('optional decoder unavailable')):
+                self.assertEqual(self.report()['summary']['pending'], 1)
 
     def test_higher_ev_side_wins_when_both_sides_qualify(self):
         source = (self.capture(prices={"draftkings": (4., 4.)}),)
