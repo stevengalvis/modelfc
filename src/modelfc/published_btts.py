@@ -1,7 +1,8 @@
 """Saved E1 BTTS evidence adapter for immutable Model Picks. No provider I/O."""
 from pathlib import Path
 
-from modelfc.btts_market_data import timestamp
+from modelfc.btts_market_data import DECIMAL_AMERICAN_ODDS_TOLERANCE, timestamp
+from modelfc.corner_markets import american_odds_terms
 from modelfc.btts_research import _directory, _read_records, digest, research_views
 from modelfc.ledger_storage import LedgerError, ledger_read_lock
 
@@ -9,7 +10,7 @@ POLICY = "first-btts-value-v1"
 QUALIFICATION_POLICY = {
     "version": "btts-paired-value-v1", "minimum_american_odds": -200,
     "minimum_no_vig_edge": .05, "edge_comparison_tolerance": 1e-12,
-    "decimal_american_odds_tolerance": .005, "no_vig_price_source": "decimal_odds",
+    "decimal_american_odds_tolerance": DECIMAL_AMERICAN_ODDS_TOLERANCE, "no_vig_price_source": "decimal_odds",
     "positive_ev_required": True,
 }
 
@@ -41,9 +42,12 @@ def offer(comparison, side, published):
 
 def eligible(value):
     odds = value["american_odds"]
-    profit = odds / 100 if odds > 0 else 100 / abs(odds)
-    return (odds >= -200 and abs(value["decimal_odds"] - (1 + profit)) <= .005
-        and value["no_vig_probability_edge"] >= .05 - 1e-12 and value["expected_profit"] > 0)
+    profit, _ = american_odds_terms(odds)
+    policy = QUALIFICATION_POLICY
+    return (odds >= policy["minimum_american_odds"]
+        and abs(value["decimal_odds"] - (1 + profit)) <= policy["decimal_american_odds_tolerance"]
+        and value["no_vig_probability_edge"] >= policy["minimum_no_vig_edge"] - policy["edge_comparison_tolerance"]
+        and value["expected_profit"] > 0)
 
 
 def select(source, now):
@@ -92,8 +96,8 @@ def result(record, state, source, now):
     from modelfc.btts_outcomes import (_directory_outcomes, _load, _provider_binding,
                                       fixture_identity, inventory)
     value = record["offer"]
-    forecasts = {digest(r.forecast): (r.forecast, {"BOOKMAKER_RESEARCH"}) for r in source}
-    forecast = forecasts[value["forecast_id"]][0]
+    forecasts = {digest(r.forecast): r.forecast for r in source}
+    forecast = forecasts[value["forecast_id"]]
     path = _directory_outcomes(state) / (digest(fixture_identity(forecast)) + ".json")
     if not path.exists():
         return "PENDING", None
@@ -107,5 +111,5 @@ def result(record, state, source, now):
     if timestamp(outcome["recorded_at_utc"]) > now:
         return "PENDING", None
     won = value["side"] == outcome["actual_btts"]
-    odds = value["american_odds"]
-    return ("WIN", odds / 100 if odds > 0 else 100 / abs(odds)) if won else ("LOSS", -1)
+    profit, _ = american_odds_terms(value["american_odds"])
+    return ("WIN", profit) if won else ("LOSS", -1)

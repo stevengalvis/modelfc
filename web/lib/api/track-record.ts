@@ -1,6 +1,6 @@
 import { ModelFCApiError } from "./errors";
 import { decodeRecommendations } from "./recommendations";
-import { record, finite, timestamp } from "./prospective";
+import { record, finite, timestamp, profit as oddsProfit } from "./prospective";
 import type { Recommendation, ShortlistRanking } from "./types";
 
 export interface TrackSummary {
@@ -77,7 +77,7 @@ export function decodeTrackRecord(value: unknown): TrackRecord {
       || Date.parse(r.forecast_created_at_utc as string) > Date.parse(r.published_at_utc as string)
       || Date.parse(o.availability_checked_at_utc) > Date.parse(r.published_at_utc as string)
       || Date.parse(r.published_at_utc as string) >= Date.parse(o.kickoff_utc)) return fail();
-    const win = o.american_odds > 0 ? o.american_odds/100 : 100/Math.abs(o.american_odds);
+    const win = oddsProfit(o.american_odds);
     if (r.result === "PENDING" ? r.profit_units !== null :
       !["WIN", "LOSS", "PUSH"].includes(r.result as string) || !finite(r.profit_units)
       || !close(r.profit_units as number, r.result === "WIN" ? win : r.result === "LOSS" ? -1 : 0)) return fail();
@@ -109,7 +109,7 @@ function validBtts(v: Record<string, unknown>): boolean {
     || !["decimal_odds", "no_vig_probability_edge", "expected_profit", "observation_age_seconds"].every(k => finite(v[k]))
     || !Number.isSafeInteger(v.american_odds) || Math.abs(Number(v.american_odds)) < 100) return false;
   const o = v as unknown as BttsPublishedOffer;
-  const profit = o.american_odds > 0 ? o.american_odds/100 : 100/Math.abs(o.american_odds);
+  const profit = oddsProfit(o.american_odds);
   return o.decimal_odds > 1 && Math.abs(o.decimal_odds-1-profit) <= .005
     && o.expected_profit > 0 && o.observation_age_seconds >= 0
     && close(o.expected_profit, o.model_probability*o.decimal_odds-1)
