@@ -1,4 +1,5 @@
 import type { ShortlistRanking } from "./types";
+import { decodeTrackRecord, emptyTrackRecord } from "./track-record";
 import { decodeShortlist } from "./shortlist";
 import { decodeBttsPerformance, emptyBttsPerformance } from "./btts-performance";
 import { decodeRecordedOffers } from "./recorded-offers";
@@ -266,6 +267,12 @@ export function createApiClient(
       signal?.throwIfAborted();
       return decodePerformance(mode === "mock" ? structuredClone(mockPerformance)
         : await requestJson<unknown>(baseUrl!, "/prospective/performance", { signal }));
+    },
+    async trackRecord(signal?: AbortSignal) {
+      checkConfiguration();
+      signal?.throwIfAborted();
+      return decodeTrackRecord(mode === "mock" ? structuredClone(emptyTrackRecord)
+        : await requestJson<unknown>(baseUrl!, "/prospective/performance?view=model_picks", { signal, cache: "no-store" }));
     },
     async analyze(payload: AnalysisRequest, signal?: AbortSignal): Promise<AnalysisResponse> {
       checkConfiguration();

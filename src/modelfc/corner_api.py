@@ -495,6 +495,52 @@ class ProspectivePerformanceResponse(StrictModel):
     opportunity_performance: OpportunityPerformanceResponse
 
 
+class PublishedOfferResponse(RecommendationResponse):
+    opportunity_id: str
+
+
+class PublishedPickResponse(StrictModel):
+    schema_version: Literal[1]
+    policy_version: Literal["first-team-total-value-v1"]
+    publication_id: str
+    published_at_utc: str
+    forecast_created_at_utc: str
+    offer: PublishedOfferResponse
+    ranking_views: list[Literal["best_value", "higher_probability"]]
+    record_hash: str
+    result: Literal["WIN", "LOSS", "PUSH", "PENDING"]
+    profit_units: float | None
+
+
+class PublishedSummaryResponse(StrictModel):
+    picks: int
+    unique_fixtures: int
+    settled: int
+    wins: int
+    losses: int
+    pushes: int
+    voids: Literal[0]
+    pending: int
+    profit_units: float
+    win_rate: float | None
+    roi: float | None
+
+
+class PublishedGroupResponse(StrictModel):
+    competition: str
+    market_type: Literal["TEAM_TOTAL"]
+    summary: PublishedSummaryResponse
+
+
+class ModelPicksResponse(StrictModel):
+    policy_version: Literal["first-team-total-value-v1"]
+    void_settlement_supported: Literal[False]
+    summary: PublishedSummaryResponse
+    by_view: dict[Literal["best_value", "higher_probability"], PublishedSummaryResponse]
+    by_league_market: list[PublishedGroupResponse]
+    publications: list[PublishedPickResponse]
+
+
 def _error(code: str, message: str, status: int, *, retryable: bool = False) -> JSONResponse:
     return JSONResponse(status_code=status, content={"error": {
         "code": code, "message": message, "details": {},
@@ -710,10 +756,15 @@ def create_app(
 
     @app.get(
         "/api/v1/prospective/performance",
-        response_model=ProspectivePerformanceResponse,
+        response_model=ProspectivePerformanceResponse | ModelPicksResponse,
     )
-    def get_prospective_performance() -> dict[str, Any]:
+    def get_prospective_performance(response: Response,
+                                   view: Literal["legacy", "model_picks"] = "legacy") -> dict[str, Any]:
+        response.headers["Cache-Control"] = "no-store"
         try:
+            if view == "model_picks":
+                from modelfc.published_recommendations import read
+                return read(state)
             return read_performance(state)
         except LedgerError as error:
             return _public_read_error(error)

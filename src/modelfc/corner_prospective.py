@@ -581,6 +581,10 @@ def run_once(*, state_dir, data_config_path, market_data_type: type[MarketDataSo
                     rollover_if_needed(path, control, now=_now(), save=_save)
                 captured = _inventory(Path(state_dir), data_config_path, summary, market_data_type)
                 _provider_work(path, control, Path(state_dir), data_config_path, summary, captured, market_data_type, release_sha)
+                # Publish once, at the real writer time, after evidence is saved.
+                # Inventory/replay and all GET handlers remain write-free.
+                from modelfc.published_recommendations import publish_locked
+                publish_locked(state_dir)
             except RunnerError as error:
                 code = str(error)
                 if code not in REASONS:

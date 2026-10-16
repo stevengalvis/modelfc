@@ -1,4 +1,5 @@
 "use client";
+import { PublishedTrackRecord } from "./track-record";
 
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api/client";
@@ -107,6 +108,7 @@ export function PerformanceDashboard() {
   }, [attempt]);
   return <div className="workspace ledger-workspace">
     <header className="page-heading"><div><p className="eyebrow">Prospective evidence</p><h1>Performance</h1><p>Frozen pre-kickoff forecasts, validated results, and market outcomes. Backend calculated.</p></div></header>
+    <PublishedTrackRecord />
     <StateMessage loading={loading} error={error} retry={() => { setLoading(true); setError(null); setAttempt((value) => value + 1); }} />
     {data && <>{data.model_performance.settled_prediction_runs === 0 && <p className="panel ledger-message">Not enough settled evidence yet. Counts are shown; error and probability metrics will appear after results are validated.</p>}
       <section className="panel ledger-panel"><div className="section-title"><span>01</span><div><h2>Model quality</h2><p>Count error: actual − predicted · positive bias means underprediction</p></div></div>
@@ -119,7 +121,7 @@ export function PerformanceDashboard() {
         {data.model_performance.decisive_probability_targets_scored < 30 && <p className="ledger-meta">Small sample: not enough settled decisive targets to interpret calibration reliably.</p>}
         <div className="performance-calibration"><h3>Calibration · {data.model_performance.decisive_probability_targets_scored} decisive targets</h3><table><thead><tr><th>Probability range</th><th>Mean predicted</th><th>Observed win rate</th><th>N</th></tr></thead><tbody>{data.model_performance.calibration.map((bucket) => <tr key={bucket.lower_bound}><td>{Math.round(bucket.lower_bound * 100)}–{Math.round(bucket.upper_bound * 100)}%</td><td>{rate(bucket.mean_predicted_probability)}</td><td>{rate(bucket.observed_win_rate)}</td><td>{bucket.sample_count}</td></tr>)}</tbody></table><p className="ledger-meta">Lower bounds included; upper bounds excluded except 100%, which is included.</p></div>
       </section>
-      <section className="panel ledger-panel"><div className="section-title"><span>03</span><div><h2>Opportunity performance</h2><p>One unit risked per settled market event</p></div></div><dl className="performance-grid"><div><dt>Settled opportunities</dt><dd>{data.opportunity_performance.settled_opportunities}</dd></div><div><dt>W-L-P</dt><dd>{data.opportunity_performance.wins}-{data.opportunity_performance.losses}-{data.opportunity_performance.pushes}</dd></div><div><dt>Decisive win rate</dt><dd>{rate(data.opportunity_performance.win_rate_excluding_pushes)}</dd></div><div><dt>Realized profit, units</dt><dd>{number(data.opportunity_performance.realized_profit_units)}</dd></div><div><dt>ROI on settled opportunities</dt><dd>{rate(data.opportunity_performance.roi_on_settled_opportunities)}</dd></div></dl><p className="ledger-meta">{data.opportunity_performance.total_opportunity_events} events · {data.opportunity_performance.unresolved_open_opportunities} unresolved</p></section>
+      <section className="panel ledger-panel"><div className="section-title"><span>03</span><div><h2>Legacy quote-event simulation</h2><p>All qualifying saved quotes, including repeated books, lines and observations. Separate from published recommendations and model accuracy. One hypothetical unit per settled event.</p></div></div><dl className="performance-grid"><div><dt>Settled opportunities</dt><dd>{data.opportunity_performance.settled_opportunities}</dd></div><div><dt>W-L-P</dt><dd>{data.opportunity_performance.wins}-{data.opportunity_performance.losses}-{data.opportunity_performance.pushes}</dd></div><div><dt>Decisive win rate</dt><dd>{rate(data.opportunity_performance.win_rate_excluding_pushes)}</dd></div><div><dt>Realized profit, units</dt><dd>{number(data.opportunity_performance.realized_profit_units)}</dd></div><div><dt>ROI on settled opportunities</dt><dd>{rate(data.opportunity_performance.roi_on_settled_opportunities)}</dd></div></dl><p className="ledger-meta">{data.opportunity_performance.total_opportunity_events} events · {data.opportunity_performance.unresolved_open_opportunities} unresolved</p></section>
     </>}
   </div>;
 }

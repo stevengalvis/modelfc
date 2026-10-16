@@ -1,0 +1,111 @@
+{
+  "policy_version": "first-team-total-value-v1",
+  "void_settlement_supported": false,
+  "summary": {
+    "picks": 1,
+    "unique_fixtures": 1,
+    "settled": 0,
+    "wins": 0,
+    "losses": 0,
+    "pushes": 0,
+    "voids": 0,
+    "pending": 1,
+    "profit_units": 0.0,
+    "win_rate": null,
+    "roi": null
+  },
+  "by_view": {
+    "best_value": {
+      "picks": 1,
+      "unique_fixtures": 1,
+      "settled": 0,
+      "wins": 0,
+      "losses": 0,
+      "pushes": 0,
+      "voids": 0,
+      "pending": 1,
+      "profit_units": 0.0,
+      "win_rate": null,
+      "roi": null
+    },
+    "higher_probability": {
+      "picks": 1,
+      "unique_fixtures": 1,
+      "settled": 0,
+      "wins": 0,
+      "losses": 0,
+      "pushes": 0,
+      "voids": 0,
+      "pending": 1,
+      "profit_units": 0.0,
+      "win_rate": null,
+      "roi": null
+    }
+  },
+  "by_league_market": [
+    {
+      "competition": "E1",
+      "market_type": "TEAM_TOTAL",
+      "summary": {
+        "picks": 1,
+        "unique_fixtures": 1,
+        "settled": 0,
+        "wins": 0,
+        "losses": 0,
+        "pushes": 0,
+        "voids": 0,
+        "pending": 1,
+        "profit_units": 0.0,
+        "win_rate": null,
+        "roi": null
+      }
+    }
+  ],
+  "publications": [
+    {
+      "forecast_created_at_utc": "2026-09-20T02:00:00+00:00",
+      "offer": {
+        "american_odds": -200,
+        "availability_checked_at_utc": "2026-09-20T02:00:00+00:00",
+        "away_team": "West Brom",
+        "bookmaker": "fanduel",
+        "competition": "E1",
+        "decimal_odds": 1.5,
+        "decisive_model_probability": 0.7095911146283653,
+        "direction": "UNDER",
+        "expected_profit": 0.06438667194254799,
+        "home_team": "Wolves",
+        "kickoff_utc": "2026-09-20T11:00:00+00:00",
+        "line": 4.5,
+        "market_type": "TEAM_TOTAL",
+        "model_probability": 0.7095911146283654,
+        "no_vig_market_probability": 0.6212121212121211,
+        "no_vig_probability_edge": 0.08837899341624422,
+        "observation_age_seconds": 30.0,
+        "opportunity_id": "07335aff0ebb55b9a9cb52c509c6a3cf",
+        "policy_version": "team-total-no-vig-v1",
+        "prediction_id": "c185c0644e3751559f8e41f9be6b1258",
+        "provider": "oddspapi",
+        "provider_fixture_id": "id1000001872339860",
+        "push_probability": 0.0,
+        "qualified": true,
+        "retrieved_at_utc": "2026-09-20T02:00:00+00:00",
+        "sportsbook_implied_probability": 0.6666666666666666,
+        "target_id": "a564e96366e4529b87f6e4b3bb0dc20c",
+        "team": "West Brom",
+        "team_side": "AWAY"
+      },
+      "policy_version": "first-team-total-value-v1",
+      "publication_id": "7c1c5e469063d33189bd6f8ef0583a300df7e8d717769da4881cc68cb5b00edd",
+      "published_at_utc": "2026-09-20T02:00:30+00:00",
+      "ranking_views": [
+        "best_value",
+        "higher_probability"
+      ],
+      "record_hash": "1a19b442be3b9b5204e808c0271cbfdc96505755f57b0b2bfc2c5154a5c6172f",
+      "schema_version": 1,
+      "result": "PENDING",
+      "profit_units": null
+    }
+  ]
+}
