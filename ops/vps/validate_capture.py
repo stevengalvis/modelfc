@@ -868,7 +868,18 @@ def strategy_component(state):
         assert publish() == 0 and reports() == first
         assert files(state / strategies.DIRECTORY) == immutable
         now = published._time(forecast.fixture.kickoff_utc) + timedelta(hours=4)
-        assert publish() == 0  # No post-kickoff backfill.
+        assert publish() == 0  # Previously published slots still deduplicate.
+        # A separate unpublished state makes this a kickoff check, not a retry check.
+        unpublished = state.with_name(state.name + '-unpublished')
+        record_btts_research(unpublished, forecast, observed)
+        saved = files(unpublished / 'btts-research')
+        assert not files(unpublished / strategies.DIRECTORY)
+        with _lock(unpublished):
+            assert strategies.publish_locked(unpublished) == 0
+        assert not files(unpublished / strategies.DIRECTORY)
+        assert files(unpublished / 'btts-research') == saved
+        assert all(strategies.read(unpublished, strategy=name, scope='history')['total'] == 0
+                   for name in ('best_value', 'higher_probability'))
         assert all(strategies.read(state, strategy=name)['total'] == 0
                    for name in ('best_value', 'higher_probability'))
         assert all(r['totals']['pending'] == 1 for r in reports())

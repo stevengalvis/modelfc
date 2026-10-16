@@ -47,13 +47,16 @@ no candidate test module is imported by the trusted harness.
 
 One saved BTTS fixture checks independent NO Best Value / YES Higher Probability
 selection, the 65% threshold, two immutable publications, pending exclusions,
-changed-price refresh deduplication, no post-kickoff publication, saved-goal
+changed-price refresh deduplication, no post-kickoff publication in a separate
+unpublished state using the same saved fixture, saved-goal
 settlement, repeated settlement, original +500/+120 prices, and $2 flat stakes.
 The loss is -$2 / -100% ROI; the win is +$2.40 / +120% ROI. A real validated
 legacy publication remains byte-identical and readable through settlement.
 Mismatched fixture results and conflicting corrections must fail without writes.
 All strategy reads must leave state unchanged. Mutation tests ensure broken
-publication or dollar totals fail the component.
+publication or dollar totals fail the component. A kickoff-guard mutation must
+produce two late publications in the fresh state and fail validation; occupied
+strategy slots alone cannot establish this protection.
 
 The bounded report adds `strategy_validation: PASS|FAIL|NOT_RUN` and
 `STRATEGY_VALIDATION_FAILED`. OFFLINE PASS requires strategy PASS; missing,

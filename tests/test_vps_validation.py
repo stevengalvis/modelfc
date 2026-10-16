@@ -525,6 +525,44 @@ class OfflineHarnessTests(unittest.TestCase):
             self.assertEqual(report['provider_request_count'], 0)
             self.assertEqual(harness.checked_report(report, SHA, '', 'OFFLINE'), report)
 
+    def test_strategy_component_detects_disabled_kickoff_guards(self):
+        from modelfc import pick_strategies as strategies, published_recommendations as published
+        from modelfc import btts_research
+        from datetime import timedelta
+        original = strategies.publish_locked
+        original_time, original_timestamp = published._time, btts_research.timestamp
+        kickoff = harness.STRATEGY_FORECAST['fixture']['kickoff_utc']
+        writes = []
+
+        def broken(state, **kwargs):
+            # Mutate kickoff comparisons in selection and both writer guards only.
+            # Persisted evidence and the actual publication clock remain unchanged.
+            if (published._now() >= original_time(kickoff)
+                    and not list((state / strategies.DIRECTORY).glob('*.json'))):
+                def future_time(value):
+                    result = original_time(value)
+                    return result + timedelta(days=1) if result == original_time(kickoff) else result
+                def future_timestamp(value):
+                    result = original_timestamp(value)
+                    return result + timedelta(days=1) if result == original_time(kickoff) else result
+                with patch.object(published, '_time', side_effect=future_time), \
+                        patch.object(btts_research, 'timestamp', side_effect=future_timestamp):
+                    created = original(state, **kwargs)
+                writes.append(created)
+                return created
+            return original(state, **kwargs)
+
+        with patch.object(strategies, 'publish_locked', side_effect=broken):
+            report = self.run_offline()
+        # Target the unpublished state: the old scenario never reaches this
+        # mutation. Two actual late writes must fail the new validation assertion.
+        self.assertEqual(writes, [2])
+        self.assertEqual((report['result'], report['reason'], report['strategy_validation']),
+                         ('FAIL', 'STRATEGY_VALIDATION_FAILED', 'FAIL'))
+        self.assertEqual(report['core_pipeline'], 'PASS')
+        self.assertEqual(report['provider_request_count'], 0)
+        self.assertEqual(harness.checked_report(report, SHA, '', 'OFFLINE'), report)
+
     def test_older_source_without_market_intelligence_is_not_applicable(self):
         # Simulate an older exported source without the optional module. The
         # installed harness must exercise core/replay without claiming it ran.
