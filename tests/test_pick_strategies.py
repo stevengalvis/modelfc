@@ -47,7 +47,8 @@ class StrategyTests(unittest.TestCase):
     def test_canonical_selection_ignores_price_time_but_not_line(self):
         base = next(iter(published.select(published._locked_inventory(self.state,
             now=self.now, include_recorded=True, upcoming_only=True), self.now).values()))
-        self.assertEqual(strategies.selection_identity(base), strategies.selection_identity(dict(base, american_odds=200, bookmaker='other')))
+        self.assertEqual(strategies.selection_identity(base), strategies.selection_identity(dict(base, american_odds=200, decimal_odds=3., bookmaker='other',
+            retrieved_at_utc=(self.now+timedelta(minutes=3)).isoformat())))
         self.assertNotEqual(strategies.selection_identity(base), strategies.selection_identity(dict(base,line=base['line']+1)))
         self.assertNotEqual(strategies.publication_identity(base,'best_value'), strategies.publication_identity(base,'higher_probability'))
 
@@ -74,6 +75,50 @@ class StrategyTests(unittest.TestCase):
         record=json.loads(path.read_text()); record['record_hash']='0'*64; path.write_text(json.dumps(record))
         with self.assertRaises(LedgerError): self.independent()
         with self.assertRaises(ValueError): strategies.read(self.state,limit=21)
+
+    def test_two_pending_legacy_sentinels_are_never_opened_or_rewritten(self):
+        # Opaque sentinels prove namespace isolation; the separate legacy test above
+        # verifies a fully validated historical publication through the legacy API.
+        directory=self.state/published.DIRECTORY; directory.mkdir()
+        for number in (1,2):
+            (directory/f"{number:064x}.json").write_text(json.dumps({
+                "historical_pending_corner_pick":number,"original_price":-200,
+                "result":"PENDING","original_timestamp":"2026-10-16T13:00:00Z"}))
+        original={p:p.read_bytes() for p in directory.iterdir()}
+        reader=published.read_json_record
+        def guarded(path,*args,**kwargs):
+            self.assertNotEqual(path.parent,directory,"new policy must not read or migrate legacy picks")
+            return reader(path,*args,**kwargs)
+        with patch.object(published,'read_json_record',side_effect=guarded):
+            self.independent(); strategies.read(self.state)
+        self.assertEqual(original,{p:p.read_bytes() for p in directory.iterdir()})
+        self.assertEqual(len(original),2)
+
+    def test_currency_and_roi_contract_for_favorite_underdog_push_loss_pending(self):
+        from modelfc.corner_prospective_read import _profit
+        self.independent()
+        template=deepcopy(strategies.read(self.state)['publications'][0])
+        # Expected dollars are explicit, not derived from the implementation's stake.
+        for odds,result,expected_units,expected_dollars,expected_roi in (
+            (-200,'WIN',.5,1.,.5),(150,'WIN',1.5,3.,1.5),
+            (-200,'LOSS',-1.,-2.,-1.),(150,'LOSS',-1.,-2.,-1.),
+            (-200,'PUSH',0.,0.,0.),(150,'PUSH',0.,0.,0.),
+            (-200,'PENDING',None,None,None)):
+            with self.subTest(odds=odds,result=result):
+                row=deepcopy(template); row['offer']['american_odds']=odds
+                row.update(result=result,profit_units=_profit(None if result=='PENDING' else result,odds))
+                with patch.object(published,'read',return_value=published._report([row])):
+                    report=strategies.read(self.state,scope='history')
+                pick=report['publications'][0]
+                self.assertEqual(pick['simulated_stake_dollars'],2)
+                self.assertEqual(pick['profit_units'],expected_units)
+                self.assertEqual(pick['profit_dollars'],expected_dollars)
+                self.assertEqual(report['totals']['roi'],expected_roi)
+                if expected_dollars is not None:
+                    self.assertEqual(report['total_profit_dollars']/2,expected_roi)
+                else:
+                    self.assertEqual(report['totals']['pending'],1)
+                    self.assertEqual(report['totals']['settled'],0)
 
 class BttsStrategyTests(unittest.TestCase):
     def setUp(self):
