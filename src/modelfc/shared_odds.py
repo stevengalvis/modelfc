@@ -119,6 +119,12 @@ def _snapshot(normalized, payload_sha256, metadata_sha256):
 
 
 def _names(fixture, historical_names):
+    if fixture.identity.competition == "E0":
+        # No reviewed E0 alias/ID registry exists. Only exact supplied history names
+        # are eligible for offline reuse; never reuse E1 aliases across leagues.
+        if {fixture.home_team, fixture.away_team} <= set(historical_names):
+            return fixture.home_team, fixture.away_team
+        raise ValueError("E0_TEAM_IDENTITY_UNVERIFIED")
     validate_team_identity(fixture.home_team, fixture.home_provider_team_id, fixture.identity.competition)
     validate_team_identity(fixture.away_team, fixture.away_provider_team_id, fixture.identity.competition)
     return (normalize_team(fixture.home_team, historical_names, fixture.identity.competition),
@@ -131,7 +137,7 @@ def _american(quote):
 
 def corner_selections(snapshot: OddsBatchSnapshot, fixture: SnapshotFixture) -> tuple[MarketSelection, ...]:
     """Existing normalized corner selections; first-half quotes stay inventory-only."""
-    if fixture not in snapshot.fixtures or fixture.identity.competition != "E1":
+    if fixture not in snapshot.fixtures or fixture.identity.competition not in {"E1", "E0"}:
         raise ValueError("UNSUPPORTED_OR_UNBOUND_CORNER_FIXTURE")
     families = {"MATCH_CORNER_TOTALS": ("MATCH_TOTAL", None),
                 "HOME_TEAM_CORNERS": ("TEAM_TOTAL", "HOME"), "AWAY_TEAM_CORNERS": ("TEAM_TOTAL", "AWAY")}
