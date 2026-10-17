@@ -430,6 +430,45 @@ remain failures. No raw exception messages are retained. It does not
 authorize promotion or change the fixed GitHub JSON report. The normal
 host execution context is used, independent of coding-agent mount restrictions.
 
+### Supplemental unittest timing (source only)
+
+The trusted test runner wraps the same unittest discovery/verbose CLI with
+startTest/stopTest observations. A separate nonblocking pipe carries bounded
+monotonic microsecond events; no new execution mode, SSH selector, service,
+identity, permission, path or validator capability is added. The 300-second
+suite deadline, 330-second service ceiling, isolation and resource limits are
+unchanged. Standard unittest outcomes and its terminal summary still determine
+the gate; timing events cannot make a failing or interrupted run pass.
+
+Failure diagnostics may include `progress`: `observed_completed`, `complete`,
+`last_test_id`, `last_progress_us`, and up to eight `slowest` pairs of source
+allowlisted test ID and elapsed microseconds. Observed completion includes tests
+that failed or skipped, not just successes; subtests are part of their enclosing
+test. `complete` describes the event stream, not successful tests or a trusted
+final count. Missing terminal summaries still mean `count_known=false` and
+retained `tests_run=null`. Dropped, malformed, out-of-order, unknown-ID or excess
+events stop timing aggregation and mark it incomplete, preserving only the
+accepted prefix. The pipe is drained even after rejection so instrumentation
+cannot block tests. At most 4 MiB/20,000 events are accepted; individual records
+are capped at 1024 bytes. No descriptions, parameters, tracebacks or raw pipe
+payloads are retained. The existing 4096-byte final report ceiling is unchanged.
+
+These candidate-process observations are supplemental, not trusted attestations
+or proof that the last test caused a timeout. Timing adds small overhead. Normal
+parent-handled timeout preserves accepted progress; OOM, service-wide kill or
+host failure before report writing may still lose it. Existing immediate-child
+reaping and systemd cgroup termination remain responsible for cleanup.
+
+There is no automatic archive of the prior private failure record: the next
+normal test attempt still deletes it. GitHub's fixed deployment artifact does
+not contain these private diagnostics. Before a future attempt, an authorized
+operator must preserve that bounded record through existing authorized access,
+matching SHA and release ID. Controller installation, evidence preservation and
+any subsequent normal deployment attempt require separate authorization. This
+source change neither performs nor authorizes them, and chooses no timeout
+increase or deployment remedy. Mocked/source tests do not establish systemd or
+VPS acceptance; that acceptance has not been performed for this change.
+
 Release retention and the one-time runtime path migration are administrator
 tasks. Never delete a release still referenced by `current`; keep previous
 successful releases until a separate retention policy is reviewed. This system
@@ -778,3 +817,34 @@ real-systemd timing/cleanup acceptance and explicit installation approval remain
 required. Keep the 300-second child deadline, service/resource/security limits,
 state isolation and promotion gate unchanged. Missing reports after controller
 termination still provide no last-test evidence; do not infer a cause.
+
+### Installed-baseline diagnostic acceptance
+
+`ops/vps/patches/deploy-main-5c1b-test-progress.patch` applies only the PR176
+instrumentation to the complete retained installed-controller fixture. The CI
+harness pins baseline SHA-256 `5c1bf84f138e491485838462ebac0cb107872c377b1224d9d4c5b117e27d03a5`,
+patch `efaf214ccd6d5ee8e9576de4ba8a4f17d1884062b00addd733c4d3f6040332c3`,
+and result `882cb40931695df85e2b0c7d72d607b5e266e2207c895a66467e080d49ee528d`.
+It does not introduce main's additional handoff/recovery behavior.
+
+The dedicated `Diagnostic controller systemd acceptance` PR workflow uses a
+fresh GitHub-hosted Ubuntu 24.04 VM, the system Python (version recorded in its
+report), no production environment/secrets and read-only repository permission.
+It reconstructs the candidate, then executes only `--run-tests` with synthetic
+Git releases using the real fixed test unit. The unit's reviewed bytes are pinned;
+CI additionally hides home directories. Fixture path/account collisions, absent
+systemd/cgroup-v2 or mismatched effective limits fail closed. Normal completion,
+malformed/flooded progress, the real 300-second child deadline within 330 seconds,
+and a setsid descendant holding inherited pipes are checked. Results are consumed
+only after the cgroup is empty. All fixed fixture units/files/accounts are removed
+in finalization and an always-run cleanup step. No installed VPS service is used.
+
+The sanitized `diagnostic-acceptance-<head SHA>` Actions artifact contains the
+acceptance report and reconstructed exact candidate/baseline inputs; download
+from that immutable run and hash-check before proposing operator installation.
+A passing run establishes these synthetic real-systemd behaviors, not VPS
+acceptance, outer controller deployment coordination, live API behavior or an
+actual production test timing. Those controller paths remain source/mock-tested.
+Review the recorded Python/systemd/runtime information against the operator's
+actual host. This workflow does not install on the VPS, preserve its failure
+record, authorize a retry, merge, or change its permissions or deadlines.
