@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import pwd
+import platform
 import shutil
 import subprocess
 import sys
@@ -228,9 +229,13 @@ def main():
     if args.cleanup: cleanup(); return
     require(args.source is not None and args.output is not None)
     output=args.output.resolve(); output.mkdir()
-    report=dict(status='FAIL',candidate_sha256=CANDIDATE,python=sys.version.split()[0],cases=[])
+    report=dict(status='FAIL',candidate_sha256=CANDIDATE,baseline_sha256=BASE,patch_sha256=PATCH,
+                python=sys.version.split()[0],systemd=command(['systemctl','--version']).splitlines()[0],
+                kernel=platform.release(),cases=[])
     try:
         candidate=build(args.source.resolve(),output/'build')
+        (output/'baseline.py').write_bytes((args.source/'tests/fixtures/vps/deploy_main_5c1b.py.txt').read_bytes())
+        (output/'diagnostic-only.patch').write_bytes((args.source/'ops/vps/patches/deploy-main-5c1b-test-progress.patch').read_bytes())
         report['effective_unit']=prepare(args.source.resolve(),candidate)
         for mode in ('normal','malformed','flood','timeout'):
             report['cases'].append(run_case(mode))
@@ -238,6 +243,9 @@ def main():
     finally:
         try:
             cleanup(); report['cleanup']='PASS'
+        except BaseException:
+            report.update(status='FAIL',cleanup='FAIL')
+            raise
         finally:
             (output/'acceptance.json').write_text(json.dumps(report,sort_keys=True)+'\n')
     require(report['status']=='PASS')
