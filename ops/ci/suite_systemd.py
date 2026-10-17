@@ -53,12 +53,12 @@ def lock_available():
 def cleanup():
     if not CLAIM.is_file(): return
     if CLAIM.read_text()!='isolated-suite-ci-v1\n': raise AssertionError('claim mismatch')
-    command('systemctl','stop',GUARD,WORKER,'modelfc-api.service',check=False)
+    command('systemctl','stop',GUARD,WORKER,'modelfc-api.service','modelfc-postmerge-tests.service',check=False)
     command('systemctl','clean','--what=fdstore',GUARD,check=False)
-    for unit in (GUARD,WORKER,'modelfc-api.service'):
+    for unit in (GUARD,WORKER,'modelfc-api.service','modelfc-postmerge-tests.service'):
         (UNITS/unit).unlink(missing_ok=True)
     command('systemctl','daemon-reload')
-    command('systemctl','reset-failed',check=False)
+    command('systemctl','reset-failed',GUARD,WORKER,'modelfc-api.service','modelfc-postmerge-tests.service',check=False)
     for path in (ROOT,STATE,CONTROL,Path('/srv/modelfc'),Path('/var/lib/modelfc'),Path('/etc/modelfc-validator')):
         if path.exists(): shutil.rmtree(path)
     CLAIM.unlink()
@@ -101,7 +101,7 @@ class Boundary(unittest.TestCase):
   with self.assertRaises(OSError): socket.create_connection(('127.0.0.1',PORT),timeout=.2)
 '''.replace('PORT',str(port))
     if mode=='failure': cases+=' def test_b_failure(self): self.fail("DO_NOT_PUBLISH_RAW_CANARY")\n'
-    if mode in ('timeout','kill','concurrent'):
+    if mode in ('timeout','kill','stop','concurrent'):
         cases+=''' def test_b_descendant(self):
   subprocess.Popen(['/usr/bin/python3','-c','import signal,time;signal.signal(signal.SIGTERM,signal.SIG_IGN);time.sleep(600)'],stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,start_new_session=True)
   os.closerange(3,256)
@@ -125,7 +125,7 @@ def run(args):
         listener.bind(('127.0.0.1',0));listener.listen()
         port=listener.getsockname()[1]
         tmp=Path(temporary)
-        for mode in ('pass','failure','busy','kill','concurrent','queued','timeout','full'):
+        for mode in ('pass','failure','busy','pending','abandoned','override','kill','stop','concurrent','queued','timeout','full'):
             if ROOT.exists():
                 guard.recover()
                 for unit in (GUARD,WORKER): (UNITS/unit).unlink()
@@ -149,12 +149,33 @@ def run(args):
                     command('/usr/bin/python3','-I',str(ROOT/'guard.py'),'run',sha)
                     evidence=json.loads(next((STATE/'results').glob('*.json')).read_text())
                     assert evidence['reason']=='DEPLOYMENT_BUSY' and evidence['worker'] is None
+            elif mode in ('pending','abandoned','override'):
+                pending=CONTROL/'service-pending.json'
+                abandoned=UNITS/'modelfc-postmerge-tests.service'
+                if mode=='pending': pending.write_text('{"unfinished":true}\n')
+                if mode=='abandoned':
+                    abandoned.write_text('[Service]\nExecStart=/usr/bin/sleep infinity\n')
+                    command('systemctl','daemon-reload');command('systemctl','start',abandoned.name)
+                if mode=='override': command('systemctl','set-property','--runtime',WORKER,'PrivateNetwork=no')
+                result=command('/usr/bin/python3','-I',str(ROOT/'guard.py'),'run',sha,check=False)
+                if mode=='override':
+                    assert result.returncode and guard.quiescent(WORKER)
+                    command('systemctl','revert',WORKER)
+                else:
+                    evidence=json.loads(next((STATE/'results').glob('*.json')).read_text())
+                    assert evidence['reason']=='DEPLOYMENT_RECOVERY_REQUIRED' and evidence['worker'] is None,evidence
+                assert lock_available()
+                if mode=='pending':
+                    assert pending.read_text()=='{"unfinished":true}\n';pending.unlink()
+                if mode=='abandoned':
+                    assert active(abandoned.name)=='active'
+                    command('systemctl','stop',abandoned.name);abandoned.unlink();command('systemctl','daemon-reload')
             elif mode=='queued':
                 command('systemctl','start','--no-block',WORKER,check=False)
                 wait_for(lambda:active(GUARD)=='failed')
                 wait_for(lambda:guard.quiescent(WORKER))
                 assert lock_available()
-            elif mode in ('kill','concurrent'):
+            elif mode in ('kill','stop','concurrent'):
                 command('systemctl','start',GUARD)
                 wait_for(lambda:active(WORKER)=='activating')
                 wait_for(lambda:int(guard.properties(GUARD,'NFileDescriptorStore')['NFileDescriptorStore'])==1)
@@ -163,7 +184,8 @@ def run(args):
                 if mode=='concurrent':
                     other=command('/usr/bin/python3','-I',str(ROOT/'guard.py'),'run',sha,check=False)
                     assert other.returncode and active(WORKER)=='activating'
-                command('systemctl','kill','--kill-whom=main','--signal=KILL',GUARD)
+                if mode=='stop': command('systemctl','stop','--no-block',GUARD)
+                else: command('systemctl','kill','--kill-whom=main','--signal=KILL',GUARD)
                 until=time.monotonic()+65
                 while not guard.quiescent(WORKER):
                     assert not lock_available(),'deployment interlock released while candidate cgroup survives'
@@ -193,8 +215,10 @@ def run(args):
                     assert lock_available()
             assert (CONTROL/'last-test-failure.json').read_bytes()==before
             assert guard.api_identity()==identity
-            results.append(dict(case=mode,status='PASS',elapsed_seconds=round(time.monotonic()-started,3)))
-            print(json.dumps(results[-1]),flush=True)
+            reports=[json.loads(p.read_text()) for p in sorted((STATE/'results').glob('*.json'))]
+            results.append(dict(case=mode,status='PASS',elapsed_seconds=round(time.monotonic()-started,3),reports=reports))
+            Path(args.output).write_text(json.dumps(dict(status='IN_PROGRESS',cases=results))+'\n')
+            print(json.dumps(dict(case=mode,status='PASS',elapsed_seconds=results[-1]['elapsed_seconds'])),flush=True)
     return dict(status='PASS',cases=results,candidate=args.candidate,source_sha=args.source_sha)
 
 
@@ -209,6 +233,10 @@ if __name__=='__main__':
     try:
         result=run(args)
     finally:
+        output=Path(args.output)
+        if result['status']=='FAIL':
+            if output.exists(): result['completed_cases']=json.loads(output.read_text()).get('cases',[])
+            if (STATE/'results').exists(): result['last_reports']=[json.loads(p.read_text()) for p in (STATE/'results').glob('*.json')]
         try: cleanup();result['cleanup']='PASS'
         except Exception: result['cleanup']='FAIL'
         output=Path(args.output);output.write_text(json.dumps(result,sort_keys=True)+'\n');output.chmod(0o644)

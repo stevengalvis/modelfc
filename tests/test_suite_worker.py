@@ -55,7 +55,7 @@ class CaptureTests(unittest.TestCase):
                 self.assertNotIn('secret',json.dumps(result))
 
     def test_zero_tests_not_success(self):
-        self.assertEqual(self.run_case(' pass\n')['classification'],'TEST_FAILURE')
+        self.assertEqual(self.run_case(' pass\n')['classification'],'INCOMPLETE')
 
     def test_output_flood_is_bounded_but_terminal_summary_survives(self):
         result=self.run_case(' def test_flood(self): os.write(2,b"SECRET"*20000)\n')

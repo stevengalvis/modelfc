@@ -1,6 +1,8 @@
 [Unit]
 Description=Trusted admission and lifecycle guard for isolated ModelFC suite
 
+PropagatesStopTo=modelfc-suite-worker.service
+
 [Service]
 Type=notify
 NotifyAccess=main

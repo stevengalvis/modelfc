@@ -22,6 +22,14 @@ def install(archive, expected, sha):
         raise ValueError('test-only resources already exist; no overwrite')
     if Path('/usr/lib').stat().st_uid!=0 or Path('/usr/lib').stat().st_mode & 0o022:
         raise ValueError('protected /usr/lib required; do not change its permissions')
+    for parent in (ROOT.parent, STATE.parent, Path('/etc/systemd/system')):
+        info=parent.lstat()
+        if not parent.is_dir() or parent.is_symlink() or info.st_uid!=0 or info.st_mode & 0o022:
+            raise ValueError('protected destination parent required')
+    for executable in ('systemctl','systemd-analyze','busctl','journalctl','python3'):
+        if not os.access('/usr/bin/'+executable,os.X_OK): raise ValueError('missing executable')
+    version=subprocess.run(['/usr/bin/systemctl','--version'],capture_output=True,text=True,check=True,timeout=10)
+    if version.stdout.split()[1]!='255': raise ValueError('requires accepted systemd 255')
     staged=None
     try:
         staged=Path(tempfile.mkdtemp(prefix='.modelfc-suite-',dir='/usr/lib'))
@@ -48,6 +56,8 @@ def install(archive, expected, sha):
             raise ValueError('manifest mismatch')
         if hashlib.sha256(Path('/usr/bin/python3').read_bytes()).hexdigest()!=value['host_python_sha256']:
             raise ValueError('host Python differs from accepted artifact; no automatic upgrade')
+        subprocess.run(['/usr/bin/systemd-analyze','verify',*[str(staged/u) for u in UNITS]],
+                       check=True,timeout=20,stdout=subprocess.DEVNULL)
         staged.chmod(0o755)
         os.rename(staged,ROOT);staged=None
         STATE.mkdir(mode=0o700)

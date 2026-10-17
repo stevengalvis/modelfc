@@ -63,6 +63,56 @@ def quiescent(unit):
         return not directory.exists()
 
 
+def deployment_quiescent():
+    # Existing controller recovery belongs to that controller, never this runner.
+    for path in (DEPLOY_LOCK.parent/'service-pending.json', DEPLOY_LOCK.parent/'test-request.json',
+                 Path('/run/modelfc-acquisition/request.json')):
+        if path.exists() or path.is_symlink(): raise Rejected('DEPLOYMENT_RECOVERY_REQUIRED')
+    units = json.loads(command(['/usr/bin/systemctl', 'list-units', '--all', '--type=service',
+                                '--output=json', '--no-pager', 'modelfc-postmerge-*']))
+    if not isinstance(units, list): raise Rejected('MANAGER_UNKNOWN')
+    for entry in units:
+        unit = entry['unit']
+        if not re.fullmatch(r'modelfc-postmerge-[a-zA-Z0-9@_.:-]+\.service', unit):
+            raise Rejected('MANAGER_UNKNOWN')
+        if not quiescent(unit): raise Rejected('DEPLOYMENT_RECOVERY_REQUIRED')
+
+
+def typed_property(unit, interface, name):
+    label = re.sub(r'[^a-zA-Z0-9]', lambda m: '_%02x' % ord(m[0]), unit)
+    return json.loads(command(['/usr/bin/busctl', '--system', '--json=short', 'get-property',
+        'org.freedesktop.systemd1', '/org/freedesktop/systemd1/unit/' + label,
+        'org.freedesktop.systemd1.' + interface, name]))
+
+
+def execution_policy(unit, script, suffix):
+    expected = ['/usr/bin/python3', '-I', '-B', str(ROOT/script), *suffix]
+    value = typed_property(unit, 'Service', 'ExecStart')
+    rows = value.get('data')
+    if value.get('type') != 'a(sasbttttuii)' or not isinstance(rows, list) or len(rows) != 1:
+        raise Rejected('EXECUTION_POLICY')
+    if rows[0][:3] != ['/usr/bin/python3', expected, False]: raise Rejected('EXECUTION_POLICY')
+    extended = typed_property(unit, 'Service', 'ExecStartEx')
+    if extended.get('type') != 'a(sasasttttuii)' or len(extended.get('data', [])) != 1 or extended['data'][0][:3] != ['/usr/bin/python3', expected, []]:
+        raise Rejected('EXECUTION_POLICY')
+    empty_arrays = ('ExecCondition', 'ExecStartPre', 'ExecStartPost', 'ExecStop', 'ExecStopPost', 'ExecReload',
+                    'Environment', 'PassEnvironment', 'UnsetEnvironment', 'SupplementaryGroups',
+                    'BindPaths', 'BindReadOnlyPaths', 'ReadWritePaths', 'LoadCredential',
+                    'LoadCredentialEncrypted', 'SetCredential', 'SetCredentialEncrypted', 'ImportCredential')
+    for name in empty_arrays:
+        if typed_property(unit, 'Service', name).get('data') != []: raise Rejected('EXECUTION_POLICY')
+    expected_files = [[str(STATE/'worker.env'), False]] if unit == WORKER else []
+    if typed_property(unit, 'Service', 'EnvironmentFiles').get('data') != expected_files:
+        raise Rejected('EXECUTION_POLICY')
+    expected_paths = ['-/srv', '-/var/lib/modelfc', '-/var/lib/modelfc-deploy',
+                      '-/var/lib/modelfc-suite', '-/etc/modelfc-validator', '-/run'] if unit == WORKER else []
+    if typed_property(unit, 'Service', 'InaccessiblePaths').get('data') != expected_paths:
+        raise Rejected('EXECUTION_POLICY')
+    expected_readonly = [str(ROOT)] if unit == WORKER else []
+    if typed_property(unit, 'Service', 'ReadOnlyPaths').get('data') != expected_readonly:
+        raise Rejected('EXECUTION_POLICY')
+
+
 def stop_worker():
     command(['/usr/bin/systemctl', 'stop', WORKER], timeout=65, check=False)
     if not quiescent(WORKER): raise Rejected('CLEANUP_UNKNOWN')
@@ -123,9 +173,12 @@ def verify_bundle():
         installed = Path('/etc/systemd/system')/unit
         trusted_path(installed)
         if installed.read_bytes() != (ROOT/unit).read_bytes(): raise Rejected('UNIT_MISMATCH')
-        if properties(unit, 'DropInPaths')['DropInPaths']: raise Rejected('UNIT_OVERRIDE')
+        if properties(unit, 'DropInPaths', 'FragmentPath') != dict(DropInPaths='', FragmentPath=str(installed)):
+            raise Rejected('UNIT_OVERRIDE')
     guard = properties(GUARD, 'FileDescriptorStoreMax', 'FileDescriptorStorePreserve', 'NotifyAccess', 'CollectMode', 'RemainAfterExit')
     if guard != dict(FileDescriptorStoreMax='1', FileDescriptorStorePreserve='yes', NotifyAccess='main', CollectMode='inactive', RemainAfterExit='yes'):
+        raise Rejected('GUARD_POLICY')
+    if properties(GUARD, 'User', 'Group', 'RootDirectory', 'RootImage') != dict(User='', Group='', RootDirectory='', RootImage=''):
         raise Rejected('GUARD_POLICY')
     expected = dict(DynamicUser='yes', PrivateNetwork='yes', PrivateTmp='yes',
                     PrivateDevices='yes', NoNewPrivileges='yes', CapabilityBoundingSet='',
@@ -134,8 +187,12 @@ def verify_bundle():
                     RestrictSUIDSGID='yes', ProtectProc='invisible', KillMode='control-group',
                     SendSIGKILL='yes', MemoryMax='2147483648', TasksMax='64',
                     TimeoutStartUSec='5min 30s', TimeoutStopUSec='30s',
-                    NetworkNamespacePath='', JoinsNamespaceOf='')
+                    NetworkNamespacePath='', JoinsNamespaceOf='', RestrictNamespaces='yes',
+                    User='modelfc-suite-worker', Group='modelfc-suite-worker',
+                    RootDirectory='', RootImage='', WorkingDirectory=str(ROOT/'source'))
     if properties(WORKER, *expected) != expected: raise Rejected('WORKER_POLICY')
+    execution_policy(GUARD, 'guard.py', ['supervise'])
+    execution_policy(WORKER, 'worker.py', [])
     return manifest
 
 
@@ -177,10 +234,11 @@ def supervise():
         if not quiescent(WORKER): raise Rejected('WORKER_BUSY')
         lock_fd = os.open(DEPLOY_LOCK, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
         info = os.fstat(lock_fd)
-        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_mode & 0o007:
+        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_uid != 0 or info.st_mode & 0o007:
             raise Rejected('DEPLOY_LOCK_REJECTED')
         try: fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError: raise Rejected('DEPLOYMENT_BUSY') from None
+        deployment_quiescent()
         # PID1 retains the same open-file description even if this process dies.
         notify('FDSTORE=1\nFDPOLL=0\nFDNAME=deployment-interlock', lock_fd)
         barrier()
@@ -194,10 +252,15 @@ def supervise():
         notify('READY=1')
         worker_started = True
         command(['/usr/bin/systemctl', 'start', '--wait', WORKER], timeout=375, check=False)
+        lifecycle = properties(WORKER, 'InvocationID', 'Result', 'ExecMainCode', 'ExecMainStatus')
+        report['worker_lifecycle'] = lifecycle
+        if not re.fullmatch('[0-9a-f]{32}', lifecycle['InvocationID']):
+            raise Rejected('WORKER_IDENTITY_UNKNOWN')
         stop_worker()
         report['cleanup'] = 'EMPTY_CGROUP'
         output = command(['/usr/bin/journalctl', '--no-pager', '-o', 'cat', '-n', '1',
-                          'SYSLOG_IDENTIFIER=modelfc-suite-worker'])
+                          'SYSLOG_IDENTIFIER=modelfc-suite-worker', '_SYSTEMD_UNIT=' + WORKER,
+                          '_SYSTEMD_INVOCATION_ID=' + lifecycle['InvocationID']])
         if len(output) > 16384: raise Rejected('REPORT_LIMIT')
         result = json.loads(output)
         required = {'run_id','classification','complete','terminal','observed_completed','last_progress','slowest','stderr_truncated','elapsed_seconds'}
@@ -209,6 +272,8 @@ def supervise():
         if not report['api_unchanged']: raise Rejected('API_IDENTITY_CHANGED')
         if result['classification'] != 'PASS' or result['complete'] is not True:
             raise Rejected('SUITE_NOT_PASS')
+        if lifecycle['Result'] != 'success' or lifecycle['ExecMainCode'] != '1' or lifecycle['ExecMainStatus'] != '0':
+            raise Rejected('WORKER_LIFECYCLE_FAILED')
         if not quiescent(WORKER): raise Rejected('CLEANUP_UNKNOWN')
         report.update(status='PASS', reason='OK')
         record(path, report)
@@ -239,6 +304,7 @@ def recover():
     command(['/usr/bin/systemctl', 'stop', GUARD], timeout=65, check=False)
     stop_worker()
     if not quiescent(GUARD) or not quiescent(WORKER): raise Rejected('CLEANUP_UNKNOWN')
+    command(['/usr/bin/systemctl', 'reset-failed', GUARD, WORKER], check=False)
     command(['/usr/bin/systemctl', 'clean', '--what=fdstore', GUARD])
     if properties(GUARD, 'NFileDescriptorStore')['NFileDescriptorStore'] != '0':
         raise Rejected('LOCK_RELEASE_UNKNOWN')
