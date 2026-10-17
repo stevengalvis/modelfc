@@ -106,7 +106,7 @@ def execution_policy(unit, script, suffix):
     if typed_property(unit, 'Service', 'EnvironmentFiles').get('data') != expected_files:
         raise Rejected('EXECUTION_POLICY')
     expected_paths = ['-/srv', '-/var/lib/modelfc', '-/var/lib/modelfc-deploy',
-                      '-/var/lib/modelfc-suite', '-/etc/modelfc-validator'] if unit == WORKER else []
+                      '-/var/lib/modelfc-suite', '-/etc/modelfc-validator', '-/etc/modelfc'] if unit == WORKER else []
     if typed_property(unit, 'Service', 'InaccessiblePaths').get('data') != expected_paths:
         raise Rejected('EXECUTION_POLICY')
     expected_tmpfs = [['/run', 'ro']] if unit == WORKER else []
@@ -238,11 +238,11 @@ def supervise():
         if not quiescent(WORKER): raise Rejected('WORKER_BUSY')
         deployment_uid = pwd.getpwnam('modelfc-deploy').pw_uid
         parent = DEPLOY_LOCK.parent.lstat()
-        if not stat.S_ISDIR(parent.st_mode) or parent.st_uid != deployment_uid or parent.st_mode & 0o022:
+        if not stat.S_ISDIR(parent.st_mode) or parent.st_uid != deployment_uid or parent.st_mode & 0o077:
             raise Rejected('DEPLOY_LOCK_REJECTED')
         lock_fd = os.open(DEPLOY_LOCK, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
         info = os.fstat(lock_fd)
-        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_uid != deployment_uid or info.st_mode & 0o007:
+        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_uid != deployment_uid or info.st_mode & 0o022:
             raise Rejected('DEPLOY_LOCK_REJECTED')
         if DEPLOY_LOCK.lstat().st_ino != info.st_ino or DEPLOY_LOCK.lstat().st_dev != info.st_dev:
             raise Rejected('DEPLOY_LOCK_REJECTED')

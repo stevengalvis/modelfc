@@ -60,7 +60,7 @@ def cleanup():
         (UNITS/unit).unlink(missing_ok=True)
     command('systemctl','daemon-reload')
     command('systemctl','reset-failed',GUARD,WORKER,'modelfc-api.service','modelfc-postmerge-tests.service',check=False)
-    for path in (ROOT,STATE,CONTROL,Path('/srv/modelfc'),Path('/var/lib/modelfc'),Path('/etc/modelfc-validator')):
+    for path in (ROOT,STATE,CONTROL,Path('/srv/modelfc'),Path('/var/lib/modelfc'),Path('/etc/modelfc-validator'),Path('/etc/modelfc')):
         if path.exists(): shutil.rmtree(path)
     command('userdel','modelfc-deploy',check=False)
     CLAIM.unlink()
@@ -69,7 +69,7 @@ def cleanup():
 def prepare_host():
     if os.geteuid()!=0 or os.environ.get('GITHUB_ACTIONS')!='true': raise AssertionError('disposable GitHub VM only')
     if command('systemctl','--version').stdout.split()[1]!='255': raise AssertionError('requires actual systemd 255')
-    paths=[ROOT,STATE,CONTROL,Path('/srv/modelfc'),Path('/var/lib/modelfc'),Path('/etc/modelfc-validator'),CLAIM]
+    paths=[ROOT,STATE,CONTROL,Path('/srv/modelfc'),Path('/var/lib/modelfc'),Path('/etc/modelfc-validator'),Path('/etc/modelfc'),CLAIM]
     paths += [UNITS/u for u in (GUARD,WORKER,'modelfc-api.service')]
     if any(p.exists() or p.is_symlink() for p in paths): raise AssertionError('preexisting fixture paths')
     try: pwd.getpwnam('modelfc-deploy')
@@ -80,10 +80,11 @@ def prepare_host():
     account=pwd.getpwnam('modelfc-deploy')
     CONTROL.mkdir(mode=0o700)
     os.chown(CONTROL,account.pw_uid,account.pw_gid)
-    (CONTROL/'deploy.lock').touch(mode=0o600)
+    (CONTROL/'deploy.lock').touch(mode=0o644)
+    (CONTROL/'deploy.lock').chmod(0o644)
     os.chown(CONTROL/'deploy.lock',account.pw_uid,account.pw_gid)
     (CONTROL/'last-test-failure.json').write_text('preserved failure evidence\n')
-    for parent in ('/var/lib/modelfc','/etc/modelfc-validator'):
+    for parent in ('/var/lib/modelfc','/etc/modelfc-validator','/etc/modelfc'):
         path=Path(parent);path.mkdir(mode=0o755)
         (path/'canary').write_text('HOST_SECRET_CANARY\n');(path/'canary').chmod(0o644)
     release=Path('/srv/modelfc/releases')/('d'*40+'-fixture')
@@ -107,7 +108,7 @@ class Boundary(unittest.TestCase):
   self.assertFalse(os.path.exists('/run/modelfc-suite-ci-claim'))
   with socket.socket(socket.AF_UNIX) as client:
    with self.assertRaises(OSError): client.connect('/run/dbus/system_bus_socket')
-  for path in ['/var/lib/modelfc/canary','/etc/modelfc-validator/canary','/var/lib/modelfc-deploy/last-test-failure.json','/srv/modelfc/current','/var/lib/modelfc-suite/results']:
+  for path in ['/var/lib/modelfc/canary','/etc/modelfc-validator/canary','/etc/modelfc/canary','/var/lib/modelfc-deploy/last-test-failure.json','/srv/modelfc/current','/var/lib/modelfc-suite/results']:
    with self.assertRaises(OSError): os.open(path,os.O_RDONLY)
   with self.assertRaises(OSError): os.open(__file__,os.O_WRONLY)
   with self.assertRaises(OSError): socket.create_connection(('127.0.0.1',PORT),timeout=.2)
@@ -168,11 +169,15 @@ def run(args):
                 if mode=='abandoned':
                     abandoned.write_text('[Service]\nExecStart=/usr/bin/sleep infinity\n')
                     command('systemctl','daemon-reload');command('systemctl','start',abandoned.name)
-                if mode=='override': command('systemctl','set-property','--runtime',WORKER,'PrivateNetwork=no')
+                if mode=='override':
+                    unit=UNITS/WORKER;original=unit.read_bytes()
+                    unit.write_bytes(original.replace(b'PrivateNetwork=yes',b'PrivateNetwork=no'))
+                    command('systemctl','daemon-reload')
+                    unit.write_bytes(original)  # disk is reviewed; effective manager state is unsafe
                 result=command('/usr/bin/python3','-I',str(ROOT/'guard.py'),'run',sha,check=False)
                 if mode=='override':
                     assert result.returncode and guard.quiescent(WORKER)
-                    command('systemctl','revert',WORKER)
+                    command('systemctl','daemon-reload')
                 else:
                     evidence=json.loads(next((STATE/'results').glob('*.json')).read_text())
                     assert evidence['reason']=='DEPLOYMENT_RECOVERY_REQUIRED' and evidence['worker'] is None,evidence
@@ -230,7 +235,8 @@ def run(args):
             reports=[json.loads(p.read_text()) for p in sorted((STATE/'results').glob('*.json'))]
             results.append(dict(case=mode,status='PASS',elapsed_seconds=round(time.monotonic()-started,3),reports=reports))
             Path(args.output).write_text(json.dumps(dict(status='IN_PROGRESS',cases=results))+'\n')
-            print(json.dumps(dict(case=mode,status='PASS',elapsed_seconds=results[-1]['elapsed_seconds'])),flush=True)
+            print(json.dumps(dict(case=mode,status='PASS',elapsed_seconds=results[-1]['elapsed_seconds'],
+                                  terminal=reports[-1]['worker']['terminal'] if mode=='full' else None)),flush=True)
     return dict(status='PASS',cases=results,candidate=args.candidate,source_sha=args.source_sha)
 
 
