@@ -14,7 +14,7 @@ import sys
 import time
 import uuid
 
-ROOT = Path('/opt/modelfc-suite')
+ROOT = Path('/usr/lib/modelfc-suite')
 STATE = Path('/var/lib/modelfc-suite')
 DEPLOY_LOCK = Path('/var/lib/modelfc-deploy/deploy.lock')
 GUARD = 'modelfc-suite-guard.service'
@@ -40,10 +40,18 @@ def properties(unit, *names):
     return values
 
 
+def no_job(unit):
+    label = re.sub(r'[^a-zA-Z0-9]', lambda m: '_%02x' % ord(m[0]), unit)
+    value = json.loads(command(['/usr/bin/busctl', '--system', '--json=short', 'get-property',
+        'org.freedesktop.systemd1', '/org/freedesktop/systemd1/unit/' + label,
+        'org.freedesktop.systemd1.Unit', 'Job']))
+    return value == {'type': '(uo)', 'data': [0, '/']}
+
+
 def quiescent(unit):
     value = properties(unit, 'ActiveState', 'MainPID', 'ControlPID', 'ControlGroup', 'Job')
     # systemd show prints empty Job when no queued job exists on 255.
-    if value['ActiveState'] not in ('inactive', 'failed') or value['MainPID'] != '0' or value['ControlPID'] != '0' or value['Job'] not in ('', '0'):
+    if value['ActiveState'] not in ('inactive', 'failed') or value['MainPID'] != '0' or value['ControlPID'] != '0' or not no_job(unit):
         return False
     group = value['ControlGroup']
     if not group: return True
@@ -119,6 +127,15 @@ def verify_bundle():
     guard = properties(GUARD, 'FileDescriptorStoreMax', 'FileDescriptorStorePreserve', 'NotifyAccess', 'CollectMode', 'RemainAfterExit')
     if guard != dict(FileDescriptorStoreMax='1', FileDescriptorStorePreserve='yes', NotifyAccess='main', CollectMode='inactive', RemainAfterExit='yes'):
         raise Rejected('GUARD_POLICY')
+    expected = dict(DynamicUser='yes', PrivateNetwork='yes', PrivateTmp='yes',
+                    PrivateDevices='yes', NoNewPrivileges='yes', CapabilityBoundingSet='',
+                    ProtectSystem='strict', ProtectHome='yes', ProtectControlGroups='yes',
+                    ProtectKernelTunables='yes', ProtectKernelModules='yes', ProtectKernelLogs='yes',
+                    RestrictSUIDSGID='yes', ProtectProc='invisible', KillMode='control-group',
+                    SendSIGKILL='yes', MemoryMax='2147483648', TasksMax='64',
+                    TimeoutStartUSec='5min 30s', TimeoutStopUSec='30s',
+                    NetworkNamespacePath='', JoinsNamespaceOf='')
+    if properties(WORKER, *expected) != expected: raise Rejected('WORKER_POLICY')
     return manifest
 
 
@@ -151,6 +168,7 @@ def supervise():
                   worker=None, cleanup='UNKNOWN', deployment_lock='NOT_ACQUIRED', api_unchanged=None)
     path = STATE/'results'/f'{run_id}.json'
     lock_fd = None
+    worker_started = False
     try:
         manifest = verify_bundle()
         report['candidate'] = manifest['candidate']
@@ -172,18 +190,19 @@ def supervise():
         before = api_identity()
         report['api_before'] = before
         record(path, report)
+        (STATE/'worker.env').write_text('MODELFC_SUITE_RUN_ID=' + run_id + '\n')
         notify('READY=1')
+        worker_started = True
         command(['/usr/bin/systemctl', 'start', '--wait', WORKER], timeout=375, check=False)
         stop_worker()
         report['cleanup'] = 'EMPTY_CGROUP'
-        invocation = properties(WORKER, 'InvocationID')['InvocationID']
-        if not re.fullmatch('[0-9a-f]{32}', invocation): raise Rejected('WORKER_IDENTITY_UNKNOWN')
         output = command(['/usr/bin/journalctl', '--no-pager', '-o', 'cat', '-n', '1',
-                          '_SYSTEMD_INVOCATION_ID=' + invocation])
+                          'SYSLOG_IDENTIFIER=modelfc-suite-worker'])
         if len(output) > 16384: raise Rejected('REPORT_LIMIT')
         result = json.loads(output)
-        required = {'classification','complete','terminal','observed_completed','last_progress','slowest','stderr_truncated','elapsed_seconds'}
+        required = {'run_id','classification','complete','terminal','observed_completed','last_progress','slowest','stderr_truncated','elapsed_seconds'}
         if type(result) is not dict or set(result) != required: raise Rejected('WORKER_REPORT_REJECTED')
+        if result['run_id'] != run_id: raise Rejected('WORKER_IDENTITY_UNKNOWN')
         report['worker'] = result
         report['api_after'] = api_identity()
         report['api_unchanged'] = report['api_after'] == before
@@ -203,8 +222,8 @@ def supervise():
     except Exception as error:
         report.update(status='FAIL', reason=str(error) if isinstance(error, Rejected) else 'GUARD_ERROR')
         try:
-            stop_worker()
-            report['cleanup'] = 'EMPTY_CGROUP'
+            if worker_started: stop_worker()
+            report['cleanup'] = 'EMPTY_CGROUP' if quiescent(WORKER) else 'UNKNOWN'
         except Exception:
             report['cleanup'] = 'UNKNOWN'
         try: record(path, report)

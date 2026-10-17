@@ -8,7 +8,7 @@ import signal
 import subprocess
 import time
 
-ROOT = Path('/opt/modelfc-suite')
+ROOT = Path('/usr/lib/modelfc-suite')
 DEADLINE = 300
 # Instrument only the stdlib runner; execute unchanged discovery and test bodies.
 BOOTSTRAP = r'''
@@ -125,6 +125,7 @@ def capture(command, cwd, env, seconds=DEADLINE):
             except ProcessLookupError: pass
             try: child.wait(timeout=2)
             except subprocess.TimeoutExpired: pass  # systemd is the independent final cgroup boundary.
+            child.stderr.close()
         os.close(read_fd)
         if write_fd >= 0: os.close(write_fd)
 
@@ -135,6 +136,7 @@ def main():
                GIT_CONFIG_COUNT='1', GIT_CONFIG_KEY_0='safe.directory',
                GIT_CONFIG_VALUE_0=str(ROOT/'source'))
     result = capture([str(ROOT/'runtime/bin/python3'), '-B', '-c', BOOTSTRAP], ROOT/'source', env)
+    result['run_id'] = os.environ['MODELFC_SUITE_RUN_ID']
     print(json.dumps(result, sort_keys=True), flush=True)
     return 0 if result['classification'] == 'PASS' else 1
 
