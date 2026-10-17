@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import shutil
 import signal
+import pwd
 import socket
 import subprocess
 import tempfile
@@ -61,6 +62,7 @@ def cleanup():
     command('systemctl','reset-failed',GUARD,WORKER,'modelfc-api.service','modelfc-postmerge-tests.service',check=False)
     for path in (ROOT,STATE,CONTROL,Path('/srv/modelfc'),Path('/var/lib/modelfc'),Path('/etc/modelfc-validator')):
         if path.exists(): shutil.rmtree(path)
+    command('userdel','modelfc-deploy',check=False)
     CLAIM.unlink()
 
 
@@ -70,9 +72,16 @@ def prepare_host():
     paths=[ROOT,STATE,CONTROL,Path('/srv/modelfc'),Path('/var/lib/modelfc'),Path('/etc/modelfc-validator'),CLAIM]
     paths += [UNITS/u for u in (GUARD,WORKER,'modelfc-api.service')]
     if any(p.exists() or p.is_symlink() for p in paths): raise AssertionError('preexisting fixture paths')
+    try: pwd.getpwnam('modelfc-deploy')
+    except KeyError: pass
+    else: raise AssertionError('preexisting deployment account')
     CLAIM.write_text('isolated-suite-ci-v1\n');CLAIM.chmod(0o600)
+    command('useradd','--system','--no-create-home','--shell','/usr/sbin/nologin','modelfc-deploy')
+    account=pwd.getpwnam('modelfc-deploy')
     CONTROL.mkdir(mode=0o700)
+    os.chown(CONTROL,account.pw_uid,account.pw_gid)
     (CONTROL/'deploy.lock').touch(mode=0o600)
+    os.chown(CONTROL/'deploy.lock',account.pw_uid,account.pw_gid)
     (CONTROL/'last-test-failure.json').write_text('preserved failure evidence\n')
     for parent in ('/var/lib/modelfc','/etc/modelfc-validator'):
         path=Path(parent);path.mkdir(mode=0o755)
@@ -237,6 +246,8 @@ if __name__=='__main__':
         if result['status']=='FAIL':
             if output.exists(): result['completed_cases']=json.loads(output.read_text()).get('cases',[])
             if (STATE/'results').exists(): result['last_reports']=[json.loads(p.read_text()) for p in (STATE/'results').glob('*.json')]
+        diagnostic=command('journalctl','--no-pager','-u',GUARD,'-u',WORKER,'-n','40',check=False).stdout
+        output.with_name('systemd-diagnostic.log').write_text(diagnostic)
         try: cleanup();result['cleanup']='PASS'
         except Exception: result['cleanup']='FAIL'
         output=Path(args.output);output.write_text(json.dumps(result,sort_keys=True)+'\n');output.chmod(0o644)

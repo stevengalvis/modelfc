@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import re
+import pwd
 import select
 import socket
 import stat
@@ -232,9 +233,15 @@ def supervise():
         if os.environ.get('LISTEN_FDS', '0') != '0' or properties(GUARD, 'NFileDescriptorStore')['NFileDescriptorStore'] != '0':
             raise Rejected('RECOVERY_REQUIRED')
         if not quiescent(WORKER): raise Rejected('WORKER_BUSY')
+        deployment_uid = pwd.getpwnam('modelfc-deploy').pw_uid
+        parent = DEPLOY_LOCK.parent.lstat()
+        if not stat.S_ISDIR(parent.st_mode) or parent.st_uid != deployment_uid or parent.st_mode & 0o022:
+            raise Rejected('DEPLOY_LOCK_REJECTED')
         lock_fd = os.open(DEPLOY_LOCK, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
         info = os.fstat(lock_fd)
-        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_uid != 0 or info.st_mode & 0o007:
+        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_uid != deployment_uid or info.st_mode & 0o007:
+            raise Rejected('DEPLOY_LOCK_REJECTED')
+        if DEPLOY_LOCK.lstat().st_ino != info.st_ino or DEPLOY_LOCK.lstat().st_dev != info.st_dev:
             raise Rejected('DEPLOY_LOCK_REJECTED')
         try: fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError: raise Rejected('DEPLOYMENT_BUSY') from None

@@ -76,6 +76,23 @@ class AdmissionTests(unittest.TestCase):
         with patch.object(guard,'properties',return_value=props),patch.object(guard,'command',return_value=json.dumps({'type':'(uo)','data':[3,'/job/3']})):
             self.assertFalse(guard.quiescent(guard.WORKER))
 
+    def test_existing_deployment_pending_state_is_preserved_and_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);pending=root/'service-pending.json'
+            pending.write_text('existing transaction')
+            with patch.object(guard,'DEPLOY_LOCK',root/'deploy.lock'):
+                with self.assertRaisesRegex(guard.Rejected,'DEPLOYMENT_RECOVERY_REQUIRED'):
+                    guard.deployment_quiescent()
+            self.assertEqual(pending.read_text(),'existing transaction')
+
+    def test_surviving_deployment_service_blocks_without_recovery(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.object(guard,'DEPLOY_LOCK',Path(directory)/'deploy.lock'), \
+                 patch.object(guard,'command',return_value='[{"unit":"modelfc-postmerge-tests.service"}]'), \
+                 patch.object(guard,'quiescent',return_value=False):
+                with self.assertRaisesRegex(guard.Rejected,'DEPLOYMENT_RECOVERY_REQUIRED'):
+                    guard.deployment_quiescent()
+
     def test_unknown_cgroup_cannot_pass(self):
         props=dict(ActiveState='inactive',MainPID='0',ControlPID='0',ControlGroup='/wrong',Job='')
         with patch.object(guard,'properties',return_value=props),patch.object(guard,'no_job',return_value=True):

@@ -2,6 +2,7 @@
 Description=Trusted admission and lifecycle guard for isolated ModelFC suite
 
 PropagatesStopTo=modelfc-suite-worker.service
+CollectMode=inactive
 
 [Service]
 Type=notify
@@ -15,7 +16,6 @@ KillMode=control-group
 SendSIGKILL=yes
 FileDescriptorStoreMax=1
 FileDescriptorStorePreserve=yes
-CollectMode=inactive
 Restart=no
 StandardInput=null
 StandardOutput=null
