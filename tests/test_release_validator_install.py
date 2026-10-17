@@ -52,46 +52,72 @@ class InstallTests(unittest.TestCase):
         self.dest.mkdir()
         self.source = self.root / 'stage'
         self.source.mkdir()
-        for name in (*installer.FILES, 'validate_capture.py'):
+        for name in installer.FILES:
             (self.source / name).write_bytes((OPS / name).read_bytes())
-        # Synthetic installer mechanics use fixture hashes, not production trust pins.
-        self.stack.enter_context(patch.object(installer, 'FILES', {
-            name: hashlib.sha256((self.source / name).read_bytes()).hexdigest()
-            for name in installer.FILES}))
-        self.stack.enter_context(patch.object(installer, 'HARNESS',
-            hashlib.sha256((self.source / 'validate_capture.py').read_bytes()).hexdigest()))
         (self.source / 'STAGED_SHA').write_text(SHA)
-        (self.dest / 'validate_capture.py').write_bytes((OPS / 'validate_capture.py').read_bytes())
-        self.original = {}
-        for name in ('validate_pr.py', 'validate_offline_ssh.py'):
-            raw = ('old ' + name).encode()
+        self.original = {name: ('old ' + name).encode() for name in installer.FILES}
+        for name, raw in self.original.items():
             (self.dest / name).write_bytes(raw)
             (self.dest / name).chmod(0o555)
-            self.original[name] = raw
+        self.stack.enter_context(patch.object(installer, 'PREVIOUS_FILES', {
+            name: hashlib.sha256(raw).hexdigest() for name, raw in self.original.items()}))
+        self.runs = self.root / 'runs'
+        self.runs.mkdir()
+        self.stack.enter_context(patch.object(installer, 'RUNS', self.runs))
+        from types import SimpleNamespace
+        self.stack.enter_context(patch.object(installer.pwd, 'getpwnam',
+            return_value=SimpleNamespace(pw_uid=os.getuid())))
         self.config = self.root / 'config.json'
-        self.config.write_text('{"image":"unchanged"}')
+        self.old_config=(json.dumps({'repository':'stevengalvis/modelfc','image':installer.PREVIOUS_IMAGE,'unchanged':'value'})+'\n').encode()
+        self.config.write_bytes(self.old_config)
+        self.config.chmod(0o640)
         for key, value in dict(DEST=self.dest, SOURCE=self.source, CONFIG=self.config,
-                               root_owned=Mock(), idle=Mock(), locked=lambda: nullcontext()).items():
+                               root_owned=Mock(), idle=Mock(), verify_image=Mock(),
+                               main_unchanged=Mock(return_value=True), locked=lambda: nullcontext()).items():
             self.stack.enter_context(patch.object(installer, key, value))
         self.stack.enter_context(patch.object(installer.os, 'chown'))
         self.stack.enter_context(patch.object(installer.os, 'geteuid', return_value=0))
         self.stack.enter_context(patch('sys.stdout', io.StringIO()))
+        # Portable fixture models root ownership only; actual root/ownership/fsync
+        # and process-death recovery run in run_validator_upgrade_fixture.py.
+        actual_stat,actual_fstat=os.stat,os.fstat
+        def root_uid(info):
+            from types import SimpleNamespace
+            values={n:getattr(info,n) for n in dir(info) if n.startswith('st_')}
+            values['st_uid']=0
+            return SimpleNamespace(**values)
+        def fixture_stat(path,*args,**kwargs):
+            info=actual_stat(path,*args,**kwargs)
+            if not isinstance(path,int) and (Path(path)==self.config or Path(path).parent==self.dest):
+                return root_uid(info)
+            return info
+        def fixture_fstat(fd):
+            info=actual_fstat(fd)
+            target=Path(os.readlink('/proc/self/fd/'+str(fd)))
+            if target in (self.config,self.runs/'validator-transition.json'):return root_uid(info)
+            return info
+        self.stack.enter_context(patch.object(installer.os,'stat',side_effect=fixture_stat))
+        self.stack.enter_context(patch.object(installer.os,'fstat',side_effect=fixture_fstat))
         # Actual files belong to the test user. Model root metadata only where required.
         self.real_restore = installer.restore_locked
+        # Exercise real hashes and modes; disposable files have the test user's gid.
+        real_verify = installer.verify_files
+        def verify(directory, *, installed=False, hashes=None):
+            real_verify(directory, hashes=hashes)
+            if installed:
+                for name in installer.FILES:
+                    self.assertEqual((directory / name).stat().st_mode & 0o777,
+                                     0o555)
+        self.stack.enter_context(patch.object(installer, 'verify_files', side_effect=verify))
 
     def verify_bytes(self):
         for name, expected in installer.FILES.items():
             self.assertEqual(hashlib.sha256((self.dest / name).read_bytes()).hexdigest(), expected)
-            self.assertEqual((self.dest / name).stat().st_mode & 0o777, 0o555)
+            self.assertEqual((self.dest / name).stat().st_mode & 0o777,
+                             0o555)
 
     def install(self):
-        # Preserve real digest/mode verification, adapt synthetic gid for unprivileged fixtures.
-        real = installer.verify_files
-        def verify(directory, installed=False):
-            real(directory, installed=False)
-            if installed: self.verify_bytes()
-        with patch.object(installer, 'verify_files', side_effect=verify):
-            return installer.install(SHA)
+        return installer.install(SHA, SHA)
 
     def fix_root_metadata(self, backup):
         path = backup / 'manifest.json'
@@ -100,21 +126,93 @@ class InstallTests(unittest.TestCase):
             if prior is not None: prior['uid'] = 0
         path.write_text(json.dumps(value))
 
-    def test_install_exact_four_backup_missing_files_and_restore(self):
+    def test_install_exact_five_and_restore_with_original_modes(self):
         backup = self.install()
         self.verify_bytes()
         self.assertEqual(backup.parent, self.dest)
         manifest = json.loads((backup / 'manifest.json').read_text())
         self.assertEqual(manifest['source_sha'], SHA)
-        self.assertIsNone(manifest['files']['release_evidence.py'])
-        self.assertIsNone(manifest['files']['offline_report.py'])
+        self.assertEqual(set(manifest['files']), set(installer.FILES))
+        self.assertIsNone(manifest['cache'])
         self.fix_root_metadata(backup)
         installer.restore_locked(backup)
         for name, raw in self.original.items():
             self.assertEqual((self.dest / name).read_bytes(), raw)
-            self.assertEqual((self.dest / name).stat().st_mode & 0o777, 0o555)
-        self.assertFalse((self.dest / 'release_evidence.py').exists())
-        self.assertEqual(self.config.read_text(), '{"image":"unchanged"}')
+            self.assertEqual((self.dest / name).stat().st_mode & 0o777,
+                             0o555)
+        self.assertFalse((self.runs / 'release-evidence.json').exists())
+        self.assertEqual(self.config.read_bytes(), self.old_config)
+
+    def test_only_image_changes_and_configuration_backup_is_exact(self):
+        backup=self.install()
+        self.assertEqual(json.loads(self.config.read_bytes()),
+            {**json.loads(self.old_config),'image':installer.EXPECTED_IMAGE})
+        self.assertEqual((backup/'old-config.json').read_bytes(),self.old_config)
+        self.assertEqual((backup/'old-config.json').stat().st_mode&0o777,0o600)
+        manifest=json.loads((backup/'manifest.json').read_bytes())
+        self.assertEqual(manifest['main_sha'],SHA)
+        self.assertEqual(manifest['images'],{'previous':installer.PREVIOUS_IMAGE,'target':installer.EXPECTED_IMAGE})
+        self.assertFalse((self.runs/'validator-transition.json').exists())
+
+    def test_missing_image_changed_main_or_pending_transaction_fail_before_backup(self):
+        for failure in ('image','main','journal'):
+            with self.subTest(failure=failure),ExitStack() as stack:
+                if failure=='image':stack.enter_context(patch.object(installer,'verify_image',side_effect=ValueError))
+                elif failure=='main':stack.enter_context(patch.object(installer,'main_unchanged',return_value=False))
+                else:(self.runs/'validator-transition.json').write_text('pending')
+                with self.assertRaises(ValueError):self.install()
+                self.assertFalse(list(self.dest.glob('.zen48-backup-*')))
+                self.assertEqual(self.config.read_bytes(),self.old_config)
+
+    def test_duplicate_configuration_and_wrong_predecessor_image_rejected(self):
+        for raw in (b'{"image":"a","image":"b"}',
+                    json.dumps({'repository':'stevengalvis/modelfc','image':installer.EXPECTED_IMAGE}).encode()):
+            with self.subTest(raw=raw),self.assertRaises(ValueError):installer.upgraded_config(raw)
+
+    def test_unreviewed_configuration_metadata_is_not_silently_discarded(self):
+        with patch.object(installer.os,'listxattr',return_value=['system.posix_acl_access']):
+            with self.assertRaises(ValueError):self.install()
+        self.assertEqual(self.config.read_bytes(),self.old_config)
+        self.assertFalse(list(self.dest.glob('.zen48-backup-*')))
+
+    def test_corrupt_configuration_or_unknown_active_configuration_blocks_restore(self):
+        backup=self.install()
+        original=(backup/'old-config.json').read_bytes()
+        (backup/'old-config.json').write_bytes(b'corrupt')
+        with self.assertRaises(ValueError):installer.restore_locked(backup)
+        self.verify_bytes()
+        (backup/'old-config.json').write_bytes(original)
+        self.config.write_text('{"unexpected":"configuration"}')
+        with self.assertRaises(ValueError):installer.restore_locked(backup)
+        self.verify_bytes()
+
+    def test_main_movement_defers_partial_failure_recovery(self):
+        actual=os.replace
+        def moved(source,destination):
+            actual(source,destination)
+            if Path(destination)==self.dest/'validate_pr.py':
+                installer.main_unchanged.return_value=False
+                raise OSError('fixture main changed')
+        with patch.object(installer.os,'replace',side_effect=moved),self.assertRaises(installer.InstallFailure) as caught:
+            self.install()
+        self.assertEqual(caught.exception.outcome,'DEFERRED_DO_NOT_MERGE')
+        self.assertTrue((self.runs/'validator-transition.json').exists())
+        before={n:(self.dest/n).read_bytes() for n in installer.FILES}
+        with self.assertRaises(ValueError):installer.restore_locked(caught.exception.backup)
+        self.assertEqual(before,{n:(self.dest/n).read_bytes() for n in installer.FILES})
+
+    def test_journal_rejects_substitution_and_recovers_atomic_publication_alias(self):
+        backup=self.install()
+        marker=self.runs/'validator-transition.json'
+        installer.transition_marker(backup)
+        # Atomic link publication can be interrupted before temporary-name unlink.
+        alias=self.runs/'.zen48-transition-interrupted';os.link(marker,alias)
+        installer.transition_marker(backup)
+        installer.transition_marker(backup,clear=True);alias.unlink()
+        marker.symlink_to(self.root/'missing')
+        with self.assertRaises(OSError):installer.transition_marker(backup)
+        marker.unlink();marker.write_text('{}');marker.chmod(0o600)
+        with self.assertRaises(ValueError):installer.transition_marker(backup)
 
     def test_backup_manifest_is_private_even_with_permissive_operator_umask(self):
         original = os.umask(0o002)
@@ -124,6 +222,75 @@ class InstallTests(unittest.TestCase):
             os.umask(original)
         self.assertEqual((backup / 'manifest.json').stat().st_mode & 0o777, 0o600)
 
+    def test_backup_is_durable_before_cache_removal_or_module_replacement(self):
+        cache = self.write_cache()
+        events = []
+        sync_file, sync_directory = installer.sync_file, installer.sync_directory
+        unlink, replace = Path.unlink, os.replace
+
+        def file_synced(path):
+            sync_file(path)
+            events.append(('file', path))
+
+        def directory_synced(path):
+            sync_directory(path)
+            events.append(('directory', path))
+
+        def require_durable_backup():
+            backups = list(self.dest.glob('.zen48-backup-*'))
+            self.assertEqual(len(backups), 1)
+            backup = backups[0]
+            backup_sync = events.index(('directory', backup))
+            self.assertIn(('directory', self.dest), events[backup_sync + 1:])
+            for name in (*('old-' + name for name in installer.FILES),
+                         'old-release-evidence.json', 'old-config.json', 'manifest.json'):
+                self.assertIn(('file', backup / name), events[:backup_sync])
+
+        def checked_unlink(path, *args, **kwargs):
+            if path == cache:
+                require_durable_backup()
+                events.append(('cache removal', path))
+            return unlink(path, *args, **kwargs)
+
+        def checked_replace(source, destination):
+            if Path(destination).parent == self.dest:
+                require_durable_backup()
+                events.append(('module replacement', Path(destination)))
+            return replace(source, destination)
+
+        with patch.object(installer, 'sync_file', side_effect=file_synced), \
+                patch.object(installer, 'sync_directory', side_effect=directory_synced), \
+                patch.object(Path, 'unlink', checked_unlink), \
+                patch.object(installer.os, 'replace', side_effect=checked_replace):
+            self.install()
+        self.assertEqual(sum(kind == 'cache removal' for kind, _ in events), 1)
+        self.assertEqual(sum(kind == 'module replacement' for kind, _ in events), len(installer.FILES))
+
+    def test_backup_parent_sync_failure_leaves_modules_and_cache_untouched(self):
+        sync_directory = installer.sync_directory
+        for has_cache in (False, True):
+            with self.subTest(has_cache=has_cache):
+                if has_cache:
+                    self.write_cache()
+                before = installer.cache_snapshot()
+                synced = []
+                def fail_parent(path):
+                    if path == self.dest:
+                        raise OSError('backup parent sync failed')
+                    sync_directory(path)
+                    synced.append(path)
+                with patch.object(installer, 'sync_directory', side_effect=fail_parent), \
+                        patch.object(installer.os, 'replace') as replace, \
+                        patch.object(installer, 'restore_locked') as restore:
+                    with self.assertRaisesRegex(OSError, 'backup parent sync failed'):
+                        self.install()
+                self.assertTrue(any(p.parent == self.dest for p in synced))
+                replace.assert_not_called()
+                restore.assert_not_called()
+                self.assertEqual(installer.cache_snapshot(), before)
+                for name, raw in self.original.items():
+                    self.assertEqual((self.dest / name).read_bytes(), raw)
+
     def test_wrong_stage_hash_or_harness_never_changes_installation(self):
         for name in ('STAGED_SHA', 'validate_pr.py', 'validate_capture.py'):
             path = self.source / name
@@ -132,9 +299,11 @@ class InstallTests(unittest.TestCase):
             with self.subTest(name=name), self.assertRaises(ValueError): self.install()
             path.write_bytes(before)
             self.assertEqual((self.dest / 'validate_pr.py').read_bytes(), self.original['validate_pr.py'])
+        (self.dest / 'validate_capture.py').chmod(0o755)
         (self.dest / 'validate_capture.py').write_text('different harness')
+        (self.dest / 'validate_capture.py').chmod(0o555)
         with self.assertRaises(ValueError): self.install()
-        self.assertFalse(list(self.dest.glob('.pr159-backup-*')))
+        self.assertFalse(list(self.dest.glob('.zen48-backup-*')))
 
     def test_backup_corruption_rejected_before_any_restore(self):
         backup = self.install()
@@ -177,18 +346,132 @@ class InstallTests(unittest.TestCase):
             installer.main(['install', '--source-sha', SHA, '--candidate-sha', SHA])
 
     def test_acceptance_failure_rolls_back_and_never_merges(self):
-        backup = self.dest / '.pr159-backup-test'
+        backup = self.dest / '.zen48-backup-test'
         with patch.object(installer, 'install', return_value=backup), \
                 patch.object(installer, 'local_acceptance', side_effect=ValueError('SECRET_CANARY')), \
                 patch.object(installer, 'restore_locked') as restore, patch('sys.stdout', io.StringIO()) as out:
             self.assertEqual(installer.main(['install', '--source-sha', SHA, '--candidate-sha', SHA,
-                                            '--idle-window-confirmed']), 1)
+                                            '--pr', '171', '--release-sha', SHA,
+                                            '--idle-window-confirmed', '--consumer-hold-confirmed']), 1)
         restore.assert_called_once_with(backup)
         self.assertNotIn('SECRET_CANARY', out.getvalue())
         self.assertEqual(json.loads(out.getvalue())['rollback'], 'ROLLED_BACK')
 
+    def write_cache(self, raw=b'old-schema-receipt'):
+        path = self.runs / 'release-evidence.json'
+        path.write_bytes(raw)
+        path.chmod(0o600)
+        return path
+
+    def test_cache_quarantined_then_restored_including_metadata(self):
+        path = self.write_cache()
+        before = installer.cache_snapshot()
+        backup = self.install()
+        self.assertFalse(path.exists())
+        self.assertEqual((backup / 'old-release-evidence.json').read_bytes(), before[1])
+        self.write_cache(b'new-schema-receipt')
+        self.fix_root_metadata(backup)
+        installer.restore_locked(backup)
+        self.assertEqual(installer.cache_snapshot(), before)
+        self.assertEqual([p.read_bytes() for p in backup.glob('rollback-cache-*')],
+                         [b'new-schema-receipt'])
+        for name, raw in self.original.items():
+            self.assertEqual((self.dest / name).read_bytes(), raw)
+
+    def test_original_cache_absence_restored_after_new_receipt(self):
+        backup = self.install()
+        self.write_cache(b'new-schema-receipt')
+        self.fix_root_metadata(backup)
+        installer.restore_locked(backup)
+        self.assertFalse((self.runs / 'release-evidence.json').exists())
+
+    def test_corrupt_cache_backup_rejected_before_module_restore(self):
+        self.write_cache()
+        backup = self.install()
+        self.fix_root_metadata(backup)
+        (backup / 'old-release-evidence.json').write_bytes(b'corrupt')
+        with self.assertRaises(ValueError): installer.restore_locked(backup)
+        self.verify_bytes()
+
+    def test_unsafe_cache_and_orphan_temporary_fail_before_install(self):
+        cache = self.runs / 'release-evidence.json'
+        target = self.root / 'sentinel'; target.write_bytes(b'untouched')
+        cache.symlink_to(target)
+        with self.assertRaises(OSError): self.install()
+        cache.unlink()
+        self.write_cache(b'x' * 16385)
+        with self.assertRaises(ValueError): self.install()
+        cache.unlink()
+        self.write_cache().chmod(0o644)
+        with self.assertRaises(ValueError): self.install()
+        cache.unlink()
+        (self.runs / 'release-evidence.tmp').write_bytes(b'orphan')
+        with self.assertRaises(ValueError): self.install()
+        self.assertFalse(list(self.dest.glob('.zen48-backup-*')))
+        self.assertEqual(target.read_bytes(), b'untouched')
+
+    def test_failure_after_harness_replacement_restores_all_bytes_and_cache(self):
+        self.write_cache()
+        before = installer.cache_snapshot()
+        replace = os.replace
+        def fail_after_harness(source, destination):
+            replace(source, destination)
+            if Path(source).name == 'new-validate_capture.py':
+                raise OSError('synthetic')
+        def restore(backup):
+            self.fix_root_metadata(backup)
+            self.real_restore(backup)
+        with patch.object(installer.os, 'replace', side_effect=fail_after_harness), \
+                patch.object(installer, 'restore_locked', side_effect=restore):
+            with self.assertRaises(installer.InstallFailure) as caught: self.install()
+        self.assertEqual(caught.exception.outcome, 'ROLLED_BACK')
+        self.assertEqual(installer.cache_snapshot(), before)
+        for name, raw in self.original.items():
+            self.assertEqual((self.dest / name).read_bytes(), raw)
+
+    def test_cli_requires_consumer_hold_as_well_as_idle(self):
+        with self.assertRaises(SystemExit), patch('sys.stderr', io.StringIO()), \
+                patch.object(installer, 'install') as install:
+            installer.main(['install', '--source-sha', SHA, '--candidate-sha', SHA,
+                            '--pr', '171', '--release-sha', SHA, '--idle-window-confirmed'])
+        install.assert_not_called()
+
 
 class BoundaryTests(unittest.TestCase):
+    def test_image_probe_is_local_exact_id_and_platform_only(self):
+        from types import SimpleNamespace
+        account=SimpleNamespace(pw_uid=1000,pw_name='fixture-user',pw_dir='/fixture/home')
+        expected=installer.EXPECTED_IMAGE
+        for output,status,valid in ((expected+' linux amd64',0,True),
+                (expected+' linux arm64',0,False),('sha256:'+'0'*64+' linux amd64',0,False),('',1,False)):
+            with patch.object(installer.pwd,'getpwnam',return_value=account), \
+                    patch.object(installer.subprocess,'run',return_value=SimpleNamespace(returncode=status,stdout=output.encode())) as run:
+                if valid:installer.verify_image(expected)
+                else:
+                    with self.assertRaises(ValueError):installer.verify_image(expected)
+                command=run.call_args.args[0]
+                self.assertEqual(command[-6:],['/usr/bin/podman','image','inspect',expected,
+                    '--format','{{.Id}} {{.Os}} {{.Architecture}}'])
+                self.assertIn('inspect',command);self.assertNotIn('pull',command);self.assertNotIn('run',command)
+
+    def test_existing_main_read_route_fails_closed_without_logging_token(self):
+        from types import SimpleNamespace
+        with tempfile.TemporaryDirectory() as t:
+            token=Path(t)/'token';token.write_text('SYNTHETIC_FIXTURE_ONLY')
+            config=json.dumps({'github_token_file':str(token)}).encode()
+            api=Mock();github=Mock(return_value=api)
+            good={'ref':'refs/heads/main','object':{'type':'commit','sha':SHA}}
+            with patch.object(installer,'root_owned'),patch.object(installer,'config_snapshot',return_value=({},config)), \
+                    patch.dict(__import__('sys').modules,{'github_offline_validation':SimpleNamespace(GitHub=github)}), \
+                    patch('sys.stdout',io.StringIO()) as out:
+                api.call.return_value=good;self.assertTrue(installer.main_unchanged(SHA))
+                api.call.return_value={**good,'object':{'type':'commit','sha':'b'*40}}
+                self.assertFalse(installer.main_unchanged(SHA))
+                api.call.side_effect=ValueError('private failure')
+                self.assertFalse(installer.main_unchanged(SHA))
+                self.assertEqual(out.getvalue(),'')
+            self.assertEqual(api.call.call_args.args,('/git/ref/heads/main',))
+
     def test_busy_existing_lock_never_enters_installation(self):
         import fcntl
         from types import SimpleNamespace
@@ -224,8 +507,18 @@ class BoundaryTests(unittest.TestCase):
 
 
 class AcceptanceTests(unittest.TestCase):
+    def test_unreviewed_image_rejected_before_remote_or_identity_read(self):
+        from types import SimpleNamespace
+        remote=Mock()
+        with self.assertRaises(ValueError):
+            installer.check_acceptance(SHA,installer.PREVIOUS_IMAGE,remote,OPS)
+        remote.assert_not_called()
+        args=SimpleNamespace(candidate_sha=SHA,image_digest=installer.PREVIOUS_IMAGE,
+            identity='/not/a/key',known_hosts='/not/hosts')
+        with self.assertRaises(ValueError):installer.ssh_acceptance(args)
+
     def test_repeated_exact_pass_stale_rejection_and_invalid_evidence(self):
-        identity = policy.binding({'repository':'stevengalvis/modelfc','image':'sha256:'+'c'*64}, OPS, lambda p: None)
+        identity = policy.binding({'repository':'stevengalvis/modelfc','image':installer.EXPECTED_IMAGE}, OPS, lambda p: None)
         value = policy.envelope(report(), identity)
         failed = {**report(), 'commit_sha':'0'*40, 'result':'FAIL','reason':'WRONG_SHA'}
         remote = Mock(side_effect=[json.dumps(value).encode(), json.dumps(value).encode(),
@@ -237,7 +530,7 @@ class AcceptanceTests(unittest.TestCase):
         self.assertEqual(remote.call_args.args[0], 'validate-offline-release stevengalvis/modelfc '+'0'*40)
 
     def test_unverified_failure_wrong_identity_and_changed_repeat_cannot_pass(self):
-        identity = policy.binding({'repository':'stevengalvis/modelfc','image':'sha256:'+'c'*64}, OPS, lambda p: None)
+        identity = policy.binding({'repository':'stevengalvis/modelfc','image':installer.EXPECTED_IMAGE}, OPS, lambda p: None)
         good = policy.envelope(report(), identity)
         for raw in (b'', b'{}', json.dumps({**good,'candidate_sha':'b'*40}).encode(),
                     json.dumps({**good,'validator_revision':'e'*64}).encode(),
@@ -256,7 +549,7 @@ class AcceptanceTests(unittest.TestCase):
             hosts.write_text('validator.example ssh-ed25519 AAAA')
             args = SimpleNamespace(candidate_sha=SHA, identity=str(key), known_hosts=str(hosts),
                 host='validator.example', fingerprint='SHA256:'+'a'*43,
-                image_digest='sha256:'+'c'*64)
+                image_digest=installer.EXPECTED_IMAGE)
             observed = []
             def transport(number, sha, release=False):
                 self.assertIsNone(number)
@@ -276,17 +569,96 @@ class AcceptanceTests(unittest.TestCase):
             self.assertEqual(observed[0]['VALIDATOR_HOST_KEY'], hosts.read_text())
             self.assertEqual(observed[0]['VALIDATOR_KEY_FINGERPRINT'], args.fingerprint)
 
-    def test_staged_strategy_revision_is_not_approved_for_installation(self):
-        # ZEN-48 deliberately stages source without changing installed trust pins.
-        self.assertEqual(installer.EXPECTED_REVISION,
-                         'dfe3a140b771a2d7dc4d4542251ea729a4be8055ef980cd3f3c2b86830dd8dd5')
-        self.assertNotEqual(policy.revision(OPS), installer.EXPECTED_REVISION)
-        with patch.object(installer, 'root_owned'), self.assertRaisesRegex(ValueError, 'CHECK_FAILED'):
-            installer.verify_files(OPS)
+    def test_external_pr_acceptance_keeps_existing_pinned_transport(self):
+        import sys
+        from types import SimpleNamespace
+        with tempfile.TemporaryDirectory() as temporary:
+            key, hosts = Path(temporary)/'key', Path(temporary)/'hosts'
+            key.write_text('SYNTHETIC_KEY'); hosts.write_text('validator.example ssh-ed25519 AAAA')
+            args = SimpleNamespace(pr=171, candidate_sha=SHA, identity=str(key), known_hosts=str(hosts),
+                host='validator.example', fingerprint='SHA256:'+'a'*43, image_digest=installer.EXPECTED_IMAGE)
+            transport = Mock(side_effect=ValueError('synthetic'))
+            def acceptance(pr, candidate, remote, source):
+                return remote(f'validate-offline stevengalvis/modelfc {pr} {candidate}')
+            with patch.dict(sys.modules, {'github_offline_validation': SimpleNamespace(transport=transport)}), \
+                    patch.object(installer, 'check_pr_acceptance', side_effect=acceptance), \
+                    patch.dict(os.environ, {}, clear=True):
+                with self.assertRaises(ValueError): installer.ssh_acceptance(args)
+                self.assertNotIn('VALIDATOR_SSH_KEY_BASE64', os.environ)
+            transport.assert_called_once_with(171, SHA, release=False)
+
+    def test_pr_acceptance_uses_pr_command_and_does_not_claim_revision_attestation(self):
+        first = report()
+        second = dict(first, capture_hash='d'*64)
+        failure = dict(report(), commit_sha='0'*40, result='FAIL', reason='WRONG_SHA')
+        remote = Mock(side_effect=[json.dumps(v).encode() for v in (first, second, failure)])
+        result = installer.check_pr_acceptance(171, SHA, remote, OPS)
+        self.assertEqual(result['pr_candidate_sha'], SHA)
+        self.assertEqual(result['installed_revision_attestation'], 'REQUIRES_RELEASE_ACCEPTANCE')
+        self.assertEqual([call.args[0] for call in remote.call_args_list], [
+            'validate-offline stevengalvis/modelfc 171 ' + head for head in (SHA, SHA, '0'*40)])
+
+    def test_pr_acceptance_rejects_missing_strategy_changed_repeat_and_stale_pass(self):
+        missing = report(); del missing['strategy_validation']
+        for sequence in ((missing,), (report(), dict(report(), target_count=3)),
+                         (report(), report(), dict(report(), commit_sha='0'*40))):
+            with self.subTest(sequence=sequence), self.assertRaises(ValueError):
+                installer.check_pr_acceptance(171, SHA,
+                    Mock(side_effect=[json.dumps(v).encode() for v in sequence]), OPS)
         remote = Mock()
-        with self.assertRaisesRegex(ValueError, 'CHECK_FAILED'):
-            installer.check_acceptance(SHA, 'sha256:' + 'c'*64, remote, OPS)
+        for pr, head in ((0, SHA), (True, SHA), (171, '0'*40), (171, 'invalid')):
+            with self.assertRaises(ValueError): installer.check_pr_acceptance(pr, head, remote, OPS)
         remote.assert_not_called()
+
+    def test_local_acceptance_keeps_unmerged_pr_and_current_main_separate(self):
+        from types import SimpleNamespace
+        main_sha = 'b'*40
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            dest, runs = root / 'installed', root / 'runs'
+            dest.mkdir(); runs.mkdir()
+            for name in installer.FILES:
+                (dest / name).write_bytes((OPS / name).read_bytes())
+            config = root / 'config.json'
+            config.write_text(json.dumps({'image': installer.EXPECTED_IMAGE}))
+            identity = policy.binding({'repository': 'stevengalvis/modelfc',
+                                       'image': installer.EXPECTED_IMAGE}, dest, lambda p: None)
+            pr_report = report()
+            stale = dict(pr_report, commit_sha='0'*40, result='FAIL', reason='WRONG_SHA')
+            release = policy.envelope(dict(pr_report, commit_sha=main_sha), identity)
+            cache = runs / 'release-evidence.json'
+            cache.write_text(json.dumps(release)); cache.chmod(0o600)
+            replies = [pr_report, pr_report, stale, release, release, policy.envelope(stale, identity)]
+            processes = [SimpleNamespace(returncode=0, stdout=json.dumps(v).encode()) for v in replies]
+            processes.append(SimpleNamespace(returncode=1, stdout=b''))
+            with patch.object(installer, 'DEST', dest), patch.object(installer, 'RUNS', runs), \
+                    patch.object(installer, 'CONFIG', config), patch.object(installer, 'verify_files'), \
+                    patch.object(installer, 'root_owned'), patch.object(installer.shutil, 'which', return_value='/usr/bin/runuser'), \
+                    patch.object(installer.pwd, 'getpwnam', return_value=SimpleNamespace(pw_uid=os.getuid())), \
+                    patch.object(installer.subprocess, 'run', side_effect=processes) as run:
+                result = installer.local_acceptance(SHA, 171, main_sha)
+            self.assertEqual(result['candidate_sha'], main_sha)
+            self.assertEqual(result['pr_acceptance']['pr_candidate_sha'], SHA)
+            commands = [next(arg for arg in call.args[0] if arg.startswith('SSH_ORIGINAL_COMMAND='))
+                        for call in run.call_args_list]
+            self.assertIn('validate-offline stevengalvis/modelfc 171 '+SHA, commands[0])
+            self.assertIn('validate-offline-release stevengalvis/modelfc '+main_sha, commands[3])
+            self.assertEqual(result['ssh_transport'], 'UNVERIFIED')
+
+    def test_proposed_pins_match_staged_source_and_preserve_predecessor_identity(self):
+        self.assertEqual(installer.PREVIOUS_REVISION,
+                         'dfe3a140b771a2d7dc4d4542251ea729a4be8055ef980cd3f3c2b86830dd8dd5')
+        manifest=json.loads((OPS/'validator-image-build.json').read_bytes())
+        self.assertEqual(installer.EXPECTED_IMAGE,manifest['image_id'])
+        self.assertEqual(policy.digest(installer.PREVIOUS_FILES), installer.PREVIOUS_REVISION)
+        self.assertEqual(policy.revision(OPS), installer.EXPECTED_REVISION)
+        self.assertEqual(policy.digest(installer.FILES), installer.EXPECTED_REVISION)
+        with patch.object(installer, 'root_owned'):
+            installer.verify_files(OPS)
+        self.assertNotEqual(installer.FILES['validate_pr.py'],
+                            installer.PREVIOUS_FILES['validate_pr.py'])
+        self.assertNotEqual(installer.FILES['validate_capture.py'],
+                            installer.PREVIOUS_FILES['validate_capture.py'])
 
 
 if __name__ == '__main__':

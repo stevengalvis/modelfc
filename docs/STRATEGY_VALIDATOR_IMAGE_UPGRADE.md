@@ -81,7 +81,8 @@ historical diagnostic evidence and must never be promoted.
    mutation. Persist the recovery journal, quarantine old cache, install the
    journal-aware controller first, install the complete matching payload, and
    atomically change **only** the configuration's image value. Preserve all other
-   values and file ownership/modes. Verify complete payload, new configuration
+   values and file ownership/modes. Unexpected configuration ACLs/xattrs/labels
+   stop before mutation; this bounded procedure does not silently discard them. Verify complete payload, new configuration
    bytes/binding, both image IDs and cache absence before clearing the journal.
 4. Retain effective consumer holds and run documented local plus dedicated
    pinned-SSH PR-head/current-main acceptance, including strategy PASS, cleanup,
@@ -118,5 +119,7 @@ After main changes, **do not perform a host-only rollback**. Preserve the new
 payload/image, backup and evidence, inspect actual serving release/pipeline state,
 and obtain separate approval for coordinated repair or a normal consumer revert
 plus matched host/configuration/cache recovery. The premerge rollback refuses a
-main different from its recorded tip. Never reuse stale evidence, force a gate,
+main different from its recorded tip. Even after a separately approved consumer
+revert, do not bypass that check: a separately reviewed recovery artifact must
+verify the reverted five-file consumer and actual current main before recovery. Never reuse stale evidence, force a gate,
 rewrite main, or execute an unreviewed revert.
