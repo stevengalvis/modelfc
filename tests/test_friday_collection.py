@@ -30,13 +30,14 @@ class PolicyTests(unittest.TestCase):
         self.assertIsNone(friday_slot(datetime(2026, 9, 26, 0, 5, tzinfo=timezone.utc)))
 
     def test_four_and_five_weekends_with_midweek_and_retries(self):
-        self.assertEqual(project_month(weekends=4)['projected_requests'], 124)
-        self.assertEqual(project_month(weekends=5)['projected_requests'], 155)
+        self.assertEqual(project_month(weekends=4)['projected_requests'], 88)
+        self.assertEqual(project_month(weekends=5)['projected_requests'], 110)
         self.assertEqual(project_month(weekends=4, midweek=20, other_discovery=44,
-                                       wasted_reservations=4)['headroom'], -12)
+                                       wasted_reservations=4)['headroom'], 24)
         self.assertEqual(project_month(weekends=5, midweek=20, other_discovery=42,
-                                       wasted_reservations=4)['headroom'], -41)
-        self.assertTrue(project_month(weekends=5, other_discovery=42)['coverage_budget_blocked'])
+                                       wasted_reservations=4)['headroom'], 4)
+        self.assertFalse(project_month(weekends=5, other_discovery=42)['coverage_budget_blocked'])
+        self.assertTrue(project_month(weekends=5, saturday=10)['coverage_policy_limited'])
         self.assertFalse(project_month(weekends=5, saturday=2, midweek=20,
                                        other_discovery=42, wasted_reservations=4)['coverage_budget_blocked'])
 
@@ -60,7 +61,7 @@ class FridayTests(unittest.TestCase):
         if endpoint == 'fixtures':
             # Provider requests a date interval; record exact query for assertions.
             self.discovery_params = params
-            value = deepcopy(self.fx.fixtures)
+            value = deepcopy([f for f in self.fx.fixtures if f["startTime"][:10] == params["from"][0][:10]])
         elif endpoint == 'markets':
             value = deepcopy(self.fx.metadata)
         else:
@@ -84,14 +85,14 @@ class FridayTests(unittest.TestCase):
         self.many(8)
         first = self.run_collect()
         self.assertEqual(first['provider_requests'], 8)
-        self.assertEqual(first['captures_created'], 6)
+        self.assertEqual(first['captures_created'], 5)
         self.assertIn('REQUEST_BUDGET', first['reasons'])
         publications = list((self.fx.state / 'strategy-picks').glob('*.json'))
         self.assertTrue(publications)
         frozen = {p: p.read_bytes() for p in publications}
         self.fx.now = self.fx.now.replace(hour=12, minute=5, second=0, microsecond=0)
         second = self.run_collect()
-        self.assertEqual((second['provider_requests'], second['captures_created']), (3, 2))
+        self.assertEqual((second['provider_requests'], second['captures_created']), (4, 3))
         self.assertEqual(len(self.fx.capture_paths()), 8)
         self.assertTrue(all(p.read_bytes() == b for p,b in frozen.items()))
         self.assertLess(self.fx.now, review_deadlines(date(2026, 9, 26))[0])
@@ -119,7 +120,7 @@ class FridayTests(unittest.TestCase):
         self.assertEqual((result['provider_requests'], result['captures_created']), (2,1))
         self.assertEqual(self.run_collect()['provider_requests'], 0)
         self.assertTrue(all(a['count'] == 2 for a in self.fx.control()['attempts'].values()))
-        self.assertEqual(sum(e == 'fixtures' for e,t in self.fx.calls), 2)
+        self.assertEqual(sum(e == 'fixtures' for e,t in self.fx.calls), 3)
 
     def test_budget_reserve_and_immutable_history_refresh(self):
         self.run_collect()
@@ -135,15 +136,15 @@ class FridayTests(unittest.TestCase):
         self.assertTrue(all(p.read_bytes() == b for p,b in first.items()))
 
     def test_friday_budget_leaves_four_then_saturday_can_use_them(self):
-        self.fx.write_control(lambda c: c['period'].update(reserved=174))
+        self.fx.write_control(lambda c: c['period'].update(reserved=161))
         result = self.run_collect()
-        self.assertIn('SATURDAY_BUDGET_RESERVED', result['reasons'])
-        self.assertEqual(result['prospective_budget_remaining'], 5)
+        self.assertIn('MIDWEEK_BUDGET_RESERVED', result['reasons'])
+        self.assertEqual(result['prospective_budget_remaining'], 17)
         self.assertEqual(read(self.fx.state, now=self.fx.now)['fixtures'][0]['collection_state'], 'ODDS_NOT_COLLECTED')
         self.fx.now = datetime(2026,9,26,14,5,tzinfo=timezone.utc)
         result = self.run_collect()
         self.assertEqual(result['captures_created'], 1)
-        self.assertEqual(result['prospective_budget_remaining'], 3)
+        self.assertEqual(result['prospective_budget_remaining'], 15)
 
     def test_crash_after_first_checkpoint_and_repeat_never_third_attempt(self):
         self.many(2)
@@ -183,7 +184,13 @@ class FridayTests(unittest.TestCase):
         self.assertEqual(self.fx.control()['advance_discovery'], advance)
 
     def test_interrupted_advance_discovery_has_only_one_afternoon_retry(self):
-        with patch('modelfc.providers.oddspapi.OddsPapiMarketData.discover_fixtures', side_effect=KeyboardInterrupt):
+        from modelfc.providers.oddspapi import OddsPapiMarketData
+        actual = OddsPapiMarketData.discover_fixtures
+        def interrupt_advance(client, competition, day):
+            if day.weekday() == 5:
+                raise KeyboardInterrupt
+            return actual(client, competition, day)
+        with patch.object(OddsPapiMarketData, 'discover_fixtures', interrupt_advance):
             with self.assertRaises(KeyboardInterrupt): self.run_collect()
         self.assertEqual(self.run_collect()['provider_requests'], 0)
         self.fx.now = self.fx.now.replace(hour=19, minute=5)
@@ -213,10 +220,10 @@ class FridayTests(unittest.TestCase):
         from tests.test_oddspapi import recorded
         self.fx.payload = recorded('wolves-west-brom-odds')
         self.fx.now = datetime(2026,9,26,14,5,tzinfo=timezone.utc)
-        self.fx.write_control(lambda c: c['period'].update(reserved=178))
+        self.fx.write_control(lambda c: c['period'].update(reserved=166))
         result = self.run_collect()
-        self.assertEqual((result['captures_created'], result['prospective_budget_remaining']), (1,0))
-        self.assertIn('REQUEST_BUDGET', result['reasons'])
+        self.assertEqual((result['captures_created'], result['prospective_budget_remaining']), (1,12))
+        self.assertIn('MIDWEEK_BUDGET_RESERVED', result['reasons'])
         self.assertTrue(list((self.fx.state/'strategy-picks').glob('*.json')))
         report = read(self.fx.state, now=self.fx.now)
         self.assertTrue(all(f['budget_blocked'] for f in report['fixtures']))

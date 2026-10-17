@@ -2,7 +2,7 @@
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from modelfc.friday_collection import NEW_YORK, SATURDAY_RESERVE, review_deadlines
+from modelfc.friday_collection import NEW_YORK, SATURDAY_RESERVE, review_deadlines, allocation_reason, SATURDAY_LIMIT
 
 
 def read(state_dir, *, now=None):
@@ -59,14 +59,19 @@ def read(state_dir, *, now=None):
                                       and not (d == afternoon and afternoon_spent)]
                         if candidates:
                             next_at = max(now, min(next_at, *candidates))
-                blocked = remaining < 2 or (now.astimezone(NEW_YORK).weekday() == 4 and remaining < SATURDAY_RESERVE + 2)
+                blocked = (kickoff.weekday() == 5 and allocation_reason(control, kickoff.date(), 2, now) is not None) or remaining < 2 or (now.astimezone(NEW_YORK).weekday() == 4 and remaining < SATURDAY_RESERVE + 2)
+                saturday_used = sum(a.get('phase_attempts', a['count']) for a in control['attempts'].values()
+                                    if a.get('phase') == 'near_kickoff' and a.get('kickoff', '')[:10] == kickoff.date().isoformat())
+                saturday_full = kickoff.weekday() == 5 and saturday_used >= SATURDAY_LIMIT
+                if saturday_full:
+                    next_at = None
                 result.append({'provider_fixture_id': fid, 'kickoff_utc': kickoff.isoformat(),
                     'collection_state': status, 'attempts_used': count,
                     'last_collection_at_utc': retrieved.isoformat() if retrieved else None,
                     'quote_age_seconds': max(0, (now - retrieved).total_seconds()) if retrieved else None,
                     'next_opportunity_at_utc': next_at.isoformat() if next_at else None,
                     'skip_reason': 'KICKOFF_CLOSED' if kickoff <= now + timedelta(minutes=15) else
-                                   'ATTEMPTS_EXHAUSTED' if count >= 2 else 'BUDGET_BLOCKED' if blocked else
+                                   'ATTEMPTS_EXHAUSTED' if count >= 2 else 'SATURDAY_LIMIT' if saturday_full else 'BUDGET_BLOCKED' if blocked else
                                    status if status in ('ATTEMPT_INCOMPLETE', 'REVIEW_REQUIRED') else 'POLICY_WINDOW_OR_PRIORITY',
                     'budget_blocked': blocked})
     return {'as_of_utc': now.isoformat(), 'policy': 'friday-review-opt-in',

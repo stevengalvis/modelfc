@@ -25,7 +25,7 @@ def review_deadlines(saturday):
                  .astimezone(timezone.utc) for hour in (9, 17))
 
 
-def project_month(*, weekends, fixtures=12, afternoon=2, saturday=10,
+def project_month(*, weekends, fixtures=12, afternoon=2, saturday=2,
                   midweek=0, other_discovery=0, wasted_reservations=0):
     """Request envelope: two Friday discovery queries, two morning batches,
     one afternoon batch and ceil(Saturday / 7) batches, each with metadata.
@@ -43,4 +43,37 @@ def project_month(*, weekends, fixtures=12, afternoon=2, saturday=10,
     total = weekends * per_weekend + midweek + other_discovery + wasted_reservations
     return {"per_weekend": per_weekend, "projected_requests": total,
             "hard_cap": 180, "headroom": 180 - total,
-            "coverage_budget_blocked": total > 180}
+            "coverage_budget_blocked": total > 180,
+            "coverage_policy_limited": saturday > SATURDAY_LIMIT or per_weekend > WEEKEND_REQUEST_LIMIT,
+            "runtime_weekend_request_ceiling": WEEKEND_REQUEST_LIMIT,
+            "runtime_weekend_total_ceiling": weekends * WEEKEND_REQUEST_LIMIT}
+
+# Runtime allocation, including discovery, metadata and crash reservations.
+WEEKEND_REQUEST_LIMIT = 22
+MIDWEEK_RESERVE = 12
+SATURDAY_LIMIT = 2
+
+
+def weekend_spent(control, day):
+    saved = control.get('weekend_allocations', {}).get(day.isoformat())
+    if saved is not None:
+        return saved
+    # Conservative migration of earlier optional-policy state: assume metadata
+    # for every old attempt, and two discoveries if that cohort already exists.
+    caches = [d for k in ('discovery', 'advance_discovery')
+              if (d := control.get(k)) and d['date'] == day.isoformat()]
+    attempts = [a for a in control['attempts'].values()
+                if (a.get('kickoff', '')[:10] == day.isoformat() or
+                    not a.get('kickoff') and datetime.fromisoformat(a['at'].replace('Z', '+00:00'))
+                    .astimezone(timezone.utc).date() in (day, day - timedelta(days=1)))]
+    return min(WEEKEND_REQUEST_LIMIT, (2 if caches else 0) + 2 * sum(a['count'] for a in attempts))
+
+
+def allocation_reason(control, day, count, now):
+    friday = now.astimezone(NEW_YORK).weekday() == 4
+    saturday_headroom = SATURDAY_RESERVE if friday else 0
+    if weekend_spent(control, day) + count > WEEKEND_REQUEST_LIMIT - saturday_headroom:
+        return 'WEEKEND_BUDGET'
+    if control['period']['allowance'] - control['period']['reserved'] - count < MIDWEEK_RESERVE + saturday_headroom:
+        return 'MIDWEEK_BUDGET_RESERVED'
+    return None
