@@ -1,4 +1,5 @@
 """Read-only operator projection; saved value is never labelled current value."""
+from contextlib import contextmanager
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
@@ -136,11 +137,30 @@ def _next_opportunity(control, fixture, attempt, observations, capture, now):
     return None, budget_reason or limit_reason, budget_reason is not None
 
 
+@contextmanager
+def _evidence_read_lock(state):
+    from modelfc.ledger_storage import LedgerStorageUnavailable, ledger_read_lock
+    try:
+        (state / '.lock').lstat()
+    except FileNotFoundError:
+        # The caller holds the runner lock. Initialization and empty discovery
+        # can leave only prospective control/receipts, without an evidence ledger.
+        # Never read unlocked evidence or hide an orphaned evidence directory.
+        if any(child.name != 'prospective' for child in state.iterdir()):
+            raise LedgerStorageUnavailable('ledger read lock is unavailable') from None
+        yield False
+    else:
+        # lstat distinguishes an absent lock from a dangling symlink. Keep the
+        # existing no-follow, regular-file and bounded shared-lock validation.
+        with ledger_read_lock(state):
+            yield True
+
+
 def read(state_dir, *, now=None):
     from modelfc.corner_prospective import _load, _timestamp
-    from modelfc.corner_prospective_read import _locked_inventory
+    from modelfc.corner_prospective_read import _empty_inventory, _locked_inventory
     from modelfc.corner_opportunities import fixture_observations, prediction_records, prediction_observations
-    from modelfc.ledger_storage import existing_read_lock, ledger_read_lock
+    from modelfc.ledger_storage import existing_read_lock
     from modelfc.providers.oddspapi import OddsPapiMarketData
     from modelfc.prospective_run_receipts import latest
     from modelfc.recorded_offers import project
@@ -152,10 +172,11 @@ def read(state_dir, *, now=None):
     with existing_read_lock(state / 'prospective/runner.lock'):
         control = _load(state / 'prospective/control.json')
         receipt = latest(state, now=now)
-        with ledger_read_lock(state):
-            inventory = _locked_inventory(state, now=now, include_recorded=True)
+        with _evidence_read_lock(state) as has_evidence:
+            inventory = (_locked_inventory(state, now=now, include_recorded=True)
+                         if has_evidence else _empty_inventory())
             captured = {}
-            for prediction in prediction_records(state):
+            for prediction in prediction_records(state) if has_evidence else ():
                 f = prediction['fixture']
                 if f['competition'] != 'E1' or f['provider'] != OddsPapiMarketData.provider_name:
                     continue
@@ -180,7 +201,8 @@ def read(state_dir, *, now=None):
             result = []
             for (fid, kickoff), fixture in sorted(fixtures.items()):
                 attempt = control['attempts'].get(fid)
-                observations = fixture_observations(state, fixture.provider, 'E1', fid)
+                observations = (fixture_observations(state, fixture.provider, 'E1', fid)
+                                if has_evidence else [])
                 quotes = [o for o in observations if _timestamp(o['retrieved_at_utc']) <= now]
                 retrieved = max((_timestamp(o['retrieved_at_utc']) for o in quotes), default=None)
                 values = offers.get((fixture.home_team, fixture.away_team, kickoff), [])

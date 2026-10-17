@@ -1,11 +1,95 @@
 """Read-only eligibility parity against the real offline collector."""
 from copy import deepcopy
+from contextlib import redirect_stdout
 from datetime import datetime, timedelta, timezone
+from io import StringIO
+import json
+import os
 import unittest
 from unittest.mock import patch
 
 from modelfc.collector_freshness import read
 from tests import test_friday_collection as friday
+from tests import test_corner_prospective as pilot
+from modelfc import corner_prospective as runner
+from modelfc.ledger_storage import LedgerStorageUnavailable
+
+
+class EmptyLedgerStatusTests(unittest.TestCase):
+    def setUp(self):
+        self.fx = pilot.PilotTests()
+        self.fx.setUp()
+        self.addCleanup(self.fx.doCleanups)
+
+    def snapshot(self):
+        return {str(p.relative_to(self.fx.state)):
+                (p.lstat().st_mode, p.lstat().st_ino,
+                 os.readlink(p) if p.is_symlink() else p.read_bytes() if p.is_file() else None)
+                for p in self.fx.state.rglob('*')}
+
+    def status(self):
+        before = self.snapshot()
+        try:
+            with patch('modelfc.providers.oddspapi.OddsPapiMarketData.__init__',
+                       side_effect=AssertionError('status must not create a provider client')):
+                return read(self.fx.state, now=self.fx.now)
+        finally:
+            self.assertEqual(before, self.snapshot())
+
+    def test_initialized_empty_state_and_cli_without_evidence_lock(self):
+        self.assertFalse((self.fx.state / '.lock').exists())
+        report = self.status()
+        self.assertEqual(report['fixtures'], [])
+        self.assertEqual(report['budget_remaining'], 180)
+        self.assertIsNone(report['last_completed_run_at_utc'])
+        before = self.snapshot()
+        output = StringIO()
+        with redirect_stdout(output), patch('modelfc.providers.oddspapi.OddsPapiMarketData.__init__',
+                                            side_effect=AssertionError('no provider')):
+            runner.main(['collector-status', '--state-dir', str(self.fx.state)])
+        self.assertEqual(json.loads(output.getvalue())['fixtures'], [])
+        self.assertEqual(before, self.snapshot())
+
+    def test_empty_discovery_retains_receipt_and_budget_without_evidence_lock(self):
+        self.fx.discovery_override = []
+        # Discovery is durable before publication first creates the evidence lock.
+        with patch('modelfc.pick_strategies.publish_locked',
+                   side_effect=OSError('interrupted before evidence publication')):
+            summary = runner.run_once(state_dir=self.fx.state, data_config_path=self.fx.config)
+        self.assertEqual(summary['provider_requests'], 1)  # recorded HTTP only
+        self.assertFalse((self.fx.state / '.lock').exists())
+        report = self.status()
+        self.assertEqual(report['fixtures'], [])
+        self.assertEqual(report['budget_remaining'], 179)
+        self.assertEqual(report['last_run_status'], summary['status'])
+        self.assertIsNotNone(report['last_completed_run_at_utc'])
+
+    def test_existing_regular_evidence_lock_is_still_used_without_mutation(self):
+        (self.fx.state / '.lock').touch()
+        self.assertEqual(self.status()['fixtures'], [])
+
+    def test_unsafe_existing_lock_is_never_treated_as_absent(self):
+        lock = self.fx.state / '.lock'
+        for kind in ('directory', 'fifo', 'dangling_symlink', 'regular_symlink'):
+            with self.subTest(kind=kind):
+                if kind == 'directory':
+                    lock.mkdir()
+                elif kind == 'fifo':
+                    os.mkfifo(lock)
+                else:
+                    lock.symlink_to('absent' if kind == 'dangling_symlink' else 'prospective/runner.lock')
+                try:
+                    with self.assertRaises(LedgerStorageUnavailable):
+                        self.status()
+                finally:
+                    lock.rmdir() if kind == 'directory' else lock.unlink()
+
+    def test_orphaned_evidence_without_lock_is_rejected(self):
+        directory = self.fx.state / 'market-observations'
+        directory.mkdir()
+        (directory / 'orphan.json').write_text('{}')
+        with self.assertRaises(LedgerStorageUnavailable):
+            self.status()
 
 
 class FreshnessParityTests(unittest.TestCase):
