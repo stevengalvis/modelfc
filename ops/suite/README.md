@@ -20,7 +20,9 @@ recommendation is valid until that acceptance passes.
 The worker retains the 300-second child deadline, 330/30-second systemd lifecycle,
 2-GiB memory and 64-task limits. PrivateNetwork, PrivateTmp, a read-only filesystem,
 no capabilities/privilege escalation and inaccessible production/control/credential
-paths isolate candidate code. stdout is discarded; stderr is drained with a 4-KiB
+paths isolate candidate code. A private read-only tmpfs hides host `/run`;
+masking `/run` itself prevents systemd namespace setup (upstream issue
+https://github.com/systemd/systemd/issues/27997). stdout is discarded; stderr is drained with a 4-KiB
 tail. The result reports terminal counts only with a complete final summary;
 observed completed count/last progress are separate. TIMEOUT is not assertion
 failure. Escaped process groups remain inside the systemd cgroup.
@@ -40,7 +42,7 @@ silently overwritten or retried. Root operator authority is required for the
 trusted guard and passive installer; candidate Python is never executed as root.
 
 Disposable CI must prove normal success, deliberate failure, full 300-second
- timeout with detached descendants, guard death, queued-start and concurrent-run
+timeout with detached descendants, guard death, queued-start and concurrent-run
 conflicts, namespace/secret denial, unchanged API identity/current pointer and
 failure evidence, and explicit recovery. It also runs the complete PR179 suite.
 The artifact includes `modelfc-suite.tar.gz`, `install.py`, `SHA256SUMS`, and

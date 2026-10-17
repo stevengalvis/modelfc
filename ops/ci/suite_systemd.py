@@ -104,6 +104,9 @@ class Boundary(unittest.TestCase):
  def test_a_boundary(self):
   self.assertNotEqual(os.geteuid(),0)
   self.assertEqual(socket.if_nameindex(),[(1,'lo')])
+  self.assertFalse(os.path.exists('/run/modelfc-suite-ci-claim'))
+  with socket.socket(socket.AF_UNIX) as client:
+   with self.assertRaises(OSError): client.connect('/run/dbus/system_bus_socket')
   for path in ['/var/lib/modelfc/canary','/etc/modelfc-validator/canary','/var/lib/modelfc-deploy/last-test-failure.json','/srv/modelfc/current','/var/lib/modelfc-suite/results']:
    with self.assertRaises(OSError): os.open(path,os.O_RDONLY)
   with self.assertRaises(OSError): os.open(__file__,os.O_WRONLY)

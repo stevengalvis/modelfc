@@ -106,8 +106,11 @@ def execution_policy(unit, script, suffix):
     if typed_property(unit, 'Service', 'EnvironmentFiles').get('data') != expected_files:
         raise Rejected('EXECUTION_POLICY')
     expected_paths = ['-/srv', '-/var/lib/modelfc', '-/var/lib/modelfc-deploy',
-                      '-/var/lib/modelfc-suite', '-/etc/modelfc-validator', '-/run'] if unit == WORKER else []
+                      '-/var/lib/modelfc-suite', '-/etc/modelfc-validator'] if unit == WORKER else []
     if typed_property(unit, 'Service', 'InaccessiblePaths').get('data') != expected_paths:
+        raise Rejected('EXECUTION_POLICY')
+    expected_tmpfs = [['/run', 'ro']] if unit == WORKER else []
+    if typed_property(unit, 'Service', 'TemporaryFileSystem').get('data') != expected_tmpfs:
         raise Rejected('EXECUTION_POLICY')
     expected_readonly = [str(ROOT)] if unit == WORKER else []
     if typed_property(unit, 'Service', 'ReadOnlyPaths').get('data') != expected_readonly:
