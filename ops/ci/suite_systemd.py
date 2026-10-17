@@ -248,6 +248,8 @@ if __name__=='__main__':
             if (STATE/'results').exists(): result['last_reports']=[json.loads(p.read_text()) for p in (STATE/'results').glob('*.json')]
         diagnostic=command('journalctl','--no-pager','-u',GUARD,'-u',WORKER,'-n','40',check=False).stdout
         output.with_name('systemd-diagnostic.log').write_text(diagnostic)
+        if result['status']=='FAIL':
+            print(command('journalctl','--no-pager','-o','cat','-u',WORKER,'_PID=1','-n','12',check=False).stdout,flush=True)
         try: cleanup();result['cleanup']='PASS'
         except Exception: result['cleanup']='FAIL'
         output=Path(args.output);output.write_text(json.dumps(result,sort_keys=True)+'\n');output.chmod(0o644)
