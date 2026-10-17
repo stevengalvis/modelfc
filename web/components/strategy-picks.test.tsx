@@ -44,3 +44,13 @@ it("paginates only on user action",async()=>{
  expect(call).toHaveBeenCalledTimes(1);fireEvent.click(screen.getByText("Next picks"));
  await screen.findByText(/No published picks/);expect(call.mock.lastCall?.[0].offset).toBe(5);
 });
+
+it("opens separately timestamped saved-price analysis from the Upcoming link",async()=>{
+ window.history.replaceState({}, "", "/recommendations?view=shortlist");
+ vi.spyOn(api,"strategyPicks").mockResolvedValue(empty());
+ const shortlist=vi.spyOn(api,"shortlist").mockImplementation(()=>new Promise(()=>{}));
+ render(<RecommendationsDashboard/>);
+ expect(await screen.findByText("Saved-price analysis")).toBeInTheDocument();
+ expect(shortlist).toHaveBeenCalled();
+ window.history.replaceState({}, "", "/");
+});

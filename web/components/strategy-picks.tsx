@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api/client";
-import type { StrategyPage } from "@/lib/api/track-record";
+import type { StrategyPage, StrategyPick } from "@/lib/api/track-record";
 import type { ShortlistRanking } from "@/lib/api/types";
 
 export function StrategyPicks({ scope }: { scope: "current" | "history" }) {
@@ -43,9 +43,7 @@ function StrategyRows({scope,strategy,market,competition}: {scope:"current"|"his
     {!data.publications.length && <p>No published picks for this strategy and filter yet. Historical subset picks are kept separately and are not reclassified.</p>}
     {data.publications.map(row=><article className="panel" key={row.publication_id}>
       <h3>{row.offer.home_team} vs {row.offer.away_team} · {row.offer.competition}</h3>
-      <p>{row.offer.market_type === "BTTS" ? `Both teams to score: ${row.offer.side === "YES" ? "Yes" : "No"}` : `${row.offer.team} corners ${row.offer.direction.toLowerCase()} ${row.offer.line}`}</p>
-      <p>{row.offer.bookmaker} · {row.offer.american_odds > 0 ? "+" : ""}{row.offer.american_odds} · {(row.offer.model_probability*100).toFixed(1)}% model probability</p>
-      <p>Quote recorded {row.offer.retrieved_at_utc}. {Math.max(0,Math.floor((Date.now()-Date.parse(row.offer.retrieved_at_utc))/60000))} minutes old at this read; recheck availability.</p>
+      <PublishedPick row={row} now={Date.now()} />
       <details><summary>Evidence and simulated result</summary><p>Published {row.published_at_utc}; policy effective {row.policy_effective_at_utc}. Strategy version: {row.strategy_policy}.</p>
         <p>No-vig edge {(row.offer.no_vig_probability_edge*100).toFixed(1)} pp · estimated EV {(row.offer.expected_profit*100).toFixed(1)}%.</p>
         <p>{row.result} · simulated $2 risked · {row.profit_units === null ? "Pending" : `${row.profit_units.toFixed(2)} units / $${row.profit_dollars?.toFixed(2)}`}</p></details>
@@ -53,4 +51,14 @@ function StrategyRows({scope,strategy,market,competition}: {scope:"current"|"his
     <button disabled={offset===0} onClick={()=>setOffset(Math.max(0,offset-5))}>Previous picks</button>
     <button disabled={data.next_offset===null} onClick={()=>data.next_offset!==null&&setOffset(data.next_offset)}>Next picks</button>
   </>;
+}
+
+/** Shared immutable publication evidence; newer quotes never replace these values. */
+export function PublishedPick({ row, now }: { row: StrategyPick; now: number }) {
+  return <div>
+    <p>{row.offer.market_type === "BTTS" ? `Both teams to score: ${row.offer.side === "YES" ? "Yes" : "No"}` : `${row.offer.team} corners ${row.offer.direction.toLowerCase()} ${row.offer.line}`}</p>
+    <p>{row.offer.bookmaker} · {row.offer.american_odds > 0 ? "+" : ""}{row.offer.american_odds} · {(row.offer.model_probability*100).toFixed(1)}% model probability</p>
+    <p className="ledger-meta">Frozen publication price · Quote recorded <time dateTime={row.offer.retrieved_at_utc}>{row.offer.retrieved_at_utc}</time> · Published <time dateTime={row.published_at_utc}>{row.published_at_utc}</time></p>
+    <p className="ledger-meta">{now >= Date.parse(row.offer.kickoff_utc) ? "Started fixture · publication is historical, not an upcoming choice." : now - Date.parse(row.offer.retrieved_at_utc) > 300_000 ? "Stale quote · price needs rechecking." : "Saved quote · recheck price and availability."}</p>
+  </div>;
 }

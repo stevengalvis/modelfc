@@ -41,3 +41,22 @@ export function ageLabel(value: string, now: number): string {
   return minutes < 1 ? "less than a minute ago" : minutes < 60 ? `${minutes} min ago`
     : minutes < 1440 ? `${Math.floor(minutes/60)} hr ago` : `${Math.floor(minutes/1440)} days ago`;
 }
+
+/** Traverse both independent strategies. Incomplete reads are unknown, never empty. */
+export async function loadUpcomingPicks(signal: AbortSignal) {
+  const { api } = await import("./api/client");
+  const pages = await Promise.all((["best_value", "higher_probability"] as const).map(async strategy => {
+    const rows: import("./api/track-record").StrategyPick[] = [];
+    let offset = 0;
+    for (let pageNumber = 0; pageNumber < 200; pageNumber++) {
+      signal.throwIfAborted();
+      const page = await api.strategyPicks({ strategy, scope: "current", offset }, signal);
+      rows.push(...page.publications);
+      if (page.next_offset === null) return rows;
+      if (page.next_offset <= offset) throw new Error("Non-advancing published picks page");
+      offset = page.next_offset;
+    }
+    throw new Error("Published picks coverage exceeded read limit");
+  }));
+  return [...new Map(pages.flat().map(row => [row.publication_id, row])).values()];
+}
