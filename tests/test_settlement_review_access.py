@@ -49,6 +49,10 @@ class ReviewCrossUserTests(unittest.TestCase):
         finally:self.acl.acl_free(acl)
 
     def reader(self,app,url,record):
+        # Load ASGI/AnyIO and endpoint dependencies before dropping UID. The CI
+        # virtualenv is private; this test grants data access, not package access.
+        with TestClient(app) as client:
+            self.assertEqual(client.get(url).status_code,200)
         receiving,sending=multiprocessing.get_context('fork').Pipe(False)
         def child():
             try:
