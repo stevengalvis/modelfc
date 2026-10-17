@@ -116,6 +116,15 @@ class HarnessMountTests(unittest.TestCase):
         (self.runs/'validation.lock').unlink();(self.runs/'validation.lock').touch(mode=0o600)
         with self.assertRaises(controller.Failure),controller.pinned_harness(self.lock):pass
 
+    def test_interrupted_transition_blocks_harness_execution(self):
+        marker=self.runs/'validator-transition.json'
+        for symlink in (False, True):
+            if symlink:marker.symlink_to(self.root/'missing')
+            else:marker.write_text('pending recovery')
+            with self.assertRaisesRegex(controller.Failure,'BUSY'),controller.pinned_harness(self.lock):pass
+            marker.unlink()
+        with controller.pinned_harness(self.lock):pass
+
 
 @unittest.skipUnless(os.environ.get('MODELFC_TEST_PODMAN'),
                      'NOT RUN: isolated rootless Podman/fixture not configured')
@@ -216,6 +225,54 @@ print(json.dumps(dict(sha=hashlib.sha256(p.read_bytes()).hexdigest(),write_denie
         until=time.monotonic()+10
         while not (race/'restored').exists():
             self.assertLess(time.monotonic(),until);time.sleep(.02)
+
+    def test_candidate_worker_receipt_cache_and_binding(self):
+        # Only GitHub metadata/export are fixture adapters. Podman, mount checks,
+        # harness/strategy execution, controller cleanup and receipt/cache policy
+        # are real; this is an isolated integration, never installed acceptance.
+        import shutil
+        from tests.test_release_offline import policy
+        image=os.environ['MODELFC_TEST_CANDIDATE_IMAGE']
+        token=self.root/'fixture-token';token.write_text('test-only-token-never-mounted')
+        config=dict(repository=controller.REPOSITORY,image=image,github_token_file=str(token))
+        run=self.runs/('b'*32)
+        actual_popen=subprocess.Popen
+        def launch(args,*pos,**kwargs):
+            if args[0]=='podman':args=self.engine+args[1:]
+            return actual_popen(args,*pos,**kwargs)
+        def export(run,pr,sha,token,**kwargs):
+            shutil.copytree(self.repo/'src',run/'subject/src')
+        def verify(sha,token):
+            if sha!=SHA:raise controller.Failure('WRONG_SHA')
+        expected=policy.binding(config,OPS,lambda path:None)
+        with patch.object(controller.subprocess,'Popen',side_effect=launch), \
+                patch.object(controller,'export_source',side_effect=export), \
+                patch.object(controller,'verify_release',side_effect=verify):
+            def execute():
+                return controller.worker(config,run,None,SHA,release=True,validation_lock=self.lock)
+            value=policy.cached_release(config,run,SHA,expected,runs=self.runs,
+                verify=verify,execute=execute,current_binding=lambda:policy.binding(config,OPS,lambda p:None))
+            self.assertEqual((value['result'],value['strategy_validation'],value['provider_request_count']),('PASS','PASS',0),value)
+            self.assertEqual(value['cleanup_status'],'COMPLETE');self.assertFalse(run.exists())
+            policy.save_success(value,expected,self.runs)
+            first=(self.runs/'release-evidence.json').read_bytes()
+            self.assertEqual(policy.validate_envelope(first,SHA,expected)['image_digest'],image)
+            with patch('builtins.print'):
+                again=policy.cached_release(config,run,SHA,expected,runs=self.runs,
+                    verify=verify,execute=lambda:self.fail('matching cache reran'),current_binding=lambda:expected)
+            self.assertEqual(again,value)
+            self.assertEqual((self.runs/'release-evidence.json').read_bytes(),first)
+            with self.assertRaisesRegex(controller.Failure,'WRONG_SHA'):
+                policy.cached_release(config,run,'0'*40,expected,runs=self.runs,
+                    verify=verify,execute=lambda:self.fail('stale ran'),current_binding=lambda:expected)
+            for field,replacement in (('image_digest','sha256:'+'d'*64),
+                    ('configuration_digest','d'*64),('validator_revision','d'*64)):
+                with self.assertRaises(ValueError):policy.validate_envelope(first,SHA,{**expected,field:replacement})
+            # A durable interrupted-transaction marker prevents any new execution.
+            (self.runs/'validator-transition.json').write_text('pending recovery')
+            failed=execute()
+            self.assertEqual((failed['result'],failed['reason']),('FAIL','BUSY'))
+            self.assertEqual((self.runs/'release-evidence.json').read_bytes(),first)
 
 
 if __name__=='__main__':unittest.main()

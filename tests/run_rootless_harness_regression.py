@@ -22,8 +22,8 @@ import time
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     for name in ('user','archive','image','work','trusted-parent'):parser.add_argument('--'+name,required=True)
-    parser.add_argument('--dependency-site', type=Path,
-        help='Optional existing development site-packages: copy ONLY Pydantic and its dependencies into a disposable test image; never changes the activation image')
+    parser.add_argument('--stale-harness', type=Path,
+        help='Optional reviewed predecessor harness: bake it into a disposable derivative of the candidate; never promote this fixture')
     args=parser.parse_args()
     assert os.geteuid()==0, 'root creates ONLY disposable root-owned mount fixtures'
     user=pwd.getpwnam(args.user);assert user.pw_uid!=0
@@ -63,26 +63,22 @@ def main():
         with (work/'image-load.log').open('w') as log:
             loaded=invoke(engine+['load','--input',str(Path(args.archive).absolute())],stdout=log,stderr=subprocess.STDOUT,timeout=180)
         assert loaded.returncode==0, 'isolated image load failed; inspect image-load.log'
-        if args.dependency_site:
-            # This fixture demonstrates mount execution independently of the
-            # activation image's missing dependency. It is NOT installed acceptance.
+        candidate_image=args.image
+        if args.stale_harness:
+            import hashlib
+            raw=args.stale_harness.read_bytes()
+            assert hashlib.sha256(raw).hexdigest()=='fa61840de404a8a8803b30a18b98b60acbaeba36b6445eb9cafcc1112028dfdd'
             context=work/'build';context.mkdir(mode=0o755)
-            packages=context/'packages';packages.mkdir(mode=0o755)
-            for name in ('pydantic','pydantic_core','annotated_types','typing_extensions.py','typing_inspection'):
-                source=args.dependency_site/name
-                assert source.exists() and not source.is_symlink(), name
-                if source.is_dir():shutil.copytree(source,packages/name,ignore=shutil.ignore_patterns('__pycache__'))
-                else:shutil.copyfile(source,packages/name)
-            # The existing image is CPython 3.12; fail the build/import if incompatible.
-            (context/'Containerfile').write_text('FROM '+args.image+'\nCOPY packages /usr/local/lib/python3.12/site-packages/\nRUN python3 -I -c "import pydantic"\n')
+            (context/'validate_capture.py').write_bytes(raw)
+            (context/'Containerfile').write_text('FROM '+args.image+'\nCOPY validate_capture.py /trusted/validate_capture.py\nRUN chmod 0555 /trusted/validate_capture.py\n')
             with (work/'image-build.log').open('w') as log:
                 built=invoke(engine+['build','--network=none','--pull=never','--tag','localhost/zen48-stale-fixture',str(context)],stdout=log,stderr=subprocess.STDOUT,timeout=180)
-            assert built.returncode==0, 'disposable fixture image build failed; inspect image-build.log'
+            assert built.returncode==0, 'disposable stale fixture build failed; inspect image-build.log'
             inspected=invoke(engine+['image','inspect','localhost/zen48-stale-fixture','--format','{{.Id}}'],capture_output=True,text=True,check=True)
             args.image='sha256:'+inspected.stdout.strip().removeprefix('sha256:')
-        print(json.dumps({'test_image':args.image,'dependency_fixture':bool(args.dependency_site)}),flush=True)
+        print(json.dumps({'candidate_image':candidate_image,'test_image':args.image,'stale_baked_fixture':bool(args.stale_harness)}),flush=True)
         env.update(MODELFC_TEST_PODMAN=json.dumps(engine),MODELFC_TEST_IMAGE=args.image,
-                   MODELFC_TEST_TRUSTED=str(fixture),MODELFC_TEST_WORK=str(work/'work'),
+                   MODELFC_TEST_CANDIDATE_IMAGE=candidate_image,MODELFC_TEST_TRUSTED=str(fixture),MODELFC_TEST_WORK=str(work/'work'),
                    MODELFC_TEST_RACE=str(work/'race'))
         thread.start()
         with (work/'real-container.log').open('w') as log:

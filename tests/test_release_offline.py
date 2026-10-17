@@ -218,6 +218,21 @@ class ReleaseGateTests(unittest.TestCase):
 
 
 class ReleaseControllerTests(unittest.TestCase):
+    def test_interrupted_upgrade_cannot_launch_or_reuse_release_cache(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory)
+            (root/'validator-transition.json').write_text('pending recovery')
+            (root/'release-evidence.json').write_bytes(wire(policy.envelope(report(),identity())))
+            output=io.StringIO()
+            with patch.object(sys,'argv',['validator','--repository',gate.REPOSITORY,'--release','--sha',SHA]), \
+                    patch.object(controller,'configuration',return_value={}), \
+                    patch.object(controller,'RUNS',root),patch.object(controller,'command') as command, \
+                    patch('sys.stdout',output):
+                controller.main()
+            command.assert_not_called()
+            value=json.loads(output.getvalue())
+            self.assertEqual((value['result'],value['reason']),('FAIL','BUSY'))
+
     def test_wrapper_separate_fixed_release_operation(self):
         command = 'validate-offline-release stevengalvis/modelfc ' + SHA
         self.assertEqual(wrapper.controller_arguments(command)[-5:], ['--release', '--sha', SHA, '--mode', 'offline'])
