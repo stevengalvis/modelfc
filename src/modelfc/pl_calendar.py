@@ -12,7 +12,8 @@ from modelfc.upcoming_fixtures import FixtureSnapshot, ProviderFixture, FixtureS
 
 _LONDON = ZoneInfo("Europe/London")
 _TERMINAL = {"FINISHED", "POSTPONED", "CANCELLED"}
-_STATUSES = _TERMINAL | {"SCHEDULED", "TIMED", "IN_PLAY", "PAUSED", "SUSPENDED"}
+_ACTIVE = {"IN_PLAY", "PAUSED", "SUSPENDED"}
+_STATUSES = _TERMINAL | {"SCHEDULED", "TIMED"} | _ACTIVE
 
 
 class CalendarRejected(ValueError):
@@ -168,6 +169,8 @@ def parse_calendar(raw: bytes, *, contract_raw: bytes, reviewed_contract_sha256:
             _require(type(matchday) is int and 1 <= matchday <= 38)
             status = row["status"]
             _require(status in _STATUSES)
+            if status in _ACTIVE:
+                _require(kickoff <= retrieved)
             score = row["score"]["fullTime"]
             goals = (score["home"], score["away"])
             if status == "FINISHED":

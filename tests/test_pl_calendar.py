@@ -203,6 +203,37 @@ class PLCalendarTests(unittest.TestCase):
                 with self.assertRaisesRegex(CalendarRejected, 'STATUS_UNSUPPORTED'):
                     self.parse().snapshot()
 
+    def test_active_status_retrieval_boundaries_and_cli_never_ready(self):
+        for status in ['IN_PLAY', 'PAUSED', 'SUSPENDED']:
+            for seconds in [-1, 0, 1]:
+                with self.subTest(status=status, kickoff_offset=seconds):
+                    row = self.payload['matches'][0]
+                    row['status'] = status
+                    row['utcDate'] = (NOW+timedelta(seconds=seconds)).isoformat()
+                    report = self.report()
+                    if seconds > 0:
+                        with self.assertRaises(CalendarRejected):
+                            self.parse()
+                        self.assertEqual(report['validity'], 'INVALID_OR_UNSUPPORTED')
+                        self.assertEqual(report['selected_day_state'], 'UNKNOWN')
+                    else:
+                        self.parse()
+                        self.assertEqual(report['validity'], 'VALID')
+                        self.assertEqual(report['freshness'], 'FRESH')
+                        self.assertEqual(report['prior_state'], 'UNRESOLVED')
+                        self.assertEqual(report['unresolved_count'], 1)
+                    with tempfile.TemporaryDirectory() as folder:
+                        bundle, contract = Path(folder)/'bundle', Path(folder)/'contract'
+                        bundle.write_bytes(self.bundle())
+                        contract.write_bytes(raw(self.contract))
+                        args = ['--bundle', str(bundle), '--bundle-sha256', sha(self.bundle()),
+                            '--contract', str(contract), '--reviewed-contract-sha256', sha(raw(self.contract)),
+                            '--competition', 'E0', '--season-year', '2026', '--day', '2026-10-17',
+                            '--as-of', NOW.isoformat()]
+                        with redirect_stdout(io.StringIO()) as output:
+                            self.assertEqual(main(args), 1)
+                        self.assertEqual(json.loads(output.getvalue()), report)
+
     def test_london_midnight_and_both_dst_transitions(self):
         cases = [('2026-10-17T23:30:00Z','2026-10-18'),
                  ('2026-10-25T00:30:00Z','2026-10-25'),

@@ -78,6 +78,8 @@ credentials, input paths or provider exception text):
   London day or before the explicit observation instant are unresolved, including
   earlier kickoffs on the selected day. Postponed/cancelled are terminal for this
   calendar assessment only; no history/results completeness is asserted.
+  IN_PLAY/PAUSED/SUSPENDED require kickoff at or before recorded retrieval and
+  always remain unresolved, including at the exact kickoff/retrieval boundary.
 
 Exit zero means valid, fresh evidence with no unresolved prior fixtures. It does
 not mean picks, live authorization or history readiness. Missing/invalid/stale/

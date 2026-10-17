@@ -8,7 +8,7 @@ import stat
 
 from modelfc.acquisition_planner import utc
 from modelfc.pl_calendar import (CalendarRejected, MAX_CALENDAR_BYTES,
-    MAX_CALENDAR_AGE, _TERMINAL, _require, _time, parse_calendar)
+    MAX_CALENDAR_AGE, _ACTIVE, _TERMINAL, _require, _time, parse_calendar)
 
 
 def read_bounded(path, limit):
@@ -58,7 +58,7 @@ def readiness(raw, *, contract_raw, reviewed_contract_sha256, bundle_sha256,
             return {**report, "freshness": "STALE", "reason": "PL_CALENDAR_STALE"}
         selected = [m for m in calendar.matches if m.day == selected_day]
         unresolved = [m for m in calendar.matches if m.status not in _TERMINAL
-                      and (m.day < selected_day or m.kickoff < observed)]
+                      and (m.status in _ACTIVE or m.day < selected_day or m.kickoff < observed)]
         counts = {status: sum(m.status == status for m in selected) for status in
                   ("SCHEDULED", "TIMED", "FINISHED", "POSTPONED", "CANCELLED",
                    "IN_PLAY", "PAUSED", "SUSPENDED")}
