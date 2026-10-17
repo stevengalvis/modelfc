@@ -44,3 +44,12 @@ describe("BTTS performance rendered states", () => {
     expect(await screen.findByText(/No frozen Championship/)).toBeInTheDocument();
   });
 });
+it("shows reviewed correction provenance without replacing the frozen forecast",async()=>{
+ const value=decodeBttsPerformance(fixture);
+ value.forecasts[0].corrections=[{correction_id:"b".repeat(64),supersedes_record_hash:"a".repeat(64),record_hash:"c".repeat(64),
+  reason:"Reviewed official correction",recorded_at_utc:value.forecasts[0].recorded_at_utc!,result:{home_goals:2,away_goals:1}}];
+ vi.spyOn(api,"bttsPerformance").mockResolvedValue(decodeBttsPerformance(value));
+ render(<BttsPerformanceDashboard/>);
+ expect(await screen.findByText(/Reviewed official correction/)).toHaveTextContent("Original forecast and outcome retained");
+ expect(screen.getByText(value.forecasts[0].forecast_id)).toBeInTheDocument();
+});
