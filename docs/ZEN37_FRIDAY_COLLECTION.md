@@ -43,7 +43,9 @@ collection. Budget pressure can reduce Saturday coverage instead.
   There is no third attempt or full triple repricing. Automatic Saturday work is
   limited to **two quote attempts total across invocations**, with missing/uncollected
   fixtures before watchlisted captures, then kickoff/id order. An initial Saturday
-  capture and its later refresh consume both checks. Thus many previously captured
+  capture and its later refresh consume both checks. **Partial Friday coverage does
+  not guarantee full Saturday catch-up: initial captures also consume these two
+  automatic Saturday attempts.** Thus many previously captured
   fixtures intentionally receive no Saturday refresh. Allocation and Saturday
   counters also apply to an ordinary run-once for a cohort previously enrolled by
   manual early collection, even without the Friday flag.
@@ -95,6 +97,16 @@ Collection states distinguish `ODDS_NOT_COLLECTED`, `MARKET_UNAVAILABLE`,
 `SAVED_QUALIFYING_VALUE`, and `NO_SUPPORTED_OFFERS`. Last-run `PARTIAL` plus
 `REQUEST_BUDGET`, `SATURDAY_BUDGET_RESERVED`, `MIDWEEK_BUDGET_RESERVED`,
 `WEEKEND_BUDGET`, `SATURDAY_LIMIT` or `AFTERNOON_LIMIT` explains coverage.
+Next-opportunity diagnostics use the runner's actual watchlist valuation, not just
+an unused attempt or saved qualifying-value label. An unwatchlisted capture has no
+scheduled refresh. Missing markets require the original completed observation and
+a full hour since retrieval, as well as an open afternoon/90-minute window. Counts,
+phase caps, known monthly/cohort budget and required discovery/metadata costs can
+remove or defer the opportunity. No future allowance reset or evidence repair is
+assumed. `budget_blocked` remains an independent **current** budget signal, even
+when attempts are exhausted; a future time may still exist when Friday's reserved
+Saturday headroom releases. Other due fixtures can consume the invocation budget
+first, so the timestamp remains conditional eligibility, not a scheduled request.
 This is an operator diagnostic; no new public endpoint or UI polling is installed.
 
 ## Monthly simulation
