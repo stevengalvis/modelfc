@@ -1,63 +1,71 @@
-# ZEN-48 executed-harness regression (preparation only)
+# ZEN-48 rootless runtime regression (preparation only)
 
-The controller's fixed single-file read-only mount replaces the stale image copy
-at `/trusted/validate_capture.py`. The launch bootstrap verifies mounted inode and
-bytes against the host's held descriptor and executes that checked buffer. The
-existing validation lock excludes the installer throughout launch/execution;
-host verification also rejects a changed source before a receipt can be accepted.
-No candidate path or configuration field selects the source. The five-file
-revision includes this controller in both PR171 and stacked PR172.
+The trusted installed harness is mounted as one read-only file onto
+`/trusted/validate_capture.py`. Host ownership/ancestor checks, a held descriptor
+under the existing validation lock, and a command-line bootstrap checking mounted
+inode/hash and compiling the same bytes prevent candidate substitution, replacement
+races and baked-harness fallback. A durable transition marker blocks the new
+controller before dispatch/cache reuse and again under the execution lock.
 
-## Running the disposable regression
+## Reviewed development candidate
 
-`tests/test_validator_harness_mount.py` contains portable safety tests and two
-opt-in actual-container cases. Ordinary discovery explicitly marks the latter
-NOT RUN (skipped). The driver requires an existing rootless Podman identity, a
-local OCI archive of a deliberately stale harness image, a new private work path,
-and a root-owned nonwritable fixture parent outside production. It creates only
-disposable test resources; no validator installation or production config/cache
-is invoked. Root creates/removes the trusted fixture and simulates a pathname
-replacement outside the cooperative lock. All container work runs unprivileged
-with a separate VFS image store/runroot and `--pull=never`, `--network=none`.
+The previous original-image test failed with missing `pydantic`. The earlier
+site-packages-copy fixture was diagnostic only; it is not promoted and its build
+option has been removed. The new candidate uses fresh, hash-verified official
+wheels and an immutable official Python base. See
+[build inputs and proposed upgrade](STRATEGY_VALIDATOR_IMAGE_UPGRADE.md).
+
+Candidate ID: `sha256:6e632bc0eba8d02a188d050ccd7b59552b2c1b3e78217982026e976120f2a7af`.
+Two independent offline no-cache builds produced this same ID. Base, platform,
+recipe/lock/harness and wheel hashes are recorded in
+`ops/vps/validator-image-inputs.json` and `ops/vps/validator-image-build.json`.
+
+## Actual container tests and reproduction
+
+The driver requires an existing rootless Podman identity, a local candidate OCI
+archive, a new private short work path and a root-owned nonwritable development
+fixture parent. Root creates/removes only trusted disposable test fixtures and
+simulates a source replacement. Containers run unprivileged with a private VFS
+store/runroot, `--pull=never`, `--network=none` and the unchanged runtime limits.
+No production configuration, cache, credentials, directories or sockets enter
+any container. No service or security change enables testing.
 
 ```text
 python3 -B tests/run_rootless_harness_regression.py \
-  --user <existing-rootless-identity> --archive <local-stale-image.oci> \
-  --image <immutable-stale-image-ID> --work <new-private-short-path> \
-  --trusted-parent <root-owned-nonwritable-development-parent>
+  --user <existing-rootless-identity> --archive <candidate.oci> \
+  --image sha256:6e632bc0eba8d02a188d050ccd7b59552b2c1b3e78217982026e976120f2a7af \
+  --work <new-short-private-path> --trusted-parent <safe-development-parent> \
+  --stale-harness <reviewed-predecessor-validate_capture.py>
 ```
 
-Optional `--dependency-site <development-site-packages>` builds an offline,
-disposable fixture layer containing only Pydantic and its direct dependencies.
-It retains the stale baked harness. This option does **not** change the configured
-activation image, and its success must never be reported as installed acceptance.
-It uses only local files, no package/registry/provider requests. Runroot must be
-at most 50 characters, a Podman requirement. Full logs remain in the private work
-directory; only the driver's newly created trusted fixture is removed afterward.
+The predecessor harness must have SHA-256
+`fa61840de404a8a8803b30a18b98b60acbaeba36b6445eb9cafcc1112028dfdd`.
+The driver bakes it into a disposable derivative of the candidate, without changing
+dependencies or promoting that derivative. The base candidate is tested separately.
 
-## Evidence and scope
+Actual rootless Podman 4.9.3 on the VPS, existing unprivileged UID 1000: **3/3 PASS**.
 
-Actual rootless Podman on the validator VPS, existing unprivileged UID 1000,
-isolated store and generated candidate/history inputs:
+- Real candidate worker/cleanup and receipt/cache policy run end to end against
+  generated saved inputs. Only GitHub metadata/source export use fixture adapters;
+  Podman, mount, harness, strategy, cleanup and envelope policy execute for real.
+  Strategy/core/replay PASS, provider requests zero, cleanup COMPLETE. Matching
+  cache repeats without execution; stale SHA, image, configuration and revision
+  bindings reject. A pending transaction blocks new execution.
+- Stale derivative's baked report lacks strategy. With the reviewed host-file
+  mount, strategy/core/replay PASS and provider requests remain zero. Candidate
+  `ops/` cannot substitute a harness. File hash agrees, writes to mounted harness
+  and read-only root fail, no extra descriptor enters the container, effective
+  capabilities are zero and networking exposes only loopback.
+- A pathname replacement after command construction fails in the trusted bootstrap
+  before any harness report; host descriptor verification rejects it too.
 
-- Original immutable image `sha256:3ea9d3919aa47eef62861ec31e2464c3dcbf9353a1ccb327a37b72f96980d1b6`:
-  launch-gap replacement rejection PASS; mounted new harness executes, but full
-  strategy regression FAIL: `ModuleNotFoundError: No module named 'pydantic'`.
-  Core/replay PASS and provider requests zero. This is an activation blocker.
-- Offline dependency fixture `sha256:3eadf24cd34ccb5ab635012f83525221922dd8c5eea0f9c1354bbdb7531087f2`
-  (Pydantic 2.13.5 and direct dependencies from the existing deployment lock
-  environment): 2/2 actual-container tests PASS. The baked report lacks strategy;
-  the mounted report has strategy/core/replay PASS and zero provider requests.
-  File hash matches, mounted-file and root-filesystem writes fail, no extra fd
-  enters the container, network exposes only loopback, effective capabilities are
-  zero, and a launch-gap replacement fails before harness output.
-- Portable cases cover missing/unsafe/symlink/hardlink sources, writable
-  ancestors, candidate/config substitution, lock-inode replacement and actual
-  installer lock exclusion. Existing installer/release tests cover revision/cache
-  binding, partial failure and rollback of the five-file/cache set.
+Portable tests additionally cover missing/unsafe/symlink/hardlink sources, writable
+ancestors, candidate/configuration substitution, lock-inode replacement, actual
+installer lock exclusion and pending/dangling transition journals. Ordinary source
+CI explicitly skips the opt-in actual-container cases; the driver runs them
+separately. Source CI, container integration and installed acceptance are distinct.
 
-The configured image, installed validator, cache, configuration, services,
-credentials and workflow states were not changed. Source tests and this fixture
-regression are not local/pinned-SSH installed acceptance. Both PRs must remain
-draft pending review of this correction and a separately authorized resolution
-of the image dependency blocker and future activation sequence.
+No installed local or pinned-SSH acceptance was performed. Active production
+image, validator, configuration and cache remain unchanged. Any future activation
+requires new review/approval of both heads, image and bounded upgrade/recovery plan.
+Full logs stay local; remove only created disposable stores after retaining them.

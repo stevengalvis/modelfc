@@ -32,6 +32,8 @@ class ControllerTests(unittest.TestCase):
         self.tmp = TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
+        runs = patch.object(controller, 'RUNS', self.root)
+        runs.start(); self.addCleanup(runs.stop)
         self.run = self.root / ("b" * 32)
         self.config = dict(repository=controller.REPOSITORY, image="sha256:" + "c" * 64,
                            history_directory=str(self.root / "data"),

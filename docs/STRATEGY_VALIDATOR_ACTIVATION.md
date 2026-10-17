@@ -6,7 +6,7 @@ also breaks validation. Keep the PR draft until a separately reviewed installer,
 coordinated maintenance window and installed acceptance are ready. This document
 is a source review and plan, not approval or evidence of host installation.
 
-## Runtime correction and unresolved image blocker
+## Runtime correction and proposed image upgrade
 
 The failed rollout restored the predecessor successfully. The image's baked
 `/trusted/validate_capture.py` remained old even though the host harness was new.
@@ -30,15 +30,23 @@ cannot select the mount. No installation directory, configuration, cache or
 credential mount is added. Image pin, network isolation, read-only root filesystem,
 capabilities and resource restrictions are unchanged.
 
-**Activation remains blocked with the existing image.** The isolated actual-image
-probe reached the new strategy code but failed importing `pydantic`. Image
-`sha256:3ea9d3919aa47eef62861ec31e2464c3dcbf9353a1ccb327a37b72f96980d1b6`
-contains the stdlib-only predecessor runtime. A disposable offline-built fixture
-with Pydantic demonstrates the mount/strategy regression, but does not approve a
-new image or establish installed acceptance. Resolving runtime dependencies and
-reviewing the resulting immutable image/configuration binding requires separate
-scope and approval; do not install these artifacts against the unchanged image
-expecting strategy PASS. See [regression evidence](STRATEGY_VALIDATOR_RUNTIME_REGRESSION.md).
+The original image lacks `pydantic`; installing new host files alone cannot pass
+strategy validation. A separately prepared candidate now adds the complete minimal
+five-package dependency closure using explicit official-PyPI wheel hashes and an
+immutable official Python base. Two independent offline, no-cache builds produced
+`sha256:6e632bc0eba8d02a188d050ccd7b59552b2c1b3e78217982026e976120f2a7af`.
+This is a **development candidate, not an active or approved production image**.
+See [build inputs and evidence](STRATEGY_VALIDATOR_IMAGE_UPGRADE.md) and
+[actual rootless regression](STRATEGY_VALIDATOR_RUNTIME_REGRESSION.md).
+
+PR172 must coordinate the five-file set, an image-only configuration change and
+cache invalidation under the existing lock. Durable rollback must include the
+original configuration bytes/metadata, original cache and all five modules; keep
+the old immutable image available. A persistent transition journal blocks the new
+controller and cache reuse after interruption until verified recovery. Install the
+journal-aware controller first and restore its predecessor last. External consumer
+holds/drain remain necessary, including for older controllers that predate this
+journal. Neither installer flags nor an empty queue alone establish coordination.
 
 ## Compatibility established from exact source
 
@@ -88,19 +96,19 @@ as an ordinary cache miss; rollback has the symmetric problem with a new cache.
 | --- | --- | --- |
 | `validate_capture.py` | `fa61840de404a8a8803b30a18b98b60acbaeba36b6445eb9cafcc1112028dfdd` | `aa267f63e456be3bb6332cfb151035ceb70ce736b950205703e50f38fc2b34e0` |
 | `offline_report.py` | `5607397a0ef2b5d81d216e149e89f8e26c09bf57bb85562ba9ebeedee0d4db0d` | `2616b66150ec1f8c822c721df117d173aa52ef33a9cb2a80370bfc5577ee855c` |
-| `validate_pr.py` | `2749f050a4b08fb9bcdebdb04228dcbb97c3fb6970669779c03a32b61099083f` | `5e8f97ff86dfee7768220bf2dc721443772bfd32d4e41c685a847df7848f0739` |
+| `validate_pr.py` | `2749f050a4b08fb9bcdebdb04228dcbb97c3fb6970669779c03a32b61099083f` | `a84e96f9fcffb51c73c8c3c1c0753a9d5af684ea66ba4684496428c871eb66f0` |
 | `validate_offline_ssh.py` (unchanged) | `cc70e53486ce1041cf1d12670a6df82da51bc7ee872865bbc45b5d78933503b3` | same |
 | `release_evidence.py` (unchanged) | `5410348dd9f1c2c173bd266e60901a8f81ac783243d3d704c64f73d2539bf3f3` | same |
 
 Aggregate `release_evidence.revision`:
 
 - Old: `dfe3a140b771a2d7dc4d4542251ea729a4be8055ef980cd3f3c2b86830dd8dd5`
-- New: `41b43d035688b1c427f9ea42ddf96ddc95bcc7eba9836a4b165e2b08cf616dea`
+- New: `edc30d7b9f5fc59570b4ad5763a81bc98baff8f73b662a3ccb33aef76ab568b4`
 
 Recompute from the final reviewed artifact before approval, and compare installed
 bytes before and after the operation. Documentation-only commits do not change
 this inventory. A change to any of these five files requires renewed review and
-new acceptance. Preserve and verify existing image/configuration bindings,
+new acceptance. Verify the approved old/new image/configuration bindings,
 credentials, host-key pin, ownership and modes; do not derive approval from values
 merely returned in a report.
 
@@ -131,7 +139,7 @@ Do not broaden host eligibility, change permissions, or bypass SHA checks.
 
 ## Safe rollout order — only after separate explicit approval
 
-1. Resolve and separately review the runtime dependency/image blocker above.
+1. Separately review the candidate image, complete transition and both exact PR heads.
    Freeze the reviewed installer artifact and final PR head; confirm exact-head CI
    and the byte inventory. Obtain approval for the specific installation/cache
    operation and maintenance window. Establish an effective hold on new manual
@@ -142,10 +150,12 @@ Do not broaden host eligibility, change permissions, or bypass SHA checks.
    If these holds cannot be demonstrated, **stop before installation**. No hold,
    workflow setting or permission has been changed by this PR.
 2. Under the idle lock, verify installed old bytes against the recorded revision.
-   Back up all affected modules and cache with hashes/metadata; preserve config and
-   image binding. Quarantine the active old cache, install the reviewed matched
+   Back up all affected modules, original configuration and cache with hashes/metadata;
+   verify both immutable images are available. Persist the recovery journal,
+   quarantine the active old cache, install the reviewed matched
    controller/harness/report set identical to final PR171, and verify all five
-   installed hashes and aggregate revision.
+   installed hashes, aggregate revision and the approved new image-only
+   configuration binding. Clear the journal only after complete verification.
    Release the lock only after the complete set is verified; keep consumer holds.
 3. Before merge, use the separately reviewed new operator acceptance client through
    the existing pinned transport. Validate the still-open PR's exact latest head
@@ -175,8 +185,10 @@ Do not broaden host eligibility, change permissions, or bypass SHA checks.
 ## Rollback and stop conditions
 
 On install or premerge acceptance failure, keep all holds, reacquire the idle lock,
-quarantine any new-format cache, validate the backup, restore the entire old module
-set and original old cache (or original absence), and verify old hashes/config.
+quarantine any new-format cache, validate the backup, restore the entire old module set, original configuration/image binding and
+original old cache (or original absence), then verify old hashes/config/cache and
+old image availability. Restoration must first verify canonical main is still the
+recorded premerge tip; changed or unavailable main leaves recovery pending.
 Only matching old consumers may resume. If idle/backup verification fails, leave
 the service held and report recovery pending; do not replace code in a live process.
 
@@ -189,5 +201,5 @@ SHA. Never rewrite history or reuse a stale receipt. Deployment remains held.
 No production installation, cache operation, trust-pin/permission/credential
 change, merge or deployment was performed for this preparation. Installer source
 preparation is available in the stacked review; its proposed pins are not active.
-The image blocker, installer review, effective holds, installed acceptance and
+Candidate image/installer review, effective holds, installed acceptance and
 new activation/merge/deployment approvals remain pending. PR171 must wait.

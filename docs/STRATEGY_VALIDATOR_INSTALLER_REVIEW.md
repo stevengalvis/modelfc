@@ -11,33 +11,41 @@ requires separate review and approval; this preparation authorizes neither.
 The installer is not a member of `release_evidence.FILES`, so its proposed pins do
 not change the five-file payload revision from PR171. Its exact commit must still
 be included in operator approval. No Actions workflow, privilege, credential,
-permission, image, provider configuration or application source changes here.
+persistent security setting, active production image/configuration or application
+source changes were performed during preparation.
 
-## Runtime correction and current blocker
+## Matched runtime and prepared image
 
-PR171 `b4088bdc13a2cafa7364d9e5b921b957e973f828` includes the controller's
+PR171 `1157ad02c1e578b5e751f3c2d26004c2f87b2eeb` includes the controller's
 fixed installed-harness file mount and checked-byte bootstrap. PR172 integrates
 that branch without rewriting predecessor history or retargeting. Its installer
 now pins controller SHA-256
-`5e8f97ff86dfee7768220bf2dc721443772bfd32d4e41c685a847df7848f0739`
+`a84e96f9fcffb51c73c8c3c1c0753a9d5af684ea66ba4684496428c871eb66f0`
 and complete five-file revision
-`41b43d035688b1c427f9ea42ddf96ddc95bcc7eba9836a4b165e2b08cf616dea`.
+`edc30d7b9f5fc59570b4ad5763a81bc98baff8f73b662a3ccb33aef76ab568b4`.
 Predecessor pins remain unchanged, including the old controller. Both installed
 payload and eventual merged consumer must use this identical five-file set.
 
-The [actual-container regression](STRATEGY_VALIDATOR_RUNTIME_REGRESSION.md) found
-that the unchanged activation image lacks `pydantic`. Strategy acceptance FAILS
-on that image even after the mount correction. The dependency fixture's PASS is
-not approval for its image or installed acceptance. Stop before installation:
-resolving the dependency/image binding needs separately reviewed scope and new
-approval. No image/configuration changes are included here.
+The [reproducible candidate](STRATEGY_VALIDATOR_IMAGE_UPGRADE.md) now supplies the
+complete minimal strategy dependency closure using five official hash-verified
+wheels and an immutable official Python base. Two offline no-cache builds produced
+`sha256:6e632bc0eba8d02a188d050ccd7b59552b2c1b3e78217982026e976120f2a7af`.
+Both actual candidate execution and stale-baked-harness regression passed in
+private rootless containers. No previous site-packages-copy fixture was promoted.
+The active image remains the stdlib predecessor. New review/approval of these
+exact source heads, image and complete transition is required before installation.
 
 ## Bounded changes and evidence
 
 `install_release_validator.py` now permits only the reviewed predecessor's exact
 five hashes to transition to PR171's exact five hashes. It backs up and restores
 all five files, including the harness, while preserving each file's ownership and
-mode. Configuration bytes must remain unchanged. Unsafe source paths, wrong old
+mode. Configuration changes only its image value from the pinned predecessor to
+the exact candidate; all other values and configuration ownership/mode remain
+unchanged. The original configuration bytes/metadata are backed up and restored
+exactly, including original formatting. Unexpected configuration ACLs/xattrs or
+labels stop before mutation rather than silently changing persistent security
+metadata; any required support needs separate review. Unsafe source paths, wrong old
 or new hashes, a busy validator or an orphan `release-evidence.tmp` stop installation.
 
 Under the existing idle/validation lock, it backs up the bounded private release
@@ -46,18 +54,37 @@ before changing modules. Before either mutation, it fsyncs all backup files and
 the manifest, then the backup directory, then its parent installation directory.
 Failure at that durability barrier leaves active files and cache untouched.
 No cache schema conversion is attempted. Rollback checks
-all module/cache backup hashes before replacing files, retains any new-format
+all module/configuration/cache backup hashes before replacing files, retains any new-format
 receipt for diagnosis, and restores the original cache or original absence.
-A partial failure rolls back when idle; otherwise it reports
+Both old/new images must already exist locally with exact IDs and Linux amd64
+platform. The installer never pulls, retags or removes images. It verifies canonical
+main through the existing bounded GitHub read client/token route before mutation
+and before restoration; changed or unavailable main forbids a host-only rollback.
+A partial failure rolls back only when idle and main is verified unchanged; otherwise it reports
 `DEFERRED_DO_NOT_MERGE` and keeps recovery pending. No partially replaced installation
 may be used; consumer holds must remain effective across install and acceptance.
 
 `install` requires both `--idle-window-confirmed` and
 `--consumer-hold-confirmed`. These flags attest to operator-established holds;
 they do not create them, cancel workflows or grant authorization. Rollback also
-requires both. Synthetic tests exercise cache presence/absence, metadata, unsafe
-cache/orphan rejection, corrupt backups, partial failure after harness replacement,
-old-byte rejection, and PR/main acceptance routing. They do not run against a VPS.
+requires both. A durable root-only transition journal is published after the backup durability
+barrier and before cache/payload/configuration mutation. New controller dispatch,
+execution and cache reuse fail closed while it exists. Install the guarded
+controller first; restore its predecessor last after other modules/config/cache.
+Clear the journal only after complete verified state. A crash during atomic
+hardlink publication can leave two root-only links to the same journal; recovery
+verifies its content/manifest binding and accepts that bounded publication state.
+
+Portable tests exercise image/configuration pinning, cache presence/absence,
+metadata, unsafe/orphan rejection, backup corruption, changed main, journal
+substitution, partial failure and PR/main acceptance routing. A separate
+`tests/run_validator_upgrade_fixture.py` runs actual root-owned disposable files,
+fsync, existing-lock exclusion and private rootless image metadata on the VPS:
+11 test groups PASS, covering all six module/config interruption boundaries,
+actual test-child SIGKILL recovery (module and journal boundaries), cache-unlink
+recovery, extended-metadata rejection and interrupted rollback. Its GitHub-main route
+is a controlled fixture adapter, not live installed acceptance. No production
+installation/configuration/cache/service is used by either test layer.
 
 ## Required approvals and safe order
 
@@ -65,9 +92,9 @@ The [compatibility matrix and byte inventory](STRATEGY_VALIDATOR_ACTIVATION.md)
 remain authoritative: old/new reports reject each other, and release bindings must
 match exactly. There is no independent safe merge order without consumer holds.
 
-1. Resolve and separately review the image dependency blocker above.
+1. Review the exact reproducible candidate and complete bounded upgrade above.
    Review this installer artifact and PR171's latest head; approve the exact host
-   installation/cache operation separately. Confirm installed predecessor hashes,
+   five-file/image-only configuration/cache operation separately. Confirm installed predecessor hashes,
    approved image/config binding and a recoverable backup location. An unknown
    installed revision is a stop condition, not permission to re-pin it.
 2. Establish and verify a hold on manual/automatic validation, queued old-event
@@ -79,12 +106,18 @@ match exactly. There is no independent safe merge order without consumer holds.
    the exact approved PR171 head (not just the harness/report). Require zero diff
    and the expected aggregate revision before installing; a controller present
    only in PR172 would break postmerge release binding. Write its exact commit to `STAGED_SHA`
-   beside the installer. Do not use floating branch names as approval evidence.
+   beside the installer. Stage the trusted GitHub read client as well, and verify
+   its existing authorized route can recheck canonical main before installation
+   or recovery. Do not use floating branch names as approval evidence. Load and
+   inspect the separately approved candidate through the existing staging route;
+   retain and verify the old immutable image. No production load is authorized here.
 4. Only after explicit installation approval, the operator may run the prepared
-   command below. It installs all five files and removes the old active cache,
+   command below. It installs all five files, switches only the pinned image configuration value
+   and removes the old active cache,
    then performs local acceptance on two different identities: the still-open PR
    head and the current canonical main tip. Failed local acceptance triggers
-   rollback; keep holds and inspect the bounded result before any next step.
+   rollback only if main remains verifiably unchanged; otherwise recovery stays
+   deferred and requires a coordinated decision; keep holds and inspect the bounded result before any next step.
 
 ```text
 python3 -I <reviewed-stage>/ops/vps/install_release_validator.py install \
@@ -100,7 +133,8 @@ python3 -I <reviewed-stage>/ops/vps/install_release_validator.py install \
    capture hash. The raw PR report **does not attest installed revision**. Run
    `accept-ssh --candidate-sha <current-main>` separately for two equivalent release
    receipts, the exact revision/config/image binding and stale-main rejection.
-   Both commands require the existing `--identity`, `--known-hosts`, `--host`,
+   Both commands reject an image argument other than the pinned candidate before
+   reading the identity. They require existing `--identity`, `--known-hosts`, `--host`,
    `--fingerprint`, and approved `--image-digest` arguments. The image argument is
    checked by release acceptance; it cannot add attestation to a raw PR report.
    Keep local and external results together with the backup and installed hashes.
@@ -120,7 +154,7 @@ python3 -I <reviewed-stage>/ops/vps/install_release_validator.py install \
 
 The prepared rollback command takes the returned backup path and both hold flags:
 `rollback --backup <recorded-backup> --idle-window-confirmed --consumer-hold-confirmed`.
-Before main advances, it restores the matching old host/cache while old consumers
+Before main advances, it restores the matching old host/configuration/image/cache while old consumers
 remain held. After main advances, host rollback alone is incompatible: keep all
 holds, obtain separate approval for a normal revert to matching old consumer bytes
 or repair the new installation, then verify the resulting current main SHA.

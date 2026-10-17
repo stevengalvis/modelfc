@@ -1,0 +1,23 @@
+{
+  "base": "docker.io/library/python@sha256:593bd06efe90efa80dc4eee3948be7c0fde4134606dd40d8dd8dbcade98e669c",
+  "input_hashes": {
+    "Containerfile": "54828de4fdfe792d33b01f7677e792ebb96bfb1ec454abb24cdb10427e3776cf",
+    "requirements-validator.lock": "e6ddac8fa2aebd4b38328d82d0bb8613fc24705f67c322a655312aeefc62106f",
+    "validate_capture.py": "aa267f63e456be3bb6332cfb151035ceb70ce736b950205703e50f38fc2b34e0"
+  },
+  "platform": "linux/amd64",
+  "source_date_epoch": 1792108800,
+  "wheel_hashes": {
+    "annotated_types-0.8.0-py3-none-any.whl": "f072f4d804ea359e4eaf198b1af7a8b0943881a87f31bb764f8bf219bb9419e0",
+    "pydantic-2.13.5-py3-none-any.whl": "346a034f080da3755d8e9cb5e00e8b07de1d39e4f6e2c87d8ab7cafa0b269a73",
+    "pydantic_core-2.46.5-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl": "0fc5be0abd4a407e200d844b404e33639a554e7bd0d448e7b9ae181be4789ac2",
+    "typing_extensions-4.16.0-py3-none-any.whl": "481caa481374e813c1b176ada14e97f1f67a4539ce9cfeb3f350d78d6370c2e8",
+    "typing_inspection-0.4.4-py3-none-any.whl": "65b8397ba37ccbce054456aaccddfc91e6e3083c92824df348d96ca832f3f147"
+  },
+  "schema": 1,
+  "image_id": "sha256:6e632bc0eba8d02a188d050ccd7b59552b2c1b3e78217982026e976120f2a7af",
+  "repeated_no_cache_builds": 2,
+  "reproducible_identity": true,
+  "build_tool": "Podman 4.9.3 / Buildah 1.33.7",
+  "runtime_platform": "CPython 3.12.12 / Debian bookworm / linux amd64"
+}

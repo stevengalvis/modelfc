@@ -458,6 +458,7 @@ def pinned_harness(validation_lock):
             or (info.st_dev, info.st_ino) != (path.st_dev, path.st_ino)):
         raise Failure("INVALID_CONFIGURATION")
     fcntl.flock(validation_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    stable_installation()
     fd = _open_harness()
     try:
         mounted = HarnessMount(fd)
@@ -466,6 +467,16 @@ def pinned_harness(validation_lock):
         mounted.verify()
     finally:
         os.close(fd)
+
+
+def stable_installation():
+    # Durable installer journal survives process death. Any entry (even an unsafe
+    # or dangling symlink) blocks execution/cache reuse until reviewed recovery.
+    try:
+        (RUNS / 'validator-transition.json').lstat()
+    except FileNotFoundError:
+        return
+    raise Failure('BUSY')
 
 
 # Trusted command-line bootstrap; check the mounted inode before executing any
@@ -661,6 +672,7 @@ def main():
         if args.cleanup:
             cleanup(RUNS / args.cleanup)
             return
+        stable_installation()
         if args.release:
             if args.pr is not None or args.mode != "offline":
                 raise Failure("INVALID_CONFIGURATION")
@@ -681,6 +693,7 @@ def main():
                     fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
                 except BlockingIOError:
                     raise Failure("BUSY") from None
+                stable_installation()
                 abandoned()
                 if args.release:
                     report = cached_release(config, run, args.sha, release_binding,
