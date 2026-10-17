@@ -12,7 +12,7 @@ import subprocess
 import sys
 import tarfile
 from tempfile import TemporaryDirectory
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 from urllib.parse import urlencode, urlsplit, parse_qs
@@ -32,6 +32,8 @@ class ControllerTests(unittest.TestCase):
         self.tmp = TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
+        runs = patch.object(controller, 'RUNS', self.root)
+        runs.start(); self.addCleanup(runs.stop)
         self.run = self.root / ("b" * 32)
         self.config = dict(repository=controller.REPOSITORY, image="sha256:" + "c" * 64,
                            history_directory=str(self.root / "data"),
@@ -43,6 +45,13 @@ class ControllerTests(unittest.TestCase):
         network = patch.object(controller, "read_url", side_effect=AssertionError("Live network forbidden"))
         network.start()
         self.addCleanup(network.stop)
+        # Routing tests use a transport double; file-identity/path/lock safety has
+        # separate real-filesystem and rootless-container regression coverage.
+        self.mount = SimpleNamespace(fd=42, source='/opt/modelfc-validator/validate_capture.py', identity=tuple(range(10)), verify=lambda: None)
+        mounted = patch.object(controller, 'pinned_harness',
+                               side_effect=lambda lock: __import__('contextlib').nullcontext(self.mount))
+        mounted.start()
+        self.addCleanup(mounted.stop)
 
     def metadata(self):
         return {"state": "open", "base": {"repo": {"full_name": controller.REPOSITORY}},
@@ -107,18 +116,21 @@ class ControllerTests(unittest.TestCase):
                         controller.export_source(run, 7, SHA, "token")
 
     def test_readonly_mounts_and_isolated_output(self):
-        args = controller.container_command(self.config, self.run, SHA)
+        args = controller.container_command(self.config, self.run, SHA, harness=self.mount)
         self.assertIn("--network=none", args)
         self.assertIn("--read-only", args)
         self.assertIn("--cap-drop=ALL", args)
         self.assertIn("--userns=keep-id", args)
         self.assertIn("--timeout=240", args)
+        for restriction in ("--pids-limit=64", "--memory=768m", "--cpus=1", "--security-opt=no-new-privileges", "--pull=never"):
+            self.assertIn(restriction, args)
         self.assertIn(str(self.run / "history") + ":/history:ro", args)
         self.assertIn(str(self.run / "subject") + ":/subject:ro", args)
         self.assertNotIn(str(self.run / "relay") + ":/relay:ro", args)
         self.assertEqual(args[-2:], ["--mode", "offline"])
         self.assertIn("/output:rw,size=64m,mode=1777", args)
-        self.assertIn("/trusted/validate_capture.py", args)
+        self.assertIn("/trusted/validate_capture.py", controller.HARNESS_BOOTSTRAP)
+        self.assertIn('type=bind,source=/opt/modelfc-validator/validate_capture.py,target=/trusted/validate_capture.py,ro', args)
         self.assertNotIn(str(self.run / "subject/ops/vps/validate_capture.py"), args)
         self.assertNotIn(SECRET, repr(args))
         self.assertNotIn("GITHUB_TOKEN", repr(args))
@@ -139,7 +151,7 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(args[-2:], ["--mode", "offline"])
 
     def test_live_mode_is_explicit_and_mounts_the_relay(self):
-        container = controller.container_command(self.config, self.run, SHA, "live")
+        container = controller.container_command(self.config, self.run, SHA, "live", harness=self.mount)
         service = controller.service_command(
             self.run, controller.REPOSITORY, 7, SHA, "live")
         self.assertIn(str(self.run / "relay") + ":/relay:ro", container)
@@ -245,10 +257,10 @@ class ControllerTests(unittest.TestCase):
                 with self.subTest(result=result, mutation=mutation), self.assertRaisesRegex(ValueError, "INVALID_REPORT"):
                     harness.checked_report(dict(harness.blank_report(SHA, result, reason), **mutation), SHA, "")
         offline = harness.blank_report(SHA, "PASS", "COMPLETE")
-        offline.update(core_pipeline="PASS", offline_replay="PASS", market_intelligence="NOT_APPLICABLE",
+        offline.update(strategy_validation="PASS", core_pipeline="PASS", offline_replay="PASS", market_intelligence="NOT_APPLICABLE",
                        immutable_capture_verified=True, offline_replay_identical=True,
                        supported_team_total_count=1, prediction_count=1, target_count=1, capture_hash="d" * 64, scenario_request_count=3)
-        live = dict(offline, mode="LIVE", provider_compatibility="PASS", market_intelligence="NOT_RUN",
+        live = dict(offline, strategy_validation="NOT_RUN", mode="LIVE", provider_compatibility="PASS", market_intelligence="NOT_RUN",
                     scenario_request_count=0, provider_request_count=3)
         for mutation in ({"market_intelligence": "FAIL"}, {"core_pipeline": "FAIL"},
                          {"target_count": 0}, {"prediction_count": 0},
@@ -386,7 +398,7 @@ class ControllerTests(unittest.TestCase):
         from contextlib import nullcontext
         config = dict(self.config, provider_key_file=str(self.root / "does-not-exist"))
         child = harness.blank_report(SHA, "PASS", "COMPLETE")
-        child.update(core_pipeline="PASS", market_intelligence="NOT_APPLICABLE",
+        child.update(strategy_validation="PASS", core_pipeline="PASS", market_intelligence="NOT_APPLICABLE",
                      offline_replay="PASS", provider_compatibility="NOT_RUN",
                      supported_team_total_count=1, prediction_count=1, target_count=1, capture_hash="d" * 64,
                      immutable_capture_verified=True, offline_replay_identical=True, scenario_request_count=3)
@@ -469,6 +481,7 @@ class OfflineHarnessTests(unittest.TestCase):
                 patch.object(oddspapi, "configured_history_lock", oddspapi.configured_history_lock), \
                 patch.object(corner_analysis_store, "configured_history_lock", corner_analysis_store.configured_history_lock), \
                 patch.object(corner_analysis_store, "git_commit_sha", corner_analysis_store.git_commit_sha), \
+                patch.object(harness.socket.socket, "connect", side_effect=AssertionError("network forbidden")), \
                 patch.object(harness, "RelayConnection", side_effect=AssertionError("relay forbidden")), \
                 patch.object(oddspapi.time, "sleep"), \
                 patch.object(oddspapi, "build_opener", side_effect=AssertionError("provider HTTP forbidden")):
@@ -490,6 +503,7 @@ class OfflineHarnessTests(unittest.TestCase):
         self.assertEqual((report["result"], report["mode"]), ("PASS", "OFFLINE"), report)
         self.assertEqual(report["core_pipeline"], "PASS")
         self.assertEqual(report["market_intelligence"], "PASS")
+        self.assertEqual(report["strategy_validation"], "PASS")
         self.assertEqual(report["offline_replay"], "PASS")
         self.assertEqual(report["provider_compatibility"], "NOT_RUN")
         self.assertEqual(report["provider_request_count"], 0)
@@ -500,6 +514,66 @@ class OfflineHarnessTests(unittest.TestCase):
         self.assertGreater(report["opportunity_count"], 0)
         self.assertEqual(report["match_total_count"], report["gated_match_total_count"])
         self.assertEqual(harness.checked_report(report, SHA, "", "OFFLINE"), report)
+
+    def test_strategy_saved_inputs_reuse_existing_integration_fixture(self):
+        from tests.test_btts_research import forecast, observation
+        self.assertEqual(harness.STRATEGY_FORECAST, forecast().model_dump(mode='json'))
+        self.assertEqual(harness.STRATEGY_OBSERVATION, observation(
+            prices={'draftkings': (2.2, 1.75), 'fanduel': (1.2, 6.)}).model_dump(mode='json'))
+
+    def test_strategy_component_detects_broken_accounting_and_refresh(self):
+        from modelfc import pick_strategies as strategies
+        original = strategies.read
+        def broken(*args, **kwargs):
+            report = original(*args, **kwargs)
+            report['total_profit_dollars'] = 0
+            return report
+        for target, replacement in (('read', broken), ('publish_locked', lambda *_: 0)):
+            with self.subTest(target=target), patch.object(strategies, target, replacement):
+                report = self.run_offline()
+            self.assertEqual((report['result'], report['reason'], report['strategy_validation']),
+                             ('FAIL', 'STRATEGY_VALIDATION_FAILED', 'FAIL'))
+            self.assertEqual(report['core_pipeline'], 'PASS')
+            self.assertEqual(report['provider_request_count'], 0)
+            self.assertEqual(harness.checked_report(report, SHA, '', 'OFFLINE'), report)
+
+    def test_strategy_component_detects_disabled_kickoff_guards(self):
+        from modelfc import pick_strategies as strategies, published_recommendations as published
+        from modelfc import btts_research
+        from datetime import timedelta
+        original = strategies.publish_locked
+        original_time, original_timestamp = published._time, btts_research.timestamp
+        kickoff = harness.STRATEGY_FORECAST['fixture']['kickoff_utc']
+        writes = []
+
+        def broken(state, **kwargs):
+            # Mutate kickoff comparisons in selection and both writer guards only.
+            # Persisted evidence and the actual publication clock remain unchanged.
+            if (published._now() >= original_time(kickoff)
+                    and not list((state / strategies.DIRECTORY).glob('*.json'))):
+                def future_time(value):
+                    result = original_time(value)
+                    return result + timedelta(days=1) if result == original_time(kickoff) else result
+                def future_timestamp(value):
+                    result = original_timestamp(value)
+                    return result + timedelta(days=1) if result == original_time(kickoff) else result
+                with patch.object(published, '_time', side_effect=future_time), \
+                        patch.object(btts_research, 'timestamp', side_effect=future_timestamp):
+                    created = original(state, **kwargs)
+                writes.append(created)
+                return created
+            return original(state, **kwargs)
+
+        with patch.object(strategies, 'publish_locked', side_effect=broken):
+            report = self.run_offline()
+        # Target the unpublished state: the old scenario never reaches this
+        # mutation. Two actual late writes must fail the new validation assertion.
+        self.assertEqual(writes, [2])
+        self.assertEqual((report['result'], report['reason'], report['strategy_validation']),
+                         ('FAIL', 'STRATEGY_VALIDATION_FAILED', 'FAIL'))
+        self.assertEqual(report['core_pipeline'], 'PASS')
+        self.assertEqual(report['provider_request_count'], 0)
+        self.assertEqual(harness.checked_report(report, SHA, '', 'OFFLINE'), report)
 
     def test_older_source_without_market_intelligence_is_not_applicable(self):
         # Simulate an older exported source without the optional module. The
