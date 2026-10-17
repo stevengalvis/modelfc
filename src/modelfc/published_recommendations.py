@@ -204,8 +204,9 @@ def _summary(rows):
     profit = math.fsum(r["profit_units"] for r in settled)
     return {"picks": len(rows), "unique_fixtures": len({_canonical_hash(_fixture(r["offer"])) for r in rows}),
             "settled": len(settled), "wins": wins, "losses": losses,
-            "pushes": sum(r["result"] == "PUSH" for r in rows), "voids": 0,
-            "pending": len(rows) - len(settled), "profit_units": profit,
+            "pushes": sum(r["result"] == "PUSH" for r in rows),
+            "voids": sum(r["result"] == "SIMULATION_VOID" for r in rows),
+            "pending": sum(r["result"] == "PENDING" for r in rows), "profit_units": profit,
             "win_rate": wins / (wins + losses) if wins + losses else None,
             "roi": profit / len(settled) if settled else None}
 
@@ -270,6 +271,8 @@ def read(state_dir, *, directory_name=DIRECTORY, record_filter=None):
                     raise LedgerError("INVALID_PUBLISHED_RECOMMENDATION") from None
                 rows.append({**record, "result": event["result"] or "PENDING",
                              "profit_units": event["realized_profit_units"]})
+            from modelfc.settlement_reviews import apply_voids
+            rows = apply_voids(state, rows, directory_name)
     return _report(rows)
 
 
@@ -280,6 +283,6 @@ def _report(rows):
         groups.append({"competition": competition, "market_type": market,
                        "summary": _summary([r for r in rows if r["offer"]["competition"] == competition
                                             and r["offer"]["market_type"] == market])})
-    return {"policy_version": "first-published-value-v2", "void_settlement_supported": False,
+    return {"policy_version": "first-published-value-v2", "void_settlement_supported": False, "simulation_void_supported": True,
             "summary": _summary(rows), "by_view": {view: _summary([r for r in rows if view in r["ranking_views"]]) for view in VIEWS},
             "by_league_market": groups, "publications": rows}

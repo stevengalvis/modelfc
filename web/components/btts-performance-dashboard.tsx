@@ -45,6 +45,7 @@ export function BttsPerformanceDashboard() {
               <td>{row.result_provider ?? "No verified final result"}{row.recorded_at_utc ? <><br />Recorded {new Date(row.recorded_at_utc).toISOString()}</> : null}
                 <details><summary>Immutable references</summary><p>Forecast: <code>{row.forecast_id}</code></p>
                   {row.outcome_id ? <p>Outcome: <code>{row.outcome_id}</code><br />Result source SHA-256: <code>{row.result_source_sha256}</code></p> : null}
+                  {row.corrections?.map(revision => <p key={revision.correction_id}>Reviewed correction {revision.recorded_at_utc}: {revision.reason}. Goals {revision.result.home_goals}–{revision.result.away_goals}. Supersedes {revision.supersedes_record_hash}; effective revision {revision.record_hash}. Original forecast and outcome retained.</p>)}
                   {row.source_data_hashes.map(s => <p key={s.filename}>{s.filename}: <code>{s.sha256}</code></p>)}
                 </details></td>
             </tr>)}

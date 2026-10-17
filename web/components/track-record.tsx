@@ -32,9 +32,9 @@ export function PublishedTrackRecord() {
       <dl className="performance-grid"><div><dt>Published picks</dt><dd>{summary.picks}</dd></div>
         <div><dt>Unique fixtures</dt><dd>{summary.unique_fixtures}</dd></div>
         <div><dt>W–L–Push</dt><dd>{summary.wins}–{summary.losses}–{summary.pushes}</dd></div>
-        <div><dt>Pending</dt><dd>{summary.pending}</dd></div><div><dt>Win rate, excluding pushes</dt><dd>{rate(summary.win_rate)}</dd></div>
+        <div><dt>Voided picks</dt><dd>{summary.voids}</dd></div><div><dt>Pending</dt><dd>{summary.pending}</dd></div><div><dt>Win rate, excluding pushes</dt><dd>{rate(summary.win_rate)}</dd></div>
         <div><dt>Profit, units</dt><dd>{summary.profit_units.toFixed(2)} units / ${(summary.profit_units*2).toFixed(2)}</dd></div><div><dt>ROI on settled picks</dt><dd>{rate(summary.roi)}</dd></div></dl>
-      <p>Simulated flat $2 risked per published pick (one unit), at its original price. Pushes return the stake and remain in the ROI denominator. Missing results remain pending. Sportsbook void settlement is not available yet; these are not actual wager returns.</p>
+      <p>Simulated flat $2 risked per published pick (one unit), at its original price. Pushes return the stake and remain in the ROI denominator. Missing results remain pending. Sportsbook void settlement is not available. Explicitly reviewed voided picks return the stake with zero profit and are excluded from ROI and win rate. Voided picks are excluded from Zeno’s tracked results and do not confirm a sportsbook refund.</p>
       {data.by_league_market.map(group => <p key={`${group.competition}:${group.market_type}`}>{group.competition} · {group.market_type === "BTTS" ? "Both teams to score" : "Team corners"} · {group.summary.picks} published picks across both views, counted once</p>)}
       {rows.length > 0 && <div className="performance-calibration"><table><caption>{MODEL_PICKS_LABEL} · published selections and original prices</caption>
         <thead><tr><th>Match / league</th><th>Selection</th><th>Book / odds</th><th>Publication / quote time (UTC)</th><th>Result</th><th>Profit (units)</th></tr></thead>
@@ -42,7 +42,7 @@ export function PublishedTrackRecord() {
           <td>{row.offer.market_type === "BTTS" ? `Both teams to score: ${row.offer.side === "YES" ? "Yes" : "No"}` : `${row.offer.team} corners ${row.offer.direction.toLowerCase()} ${row.offer.line}`}</td>
           <td>{row.offer.bookmaker} {row.offer.american_odds > 0 ? "+" : ""}{row.offer.american_odds}</td>
           <td><time dateTime={row.published_at_utc}>{new Date(row.published_at_utc).toISOString()}</time><br /><time dateTime={row.offer.retrieved_at_utc}>{new Date(row.offer.retrieved_at_utc).toISOString()}</time></td>
-          <td>{row.result}</td><td>{row.profit_units === null ? "—" : row.profit_units.toFixed(2)}</td></tr>)}</tbody>
+          <td>{row.result === "SIMULATION_VOID" ? "Voided pick" : row.result}{row.simulation_void && <details><summary>Void review</summary>{row.simulation_void.recorded_at_utc}: {row.simulation_void.reason} · {row.simulation_void.record_hash}</details>}</td><td>{row.profit_units === null ? "—" : row.profit_units.toFixed(2)}</td></tr>)}</tbody>
       </table></div>}
     </>}
   </section>;

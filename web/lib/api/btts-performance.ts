@@ -11,6 +11,8 @@ export interface BttsPerformance {
     yes_probability: number; no_probability: number; source_data_hashes: { competition: string; filename: string; sha256: string }[];
     status: "SETTLED" | "UPCOMING" | "UNRESOLVED"; actual_btts: "YES" | "NO" | null;
     home_goals: number | null; away_goals: number | null; outcome_id: string | null;
+    effective_record_hash?: string | null;
+    corrections?: { correction_id: string; supersedes_record_hash: string; record_hash: string; reason: string; recorded_at_utc: string; result: { home_goals: number; away_goals: number } }[];
     recorded_at_utc: string | null; result_provider: string | null; result_source_sha256: string | null }[];
 }
 const object = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
@@ -30,6 +32,10 @@ export function decodeBttsPerformance(value: unknown): BttsPerformance {
     || !object(value.metrics) || !count(value.metrics.sample_count) || !Array.isArray(value.metrics.calibration)
     || !Array.isArray(value.forecasts)) return fail();
   for (const row of value.forecasts) {
+    if (object(row) && row.corrections !== undefined && (!Array.isArray(row.corrections)
+      || row.corrections.some(r => !object(r) || !hash(r.correction_id) || !hash(r.supersedes_record_hash)
+        || !hash(r.record_hash) || !text(r.reason) || !time(r.recorded_at_utc) || !object(r.result)
+        || !count(r.result.home_goals) || !count(r.result.away_goals)))) return fail();
     if (!object(row) || row.competition !== "E1" || !hash(row.fixture_id) || !hash(row.forecast_id)
       || ![row.home_team, row.away_team, row.provider, row.provider_fixture_id, row.model_version].every(text)
       || row.home_team === row.away_team || !time(row.kickoff_utc) || !time(row.frozen_at_utc)

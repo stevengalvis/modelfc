@@ -103,11 +103,16 @@ def result(record, state, source, now):
         return "PENDING", None
     # An outcome may select an odds-free forecast of the same exact fixture.
     try:
-        outcome = _load(path, inventory(state))
+        forecasts_inventory = inventory(state)
+        outcome = _load(path, forecasts_inventory)
+        from modelfc.btts_corrections import chain
+        outcome, _ = chain(state, outcome, forecasts_inventory, as_of=now)
         _provider_binding(forecast, outcome["source"])
     except ImportError:
         # Optional provider evidence decoder absent: never infer a result.
         return "PENDING", None
+    except (ValueError, KeyError, TypeError, AttributeError):
+        raise LedgerError("INVALID_BTTS_OUTCOME") from None
     if timestamp(outcome["recorded_at_utc"]) > now:
         return "PENDING", None
     won = value["side"] == outcome["actual_btts"]

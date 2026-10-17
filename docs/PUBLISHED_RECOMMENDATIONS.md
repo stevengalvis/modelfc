@@ -1,3 +1,6 @@
+> Reviewed exception extension: see [REVIEWED_SETTLEMENT.md](REVIEWED_SETTLEMENT.md).
+> Earlier V1 limitations below describe the unchanged original record format.
+
 # Published recommendations v1
 
 UI names: **Model Picks** for published selections, **Model Picks Performance**

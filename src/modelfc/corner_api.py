@@ -535,7 +535,8 @@ class PublishedPickResponse(StrictModel):
     ranking_views: list[Literal["best_value", "higher_probability"]]
     qualification_policy: dict[str, Any]
     record_hash: str
-    result: Literal["WIN", "LOSS", "PUSH", "PENDING"]
+    result: Literal["WIN", "LOSS", "PUSH", "PENDING", "SIMULATION_VOID"]
+    simulation_void: dict[str, Any] | None = None
     profit_units: float | None
 
 
@@ -546,7 +547,7 @@ class PublishedSummaryResponse(StrictModel):
     wins: int
     losses: int
     pushes: int
-    voids: Literal[0]
+    voids: int
     pending: int
     profit_units: float
     win_rate: float | None
@@ -562,6 +563,7 @@ class PublishedGroupResponse(StrictModel):
 class ModelPicksResponse(StrictModel):
     policy_version: Literal["first-published-value-v2"]
     void_settlement_supported: Literal[False]
+    simulation_void_supported: bool = False
     summary: PublishedSummaryResponse
     by_view: dict[Literal["best_value", "higher_probability"], PublishedSummaryResponse]
     by_league_market: list[PublishedGroupResponse]
@@ -585,6 +587,7 @@ class StrategyPageResponse(StrictModel):
     stake_dollars: Literal[2]
     simulated: Literal[True]
     void_settlement_supported: Literal[False]
+    simulation_void_supported: bool = False
     summary_scope: Literal["page"]
     totals: PublishedSummaryResponse
     market_totals: list[PublishedGroupResponse]
