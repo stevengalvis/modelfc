@@ -1384,6 +1384,130 @@ def verify_test_network(controller_netns):
         raise Failure("STATE_BOUNDARY_FAILED") from None
 
 
+# Fixed bootstrap, not a selectable command or a candidate-supplied helper.
+# The original unittest CLI still owns discovery, reporting and exit status.
+TEST_BOOTSTRAP = r"""
+import json, os, runpy, sys, time, unittest
+fd = int(sys.argv[1])
+os.set_inheritable(fd, False)
+os.set_blocking(fd, False)
+sequence = 0
+origin = time.monotonic_ns()
+def emit(kind, name=""):
+    global sequence
+    sequence += 1
+    try:
+        if not isinstance(name, str) or len(name) > 160:
+            name = ""
+        raw = (json.dumps([sequence, kind, name,
+                          (time.monotonic_ns() - origin) // 1000],
+                         ensure_ascii=True) + "\n").encode("ascii")
+        if len(raw) <= 1024:
+            os.write(fd, raw)  # One atomic, nonblocking write; loss is observable.
+    except Exception:
+        pass
+class TimedResult(unittest.TextTestResult):
+    def startTest(self, test):
+        super().startTest(test)
+        try:
+            emit("start", test.id())
+        except Exception:
+            emit("start")
+    def stopTest(self, test):
+        try:
+            emit("finish", test.id())
+        except Exception:
+            emit("finish")
+        super().stopTest(test)
+unittest.TextTestRunner.resultclass = TimedResult
+sys.argv = ["python -m unittest", "discover", "-v", "-s", "tests"]
+try:
+    runpy.run_module("unittest", run_name="__main__")
+finally:
+    emit("end")
+    os.close(fd)
+"""
+
+
+class TestProgress:
+    """Bounded, untrusted observations; never an input to the pass/fail gate."""
+    def __init__(self, allowed):
+        self.allowed = allowed
+        self.pending = b""
+        self.bytes = self.sequence = self.last_us = self.completed = 0
+        self.invalid = self.ended = False
+        self.active = self.last = None
+        self.slowest = []
+
+    def feed(self, chunk):
+        self.bytes += len(chunk)
+        if self.invalid or self.bytes > 4 * 1024 * 1024:
+            self.invalid = True
+            self.pending = b""
+            return
+        self.pending += chunk
+        while b"\n" in self.pending:
+            raw, self.pending = self.pending.split(b"\n", 1)
+            try:
+                if len(raw) > 1024 or self.ended:
+                    raise ValueError
+                seq, kind, name, stamp = json.loads(raw)
+                if (type(seq) is not int or seq != self.sequence + 1 or seq > 20000
+                        or type(stamp) is not int or not self.last_us <= stamp <= 330_000_000
+                        or not isinstance(name, str) or kind not in ("start", "finish", "end")):
+                    raise ValueError
+                if kind == "end":
+                    if name or self.active is not None:
+                        raise ValueError
+                    self.ended = True
+                else:
+                    if name not in self.allowed:
+                        raise ValueError
+                    if kind == "start":
+                        if self.active is not None:
+                            raise ValueError
+                        self.active = (name, stamp)
+                    else:
+                        if self.active is None or self.active[0] != name:
+                            raise ValueError
+                        self.completed += 1
+                        self.slowest.append([name, stamp - self.active[1]])
+                        self.slowest = sorted(self.slowest, key=lambda item: (-item[1], item[0]))[:8]
+                        self.active = None
+                    self.last = name
+                self.sequence, self.last_us = seq, stamp
+            except (ValueError, TypeError, UnicodeError):
+                self.invalid = True
+                self.pending = b""
+                return
+        if len(self.pending) > 1024:
+            self.invalid = True
+            self.pending = b""
+
+    def snapshot(self):
+        return dict(observed_completed=self.completed,
+                    complete=self.ended and not self.invalid and not self.pending,
+                    last_test_id=self.last, last_progress_us=self.last_us,
+                    slowest=self.slowest)
+
+
+def valid_progress(value, allowed):
+    if not isinstance(value, dict) or set(value) != {
+            "observed_completed", "complete", "last_test_id", "last_progress_us", "slowest"}:
+        return False
+    def number(n, limit):
+        return type(n) is int and 0 <= n <= limit
+    def name(n):
+        return isinstance(n, str) and len(n) <= 160 and n in allowed
+    return (number(value["observed_completed"], 10000)
+            and type(value["complete"]) is bool
+            and (value["last_test_id"] is None or name(value["last_test_id"]))
+            and number(value["last_progress_us"], 330_000_000)
+            and isinstance(value["slowest"], list) and len(value["slowest"]) <= 8
+            and all(isinstance(item, list) and len(item) == 2 and name(item[0])
+                    and number(item[1], 330_000_000) for item in value["slowest"]))
+
+
 class TestCaptureFailure(Exception):
     """Internal bounded capture; only allowlisted derived fields may be retained."""
     def __init__(self, classification, captured=b"", truncated=False):
@@ -1393,16 +1517,31 @@ class TestCaptureFailure(Exception):
         super().__init__(classification)
 
 
-def capture_test_process(args, *, cwd, env, timeout=300):
+def capture_test_process(args, *, cwd, env, timeout=300, progress=None):
     """Discard stdout; drain stderr with a fixed tail and an overall deadline."""
-    process = subprocess.Popen(args, cwd=cwd, env=env, stdout=subprocess.DEVNULL,
-                               stderr=subprocess.PIPE)
+    read_fd = write_fd = None
+    try:
+        if progress is not None:
+            read_fd, write_fd = os.pipe()
+            args = [args[0], "-B", "-c", TEST_BOOTSTRAP, str(write_fd)]
+        process = subprocess.Popen(args, cwd=cwd, env=env, stdout=subprocess.DEVNULL,
+                                   stderr=subprocess.PIPE,
+                                   pass_fds=() if write_fd is None else (write_fd,))
+    except BaseException:
+        if read_fd is not None:
+            os.close(read_fd)
+        raise
+    finally:
+        if write_fd is not None:
+            os.close(write_fd)
     tail = b""
     truncated = False
     deadline = time.monotonic() + timeout
     try:
         with selectors.DefaultSelector() as selector:
             selector.register(process.stderr, selectors.EVENT_READ)
+            if read_fd is not None:
+                selector.register(read_fd, selectors.EVENT_READ)
             while selector.get_map():
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
@@ -1411,6 +1550,9 @@ def capture_test_process(args, *, cwd, env, timeout=300):
                     chunk = os.read(key.fd, 4096)
                     if not chunk:
                         selector.unregister(key.fd)
+                        continue
+                    if key.fd == read_fd:
+                        progress.feed(chunk)
                         continue
                     truncated |= len(tail) + len(chunk) > TEST_STDERR_LIMIT
                     tail = (tail + chunk)[-TEST_STDERR_LIMIT:]
@@ -1427,6 +1569,8 @@ def capture_test_process(args, *, cwd, env, timeout=300):
             process.kill()
         process.wait()
         process.stderr.close()
+        if read_fd is not None:
+            os.close(read_fd)
 
 
 def test_identifiers(release):
@@ -1492,6 +1636,10 @@ def extended_diagnostics(stderr, summary, allowed, truncated, classification, co
 
 
 def valid_test_diagnostics(value, allowed):
+    if isinstance(value, dict) and "progress" in value:
+        if not valid_progress(value["progress"], allowed):
+            return False
+        value = {key: item for key, item in value.items() if key != "progress"}
     basic = {"failures", "errors", "test_ids", "truncated"}
     extra = {"classification", "count_known", "last_test_id"}
     if isinstance(value, dict) and set(value) == basic | extra:
@@ -1536,10 +1684,11 @@ def run_tests():
                "PYTHONDONTWRITEBYTECODE": "1", "PYTHONNOUSERSITE": "1"}
         allowed = test_identifiers(release)
         classification = None
+        progress = TestProgress(allowed)
         try:
             code, captured, truncated = capture_test_process([str(release / ".venv/bin/python"), "-B", "-m", "unittest",
                                   "discover", "-v", "-s", "tests"], cwd=release, env=env,
-                                      timeout=300)
+                                      timeout=300, progress=progress)
         except TestCaptureFailure as error:
             code, captured, truncated = None, error.captured, error.truncated
             classification = error.classification
@@ -1560,6 +1709,10 @@ def run_tests():
                 stderr, match[2] if match and classification is None else None, allowed, truncated,
                 classification or ("TEST_FAILURE" if match else "MISSING_SUMMARY"),
                 match is not None and classification is None)
+            timing = progress.snapshot()
+            if classification is not None:
+                timing["complete"] = False
+            value["diagnostics"]["progress"] = timing
     except (Failure, OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
         pass
     try:

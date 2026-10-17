@@ -430,6 +430,45 @@ remain failures. No raw exception messages are retained. It does not
 authorize promotion or change the fixed GitHub JSON report. The normal
 host execution context is used, independent of coding-agent mount restrictions.
 
+### Supplemental unittest timing (source only)
+
+The trusted test runner wraps the same unittest discovery/verbose CLI with
+startTest/stopTest observations. A separate nonblocking pipe carries bounded
+monotonic microsecond events; no new execution mode, SSH selector, service,
+identity, permission, path or validator capability is added. The 300-second
+suite deadline, 330-second service ceiling, isolation and resource limits are
+unchanged. Standard unittest outcomes and its terminal summary still determine
+the gate; timing events cannot make a failing or interrupted run pass.
+
+Failure diagnostics may include `progress`: `observed_completed`, `complete`,
+`last_test_id`, `last_progress_us`, and up to eight `slowest` pairs of source
+allowlisted test ID and elapsed microseconds. Observed completion includes tests
+that failed or skipped, not just successes; subtests are part of their enclosing
+test. `complete` describes the event stream, not successful tests or a trusted
+final count. Missing terminal summaries still mean `count_known=false` and
+retained `tests_run=null`. Dropped, malformed, out-of-order, unknown-ID or excess
+events stop timing aggregation and mark it incomplete, preserving only the
+accepted prefix. The pipe is drained even after rejection so instrumentation
+cannot block tests. At most 4 MiB/20,000 events are accepted; individual records
+are capped at 1024 bytes. No descriptions, parameters, tracebacks or raw pipe
+payloads are retained. The existing 4096-byte final report ceiling is unchanged.
+
+These candidate-process observations are supplemental, not trusted attestations
+or proof that the last test caused a timeout. Timing adds small overhead. Normal
+parent-handled timeout preserves accepted progress; OOM, service-wide kill or
+host failure before report writing may still lose it. Existing immediate-child
+reaping and systemd cgroup termination remain responsible for cleanup.
+
+There is no automatic archive of the prior private failure record: the next
+normal test attempt still deletes it. GitHub's fixed deployment artifact does
+not contain these private diagnostics. Before a future attempt, an authorized
+operator must preserve that bounded record through existing authorized access,
+matching SHA and release ID. Controller installation, evidence preservation and
+any subsequent normal deployment attempt require separate authorization. This
+source change neither performs nor authorizes them, and chooses no timeout
+increase or deployment remedy. Mocked/source tests do not establish systemd or
+VPS acceptance; that acceptance has not been performed for this change.
+
 Release retention and the one-time runtime path migration are administrator
 tasks. Never delete a release still referenced by `current`; keep previous
 successful releases until a separate retention policy is reviewed. This system
