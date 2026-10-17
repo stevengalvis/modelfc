@@ -203,6 +203,7 @@ function RankedRecommendations({ ranking }: { ranking: ShortlistRanking }) {
 
 export function RecommendationsDashboard() {
   const [showAnalysis,setShowAnalysis]=useState(false);
+  useEffect(() => { setShowAnalysis(new URLSearchParams(window.location.search).get("view") === "shortlist"); }, []);
   return <div className="workspace recommendations-workspace">
     <header className="page-heading"><h1>Recommendations</h1><p>Published current choices at saved prices.</p></header>
     <StrategyPicks scope="current" />
