@@ -1,0 +1,21 @@
+[Unit]
+Description=Trusted admission and lifecycle guard for isolated ModelFC suite
+
+[Service]
+Type=notify
+NotifyAccess=main
+RemainAfterExit=yes
+ExecStart=/usr/bin/python3 -I -B /opt/modelfc-suite/guard.py supervise
+RuntimeMaxSec=420
+TimeoutStartSec=30
+TimeoutStopSec=30
+KillMode=control-group
+SendSIGKILL=yes
+FileDescriptorStoreMax=1
+FileDescriptorStorePreserve=yes
+CollectMode=inactive
+Restart=no
+StandardInput=null
+StandardOutput=null
+StandardError=null
+UMask=0077
