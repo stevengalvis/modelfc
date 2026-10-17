@@ -91,7 +91,10 @@ it("uses the same immutable BTTS pick as Recommendations despite an empty legacy
   expect(screen.getByText(/No legacy corner opportunity/)).toBeInTheDocument();
   expect(screen.queryByText(/BTTS is research only/)).not.toBeInTheDocument();
   expect(screen.getByText(/Stale quote/)).toBeInTheDocument();
-  expect(screen.getByRole("link", {name: /Saved-price analysis/})).toHaveAttribute("href", "/recommendations?view=shortlist");
+  expect(screen.getByRole("link", {name: "Corner saved-price analysis · all fixtures"})).toHaveAttribute("href", "/recommendations?view=shortlist");
+  expect(screen.getByRole("link", {name: "BTTS research prices · all fixtures"})).toHaveAttribute("href", "/research/btts");
+  expect(screen.getByText(/may not contain this fixture or a newer quote/)).toBeInTheDocument();
+  expect(screen.queryByRole("link", {name: /newer observed quotes/})).not.toBeInTheDocument();
   view.unmount(); render(<RecommendationsDashboard/>);
   expect(await screen.findByText(price!)).toBeInTheDocument();
 });
@@ -126,9 +129,39 @@ it("labels fixtures that start while the page remains open", async () => {
 });
 it("reads subsequent strategy pages and rejects non-advancing pagination", async () => {
   sources();
-  vi.mocked(api.strategyPicks).mockImplementation(async q => ({...page, strategy:q.strategy, offset:q.offset, publications:q.offset ? page.publications : [], next_offset:q.offset ? null : 5}));
-  expect(await loadUpcomingPicks(new AbortController().signal)).toHaveLength(1);
+  const six = Array.from({length:6}, (_, i) => ({...page.publications[0], publication_id:`pick-${i}`}));
+  vi.mocked(api.strategyPicks).mockImplementation(async q => ({...page, strategy:q.strategy, offset:q.offset, total:6, publications:six.slice(q.offset,q.offset+5), next_offset:q.offset ? null : 5}));
+  expect(await loadUpcomingPicks(new AbortController().signal)).toHaveLength(6);
   expect(api.strategyPicks).toHaveBeenCalledWith(expect.objectContaining({strategy:"higher_probability", offset:5}), expect.any(AbortSignal));
   vi.mocked(api.strategyPicks).mockResolvedValue({...page, next_offset:0});
   await expect(loadUpcomingPicks(new AbortController().signal)).rejects.toThrow("Non-advancing");
+});
+
+it("reports unknown picks when kickoff shrinks the current cohort between pages", async () => {
+  sources();
+  const six = Array.from({length:6}, (_, i) => ({...page.publications[0], publication_id:`pick-${i}`, offer:{...page.publications[0].offer, home_team:i === 5 ? "Home" : `Team ${i}`, away_team:"Away", kickoff_utc:corner.kickoff_utc}}));
+  vi.mocked(api.strategyPicks).mockImplementation(async q => ({...page, strategy:q.strategy, offset:q.offset,
+    total:q.offset === 0 ? 6 : 5, publications:q.offset === 0 ? six.slice(0,5) : [], next_offset:q.offset === 0 ? 5 : null}));
+  await expect(loadUpcomingPicks(new AbortController().signal)).rejects.toThrow(/Incomplete/);
+  render(<UpcomingDashboard/>);
+  expect(await screen.findByText(/Published picks unavailable/)).toBeInTheDocument();
+  expect(screen.queryByText(/No qualifying published pick returned/)).not.toBeInTheDocument();
+});
+
+it("rejects duplicate offset rows even when totals stay constant", async () => {
+  sources();
+  const five = Array.from({length:5}, (_, i) => ({...page.publications[0], publication_id:`pick-${i}`}));
+  vi.mocked(api.strategyPicks).mockImplementation(async q => ({...page, strategy:q.strategy, offset:q.offset,
+    total:6, publications:q.offset === 0 ? five : [five[4]], next_offset:q.offset === 0 ? 5 : null}));
+  await expect(loadUpcomingPicks(new AbortController().signal)).rejects.toThrow(/repeated publication/);
+});
+it("rejects a crossed kickoff even if new publication keeps the total unchanged", async () => {
+  sources();
+  const six = Array.from({length:6}, (_, i) => ({...page.publications[0], publication_id:`pick-${i}`}));
+  six[0] = {...six[0], offer:{...six[0].offer, kickoff_utc:new Date(now+1000).toISOString()}};
+  vi.mocked(api.strategyPicks).mockImplementation(async q => {
+    if(q.offset) vi.mocked(Date.now).mockReturnValue(now+1000);
+    return {...page, strategy:q.strategy, offset:q.offset, total:6, publications:six.slice(q.offset,q.offset+5), next_offset:q.offset === 0 ? 5 : null};
+  });
+  await expect(loadUpcomingPicks(new AbortController().signal)).rejects.toThrow(/kickoff crossed/);
 });

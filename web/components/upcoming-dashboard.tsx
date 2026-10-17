@@ -78,8 +78,8 @@ export function UpcomingDashboard() {
             <strong>{row.strategy === "best_value" ? "Best Value" : "Higher Probability"}</strong>
             <PublishedPick row={row} now={now} />
           </div>) : <p>No qualifying published pick returned for this fixture in either strategy at this read. This does not describe legacy opportunities or research forecasts.</p>}
-          <p><Link href="/recommendations">All published picks</Link> · <Link href="/recommendations?view=shortlist">Saved-price analysis and newer observed quotes</Link></p>
-          <p className="ledger-meta">Newer saved quotes, when available, are shown separately in analysis with observation timestamps; they do not replace frozen publication odds or probabilities.</p>
+          <p><Link href="/recommendations">All published picks</Link> · <Link href="/recommendations?view=shortlist">Corner saved-price analysis · all fixtures</Link> · <Link href="/research/btts">BTTS research prices · all fixtures</Link></p>
+          <p className="ledger-meta">These market-specific pages show saved observations with timestamps across all fixtures; they may not contain this fixture or a newer quote. Saved observations do not replace frozen publication odds or probabilities.</p>
         </section>
         {f.competition !== "E1" ? <p>Unsupported league for research forecasts · published picks above are independent.</p> : <div className="upcoming-markets"><Market title="Corners" data={f.corner} blocked={data.errors.includes("predictions")} now={now}/><Market title="BTTS" data={f.btts} blocked={data.errors.includes("BTTS") || data.errors.includes("predictions")} now={now}/></div>}
         <details><summary>Legacy opportunities</summary><p>{data.errors.includes("legacy opportunities") || now-data.checked >= 60000 ? "Legacy opportunity status unavailable · refresh to check." : data.recommendations.some(r => fixtureKey(r) === f.key)

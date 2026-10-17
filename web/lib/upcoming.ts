@@ -48,15 +48,36 @@ export async function loadUpcomingPicks(signal: AbortSignal) {
   const pages = await Promise.all((["best_value", "higher_probability"] as const).map(async strategy => {
     const rows: import("./api/track-record").StrategyPick[] = [];
     let offset = 0;
+    let expectedTotal: number | undefined;
+    const seen = new Set<string>();
     for (let pageNumber = 0; pageNumber < 200; pageNumber++) {
       signal.throwIfAborted();
       const page = await api.strategyPicks({ strategy, scope: "current", offset }, signal);
-      rows.push(...page.publications);
-      if (page.next_offset === null) return rows;
-      if (page.next_offset <= offset) throw new Error("Non-advancing published picks page");
+      if (page.next_offset !== null && page.next_offset <= offset) throw new Error("Non-advancing published picks page");
+      // `current` is recomputed per request, not a snapshot. A kickoff can remove
+      // an earlier row and shift an unseen pick behind our next offset.
+      expectedTotal ??= page.total;
+      if (page.total !== expectedTotal || page.publications.length !== Math.min(page.limit, Math.max(0, expectedTotal-offset))) {
+        throw new Error("Incomplete published picks: cohort changed during pagination");
+      }
+      for (const row of page.publications) {
+        if (seen.has(row.publication_id)) throw new Error("Incomplete published picks: repeated publication");
+        seen.add(row.publication_id);
+        rows.push(row);
+      }
+      if (page.next_offset === null) {
+        if (rows.length !== expectedTotal) throw new Error("Incomplete published picks: missing publications");
+        return rows;
+      }
       offset = page.next_offset;
     }
     throw new Error("Published picks coverage exceeded read limit");
   }));
+  // Also reject a kickoff crossed during either traversal, including a removal
+  // masked by a simultaneous new publication that leaves the total unchanged.
+  const completed = Date.now();
+  if (pages.flat().some(row => Date.parse(row.offer.kickoff_utc) <= completed)) {
+    throw new Error("Incomplete published picks: kickoff crossed during read");
+  }
   return [...new Map(pages.flat().map(row => [row.publication_id, row])).values()];
 }
