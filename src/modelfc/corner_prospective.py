@@ -38,6 +38,7 @@ from modelfc.corner_prospective_budget import (
     rollover_if_needed, validate_calendar_control,
 )
 from modelfc.providers.oddspapi import OddsPapiMarketData
+from modelfc.friday_collection import friday_slot, SATURDAY_RESERVE, AFTERNOON_LIMIT, NEW_YORK
 
 class RunnerError(ValueError):
     pass
@@ -107,7 +108,7 @@ def _load(path, market_data_type=OddsPapiMarketData):
         fields = {"version", "period", "discovery", "attempts", "last_request"}
         if version == 2:
             fields.add("budget")
-        _require(set(control) == fields)
+        _require(set(control) - {"advance_discovery"} == fields)
         period = control["period"]
         _require(set(period) == {"start", "end", "allowance", "reserved"})
         _require(date.fromisoformat(period["start"]) < date.fromisoformat(period["end"]))
@@ -120,12 +121,18 @@ def _load(path, market_data_type=OddsPapiMarketData):
         _require(isinstance(control["attempts"], dict))
         for fid, attempt in control["attempts"].items():
             _require(isinstance(fid, str) and bool(fid))
-            _require(set(attempt) == {"count", "state", "at"})
+            _require(set(attempt) - {"kickoff", "phase"} == {"count", "state", "at"})
+            if "kickoff" in attempt:
+                _timestamp(attempt["kickoff"])
+            if "phase" in attempt:
+                _require(attempt["phase"] in ("morning", "afternoon", "near_kickoff"))
             _require(type(attempt["count"]) is int and attempt["count"] in (1, 2))
             _require(attempt["state"] in ("RESERVED", "NO_TEAM_TOTAL", "DONE", "REVIEW", "HISTORY"))
             _timestamp(attempt["at"])
-        discovery = control["discovery"]
-        if discovery is not None:
+        for key in ("discovery", "advance_discovery"):
+            discovery = control.get(key)
+            if discovery is None:
+                continue
             legacy = set(discovery) == {"date", "status", "fixtures"}
             _require(legacy or set(discovery) == {
                 "date", "status", "fixtures", "queries", "last_attempt_at"})
@@ -135,7 +142,8 @@ def _load(path, market_data_type=OddsPapiMarketData):
             if not legacy:
                 _require(type(discovery["queries"]) is int and discovery["queries"] in (1, 2))
                 attempted = _timestamp(discovery["last_attempt_at"])
-                _require(attempted.date() == day and attempted <= _now())
+                _require(attempted <= _now() and (attempted.date() == day or
+                    key == "advance_discovery" and attempted.date() == day - timedelta(days=1) and day.weekday() == 5))
             else:
                 _require(discovery["status"] == "DONE" or not discovery["fixtures"])
             ids = set()
@@ -338,7 +346,8 @@ def _inventory(state, config, summary, market_data_type):
     return captured
 
 
-def _provider_work(path, control, state, config, summary, captured, market_data_type, release_sha):
+def _provider_work(path, control, state, config, summary, captured, market_data_type, release_sha,
+                   *, friday_review=False):
     client = guard = None
     research = BttsResearchAcquisition(state, config, summary["btts_research"], _now)
     def get_client():
@@ -355,11 +364,22 @@ def _provider_work(path, control, state, config, summary, captured, market_data_
         return client
 
     current = _now()
-    day = current.date().isoformat()
-    discovery = control["discovery"]
+    hold_reserve = friday_review and current.astimezone(NEW_YORK).weekday() == 4
+    slot = friday_slot(current) if friday_review else None
+    target_day = slot[0] if slot else current.date()
+    phase = slot[1] if slot else "near_kickoff"
+    key = "advance_discovery" if slot else "discovery"
+    # Reuse Friday discovery on Saturday, including across UTC rollover. Keep
+    # the separate cache so ordinary Friday/midweek collection can coexist.
+    advance = control.get("advance_discovery")
+    if friday_review and not slot and advance and advance["date"] == target_day.isoformat():
+        key = "advance_discovery"
+    day = target_day.isoformat()
+    discovery = control.get(key)
     new_day = discovery is None or discovery["date"] != day
     retry = False
-    if not new_day and discovery["status"] == "DONE" and discovery.get("queries", 1) == 1:
+    if (not new_day and (discovery["status"] == "DONE" or key == "advance_discovery")
+            and discovery.get("queries", 1) == 1):
         if "last_attempt_at" in discovery:
             last_attempt = _timestamp(discovery["last_attempt_at"])
         else:
@@ -371,32 +391,43 @@ def _provider_work(path, control, state, config, summary, captured, market_data_
                             datetime.combine(current.date(), datetime.min.time(), timezone.utc))
             if last_attempt.date() != current.date():
                 last_attempt = datetime.combine(current.date(), datetime.min.time(), timezone.utc)
-        retry = (DISCOVERY_RETRY_HOUR <= current.hour < DISCOVERY_CUTOFF_HOUR
+        retry = ((phase == "afternoon" if slot else
+                  DISCOVERY_RETRY_HOUR <= current.hour < DISCOVERY_CUTOFF_HOUR)
                  and current - last_attempt >= DISCOVERY_RETRY_DELAY)
+        if key == "advance_discovery" and not slot:
+            retry = False
     if new_day or retry:
         client = get_client()
+        if hold_reserve and control["period"]["allowance"] - control["period"]["reserved"] <= SATURDAY_RESERVE:
+            _reason(summary, "SATURDAY_BUDGET_RESERVED")
+            return
         guard.reserve(1)
         if new_day:
             discovery = {"date": day, "status": "RESERVED", "fixtures": [],
                          "queries": 1, "last_attempt_at": current.isoformat()}
-            control["discovery"] = discovery
+            control[key] = discovery
         else:
             discovery.update(status="RESERVED", queries=2, last_attempt_at=current.isoformat())
         _save(path, control)
         try:
             fixtures = client.discover_fixtures("E1", date.fromisoformat(day))
             additions = [market_data_type.cache_fixture(f) for f in fixtures]
-            as_of = datetime.combine(current.date(), datetime.min.time(), timezone.utc) - timedelta(seconds=1)
-            ids = {market_data_type.cached_fixture(raw,
-                as_of, "E1").provider_fixture_id
-                for raw in discovery["fixtures"]}
+            as_of = datetime.combine(target_day, datetime.min.time(), timezone.utc) - timedelta(seconds=1)
+            known = {market_data_type.cached_fixture(raw, as_of, "E1").provider_fixture_id:
+                     market_data_type.cached_fixture(raw, as_of, "E1")
+                     for raw in discovery["fixtures"]}
+            ids = set(known)
             seen = set()
             novel = []
             for raw in additions:
                 normalized = market_data_type.cached_fixture(raw, as_of, "E1")
-                if normalized.kickoff_utc.date() != current.date() or normalized.provider_fixture_id in seen:
+                if normalized.kickoff_utc.date() != target_day or normalized.provider_fixture_id in seen:
                     raise MarketDataError("DISCOVERY_INVALID")
                 seen.add(normalized.provider_fixture_id)
+                prior = known.get(normalized.provider_fixture_id)
+                if prior and (prior.kickoff_utc, prior.home_team, prior.away_team) != (
+                        normalized.kickoff_utc, normalized.home_team, normalized.away_team):
+                    raise MarketDataError("FIXTURE_REVIEW")
                 if normalized.provider_fixture_id not in ids:
                     novel.append(raw)
             discovery["fixtures"].extend(novel)
@@ -410,28 +441,49 @@ def _provider_work(path, control, state, config, summary, captured, market_data_
             raise RunnerError("DISCOVERY_INVALID") from None
     if discovery["status"] != "DONE":
         _reason(summary, "DISCOVERY_INCOMPLETE")
-        return
+        if key != "advance_discovery" or not discovery["fixtures"]:
+            return
     summary["fixtures_discovered"] = len(discovery["fixtures"])
     fixtures = [market_data_type.cached_fixture(
         raw, datetime.combine(date.fromisoformat(day), datetime.min.time(), timezone.utc) - timedelta(seconds=1), "E1")
         for raw in discovery["fixtures"]]
-    for fixture in sorted(fixtures, key=lambda f: (f.kickoff_utc, f.provider_fixture_id)):
+    # Missing markets precede existing watchlist candidates in the afternoon.
+    for fixture in sorted(fixtures, key=lambda f: (
+            bool(captured.get(f.provider_fixture_id)) if phase == "afternoon" else False,
+            f.kickoff_utc, f.provider_fixture_id)):
+        if slot and friday_slot(_now()) != slot:
+            _reason(summary, "CAPTURE_WINDOW_CLOSED")
+            break
         fid = fixture.provider_fixture_id
         seconds = (fixture.kickoff_utc - _now()).total_seconds()
         existing_capture = captured.get(fid)
-        initial_slot = existing_capture is None and 900 < seconds <= 21600
+        initial_slot = existing_capture is None and (bool(slot) or 900 < seconds <= 21600)
         latest_slot = (existing_capture is not None
                        and existing_capture["watchlisted"]
                        and existing_capture["observation_count"] < 2
-                       and 900 < seconds <= 5400)
+                       and (phase == "afternoon" or 900 < seconds <= 5400))
         if not (initial_slot or latest_slot):
             continue
         previous = control["attempts"].get(fid)
+        if previous and previous.get("kickoff", fixture.kickoff_utc.isoformat()) != fixture.kickoff_utc.isoformat():
+            _reason(summary, "FIXTURE_REVIEW")
+            continue
+        if phase == "afternoon" and sum(
+                a.get("phase") == "afternoon" and a.get("kickoff", "")[:10] == day
+                for a in control["attempts"].values()) >= AFTERNOON_LIMIT:
+            _reason(summary, "AFTERNOON_LIMIT")
+            break
+        # An afternoon first capture also consumes that fixture's afternoon
+        # allocation. Repeated :05 invocations must not refresh it again.
+        if phase == "afternoon" and previous and previous.get("phase") == "afternoon":
+            if previous["state"] == "RESERVED":
+                _reason(summary, "ATTEMPT_INCOMPLETE")
+            continue
         successful_latest = (latest_slot and (previous is None or previous["count"] == 1))
         late_no_team = False
         if (initial_slot and previous is not None
                 and previous["state"] == "NO_TEAM_TOTAL" and previous["count"] == 1
-                and 900 < seconds <= 5400):
+                and (phase == "afternoon" or 900 < seconds <= 5400)):
             original = fixture_observations(state, fixture.provider, "E1", fid)
             if len(original) == 1:
                 first_retrieved = _timestamp(original[0]["retrieved_at_utc"])
@@ -477,13 +529,27 @@ def _provider_work(path, control, state, config, summary, captured, market_data_
         if latest_slot and (existing_capture is None
                             or existing_capture["observation_count"] >= 2):
             continue
+        observed_count = len(fixture_observations(state, fixture.provider, "E1", fid))
+        if observed_count >= 2:
+            continue
         client = get_client()
         request_count = getattr(client, "corner_market_request_count", lambda: 2)()
         if type(request_count) is not int or request_count not in (1, 2):
             raise RunnerError("REQUEST_BUDGET")
-        guard.reserve(request_count)
-        attempt = {"count": 1 if previous is None and existing_capture is None else 2,
+        if hold_reserve and control["period"]["allowance"] - control["period"]["reserved"] - request_count < SATURDAY_RESERVE:
+            _reason(summary, "SATURDAY_BUDGET_RESERVED")
+            break
+        try:
+            guard.reserve(request_count)
+        except RunnerError as error:
+            if str(error) != "REQUEST_BUDGET":
+                raise
+            _reason(summary, "REQUEST_BUDGET")
+            break
+        attempt = {"count": max(observed_count, previous["count"] if previous else 0) + 1,
                    "state": "RESERVED", "at": _now().isoformat()}
+        if friday_review:
+            attempt.update(kickoff=fixture.kickoff_utc.isoformat(), phase=phase)
         control["attempts"][fid] = attempt
         _save(path, control)
         # Freeze independently before acquisition, never after inspecting prices.
@@ -552,10 +618,14 @@ def _provider_work(path, control, state, config, summary, captured, market_data_
             else:
                 raise LedgerError("Invalid capture input") from None
         _save(path, control)
+        # Checkpoint each successful subset while quotes are still fresh. A later
+        # cap, provider failure or interruption cannot strand an earlier pick.
+        from modelfc.pick_strategies import publish_locked
+        publish_locked(state, include_btts=summary["btts_research"]["status"] != "REVIEW")
 
 
 def run_once(*, state_dir, data_config_path, market_data_type: type[MarketDataSource] = OddsPapiMarketData,
-             require_calendar_budget=False):
+             require_calendar_budget=False, friday_review=False):
     started = _now()
     summary = {"status": "OK", **dict.fromkeys(("fixtures_discovered", "captures_created",
         "captures_existing", "captures_skipped_no_team_totals", "captures_with_history_warnings",
@@ -580,8 +650,9 @@ def run_once(*, state_dir, data_config_path, market_data_type: type[MarketDataSo
                 if control["version"] == 2:
                     rollover_if_needed(path, control, now=_now(), save=_save)
                 captured = _inventory(Path(state_dir), data_config_path, summary, market_data_type)
-                _provider_work(path, control, Path(state_dir), data_config_path, summary, captured, market_data_type, release_sha)
-                # Publish once, at the real writer time, after evidence is saved.
+                _provider_work(path, control, Path(state_dir), data_config_path, summary, captured, market_data_type, release_sha,
+                               friday_review=friday_review)
+                # Finish publication, including recovered evidence, at the real writer time.
                 # Inventory/replay and all GET handlers remain write-free.
                 from modelfc.pick_strategies import publish_locked
                 publish_locked(state_dir, include_btts=summary["btts_research"]["status"] != "REVIEW")
@@ -616,7 +687,7 @@ def run_once(*, state_dir, data_config_path, market_data_type: type[MarketDataSo
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("run-once", "initialize-period", "enroll-calendar-budget"))
+    parser.add_argument("command", choices=("run-once", "collector-status", "initialize-period", "enroll-calendar-budget"))
     parser.add_argument("--state-dir", type=Path, required=True)
     parser.add_argument("--data-config", type=Path, default=Path("corner_data.json"))
     parser.add_argument("--period-start", type=date.fromisoformat)
@@ -625,7 +696,13 @@ def main(argv=None):
     parser.add_argument("--expected-allowance", type=int)
     parser.add_argument("--expected-reserved", type=int)
     parser.add_argument("--require-calendar-budget", action="store_true")
+    parser.add_argument("--friday-review", action="store_true",
+                        help="Opt-in Friday E1 Saturday collection; requires separate activation review")
     args = parser.parse_args(argv)
+    if args.command == "collector-status":
+        from modelfc.collector_freshness import read
+        print(json.dumps(read(args.state_dir), sort_keys=True))
+        return 0
     if args.command == "initialize-period":
         if args.period_start is None or args.period_end is None:
             parser.error("initialize-period requires --period-start and --period-end (exclusive)")
@@ -644,7 +721,7 @@ def main(argv=None):
             report = {"status": "FAIL", "reasons": ["BUDGET_ENROLLMENT_FAILED"]}
     else:
         report = run_once(state_dir=args.state_dir, data_config_path=args.data_config,
-                          require_calendar_budget=args.require_calendar_budget)
+                          require_calendar_budget=args.require_calendar_budget, friday_review=args.friday_review)
     print(json.dumps(report, sort_keys=True))
     return 0 if report["status"] in ("OK", "INITIALIZED", "ENROLLED") else 1
 
