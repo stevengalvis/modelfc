@@ -104,8 +104,8 @@ class MatchEvidenceTests(unittest.TestCase):
         for minute in range(4):
             record_btts_research(self.state, btts.forecast(), btts.observation(retrieved=btts.NOW + timedelta(minutes=minute)))
         result = self.read()
-        self.assertEqual(len(result['saved_btts']['comparisons']), 4)
-        self.assertEqual(result['saved_btts']['comparisons_omitted'], 4)
+        self.assertEqual(len(result['saved_btts']['comparisons']), 2)
+        self.assertEqual(result['saved_btts']['comparisons_omitted'], 6)
         self.assertLessEqual(len(json.dumps(result, separators=(',', ':')).encode()), compact.MAX_OUTPUT_BYTES)
 
     def test_storage_error_is_not_missing_evidence(self):

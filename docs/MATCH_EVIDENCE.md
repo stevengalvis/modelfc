@@ -31,7 +31,7 @@ Evidence map and scopes:
   four targets/selections/decisions with omission counts. This preserves frozen
   decisions; it does not choose a new bet or promote a shadow model.
 - `btts_research.read_btts_research`: existing validated saved inventory and
-  status/best-price rules; first four exact-fixture comparisons in existing
+  status/best-price rules; first two exact-fixture comparisons in existing
   reader order with omission count. Values include probabilities, recorded
   prices, EV, no-vig differences, bookmaker and immutable source references.
   This inventory can grow independently; it is explicitly **not frozen by the

@@ -11,6 +11,7 @@ from modelfc.team_intelligence import BY_SOURCE, MAX_SOURCE_BYTES, parse_source,
 
 MAX_OUTPUT_BYTES = 16384
 MAX_ROWS = 4
+MAX_BTTS_ROWS = 2
 
 
 def _age(observed, as_of):
@@ -71,8 +72,8 @@ def match_evidence(state_dir: str | Path, fixture: BttsFixture, *, as_of: dateti
                (fixture.provider, fixture.provider_fixture_id)]
     exact = [v for v in same_id if _same_fixture(v.fixture.model_dump(), fixture)]
     result["saved_btts"] = {"state": "CONFLICTING_FIXTURE" if len(exact) != len(same_id) else
-        "SAVED_RESEARCH" if exact else "UNAVAILABLE", "comparisons": [v.model_dump(mode="json") for v in exact[:MAX_ROWS]],
-        "comparisons_omitted": max(0, len(exact) - MAX_ROWS),
+        "SAVED_RESEARCH" if exact else "UNAVAILABLE", "comparisons": [v.model_dump(mode="json") for v in exact[:MAX_BTTS_ROWS]],
+        "comparisons_omitted": max(0, len(exact) - MAX_BTTS_ROWS),
         "scope": "SAVED_INVENTORY_AT_READ_NOT_PART_OF_CORNER_SNAPSHOT"}
     if history_bytes is not None:
         if len(history_bytes) > MAX_SOURCE_BYTES:
