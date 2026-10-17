@@ -747,6 +747,10 @@ def main():
                     except BlockingIOError:
                         pass
                     else:
+                        stable_installation()
+                        current_config = configuration("offline")
+                        if binding(current_config, TRUSTED, root_owned) != release_binding:
+                            raise ValueError("INVALID_CONFIGURATION")
                         save_success(report, release_binding, RUNS)
             report = envelope(report, release_binding)
         except Exception:

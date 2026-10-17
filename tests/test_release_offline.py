@@ -3,9 +3,11 @@ import io
 import importlib
 import json
 import os
+from contextlib import ExitStack
 from pathlib import Path
 import sys
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
@@ -147,6 +149,136 @@ class ReleaseCacheTests(unittest.TestCase):
                 runs=self.root, verify=self.verify, execute=self.execute,
                 current_binding=lambda: {})
         self.assertFalse((self.root / 'release-evidence.json').exists())
+
+
+class FinalCachePublicationTests(unittest.TestCase):
+    """Exercise the real parent's publication block with private files and flock."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.trusted = self.root / 'trusted'
+        self.trusted.mkdir()
+        for name in policy.FILES:
+            (self.trusted / name).write_bytes((OPS / name).read_bytes())
+        self.token = self.root / 'token'
+        self.token.write_text('synthetic-token')
+        self.token.chmod(0o600)
+        self.config_path = self.root / 'config.json'
+        self.config = {'repository': gate.REPOSITORY, 'image': 'sha256:' + 'c' * 64,
+                       'history_directory': str(self.root / 'unused-history'),
+                       'history_lock': str(self.root / 'unused-history-lock'),
+                       'max_age_days': 1, 'provider_key_file': str(self.root / 'absent-provider-key'),
+                       'github_token_file': str(self.token)}
+        self.config_path.write_text(json.dumps(self.config))
+        self.binding = policy.binding(self.config, self.trusted, lambda path: None)
+        self.receipt = policy.envelope(report(), self.binding)
+        self.cache = self.root / 'release-evidence.json'
+        self.cache.write_bytes(wire(policy.envelope({**report(), 'commit_sha': NEW_SHA}, self.binding)))
+        self.cache.chmod(0o600)
+        self.old_cache = self.cache.read_bytes()
+        self.old_stat = self.cache.stat()
+        self.lock_path = self.root / 'validation.lock'
+        self.lock_path.touch(mode=0o600)
+        # Exercise configuration's real parser with a synthetic account boundary.
+        # Root test runners own only this disposable directory as the fixture UID.
+        if os.geteuid() == 0:
+            os.chown(self.root, 1000, -1)
+        self.runtime_uid = self.root.stat().st_uid
+
+    def invoke(self, mutate=None, *, busy=False):
+        output = io.StringIO()
+        original_flock = controller.fcntl.flock
+        original_save = policy.save_success
+        publication = []
+        acquisitions = []
+        with ExitStack() as stack:
+            if busy:
+                held = stack.enter_context(self.lock_path.open('a'))
+                original_flock(held, controller.fcntl.LOCK_EX | controller.fcntl.LOCK_NB)
+            stack.enter_context(patch.object(sys, 'argv', ['validator', '--repository', gate.REPOSITORY,
+                                                         '--release', '--sha', SHA]))
+            stack.enter_context(patch.object(controller, 'CONFIG', self.config_path))
+            stack.enter_context(patch.object(controller, 'TRUSTED', self.trusted))
+            stack.enter_context(patch.object(controller, 'RUNS', self.root))
+            stack.enter_context(patch.object(controller, 'root_owned'))
+            stack.enter_context(patch.object(controller.os, 'geteuid', return_value=self.runtime_uid))
+            stack.enter_context(patch.object(controller.pwd, 'getpwuid',
+                                             return_value=SimpleNamespace(pw_name='modelfc-validator')))
+            config_reader = stack.enter_context(patch.object(controller, 'configuration', wraps=controller.configuration))
+            bindings = stack.enter_context(patch.object(policy, 'binding', wraps=policy.binding))
+            stack.enter_context(patch.object(controller, 'command', return_value=wire(self.receipt)))
+            stack.enter_context(patch.object(controller, 'cleanup'))
+            stack.enter_context(patch('sys.stdout', output))
+
+            def acquire(fd, operation):
+                # The initial and pre-publication bindings already passed. Change
+                # real fixture state precisely before the final lock acquisition.
+                self.assertEqual(bindings.call_count, 2)
+                self.assertEqual(config_reader.call_count, 1)
+                if mutate is not None:
+                    mutate()
+                acquisitions.append(True)
+                return original_flock(fd, operation)
+
+            def save(value, binding, runs):
+                # A separate open-file description proves the writer owns flock.
+                held = False
+                with self.lock_path.open('a') as probe:
+                    try:
+                        original_flock(probe, controller.fcntl.LOCK_EX | controller.fcntl.LOCK_NB)
+                    except BlockingIOError:
+                        held = True
+                publication.append({'lock_held': held, 'configuration_reads': config_reader.call_count,
+                                    'last_mode': config_reader.call_args.args,
+                                    'binding_checks': bindings.call_count})
+                return original_save(value, binding, runs)
+
+            stack.enter_context(patch.object(controller.fcntl, 'flock', side_effect=acquire))
+            stack.enter_context(patch.object(policy, 'save_success', side_effect=save))
+            controller.main()
+            self.assertEqual(acquisitions, [True])
+        return json.loads(output.getvalue()), publication
+
+    def assert_rejected_unchanged(self, mutate):
+        value, publication = self.invoke(mutate)
+        result = value.get('report', value)
+        self.assertEqual((result['result'], result['reason']), ('FAIL', 'INVALID_CONFIGURATION'))
+        self.assertEqual(publication, [])
+        self.assertEqual(self.cache.read_bytes(), self.old_cache)
+        self.assertEqual(self.cache.stat(), self.old_stat)
+        self.assertFalse((self.root / 'release-evidence.tmp').exists())
+
+    def test_journal_appearing_at_final_lock_cannot_publish_success(self):
+        self.assert_rejected_unchanged(
+            lambda: (self.root / 'validator-transition.json').write_text('pending recovery'))
+
+    def test_payload_change_at_final_lock_cannot_publish_success(self):
+        path = self.trusted / 'validate_pr.py'
+        self.assert_rejected_unchanged(lambda: path.write_bytes(path.read_bytes() + b'\n# changed\n'))
+
+    def test_image_only_configuration_change_at_final_lock_cannot_publish_success(self):
+        changed = {**self.config, 'image': 'sha256:' + 'd' * 64}
+        self.assert_rejected_unchanged(lambda: self.config_path.write_text(json.dumps(changed)))
+
+    def test_invalid_reloaded_offline_configuration_cannot_publish_success(self):
+        changed = {**self.config, 'max_age_days': 0}
+        self.assert_rejected_unchanged(lambda: self.config_path.write_text(json.dumps(changed)))
+
+    def test_stable_configuration_publishes_success_while_holding_final_lock(self):
+        value, publication = self.invoke()
+        self.assertEqual(value, self.receipt)
+        self.assertEqual(publication, [{'lock_held': True, 'configuration_reads': 2,
+                                      'last_mode': ('offline',), 'binding_checks': 3}])
+        self.assertEqual(policy.validate_envelope(self.cache.read_bytes(), SHA, self.binding), self.receipt)
+
+    def test_contended_final_lock_preserves_cache_and_validated_result(self):
+        value, publication = self.invoke(busy=True)
+        self.assertEqual(value, self.receipt)
+        self.assertEqual(publication, [])
+        self.assertEqual(self.cache.read_bytes(), self.old_cache)
+        self.assertEqual(self.cache.stat(), self.old_stat)
 
 
 class ReleaseGateTests(unittest.TestCase):
