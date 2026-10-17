@@ -1,9 +1,13 @@
-# Supply an approved immutable docker.io/library/python@sha256:... base at build time.
-ARG PYTHON_BASE
-FROM ${PYTHON_BASE}
-# All imported Model FC capture modules use the standard library. No PR requirements.
+# Reviewed CPython 3.12.12, linux/amd64 manifest, not a floating tag.
+FROM docker.io/library/python@sha256:593bd06efe90efa80dc4eee3948be7c0fde4134606dd40d8dd8dbcade98e669c AS dependencies
+COPY wheels /wheels
+COPY requirements-validator.lock /requirements-validator.lock
+# Build with --network=none. Only verified wheel inputs; no candidate requirements.
+RUN umask 022 && python3 -I -B -m pip install --no-index --find-links=/wheels --require-hashes --only-binary=:all: --no-compile --no-cache-dir --prefix=/runtime -r /requirements-validator.lock && python3 -I -B -c "import os; from pathlib import Path; paths=list(Path('/runtime').rglob('*')); [os.utime(p,(1792108800,1792108800),follow_symlinks=False) for p in paths]"
+FROM docker.io/library/python@sha256:593bd06efe90efa80dc4eee3948be7c0fde4134606dd40d8dd8dbcade98e669c
+COPY --from=dependencies /runtime/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
 COPY validate_capture.py /trusted/validate_capture.py
-RUN chmod 0555 /trusted /trusted/validate_capture.py
+RUN chmod 0555 /trusted /trusted/validate_capture.py && python3 -I -B -m pip check && python3 -I -B -c "import pydantic,pydantic_core,annotated_types,typing_extensions,typing_inspection"
 WORKDIR /output
 ENV PYTHONDONTWRITEBYTECODE=1
 ENTRYPOINT ["python3", "-I", "-B", "/trusted/validate_capture.py"]
