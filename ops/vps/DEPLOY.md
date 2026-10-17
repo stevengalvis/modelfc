@@ -817,3 +817,34 @@ real-systemd timing/cleanup acceptance and explicit installation approval remain
 required. Keep the 300-second child deadline, service/resource/security limits,
 state isolation and promotion gate unchanged. Missing reports after controller
 termination still provide no last-test evidence; do not infer a cause.
+
+### Installed-baseline diagnostic acceptance
+
+`ops/vps/patches/deploy-main-5c1b-test-progress.patch` applies only the PR176
+instrumentation to the complete retained installed-controller fixture. The CI
+harness pins baseline SHA-256 `5c1bf84f138e491485838462ebac0cb107872c377b1224d9d4c5b117e27d03a5`,
+patch `efaf214ccd6d5ee8e9576de4ba8a4f17d1884062b00addd733c4d3f6040332c3`,
+and result `882cb40931695df85e2b0c7d72d607b5e266e2207c895a66467e080d49ee528d`.
+It does not introduce main's additional handoff/recovery behavior.
+
+The dedicated `Diagnostic controller systemd acceptance` PR workflow uses a
+fresh GitHub-hosted Ubuntu 24.04 VM, the system Python (version recorded in its
+report), no production environment/secrets and read-only repository permission.
+It reconstructs the candidate, then executes only `--run-tests` with synthetic
+Git releases using the real fixed test unit. The unit's reviewed bytes are pinned;
+CI additionally hides home directories. Fixture path/account collisions, absent
+systemd/cgroup-v2 or mismatched effective limits fail closed. Normal completion,
+malformed/flooded progress, the real 300-second child deadline within 330 seconds,
+and a setsid descendant holding inherited pipes are checked. Results are consumed
+only after the cgroup is empty. All fixed fixture units/files/accounts are removed
+in finalization and an always-run cleanup step. No installed VPS service is used.
+
+The sanitized `diagnostic-acceptance-<head SHA>` Actions artifact contains the
+acceptance report and reconstructed exact candidate/baseline inputs; download
+from that immutable run and hash-check before proposing operator installation.
+A passing run establishes these synthetic real-systemd behaviors, not VPS
+acceptance, outer controller deployment coordination, live API behavior or an
+actual production test timing. Those controller paths remain source/mock-tested.
+Review the recorded Python/systemd/runtime information against the operator's
+actual host. This workflow does not install on the VPS, preserve its failure
+record, authorize a retry, merge, or change its permissions or deadlines.
