@@ -19,7 +19,7 @@ COUNTERS = ("fixtures_discovered", "captures_created", "captures_existing",
             "captures_awaiting_kickoff", "outcomes_created", "outcomes_pending",
             "outcomes_settled", "market_observations_created", "opportunities_created",
             "review_required", "provider_requests")
-REASONS = frozenset(("PERIOD_EXPIRED", "REQUEST_BUDGET", "SETTLEMENT_REVIEW",
+REASONS = frozenset(("PERIOD_EXPIRED", "REQUEST_BUDGET", "SATURDAY_BUDGET_RESERVED", "AFTERNOON_LIMIT", "SATURDAY_LIMIT", "WEEKEND_BUDGET", "MIDWEEK_BUDGET_RESERVED", "FIXTURE_NOT_DISCOVERED", "SETTLEMENT_REVIEW",
                      "DISCOVERY_INVALID", "DISCOVERY_INCOMPLETE", "ATTEMPT_INCOMPLETE",
                      "CAPTURE_WINDOW_CLOSED", "FIXTURE_REVIEW", "INSUFFICIENT_HISTORY",
                      "PROVIDER_FAILURE", "PROVIDER_CONFIGURATION", "MARKET_METADATA_INVALID",

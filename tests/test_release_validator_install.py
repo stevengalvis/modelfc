@@ -54,6 +54,12 @@ class InstallTests(unittest.TestCase):
         self.source.mkdir()
         for name in (*installer.FILES, 'validate_capture.py'):
             (self.source / name).write_bytes((OPS / name).read_bytes())
+        # Synthetic installer mechanics use fixture hashes, not production trust pins.
+        self.stack.enter_context(patch.object(installer, 'FILES', {
+            name: hashlib.sha256((self.source / name).read_bytes()).hexdigest()
+            for name in installer.FILES}))
+        self.stack.enter_context(patch.object(installer, 'HARNESS',
+            hashlib.sha256((self.source / 'validate_capture.py').read_bytes()).hexdigest()))
         (self.source / 'STAGED_SHA').write_text(SHA)
         (self.dest / 'validate_capture.py').write_bytes((OPS / 'validate_capture.py').read_bytes())
         self.original = {}
@@ -224,7 +230,8 @@ class AcceptanceTests(unittest.TestCase):
         failed = {**report(), 'commit_sha':'0'*40, 'result':'FAIL','reason':'WRONG_SHA'}
         remote = Mock(side_effect=[json.dumps(value).encode(), json.dumps(value).encode(),
                                  json.dumps(policy.envelope(failed, identity)).encode()])
-        result = installer.check_acceptance(SHA, identity['image_digest'], remote, OPS)
+        with patch.object(installer, 'EXPECTED_REVISION', identity['validator_revision']):
+            result = installer.check_acceptance(SHA, identity['image_digest'], remote, OPS)
         self.assertEqual(result['provider_requests'], 0)
         self.assertEqual(remote.call_count, 3)
         self.assertEqual(remote.call_args.args[0], 'validate-offline-release stevengalvis/modelfc '+'0'*40)
@@ -236,7 +243,8 @@ class AcceptanceTests(unittest.TestCase):
                     json.dumps({**good,'validator_revision':'e'*64}).encode(),
                     json.dumps(policy.envelope({**report(),'result':'FAIL','reason':'BUSY'},identity)).encode()):
             with self.subTest(raw=raw[:20]), self.assertRaises(ValueError):
-                installer.check_acceptance(SHA, identity['image_digest'], Mock(return_value=raw), OPS)
+                with patch.object(installer, 'EXPECTED_REVISION', identity['validator_revision']):
+                    installer.check_acceptance(SHA, identity['image_digest'], Mock(return_value=raw), OPS)
 
     def test_external_acceptance_reuses_pinned_transport_and_clears_key(self):
         import sys
@@ -268,11 +276,17 @@ class AcceptanceTests(unittest.TestCase):
             self.assertEqual(observed[0]['VALIDATOR_HOST_KEY'], hosts.read_text())
             self.assertEqual(observed[0]['VALIDATOR_KEY_FINGERPRINT'], args.fingerprint)
 
-    def test_file_payload_pins_still_match_reviewed_validator_revision(self):
-        expected = policy.revision(OPS)
-        self.assertEqual(expected, installer.EXPECTED_REVISION)
-        for name, value in installer.FILES.items():
-            self.assertEqual(hashlib.sha256((OPS/name).read_bytes()).hexdigest(), value)
+    def test_staged_strategy_revision_is_not_approved_for_installation(self):
+        # ZEN-48 deliberately stages source without changing installed trust pins.
+        self.assertEqual(installer.EXPECTED_REVISION,
+                         'dfe3a140b771a2d7dc4d4542251ea729a4be8055ef980cd3f3c2b86830dd8dd5')
+        self.assertNotEqual(policy.revision(OPS), installer.EXPECTED_REVISION)
+        with patch.object(installer, 'root_owned'), self.assertRaisesRegex(ValueError, 'CHECK_FAILED'):
+            installer.verify_files(OPS)
+        remote = Mock()
+        with self.assertRaisesRegex(ValueError, 'CHECK_FAILED'):
+            installer.check_acceptance(SHA, 'sha256:' + 'c'*64, remote, OPS)
+        remote.assert_not_called()
 
 
 if __name__ == '__main__':

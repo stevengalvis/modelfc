@@ -46,13 +46,17 @@ The controller verifies repository identity, open PR status and the current PR h
 using GitHub, fetches `refs/pull/N/head`, and checks the fetched SHA again. Fork PRs
 are rejected. It exports **only src/**. PR `ops/`, Containerfile, workflow, requirements,
 Git config and hooks do not enter execution. Symlinks and non-regular source entries
-are rejected. The container runs the harness baked into the previously installed
-image, identified by immutable local image ID. PR infrastructure changes cannot
+are rejected. The container mounts only the fixed root-owned installed harness read-only onto
+`/trusted/validate_capture.py`, overriding the image copy. A trusted bootstrap
+verifies mounted inode and hash and executes the same checked bytes. The image is
+identified by immutable local image ID. PR infrastructure changes cannot
 update that image or the installed controller. After a separate infrastructure PR
 is approved and merged, an administrator intentionally reinstalls/rebuilds it.
 
-The image uses Python's standard library. No `pip install` runs during validation.
-If a future PR needs another dependency, separately review/rebuild the runtime.
+The reviewed candidate adds only Pydantic and its four required dependencies
+from hash-pinned wheels at image build time. No `pip install` runs during validation.
+Any dependency or image update requires separate review and an approved binding
+transition; see [image build and upgrade preparation](../../docs/STRATEGY_VALIDATOR_IMAGE_UPGRADE.md).
 A failure caused by a missing dependency is FAIL, not an automatic installation.
 
 ## Execution and cleanup
@@ -257,17 +261,12 @@ them. Confirm rootless Podman and cgroup v2 before proceeding:
 sudo -u modelfc-validator env XDG_RUNTIME_DIR="/run/user/$VALIDATOR_UID" podman info
 ```
 
-Build once, from an approved base digest. Resolve/review the registry digest during
-installation, never during a validation. Pin the resulting local image ID in config.
-
-```bash
-PYTHON_BASE='docker.io/library/python@sha256:REPLACE_WITH_APPROVED_DIGEST'
-sudo -u modelfc-validator env XDG_RUNTIME_DIR="/run/user/$VALIDATOR_UID" \
-  podman build --build-arg "PYTHON_BASE=$PYTHON_BASE" \
-  -t localhost/modelfc-validation:installed /opt/modelfc-validator
-sudo -u modelfc-validator env XDG_RUNTIME_DIR="/run/user/$VALIDATOR_UID" \
-  podman image inspect localhost/modelfc-validation:installed --format '{{.Id}}'
-```
+For the existing installation, do not rebuild into the active image tag or edit
+its configuration during preparation. The reviewed candidate has a fixed official
+base digest and a separate hash-verified wheel lock. Prepare/build it in an isolated
+rootless development store using [the reproducible image procedure](../../docs/STRATEGY_VALIDATOR_IMAGE_UPGRADE.md).
+Only a later separately approved coordinated upgrade may load that exact image and
+change the active image binding, with five-file/configuration/cache rollback.
 
 Create two credential files using silent terminal input. OFFLINE reads only the
 GitHub token; the provider key file is opened only after LIVE was explicitly
