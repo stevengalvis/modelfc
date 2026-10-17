@@ -16,15 +16,32 @@ source changes were performed during preparation.
 
 ## Matched runtime and prepared image
 
-PR171 `1157ad02c1e578b5e751f3c2d26004c2f87b2eeb` includes the controller's
+PR171 `1050125a865c14e10a6b849734d10e77908b9928` includes the controller's
 fixed installed-harness file mount and checked-byte bootstrap. PR172 integrates
 that branch without rewriting predecessor history or retargeting. Its installer
 now pins controller SHA-256
-`a84e96f9fcffb51c73c8c3c1c0753a9d5af684ea66ba4684496428c871eb66f0`
+`22e417003c94fe2c3ceb30ae66a6979e63396ca7a411d93589a3fd8442be9227`
 and complete five-file revision
-`edc30d7b9f5fc59570b4ad5763a81bc98baff8f73b662a3ccb33aef76ab568b4`.
+`3a407114934629b3b51184e18e116106115c66e2705626587181092815daf113`.
 Predecessor pins remain unchanged, including the old controller. Both installed
 payload and eventual merged consumer must use this identical five-file set.
+
+The final cache-publication correction addresses
+[r4300600715](https://github.com/stevengalvis/modelfc/pull/171#discussion_r4300600715):
+after acquiring the writer lock, recheck the journal, reload validated OFFLINE
+configuration and compare fresh payload/image/configuration binding before saving.
+The earlier configuration object cannot detect an image-only switch. Deterministic
+real-file/real-flock source tests cover journal, payload, image-only and invalid
+configuration changes, successful publication and contention; rejected publication
+preserves the existing cache bytes and metadata. The existing idle checks remain.
+Only the controller hash changes within the payload. The harness, dependencies,
+Containerfile, accepted candidate image and installer transaction/recovery logic
+are unchanged. The [previous activation/recovery report](https://github.com/stevengalvis/modelfc/pull/172#issuecomment-6227712126)
+is historical: it verified predecessor restoration, and its installed acceptance
+does not cover these new controller bytes. Obtain fresh exact-head review and
+renewed activation approval before repeating the documented installation and all
+installed local/pinned-SSH checks. No installation or installed acceptance is part
+of this narrow preparation.
 
 The [reproducible candidate](STRATEGY_VALIDATOR_IMAGE_UPGRADE.md) now supplies the
 complete minimal strategy dependency closure using five official hash-verified

@@ -48,6 +48,36 @@ journal-aware controller first and restore its predecessor last. External consum
 holds/drain remain necessary, including for older controllers that predate this
 journal. Neither installer flags nor an empty queue alone establish coordination.
 
+## Final cache publication correction
+
+The [previous activation attempt](https://github.com/stevengalvis/modelfc/pull/172#issuecomment-6227712126)
+passed installed local and pinned-SSH acceptance, then stopped before merge on
+[review finding r4300600715](https://github.com/stevengalvis/modelfc/pull/171#discussion_r4300600715).
+The predecessor payload, configuration and cache were restored and verified.
+Those historical passes do not establish installed acceptance of this correction.
+
+Immediately after acquiring the final cache-publication lock, the parent now
+rechecks the transition journal, reloads and validates OFFLINE configuration,
+and compares the fresh five-file/image/configuration binding with the validation
+run's binding before calling `save_success`. Reloading matters: hashing files
+with the earlier configuration object misses an image-only change. Transitional,
+invalid or changed state returns failure without publishing success or touching
+existing cache bytes. Lock contention still skips optional cache publication
+while preserving the validated result. Existing installer process-idle checks
+and container isolation remain unchanged.
+
+Deterministic source regressions change real disposable files between the prior
+binding check and final flock acquisition. Journal, payload, image-only and
+invalid-configuration changes must reject publication and preserve cache bytes,
+inode and metadata. Happy-path publication proves the lock is held; real lock
+contention preserves the cache. All four transition cases reproduce unsafe PASS
+publication against the previous controller. This preparation changes only the
+controller within the five-file payload; the harness, dependency inputs,
+Containerfile and candidate image remain unchanged. Both draft PRs need matching
+pins, exact-head CI and fresh review. Any future activation requires renewed
+approval and all installed local/pinned-SSH checks against these new bytes; the
+existing image and documented full premerge recovery procedure still apply.
+
 ## Compatibility established from exact source
 
 Compared main `1f51047af65bba30e1684973a65e1e0154af1fab` (old) with
@@ -96,14 +126,14 @@ as an ordinary cache miss; rollback has the symmetric problem with a new cache.
 | --- | --- | --- |
 | `validate_capture.py` | `fa61840de404a8a8803b30a18b98b60acbaeba36b6445eb9cafcc1112028dfdd` | `aa267f63e456be3bb6332cfb151035ceb70ce736b950205703e50f38fc2b34e0` |
 | `offline_report.py` | `5607397a0ef2b5d81d216e149e89f8e26c09bf57bb85562ba9ebeedee0d4db0d` | `2616b66150ec1f8c822c721df117d173aa52ef33a9cb2a80370bfc5577ee855c` |
-| `validate_pr.py` | `2749f050a4b08fb9bcdebdb04228dcbb97c3fb6970669779c03a32b61099083f` | `a84e96f9fcffb51c73c8c3c1c0753a9d5af684ea66ba4684496428c871eb66f0` |
+| `validate_pr.py` | `2749f050a4b08fb9bcdebdb04228dcbb97c3fb6970669779c03a32b61099083f` | `22e417003c94fe2c3ceb30ae66a6979e63396ca7a411d93589a3fd8442be9227` |
 | `validate_offline_ssh.py` (unchanged) | `cc70e53486ce1041cf1d12670a6df82da51bc7ee872865bbc45b5d78933503b3` | same |
 | `release_evidence.py` (unchanged) | `5410348dd9f1c2c173bd266e60901a8f81ac783243d3d704c64f73d2539bf3f3` | same |
 
 Aggregate `release_evidence.revision`:
 
 - Old: `dfe3a140b771a2d7dc4d4542251ea729a4be8055ef980cd3f3c2b86830dd8dd5`
-- New: `edc30d7b9f5fc59570b4ad5763a81bc98baff8f73b662a3ccb33aef76ab568b4`
+- New: `3a407114934629b3b51184e18e116106115c66e2705626587181092815daf113`
 
 Recompute from the final reviewed artifact before approval, and compare installed
 bytes before and after the operation. Documentation-only commits do not change
