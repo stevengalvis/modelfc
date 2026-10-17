@@ -1,6 +1,5 @@
 """Reviewed append-only BTTS corrections using the existing validated result sources."""
 from datetime import datetime, timezone
-from itertools import islice
 from pathlib import Path
 
 from modelfc import btts_outcomes as outcomes
@@ -8,14 +7,13 @@ from modelfc.btts_market_data import timestamp
 from modelfc.btts_research import digest
 from modelfc.corner_analysis_outcomes import _require
 from modelfc.ledger_storage import ledger_lock, ensure_directory, write_new_record, utc_timestamp
-from modelfc.settlement_reviews import directory, load_record
+from modelfc.settlement_reviews import directory, load_record, review_entries
 from modelfc.research_predictions import _sync_directories
 
 
 def chain(state, original, forecasts, *, as_of=None):
     path = directory(state, 'btts-corrections')
-    entries = list(islice(path.glob('*.json'),2001)) if path.exists() else []
-    _require(len(entries) <= 2000, 'CORRECTION_CAPACITY_EXCEEDED')
+    entries = review_entries(state, 'btts-corrections')
     records=[]
     for target in entries:
         r=load_record(target,65536)
@@ -78,7 +76,7 @@ def correct(state, forecast_id, source, *, supersedes_record_hash, reason):
         row=dict(schema_version=1,correction_id=identity,**request,recorded_at_utc=recorded,result=result)
         row['record_hash']=digest(row)
         path=directory(state,'btts-corrections');ensure_directory(path,'BTTS corrections')
-        _require(len(list(islice(path.glob('*.json'),2000))) < 2000,'CORRECTION_CAPACITY_EXCEEDED')
+        _require(len(review_entries(state, 'btts-corrections')) < 2000,'CORRECTION_CAPACITY_EXCEEDED')
         write_new_record(path/(identity+'.json'),row)
         _sync_directories(path,state)
         return row,True

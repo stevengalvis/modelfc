@@ -24,9 +24,34 @@ from modelfc.research_predictions import _sync_directories
 def directory(state, name):
     state = Path(state)
     path = state / name
-    _require(not state.is_symlink() and not path.is_symlink()
-             and (not path.exists() or path.is_dir()), 'INVALID_REVIEW_DIRECTORY')
-    return path
+    try:
+        _require(stat.S_ISDIR(state.lstat().st_mode), 'INVALID_REVIEW_DIRECTORY')
+        try:
+            info = path.lstat()
+        except FileNotFoundError:
+            return path
+        _require(stat.S_ISDIR(info.st_mode), 'INVALID_REVIEW_DIRECTORY')
+        return path
+    except OSError:
+        raise OutcomeError('REVIEW_STORAGE_UNAVAILABLE') from None
+
+
+def review_entries(state, name, limit=2000):
+    """Only ENOENT means absent: pathlib glob suppresses directory read errors."""
+    path = directory(state, name)
+    try:
+        with os.scandir(path) as entries:
+            result = []
+            for entry in entries:
+                _require(len(result) < limit, 'CORRECTION_CAPACITY_EXCEEDED')
+                _require(re.fullmatch(r'[0-9a-f]{64}\.json', entry.name)
+                         and entry.is_file(follow_symlinks=False), 'INVALID_REVIEW')
+                result.append(path / entry.name)
+            return sorted(result)
+    except FileNotFoundError:
+        return []
+    except OSError:
+        raise OutcomeError('REVIEW_STORAGE_UNAVAILABLE') from None
 
 
 def load_record(path, limit=4_000_000):
@@ -88,7 +113,13 @@ def apply_voids(state, rows, namespace):
         row["simulation_void"] = None
         key = digest([namespace, row['publication_id']])
         target = path / (key + '.json')
-        if target.exists() or target.is_symlink():
+        try:
+            target.lstat()
+        except FileNotFoundError:
+            continue
+        except OSError:
+            raise OutcomeError("REVIEW_STORAGE_UNAVAILABLE") from None
+        else:
             record = load_record(target)
             try:
                 review = validate_void(record, row, namespace)

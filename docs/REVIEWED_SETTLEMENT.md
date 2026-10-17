@@ -101,3 +101,14 @@ should be written before that access and coordinated backend/frontend compatibil
 are verified. Live API/UI parity remains blocked by the audit environment's denied
 public-host access. The original eight-BTTS/seven-corners cohort reconciliation,
 E0/reporting gaps and broader ZEN-38 acceptance are not completed here.
+
+### Restricted-reader regression
+
+Correction enumeration uses explicit `os.scandir`, not `Path.glob`: permission
+errors must never be interpreted as absent correction history. Void review lookups
+also use explicit `lstat` error handling. Unreadable directories or records reject
+the API read; only an actually missing namespace/record can represent no review.
+The normal test workflow runs genuine UID-65534 tests under its existing root ACL
+acceptance step: writer-visible/private corrections and voids reject, then explicit
+read-only fixture ACLs expose the effective result without write access. These
+grants affect disposable test fixtures only, not installed production permissions.
