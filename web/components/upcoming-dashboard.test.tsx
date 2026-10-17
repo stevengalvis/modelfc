@@ -165,3 +165,16 @@ it("rejects a crossed kickoff even if new publication keeps the total unchanged"
   });
   await expect(loadUpcomingPicks(new AbortController().signal)).rejects.toThrow(/kickoff crossed/);
 });
+
+it.each([true,false])("separates a publication outage from successful forecast reads (populated=%s)",async(populated)=>{
+ sources(); vi.mocked(api.strategyPicks).mockRejectedValue(new Error("publication read failed"));
+ if(!populated) vi.mocked(api.predictions).mockResolvedValue([]);
+ render(<UpcomingDashboard/>);
+ const alert=await screen.findByRole("alert");
+ expect(alert).toHaveTextContent("Published pick coverage is incomplete.");
+ expect(alert).not.toHaveTextContent("Forecast coverage is incomplete.");
+ expect(alert).not.toHaveTextContent("Legacy opportunity status is unavailable.");
+ if(populated) expect(screen.getByText("Home corners")).toBeInTheDocument();
+ else expect(screen.getByRole("heading",{name:"Published pick coverage unavailable"})).toBeInTheDocument();
+ expect(screen.queryByText(/No qualifying published pick returned/)).not.toBeInTheDocument();
+});

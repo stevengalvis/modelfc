@@ -1,4 +1,4 @@
-import { cleanup,fireEvent,render,screen } from "@testing-library/react";
+import { act,cleanup,fireEvent,render,screen } from "@testing-library/react";
 import { afterEach,expect,it,vi } from "vitest";
 import { api } from "@/lib/api/client";
 import { decodeStrategyPage,emptyTrackRecord } from "@/lib/api/track-record";
@@ -6,7 +6,7 @@ import fixture from "../../tests/fixtures/strategy_picks.json";
 import { RecommendationsDashboard } from "./recommendations-dashboard";
 import { PerformanceDashboard } from "./prospective-dashboard";
 import { StrategyPicks } from "./strategy-picks";
-afterEach(()=>{cleanup();vi.restoreAllMocks();});
+afterEach(()=>{cleanup();vi.restoreAllMocks();vi.useRealTimers();});
 const empty=()=>({...decodeStrategyPage(fixture),publications:[],total:0,next_offset:null,summary:emptyTrackRecord.summary,totals:emptyTrackRecord.summary,market_totals:[],by_league_market:[],profit_dollars:0,total_profit_dollars:0});
 it("loads only current picks on Recommendations and labels simulated flat risk",async()=>{
  const call=vi.spyOn(api,"strategyPicks").mockResolvedValue(decodeStrategyPage(fixture));
@@ -53,4 +53,21 @@ it("opens separately timestamped saved-price analysis from the Upcoming link",as
  expect(await screen.findByText("Saved-price analysis")).toBeInTheDocument();
  expect(shortlist).toHaveBeenCalled();
  window.history.replaceState({}, "", "/");
+});
+
+it("updates a published current pick at kickoff without refetching or changing frozen values",async()=>{
+ vi.useFakeTimers();
+ const data=decodeStrategyPage(fixture);
+ const kickoff=Date.parse(data.publications[0].offer.kickoff_utc);
+ vi.setSystemTime(kickoff-1000);
+ const read=vi.spyOn(api,"strategyPicks").mockResolvedValue(data);
+ const view=render(<RecommendationsDashboard/>);
+ await act(async()=>{await vi.advanceTimersByTimeAsync(0);});
+ const price=screen.getByText(/draftkings · \+120 · 67.0% model probability/).textContent;
+ expect(screen.queryByText(/Started fixture/)).not.toBeInTheDocument();
+ await act(async()=>{await vi.advanceTimersByTimeAsync(30000);});
+ expect(screen.getByText(/Started fixture · publication is historical/)).toBeInTheDocument();
+ expect(screen.getByText(price!)).toBeInTheDocument();
+ expect(read).toHaveBeenCalledTimes(1);
+ view.unmount(); expect(vi.getTimerCount()).toBe(0);
 });

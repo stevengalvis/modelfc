@@ -23,6 +23,18 @@ export function StrategyPicks({ scope }: { scope: "current" | "history" }) {
 function StrategyRows({scope,strategy,market,competition}: {scope:"current"|"history"; strategy:ShortlistRanking; market:string; competition:string}) {
   const [offset,setOffset]=useState(0), [attempt,setAttempt]=useState(0);
   const [data,setData]=useState<StrategyPage|null>(null), [error,setError]=useState(false);
+  const [now,setNow]=useState(Date.now);
+  useEffect(()=>{
+    const advance=()=>setNow(Date.now());
+    const timer=window.setInterval(advance,1000);
+    window.addEventListener("focus",advance);
+    document.addEventListener("visibilitychange",advance);
+    return ()=>{
+      window.clearInterval(timer);
+      window.removeEventListener("focus",advance);
+      document.removeEventListener("visibilitychange",advance);
+    };
+  },[]);
   useEffect(()=>{
     const controller=new AbortController(); setData(null); setError(false);
     api.strategyPicks({scope,strategy,market,competition,offset},controller.signal)
@@ -43,7 +55,7 @@ function StrategyRows({scope,strategy,market,competition}: {scope:"current"|"his
     {!data.publications.length && <p>No published picks for this strategy and filter yet. Historical subset picks are kept separately and are not reclassified.</p>}
     {data.publications.map(row=><article className="panel" key={row.publication_id}>
       <h3>{row.offer.home_team} vs {row.offer.away_team} · {row.offer.competition}</h3>
-      <PublishedPick row={row} now={Date.now()} />
+      <PublishedPick row={row} now={now} />
       <details><summary>Evidence and simulated result</summary><p>Published {row.published_at_utc}; policy effective {row.policy_effective_at_utc}. Strategy version: {row.strategy_policy}.</p>
         <p>No-vig edge {(row.offer.no_vig_probability_edge*100).toFixed(1)} pp · estimated EV {(row.offer.expected_profit*100).toFixed(1)}%.</p>
         <p>{row.result} · simulated $2 risked · {row.profit_units === null ? "Pending" : `${row.profit_units.toFixed(2)} units / $${row.profit_dollars?.toFixed(2)}`}</p></details>
