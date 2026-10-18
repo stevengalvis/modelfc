@@ -21,7 +21,14 @@ The worker retains the 300-second child deadline, 330/30-second systemd lifecycl
 2-GiB memory and 64-task limits. PrivateNetwork, PrivateTmp, a read-only filesystem,
 no capabilities/privilege escalation and inaccessible production/control/credential
 paths isolate candidate code. A private read-only tmpfs hides host `/run`;
-masking `/run` itself prevents systemd namespace setup (upstream issue
+The only exposed host runtime socket is
+`/run/systemd/userdb/io.systemd.DynamicUser`, needed for real UID lookup and SSH
+key parsing. This adds PID1 IPC: dynamic-account metadata can be queried; a
+read-only bind does not restrict socket requests. Acceptance must prove the
+additional ManagedOOM subscription method denies the worker and that the bus,
+notify, private control and multiplexer sockets remain absent. See the exact
+[systemd 255 interface](https://github.com/systemd/systemd/blob/v255/src/core/core-varlink.c).
+Masking `/run` itself prevents systemd namespace setup (upstream issue
 https://github.com/systemd/systemd/issues/27997). stdout is discarded; stderr is drained with a 4-KiB
 tail. The result reports terminal counts only with a complete final summary;
 observed completed count/last progress are separate. TIMEOUT is not assertion

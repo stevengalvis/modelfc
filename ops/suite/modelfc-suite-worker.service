@@ -31,6 +31,7 @@ ProtectProc=invisible
 ReadOnlyPaths=/usr/lib/modelfc-suite
 InaccessiblePaths=-/srv -/var/lib/modelfc -/var/lib/modelfc-deploy -/var/lib/modelfc-suite -/etc/modelfc-validator -/etc/modelfc
 TemporaryFileSystem=/run:ro
+BindReadOnlyPaths=/run/systemd/userdb/io.systemd.DynamicUser:/run/systemd/userdb/io.systemd.DynamicUser:norbind
 EnvironmentFile=/var/lib/modelfc-suite/worker.env
 SyslogIdentifier=modelfc-suite-worker
 StandardInput=null

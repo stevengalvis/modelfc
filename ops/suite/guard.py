@@ -98,7 +98,7 @@ def execution_policy(unit, script, suffix):
         raise Rejected('EXECUTION_POLICY')
     empty_arrays = ('ExecCondition', 'ExecStartPre', 'ExecStartPost', 'ExecStop', 'ExecStopPost', 'ExecReload',
                     'Environment', 'PassEnvironment', 'UnsetEnvironment', 'SupplementaryGroups',
-                    'BindPaths', 'BindReadOnlyPaths', 'ReadWritePaths', 'LoadCredential',
+                    'BindPaths', 'ReadWritePaths', 'LoadCredential',
                     'LoadCredentialEncrypted', 'SetCredential', 'SetCredentialEncrypted', 'ImportCredential')
     for name in empty_arrays:
         if typed_property(unit, 'Service', name).get('data') != []: raise Rejected('EXECUTION_POLICY')
@@ -108,6 +108,10 @@ def execution_policy(unit, script, suffix):
     expected_paths = ['-/srv', '-/var/lib/modelfc', '-/var/lib/modelfc-deploy',
                       '-/var/lib/modelfc-suite', '-/etc/modelfc-validator', '-/etc/modelfc'] if unit == WORKER else []
     if typed_property(unit, 'Service', 'InaccessiblePaths').get('data') != expected_paths:
+        raise Rejected('EXECUTION_POLICY')
+    nss_socket = '/run/systemd/userdb/io.systemd.DynamicUser'
+    expected_binds = [[nss_socket, nss_socket, False, 0]] if unit == WORKER else []
+    if typed_property(unit, 'Service', 'BindReadOnlyPaths') != dict(type='a(ssbt)', data=expected_binds):
         raise Rejected('EXECUTION_POLICY')
     expected_tmpfs = [['/run', 'ro']] if unit == WORKER else []
     if typed_property(unit, 'Service', 'TemporaryFileSystem').get('data') != expected_tmpfs:

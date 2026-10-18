@@ -100,12 +100,25 @@ def case_source(directory,mode,source,port):
     command('git','init','--quiet',str(directory))
     (directory/'requirements-deploy.lock').write_bytes((source/'requirements-deploy.lock').read_bytes())
     (directory/'tests').mkdir()
-    cases='''import os, socket, subprocess, time, unittest
+    cases='''import json, os, pwd, socket, subprocess, tempfile, time, unittest
+from pathlib import Path
 class Boundary(unittest.TestCase):
  def test_a_boundary(self):
   self.assertNotEqual(os.geteuid(),0)
   self.assertEqual(socket.if_nameindex(),[(1,'lo')])
   self.assertFalse(os.path.exists('/run/modelfc-suite-ci-claim'))
+  for path in ('/run/systemd/notify','/run/systemd/private','/run/dbus/system_bus_socket','/run/systemd/userdb/io.systemd.Multiplexer'):
+   self.assertFalse(os.path.exists(path))
+  self.assertEqual(pwd.getpwuid(os.getuid()).pw_name,'modelfc-suite-worker')
+  with tempfile.TemporaryDirectory() as directory:
+   subprocess.run(['/usr/bin/ssh-keygen','-q','-t','ed25519','-N','','-f',str(Path(directory)/'disposable')],capture_output=True,check=True)
+  with socket.socket(socket.AF_UNIX) as client:
+   client.settimeout(2);client.connect('/run/systemd/userdb/io.systemd.DynamicUser')
+   client.sendall(json.dumps(dict(method='io.systemd.ManagedOOM.SubscribeManagedOOMCGroups',parameters={},more=True)).encode()+bytes([0]))
+   raw=b''
+   while bytes([0]) not in raw:
+    chunk=client.recv(1024);self.assertTrue(chunk);raw+=chunk;self.assertLessEqual(len(raw),4096)
+   self.assertEqual(json.loads(raw.split(bytes([0]))[0])['error'],'org.varlink.service.PermissionDenied')
   with socket.socket(socket.AF_UNIX) as client:
    with self.assertRaises(OSError): client.connect('/run/dbus/system_bus_socket')
   for path in ['/var/lib/modelfc/canary','/etc/modelfc-validator/canary','/etc/modelfc/canary','/var/lib/modelfc-deploy/last-test-failure.json','/srv/modelfc/current','/var/lib/modelfc-suite/results']:
@@ -138,7 +151,7 @@ def run(args):
         listener.bind(('127.0.0.1',0));listener.listen()
         port=listener.getsockname()[1]
         tmp=Path(temporary)
-        for mode in ('pass','full','failure','busy','pending','abandoned','override','kill','stop','concurrent','queued','timeout'):
+        for mode in ('pass','full','failure','busy','pending','abandoned','override','override_bind','kill','stop','concurrent','queued','timeout'):
             if ROOT.exists():
                 guard.recover()
                 for unit in (GUARD,WORKER): (UNITS/unit).unlink()
@@ -162,24 +175,26 @@ def run(args):
                     command('/usr/bin/python3','-I',str(ROOT/'guard.py'),'run',sha)
                     evidence=json.loads(next((STATE/'results').glob('*.json')).read_text())
                     assert evidence['reason']=='DEPLOYMENT_BUSY' and evidence['worker'] is None
-            elif mode in ('pending','abandoned','override'):
+            elif mode in ('pending','abandoned','override','override_bind'):
                 pending=CONTROL/'service-pending.json'
                 abandoned=UNITS/'modelfc-postmerge-tests.service'
                 if mode=='pending': pending.write_text('{"unfinished":true}\n')
                 if mode=='abandoned':
                     abandoned.write_text('[Service]\nExecStart=/usr/bin/sleep infinity\n')
                     command('systemctl','daemon-reload');command('systemctl','start',abandoned.name)
-                if mode=='override':
+                if mode in ('override','override_bind'):
                     unit=UNITS/WORKER;original=unit.read_bytes()
-                    unit.write_bytes(original.replace(b'PrivateNetwork=yes',b'PrivateNetwork=no'))
+                    altered=original.replace(b'PrivateNetwork=yes',b'PrivateNetwork=no') if mode=='override' else original+b'BindReadOnlyPaths=/run:/run:norbind\n'
+                    unit.write_bytes(altered)
                     api_unit=UNITS/'modelfc-api.service';api_original=api_unit.read_bytes()
                     api_unit.write_bytes(b'[Unit]\nAfter='+WORKER.encode()+b'\n'+api_original)
                     command('systemctl','daemon-reload')
                     unit.write_bytes(original)  # disk is reviewed; effective manager state is unsafe
                 result=command('/usr/bin/python3','-I',str(ROOT/'guard.py'),'run',sha,check=False)
-                if mode=='override':
+                if mode in ('override','override_bind'):
                     assert result.returncode and guard.quiescent(WORKER),result.stdout
-                    assert json.loads(result.stdout)['reason']=='WORKER_POLICY',result.stdout
+                    expected_reason='WORKER_POLICY' if mode=='override' else 'EXECUTION_POLICY'
+                    assert json.loads(result.stdout)['reason']==expected_reason,result.stdout
                     api_unit.write_bytes(api_original)
                     command('systemctl','daemon-reload')
                 else:
@@ -223,6 +238,9 @@ def run(args):
                 if mode in ('pass','full'):
                     assert evidence['status']=='PASS' and lock_available(),evidence
                     assert evidence['worker']['terminal']['tests']>0
+                    if mode=='full':
+                        assert evidence['worker']['terminal']['tests']==1748,evidence
+                        assert evidence['worker']['terminal']['skipped']==23,evidence
                 else:
                     assert evidence['status']=='FAIL' and not lock_available(),evidence
                     if mode=='timeout':
