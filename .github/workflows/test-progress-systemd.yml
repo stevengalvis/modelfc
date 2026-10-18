@@ -1,10 +1,13 @@
-name: Diagnostic controller systemd acceptance
+name: Production test budget systemd acceptance
 on:
   pull_request:
     paths:
       - 'ops/ci/test_progress_systemd.py'
-      - 'ops/vps/patches/deploy-main-5c1b-test-progress.patch'
-      - 'tests/fixtures/vps/deploy_main_5c1b.py.txt'
+      - 'ops/vps/patches/*.patch'
+      - 'ops/vps/deploy_main.py'
+      - 'tests/test_progress_acceptance.py'
+      - 'tests/test_test_admission.py'
+      - 'tests/fixtures/vps/deploy_main_*.py.txt'
       - 'deploy/modelfc-postmerge-tests.service'
       - '.github/workflows/test-progress-systemd.yml'
 permissions:
@@ -15,7 +18,7 @@ concurrency:
 jobs:
   acceptance:
     runs-on: ubuntu-24.04
-    timeout-minutes: 12
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:

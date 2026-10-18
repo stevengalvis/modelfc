@@ -12,10 +12,12 @@ import subprocess
 import sys
 import time
 
-BASE = '5c1bf84f138e491485838462ebac0cb107872c377b1224d9d4c5b117e27d03a5'
-CANDIDATE = '882cb40931695df85e2b0c7d72d607b5e266e2207c895a66467e080d49ee528d'
-PATCH = 'efaf214ccd6d5ee8e9576de4ba8a4f17d1884062b00addd733c4d3f6040332c3'
+BASE = '882cb40931695df85e2b0c7d72d607b5e266e2207c895a66467e080d49ee528d'
+CANDIDATE = '0de12a59129c87cd4a21b6bb1cc6a8bdd5a72f964a0a35f4f860f7679e89d23a'
+PATCH = '4e70453090f83364326f78d572ed01aa36736b83bc2e14efd6f1f99de801583b'
 UNIT = 'modelfc-postmerge-tests.service'
+API = 'modelfc-corner-api.service'
+API_PATH = Path('/etc/systemd/system') / API
 UNIT_PATH = Path('/etc/systemd/system') / UNIT
 MARKER = Path('/run/modelfc-test-progress-ci.json')
 ROOTS = [Path(p) for p in ('/opt/modelfc-deploy', '/srv/modelfc', '/var/lib/modelfc-deploy',
@@ -47,12 +49,13 @@ def cleanup():
         return
     require(not MARKER.is_symlink() and MARKER.stat().st_uid == 0)
     require(json.loads(MARKER.read_text()) == {'schema': 1})
-    subprocess.run(['systemctl', 'stop', UNIT], env=ENV, capture_output=True, timeout=45)
+    subprocess.run(['systemctl', 'stop', UNIT, API], env=ENV, capture_output=True, timeout=45)
     group = command(['systemctl', 'show', UNIT, '-p', 'ControlGroup', '--value']) if UNIT_PATH.exists() else ''
     if group:
         procs = Path('/sys/fs/cgroup') / group.lstrip('/') / 'cgroup.procs'
         require(not procs.exists() or not procs.read_text().strip(), 'CLEANUP_NOT_EMPTY')
     UNIT_PATH.unlink(missing_ok=True)
+    API_PATH.unlink(missing_ok=True)
     command(['systemctl', 'daemon-reload'])
     subprocess.run(['systemctl', 'reset-failed', UNIT], env=ENV, capture_output=True, timeout=30)
     for path in ROOTS:
@@ -69,8 +72,8 @@ def cleanup():
 
 
 def build(source, output):
-    baseline = source / 'tests/fixtures/vps/deploy_main_5c1b.py.txt'
-    patch = source / 'ops/vps/patches/deploy-main-5c1b-test-progress.patch'
+    baseline = source / 'tests/fixtures/vps/deploy_main_882c.py.txt'
+    patch = source / 'ops/vps/patches/deploy-main-882c-production-budget.patch'
     require(hashlib.sha256(baseline.read_bytes()).hexdigest() == BASE, 'BASE_HASH')
     require(hashlib.sha256(patch.read_bytes()).hexdigest() == PATCH, 'PATCH_HASH')
     target = output / 'ops/vps/deploy_main.py'
@@ -91,7 +94,7 @@ def properties():
 
 
 def prepare(source, built):
-    require(not MARKER.exists() and not UNIT_PATH.exists())
+    require(not MARKER.exists() and not UNIT_PATH.exists() and not API_PATH.exists() and not API_PATH.is_symlink())
     require(all(not p.exists() and not p.is_symlink() for p in ROOTS), 'FIXTURE_PATH_COLLISION')
     try:
         pwd.getpwnam('modelfc-deploy')
@@ -112,7 +115,7 @@ def prepare(source, built):
     # Original unit plus stronger home hiding on CI; never weaken its boundary.
     unit_path = source/'deploy/modelfc-postmerge-tests.service'
     require(hashlib.sha256(unit_path.read_bytes()).hexdigest() ==
-            'e93dbf72da38fff2c5e541b9b54871a65a358e70d53b99c139661cb5015f7c92', 'UNIT_HASH')
+            '4833e637436a6fdd7bdc1c7b895c29c602082b7d99740a65da7931728c5e97fa', 'UNIT_HASH')
     unit = unit_path.read_text()
     unit = unit.replace('[Install]', 'ProtectHome=yes\n\n[Install]')
     UNIT_PATH.write_text(unit)
@@ -121,10 +124,59 @@ def prepare(source, built):
     expected = dict(PrivateNetwork='yes',PrivateTmp='yes',ProtectSystem='strict',
                     KillMode='control-group',SendSIGKILL='yes',MemoryMax=str(2*1024**3),
                     TasksMax='64',User='modelfc-deploy',Group='modelfc-deploy',
-                    NoNewPrivileges='yes',TimeoutStartUSec='5min 30s',TimeoutStopUSec='30s')
+                    NoNewPrivileges='yes',TimeoutStartUSec='10min 30s',TimeoutStopUSec='30s')
     actual = properties()
     require(all(actual.get(k)==v for k,v in expected.items()), 'EFFECTIVE_UNIT_MISMATCH')
     return actual
+
+
+ADMISSION = r'''
+import importlib.util, json, os, subprocess, sys
+from pathlib import Path
+spec=importlib.util.spec_from_file_location('controller','/opt/modelfc-deploy/deploy_main.py')
+m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
+assert os.getuid()!=0
+mode=sys.argv[1]
+if mode in ('edge','late','future'):
+    start=int(subprocess.check_output(['/usr/bin/systemctl','show','modelfc-corner-api.service','-p','ExecMainStartTimestampMonotonic','--value']))/1_000_000
+    # Only the clock is controlled to reach the boundary without a 17-minute wait.
+    # Properties and permission checks still use the real manager and deployment UID.
+    m.time.monotonic=lambda:start+{'edge':1020,'late':1020.001,'future':-1}[mode]
+if mode in ('fresh','edge'):
+    m.test_admission_window()
+else:
+    root=Path('/var/lib/modelfc-deploy/reports/admission');root.mkdir(exist_ok=True)
+    files=[root/n for n in ('test-request.json','test-result.json','last-test-failure.json')]
+    for p in files:p.write_bytes(b'preserved evidence\n')
+    try:m.tests(root/('a'*40+'-'+'b'*12),'a'*40,request=files[0],output=files[1])
+    except m.Failure as error:assert error.code=='STATE_BOUNDARY_FAILED'
+    else:raise AssertionError('unsafe admission accepted')
+    assert all(p.read_bytes()==b'preserved evidence\n' for p in files)
+    for p in files:p.unlink()
+    root.rmdir()
+print(json.dumps(dict(mode=mode,status='PASS',uid=os.getuid())))
+'''
+
+
+def admission_cases():
+    cases=[]
+    def check(mode):
+        before=command(['systemctl','show',UNIT,'-p','InvocationID','--value'])
+        result=command(['/usr/sbin/runuser','-u','modelfc-deploy','--','/usr/bin/python3','-I','-B','-c',ADMISSION,mode])
+        require(command(['systemctl','show',UNIT,'-p','InvocationID','--value'])==before,'ADMISSION_STARTED_TESTS')
+        cases.append(json.loads(result))
+    check('missing')
+    API_PATH.write_text('[Service]\nType=simple\nExecStart=/usr/bin/sleep infinity\nRuntimeMaxSec=30min\n')
+    command(['systemctl','daemon-reload'])
+    check('inactive')
+    command(['systemctl','start',API])
+    for mode in ('fresh','edge','late','future'):check(mode)
+    API_PATH.write_text(API_PATH.read_text().replace('RuntimeMaxSec=30min','RuntimeMaxSec=29min'))
+    command(['systemctl','daemon-reload'])
+    check('wrong_limit')
+    API_PATH.write_text(API_PATH.read_text().replace('RuntimeMaxSec=29min','RuntimeMaxSec=30min'))
+    command(['systemctl','daemon-reload'])
+    return cases
 
 
 FIXTURE = r'''
@@ -148,9 +200,9 @@ class Timing(unittest.TestCase):
             if pid == 0:
                 os.setsid()
                 Path('/var/lib/modelfc-deploy/reports/descendant').write_text(str(os.getpid()))
-                time.sleep(600)
+                time.sleep(1200)
                 os._exit(0)
-            time.sleep(600)
+            time.sleep(1200)
         if MODE == 'malformed':
             os.write(fd, b'[' * 1024 + b'\n')
         if MODE == 'flood':
@@ -188,7 +240,7 @@ def run_case(mode):
     group=''
     try:
         while process.poll() is None:
-            require(time.monotonic()-started < 365, 'OUTER_DEADLINE')
+            require(time.monotonic()-started < 690, 'OUTER_DEADLINE')
             current=properties()
             group=current['ControlGroup'] or group
             time.sleep(0.25)
@@ -200,7 +252,7 @@ def run_case(mode):
         if mode=='timeout':
             require(descendant.exists(),'DESCENDANT_NOT_CREATED')
             require(not Path('/proc',descendant.read_text()).exists(),'DESCENDANT_SURVIVED')
-            require(300 <= elapsed < 330,'DEADLINE_MISMATCH')
+            require(600 <= elapsed < 630,'DEADLINE_MISMATCH')
         raw=(reports/'test-result.json').read_bytes()
         require(len(raw)<=4096 and b'SYNTHETIC_SECRET' not in raw,'REPORT_BOUNDS_OR_LEAK')
         result=json.loads(raw)
@@ -211,7 +263,7 @@ def run_case(mode):
             require(result['tests_run']==2 and 'diagnostics' not in result)
         else:
             info=result['diagnostics']; progress=info['progress']
-            require(progress['complete'] is False and progress['observed_completed']==1)
+            require(progress['complete'] is (mode=='failure') and progress['observed_completed']==(2 if mode=='failure' else 1))
             require(info['classification']==('TIMEOUT' if mode=='timeout' else 'TEST_FAILURE'))
             require(info['count_known']==(mode!='timeout'))
             require(result['tests_run']==(0 if mode=='timeout' else 2))
@@ -234,10 +286,12 @@ def main():
                 kernel=platform.release(),cases=[])
     try:
         candidate=build(args.source.resolve(),output/'build')
-        (output/'baseline.py').write_bytes((args.source/'tests/fixtures/vps/deploy_main_5c1b.py.txt').read_bytes())
-        (output/'diagnostic-only.patch').write_bytes((args.source/'ops/vps/patches/deploy-main-5c1b-test-progress.patch').read_bytes())
+        (output/'baseline.py').write_bytes((args.source/'tests/fixtures/vps/deploy_main_882c.py.txt').read_bytes())
+        (output/'production-budget.patch').write_bytes((args.source/'ops/vps/patches/deploy-main-882c-production-budget.patch').read_bytes())
         report['effective_unit']=prepare(args.source.resolve(),candidate)
-        for mode in ('normal','malformed','flood','timeout'):
+        (output/'modelfc-postmerge-tests.service').write_bytes((args.source/'deploy/modelfc-postmerge-tests.service').read_bytes())
+        report['admission']=admission_cases()
+        for mode in ('normal','failure','malformed','flood','timeout'):
             report['cases'].append(run_case(mode))
         report['status']='PASS'
     finally:

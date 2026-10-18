@@ -415,7 +415,7 @@ diagnostics: failure/error counts (null when unavailable), at most eight
 source-declared test identifiers (160 ASCII characters each), and `truncated`.
 Subtest values, traceback text, stdout and unknown identifiers are never retained.
 Stdout is discarded; stderr is drained in 4096-byte chunks into a 65536-byte tail
-while reading, under the existing 300-second deadline. `truncated` also indicates
+while reading, under the fixed 600-second deadline. `truncated` also indicates
 omitted/unrecognized identifiers. Each new test attempt removes the previous failure artifact before starting the
 service, so a missing new report cannot leave stale diagnostics presented as the
 current attempt. Always match both SHA and nonce-bearing release ID. Interrupted
@@ -435,9 +435,8 @@ host execution context is used, independent of coding-agent mount restrictions.
 The trusted test runner wraps the same unittest discovery/verbose CLI with
 startTest/stopTest observations. A separate nonblocking pipe carries bounded
 monotonic microsecond events; no new execution mode, SSH selector, service,
-identity, permission, path or validator capability is added. The 300-second
-suite deadline, 330-second service ceiling, isolation and resource limits are
-unchanged. Standard unittest outcomes and its terminal summary still determine
+identity, permission, path or validator capability is added. The production budget is now a fixed 600-second child deadline and 630-second
+service ceiling; isolation and resource limits remain unchanged. Standard unittest outcomes and its terminal summary still determine
 the gate; timing events cannot make a failing or interrupted run pass.
 
 Failure diagnostics may include `progress`: `observed_completed`, `complete`,
@@ -624,7 +623,7 @@ conservative for the 4 GB VPS. Setsid/fork descendants stay in the systemd cgrou
 
 | Service | Start budget | Stop budget | Controller start/wait budget |
 | --- | ---: | ---: | ---: |
-| Tests | 330 s | 30 s | 390 s |
+| Tests | 630 s | 30 s | 690 s |
 | Dependencies | 510 s | 30 s | 570 s |
 | Acquisition | 600 s | 30 s | 660 s |
 
@@ -827,14 +826,14 @@ patch `efaf214ccd6d5ee8e9576de4ba8a4f17d1884062b00addd733c4d3f6040332c3`,
 and result `882cb40931695df85e2b0c7d72d607b5e266e2207c895a66467e080d49ee528d`.
 It does not introduce main's additional handoff/recovery behavior.
 
-The dedicated `Diagnostic controller systemd acceptance` PR workflow uses a
+The current `Production test budget systemd acceptance` PR workflow uses a
 fresh GitHub-hosted Ubuntu 24.04 VM, the system Python (version recorded in its
 report), no production environment/secrets and read-only repository permission.
 It reconstructs the candidate, then executes only `--run-tests` with synthetic
 Git releases using the real fixed test unit. The unit's reviewed bytes are pinned;
 CI additionally hides home directories. Fixture path/account collisions, absent
 systemd/cgroup-v2 or mismatched effective limits fail closed. Normal completion,
-malformed/flooded progress, the real 300-second child deadline within 330 seconds,
+malformed/flooded progress, the real 600-second child deadline within 630 seconds,
 and a setsid descendant holding inherited pipes are checked. Results are consumed
 only after the cgroup is empty. All fixed fixture units/files/accounts are removed
 in finalization and an always-run cleanup step. No installed VPS service is used.
@@ -847,4 +846,52 @@ acceptance, outer controller deployment coordination, live API behavior or an
 actual production test timing. Those controller paths remain source/mock-tested.
 Review the recorded Python/systemd/runtime information against the operator's
 actual host. This workflow does not install on the VPS, preserve its failure
-record, authorize a retry, merge, or change its permissions or deadlines.
+record, authorize a retry, merge, or change installed permissions or deadlines.
+
+### Reviewed production test budget (not installed by merging)
+
+The completed PR180 diagnostic measured 355.202791 seconds for candidate
+`471e4a36df2b47ba925e663252decff035d511af` (1748 tests, 23 skips, zero failure
+categories). That diagnostic is not production acceptance. This proposal changes
+only the production test budget: child600s, service630s, controller wait690s,
+progress ceiling630000000 microseconds. Stop30s, controller stop60s, fail-closed
+cgroup cleanup, 2-GiB/64-task limits and all access/isolation controls remain fixed.
+Dependency/acquisition/pip/validator deadlines and the 75-minute CI deployment
+job are unchanged. No arbitrary timeout argument or environment override exists.
+
+`ops/vps/patches/deploy-main-882c-production-budget.patch` applies only to the
+retained installed882cb controller fixture. Its exact base, patch and candidate
+hashes are enforced by the existing acceptance builder; the old diagnostic patch
+is preserved. The compatibility candidate excludes main's latest-main rechecks,
+API handoff/adoption/recovery and new helper dependencies. Never install the
+whole main controller as a shortcut. The artifact includes the exact unit too.
+
+Immediately before test request/report/failure deletion, the outer controller
+reads actual `modelfc-corner-api.service` properties as `modelfc-deploy`. Exact
+loaded/active identity, positive PID/start timestamp, valid invocation ID and
+effective RuntimeMaxSec=30min are required. Monotonic time sampled after the
+bounded15-second query must leave at least780 seconds before scheduled rotation.
+Missing, unavailable, malformed, future or insufficient values reject with
+STATE_BOUNDARY_FAILED before any test-stage writes or service launch. No restart,
+waiting for a new window, retry, alias, credential or privilege change is made.
+Earlier dependency/acquisition work is not included in this stage-specific window.
+This reduces scheduled-rotation risk; it cannot prevent manual restarts or crashes
+and is not an API-adoption proof. Existing deployment cleanup still applies.
+
+Acceptance checks actual systemd reads as the deployment UID, missing/inactive
+API and wrong limit, and exact780-second/insufficient/future boundaries (only
+the clock is advanced in the disposable boundary fixtures). Rejection preserves
+evidence and the test-unit invocation ID. Real normal/failure/malformed/flood
+and600-second timeout runs preserve report bounds and descendant cleanup.
+
+Operator installation requires separate approval of pinned controller+unit bytes,
+fresh baseline/idle checks, evidence backups, original lock exclusion, protected
+atomic replacements and daemon-reload/effective-property verification. A partial
+pair must never execute: restore both verified old files on verification failure
+while retaining exclusion, then verify restoration before releasing it. Merging
+does not install the trusted controller and can trigger deployment. Coordinate
+installation first, then separately approve merge and one ordinary exact-main
+deployment. Verify actual production test result, cleanup, promotion and
+process-bound API adoption; diagnostic success cannot substitute for those.
+PR179 remains a separate reviewed fixture optimization. No further diagnostic
+run, deployment, API restart or host operation is authorized by this draft.

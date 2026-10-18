@@ -183,7 +183,7 @@ def deployment_account_groups():
 # Includes stop escalation and time for systemctl to report completed cgroup cleanup.
 STOP_SECONDS = 30
 SERVICE_OVERHEAD = 30
-START_SECONDS = {SERVICE: 330, DEPENDENCY_SERVICE: 510, ACQUISITION_SERVICE: 600}
+START_SECONDS = {SERVICE: 630, DEPENDENCY_SERVICE: 510, ACQUISITION_SERVICE: 600}
 
 
 def service_kind(unit):
@@ -198,7 +198,7 @@ def service_kind(unit):
 
 
 def lifecycle_valid(fields, seconds):
-    expected = {330: "5min 30s", 510: "8min 30s", 600: "10min"}[seconds]
+    expected = {630: "10min 30s", 510: "8min 30s", 600: "10min"}[seconds]
     return (fields.get("TimeoutStartUSec") == expected
             and fields.get("TimeoutStopUSec") == "30s"
             and fields.get("SendSIGKILL") == "yes"
@@ -483,7 +483,7 @@ def boundary(*, root=ROOT, releases=RELEASES, control=CONTROL, state=STATE,
     hidden = fields.get("InaccessiblePaths", "").split()
     if (not service_environment_valid(fields, bytecode=True)
             or fields.get("StandardInput") != "null"
-            or not lifecycle_valid(fields, 330)
+            or not lifecycle_valid(fields, 630)
             or fields.get("PrivateNetwork") != "yes"
             or fields.get("PrivateTmp") != "yes"
             or fields.get("NoNewPrivileges") != "yes"
@@ -1122,10 +1122,35 @@ def read_test_report(path):
     return json.loads(contents)
 
 
+def test_admission_window():
+    """Read-only, fresh API rotation admission immediately before test staging."""
+    unit = "modelfc-corner-api.service"
+    keys = ("Id", "LoadState", "ActiveState", "MainPID", "InvocationID",
+            "ExecMainStartTimestampMonotonic", "RuntimeMaxUSec")
+    try:
+        fields = unique_properties(line.split("=", 1) for line in command([
+            "/usr/bin/systemctl", "show", unit, "--all",
+            *[item for key in keys for item in ("-p", key)]], timeout=15).splitlines())
+        now = time.monotonic()
+        if (set(fields) != set(keys) or fields["Id"] != unit
+                or fields["LoadState"] != "loaded" or fields["ActiveState"] != "active"
+                or not fields["MainPID"].isdigit() or int(fields["MainPID"]) < 1
+                or re.fullmatch("[0-9a-f]{32}", fields["InvocationID"]) is None
+                or fields["RuntimeMaxUSec"] != "30min"
+                or not fields["ExecMainStartTimestampMonotonic"].isdigit()):
+            raise ValueError
+        started = int(fields["ExecMainStartTimestampMonotonic"]) / 1_000_000
+        if started <= 0 or not 0 <= now - started <= 1020:
+            raise ValueError
+    except (Failure, ValueError, KeyError, TypeError, OverflowError):
+        raise Failure("STATE_BOUNDARY_FAILED") from None
+
+
 def tests(release, sha, *, request=REQUEST, output=TEST_OUTPUT, service=SERVICE):
     release_id = release.name
     if RELEASE_ID.fullmatch(release_id) is None or release_id[:40] != sha:
         raise Failure("STATE_BOUNDARY_FAILED")
+    test_admission_window()
     request.unlink(missing_ok=True)
     output.unlink(missing_ok=True)
     # A prior attempt must never masquerade as evidence for this attempt.
@@ -1453,7 +1478,7 @@ class TestProgress:
                     raise ValueError
                 seq, kind, name, stamp = json.loads(raw)
                 if (type(seq) is not int or seq != self.sequence + 1 or seq > 20000
-                        or type(stamp) is not int or not self.last_us <= stamp <= 330_000_000
+                        or type(stamp) is not int or not self.last_us <= stamp <= 630_000_000
                         or not isinstance(name, str) or kind not in ("start", "finish", "end")):
                     raise ValueError
                 if kind == "end":
@@ -1502,10 +1527,10 @@ def valid_progress(value, allowed):
     return (number(value["observed_completed"], 10000)
             and type(value["complete"]) is bool
             and (value["last_test_id"] is None or name(value["last_test_id"]))
-            and number(value["last_progress_us"], 330_000_000)
+            and number(value["last_progress_us"], 630_000_000)
             and isinstance(value["slowest"], list) and len(value["slowest"]) <= 8
             and all(isinstance(item, list) and len(item) == 2 and name(item[0])
-                    and number(item[1], 330_000_000) for item in value["slowest"]))
+                    and number(item[1], 630_000_000) for item in value["slowest"]))
 
 
 class TestCaptureFailure(Exception):
@@ -1517,7 +1542,7 @@ class TestCaptureFailure(Exception):
         super().__init__(classification)
 
 
-def capture_test_process(args, *, cwd, env, timeout=300, progress=None):
+def capture_test_process(args, *, cwd, env, timeout=600, progress=None):
     """Discard stdout; drain stderr with a fixed tail and an overall deadline."""
     read_fd = write_fd = None
     try:
@@ -1688,7 +1713,7 @@ def run_tests():
         try:
             code, captured, truncated = capture_test_process([str(release / ".venv/bin/python"), "-B", "-m", "unittest",
                                   "discover", "-v", "-s", "tests"], cwd=release, env=env,
-                                      timeout=300, progress=progress)
+                                      timeout=600, progress=progress)
         except TestCaptureFailure as error:
             code, captured, truncated = None, error.captured, error.truncated
             classification = error.classification

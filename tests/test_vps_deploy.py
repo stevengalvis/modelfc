@@ -624,7 +624,7 @@ class FreshReleaseTest(unittest.TestCase):
                 tests_status="FAIL", tests_run=1, state_boundary_enforced=True, diagnostics=diagnostics)))
         def runner(release, sha):
             return self.real_tests(release, sha, request=request, output=output)
-        with patch.object(deploy, "tests", side_effect=runner), patch.object(deploy, "run_service", side_effect=report):
+        with patch.object(deploy, "test_admission_window"), patch.object(deploy, "tests", side_effect=runner), patch.object(deploy, "run_service", side_effect=report):
             result = self.run_deploy(self.b)
         self.assertEqual((result["status"], result["reason"], result["promotion_status"]),
                          ("FAIL", "TESTS_FAILED", "NOT_ATTEMPTED"))
@@ -988,6 +988,8 @@ class FreshReleaseTest(unittest.TestCase):
 
 class IsolatedBoundaryTest(unittest.TestCase):
     def setUp(self):
+        admission = patch.object(deploy, "test_admission_window")
+        admission.start(); self.addCleanup(admission.stop)
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
@@ -1659,7 +1661,7 @@ class IsolatedBoundaryTest(unittest.TestCase):
     def test_effective_service_properties_enforced(self):
         properties = ("Environment=PYTHONDONTWRITEBYTECODE=1\nEnvironmentFiles=\nPassEnvironment=\n"
                       "UnsetEnvironment=ODDSPAPI_API_KEY GITHUB_TOKEN SSH_AUTH_SOCK LD_PRELOAD LD_LIBRARY_PATH LD_AUDIT PYTHONPATH PYTHONHOME\n"
-                      "TimeoutStartUSec=5min 30s\nTimeoutStopUSec=30s\nSendSIGKILL=yes\n"
+                      "TimeoutStartUSec=10min 30s\nTimeoutStopUSec=30s\nSendSIGKILL=yes\n"
                       "PrivateNetwork=yes\nPrivateTmp=yes\nNoNewPrivileges=yes\nKillMode=control-group\nInaccessiblePaths=/var/lib/modelfc /root/modelfc-state "
                       "/root/dev/modelfc /etc/modelfc-validator\nProtectSystem=strict\n"
                       f"ReadOnlyPaths={self.releases} {self.control}\nReadWritePaths="
@@ -1857,7 +1859,7 @@ class IsolatedBoundaryTest(unittest.TestCase):
                          ("Environment=PYTHONDONTWRITEBYTECODE=1\n", ""),
                          ("EnvironmentFiles=\n", ""),
                          ("PassEnvironment=\n", ""),
-                         ("TimeoutStartUSec=5min 30s", "TimeoutStartUSec=infinity"),
+                         ("TimeoutStartUSec=10min 30s", "TimeoutStartUSec=infinity"),
                          ("SendSIGKILL=yes", "SendSIGKILL=no"),
                          ("MemoryMax=2147483648", "MemoryMax=4294967296"),
                          ("MemoryMax=2147483648\n", ""),
@@ -2067,6 +2069,8 @@ class IsolatedBoundaryTest(unittest.TestCase):
 
 class TestFailureDiagnosticsTest(unittest.TestCase):
     def setUp(self):
+        admission = patch.object(deploy, "test_admission_window")
+        admission.start(); self.addCleanup(admission.stop)
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
@@ -2277,7 +2281,7 @@ class TestFailureDiagnosticsTest(unittest.TestCase):
         self.request.write_text(json.dumps(dict(release_id=self.release.name, sha=self.sha,
                                                controller_netns=[4, 2])))
         def capture(*args, **kwargs):
-            self.assertEqual(kwargs["timeout"], 300)
+            self.assertEqual(kwargs["timeout"], 600)
             name = self.names[0]
             for event in ([1, "start", name, 0], [2, "finish", name, 5], [3, "start", name, 6]):
                 kwargs["progress"].feed((json.dumps(event) + "\n").encode())
@@ -2503,7 +2507,7 @@ class ServiceLifecycleTest(unittest.TestCase):
         self.addCleanup(stub.stop)
 
     def test_normal_completion_and_complete_wait_budgets(self):
-        for unit, wait in ((deploy.SERVICE, 390),
+        for unit, wait in ((deploy.SERVICE, 690),
                            (deploy.DEPENDENCY_SERVICE.format(self.ident), 570),
                            (deploy.ACQUISITION_SERVICE.format(self.ident), 660)):
             with self.subTest(unit=unit), patch.object(deploy, "service_inactive", return_value=True), patch.object(
@@ -2531,10 +2535,10 @@ class ServiceLifecycleTest(unittest.TestCase):
     def test_real_command_timeout_translation_still_stops_unit(self):
         completed = subprocess.CompletedProcess([], 0, stdout=b"")
         with patch.object(deploy, "service_inactive", side_effect=[True, False, True, True]), patch.object(
-                deploy.subprocess, "run", side_effect=[subprocess.TimeoutExpired("systemctl", 390), completed]) as run:
+                deploy.subprocess, "run", side_effect=[subprocess.TimeoutExpired("systemctl", 690), completed]) as run:
             with self.assertRaisesRegex(deploy.Failure, "INTERNAL_ERROR"):
                 deploy.run_service(deploy.SERVICE)
-        self.assertEqual(run.call_args_list[0].kwargs["timeout"], 390)
+        self.assertEqual(run.call_args_list[0].kwargs["timeout"], 690)
         self.assertEqual(run.call_args_list[1].args[0],
                          ["sudo", "-n", "/usr/bin/systemctl", "stop", deploy.SERVICE])
         self.assertEqual(run.call_args_list[1].kwargs["timeout"], 60)
@@ -2584,7 +2588,7 @@ class ServiceLifecycleTest(unittest.TestCase):
         self.assertTrue(self.marker.exists())
 
     def test_reviewed_units_bound_complete_termination(self):
-        for name, start in (("modelfc-postmerge-tests.service", 330),
+        for name, start in (("modelfc-postmerge-tests.service", 630),
                             ("modelfc-postmerge-dependencies@.service", 510),
                             ("modelfc-postmerge-acquisition@.service", 600)):
             text = (SOURCE.parents[2] / "deploy" / name).read_text()
@@ -2684,7 +2688,7 @@ class AcquisitionResourceTest(unittest.TestCase):
 
 # Verbatim property output retained from the real Ubuntu/systemd 255 VPS.
 # Empty struct arrays are absent; credential struct arrays are unprintable.
-SYSTEMD255_TEST_PROPERTIES = """TimeoutStartUSec=5min 30s
+SYSTEMD255_TEST_PROPERTIES = """TimeoutStartUSec=10min 30s
 TimeoutStopUSec=30s
 ExecStart={ path=/usr/bin/python3 ; argv[]=/usr/bin/python3 -I /opt/modelfc-deploy/deploy_main.py --run-tests ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }
 ExecStartEx={ path=/usr/bin/python3 ; argv[]=/usr/bin/python3 -I /opt/modelfc-deploy/deploy_main.py --run-tests ; flags= ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }
@@ -3092,7 +3096,7 @@ class TestTimingProgress(unittest.TestCase):
     def test_invalid_dropped_truncated_and_flooded_events_are_incomplete(self):
         bad = [b"secret\n", b"x" * 1025, b"[]\n", b'{}\n',
                self.event(4, "start", 3), self.event(True, "start", 3),
-               self.event(3, "start", -1), self.event(3, "start", 330000001),
+               self.event(3, "start", -1), self.event(3, "start", 630000001),
                self.event(3, "start", 3, "secret"), self.event(3, "finish", 3),
                self.event(3, "unknown", 3), self.event(3, "start", 0),
                b"x" * (4 * 1024 * 1024 + 1)]
@@ -3190,7 +3194,7 @@ class TestTimingProgress(unittest.TestCase):
         info = dict(failures=999999, errors=999999, test_ids=names, truncated=True,
                     classification="CAPTURE_ERROR", count_known=False, last_test_id=names[0],
                     progress=dict(observed_completed=10000, complete=False, last_test_id=names[0],
-                                  last_progress_us=330000000, slowest=[[n,330000000] for n in names]))
+                                  last_progress_us=630000000, slowest=[[n,630000000] for n in names]))
         report = dict(sha="a"*40, release_id="a"*40+"-"+"b"*12,
                       tests_status="FAIL", tests_run=0, state_boundary_enforced=True, diagnostics=info)
         self.assertTrue(deploy.valid_test_diagnostics(info, set(names)))
