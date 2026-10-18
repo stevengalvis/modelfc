@@ -40,7 +40,7 @@
 +        fields = unique_properties(line.split("=", 1) for line in command([
 +            "/usr/bin/systemctl", "show", unit, "--all",
 +            *[item for key in keys for item in ("-p", key)]], timeout=15).splitlines())
-+        now = time.monotonic()
++        now = time.monotonic_ns()
 +        if (set(fields) != set(keys) or fields["Id"] != unit
 +                or fields["LoadState"] != "loaded" or fields["ActiveState"] != "active"
 +                or not fields["MainPID"].isdigit() or int(fields["MainPID"]) < 1
@@ -48,8 +48,8 @@
 +                or fields["RuntimeMaxUSec"] != "30min"
 +                or not fields["ExecMainStartTimestampMonotonic"].isdigit()):
 +            raise ValueError
-+        started = int(fields["ExecMainStartTimestampMonotonic"]) / 1_000_000
-+        if started <= 0 or not 0 <= now - started <= 1020:
++        started = int(fields["ExecMainStartTimestampMonotonic"]) * 1000
++        if started <= 0 or not 0 <= now - started <= 1_020_000_000_000:
 +            raise ValueError
 +    except (Failure, ValueError, KeyError, TypeError, OverflowError):
 +        raise Failure("STATE_BOUNDARY_FAILED") from None

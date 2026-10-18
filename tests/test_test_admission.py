@@ -1,5 +1,6 @@
 """Offline admission boundary checks; real deployment-UID reads also run in CI."""
 import importlib.util
+import math
 from pathlib import Path
 import tempfile
 import unittest
@@ -18,7 +19,7 @@ class AdmissionTests(unittest.TestCase):
 
     def check(self, fields, now, accepted):
         raw='\n'.join(k+'='+v for k,v in fields.items())
-        with patch.object(controller,'command',return_value=raw) as command, patch.object(controller.time,'monotonic',return_value=now):
+        with patch.object(controller,'command',return_value=raw) as command, patch.object(controller.time,'monotonic_ns',return_value=int(now*1_000_000_000) if math.isfinite(now) else now):
             if accepted: controller.test_admission_window()
             else:
                 with self.assertRaisesRegex(controller.Failure,'STATE_BOUNDARY_FAILED'):
@@ -29,6 +30,10 @@ class AdmissionTests(unittest.TestCase):
     def test_exact_boundary_and_invalid_clock(self):
         for now,accepted in ((100,True),(1119.999,True),(1120,True),(1120.000001,False),(99,False),(float('nan'),False),(float('inf'),False)):
             with self.subTest(now=now): self.check(self.fields(),now,accepted)
+
+    def test_fractional_start_exact_boundary_does_not_round_outside_window(self):
+        fields={**self.fields(),"ExecMainStartTimestampMonotonic":"100000003"}
+        self.check(fields,1120.000003,True)
 
     def test_unknown_inactive_or_malformed_properties_reject(self):
         for key,value in (('Id','modelfc-api.service'),('LoadState','not-found'),('ActiveState','inactive'),

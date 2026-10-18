@@ -13,8 +13,8 @@ import sys
 import time
 
 BASE = '882cb40931695df85e2b0c7d72d607b5e266e2207c895a66467e080d49ee528d'
-CANDIDATE = '0de12a59129c87cd4a21b6bb1cc6a8bdd5a72f964a0a35f4f860f7679e89d23a'
-PATCH = '4e70453090f83364326f78d572ed01aa36736b83bc2e14efd6f1f99de801583b'
+CANDIDATE = '08f7b8df9f7807249a2057fc72e64ae0326bce85e9ee633c386d7f1bae37f785'
+PATCH = '28b83d2955b563ae12ecd56cf28c7a40b78c9c3ab8a07690c28a414d7edfe209'
 UNIT = 'modelfc-postmerge-tests.service'
 API = 'modelfc-corner-api.service'
 API_PATH = Path('/etc/systemd/system') / API
@@ -138,10 +138,10 @@ m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
 assert os.getuid()!=0
 mode=sys.argv[1]
 if mode in ('edge','late','future'):
-    start=int(subprocess.check_output(['/usr/bin/systemctl','show','modelfc-corner-api.service','-p','ExecMainStartTimestampMonotonic','--value']))/1_000_000
+    start=int(subprocess.check_output(['/usr/bin/systemctl','show','modelfc-corner-api.service','-p','ExecMainStartTimestampMonotonic','--value']))*1000
     # Only the clock is controlled to reach the boundary without a 17-minute wait.
     # Properties and permission checks still use the real manager and deployment UID.
-    m.time.monotonic=lambda:start+{'edge':1020,'late':1020.001,'future':-1}[mode]
+    m.time.monotonic_ns=lambda:start+{'edge':1_020_000_000_000,'late':1_020_000_000_001,'future':-1}[mode]
 if mode in ('fresh','edge'):
     m.test_admission_window()
 else:
