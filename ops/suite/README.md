@@ -6,6 +6,18 @@ release: no deployment function is imported or invoked, and candidate code runs
 only in the separate DynamicUser worker. Existing controller, units, release tree,
 transaction markers and failure evidence are not modified.
 
+API snapshots attest the existing `modelfc-corner-api.service`, as documented in
+[`API_INGRESS.md`](../vps/API_INGRESS.md) and defined in
+[`deploy/modelfc-corner-api.service`](../../deploy/modelfc-corner-api.service).
+`modelfc-api` is its Unix account, not the unit name. The guard requires that
+exact loaded, active unit and compares its PID, invocation, monotonic start time,
+`/srv/modelfc/current` pointer and process cwd before/after the suite. No alias or
+API restart is needed or authorized. The unit's existing 30-minute runtime limit
+can cause a natural restart: record a fresh stable identity at approved preflight;
+do not pin a historical PID. A change during the suite fails the identity check.
+This snapshot detects changes; it does not replace operator verification of the
+healthy release's provenance or authorize deploying main's controller behavior.
+
 A trusted root guard acquires the **existing inode** of `deploy.lock` read-only and
 stores a duplicate with PID1. The candidate receives neither the descriptor nor
 notification access. A notify barrier plus `NFileDescriptorStore=1` must precede

@@ -78,6 +78,28 @@ class CaptureTests(unittest.TestCase):
 
 
 class AdmissionTests(unittest.TestCase):
+    def test_api_identity_binds_actual_unit_and_process_snapshot(self):
+        props=dict(Id='modelfc-corner-api.service',LoadState='loaded',ActiveState='active',
+                   MainPID='123',InvocationID='a'*32,ExecMainStartTimestampMonotonic='456')
+        with patch.object(guard,'properties',return_value=props.copy()) as query, \
+             patch.object(guard.os,'readlink',side_effect=['/srv/modelfc/releases/release','/srv/modelfc/releases/release']) as readlink:
+            identity=guard.api_identity()
+        query.assert_called_once_with('modelfc-corner-api.service','Id','LoadState','ActiveState',
+                                      'MainPID','InvocationID','ExecMainStartTimestampMonotonic')
+        self.assertEqual(identity,{**props,'selected':'/srv/modelfc/releases/release','process_cwd':'/srv/modelfc/releases/release'})
+        self.assertEqual([call.args[0] for call in readlink.call_args_list],['/srv/modelfc/current','/proc/123/cwd'])
+
+    def test_missing_wrong_or_inactive_api_rejected_before_proc_reads(self):
+        props=dict(Id='modelfc-corner-api.service',LoadState='loaded',ActiveState='active',
+                   MainPID='123',InvocationID='a'*32,ExecMainStartTimestampMonotonic='456')
+        for changed in (dict(LoadState='not-found',MainPID='0',InvocationID=''),
+                        dict(Id='modelfc-api.service'),dict(ActiveState='inactive'),
+                        dict(MainPID='0'),dict(InvocationID='')):
+            with self.subTest(changed=changed),patch.object(guard,'properties',return_value={**props,**changed}), \
+                 patch.object(guard.os,'readlink') as readlink:
+                with self.assertRaisesRegex(guard.Rejected,'API_NOT_RUNNING'): guard.api_identity()
+                readlink.assert_not_called()
+
     def test_typed_queued_job_blocks_even_when_text_job_is_empty(self):
         props=dict(ActiveState='inactive',MainPID='0',ControlPID='0',ControlGroup='',Job='')
         with patch.object(guard,'properties',return_value=props),patch.object(guard,'command',return_value=json.dumps({'type':'(uo)','data':[3,'/job/3']})):

@@ -18,6 +18,8 @@ ROOT=Path('/usr/lib/modelfc-suite')
 STATE=Path('/var/lib/modelfc-suite')
 CONTROL=Path('/var/lib/modelfc-deploy')
 GUARD='modelfc-suite-guard.service'; WORKER='modelfc-suite-worker.service'
+API='modelfc-corner-api.service'
+WRONG_API='modelfc-api.service'
 UNITS=Path('/etc/systemd/system')
 CLAIM=Path('/run/modelfc-suite-ci-claim')
 ENV={'PATH':'/usr/sbin:/usr/bin:/sbin:/bin','LANG':'C','HOME':'/root'}
@@ -54,12 +56,12 @@ def lock_available():
 def cleanup():
     if not CLAIM.is_file(): return
     if CLAIM.read_text()!='isolated-suite-ci-v1\n': raise AssertionError('claim mismatch')
-    command('systemctl','stop',GUARD,WORKER,'modelfc-api.service','modelfc-postmerge-tests.service',check=False)
+    command('systemctl','stop',GUARD,WORKER,API,WRONG_API,'modelfc-postmerge-tests.service',check=False)
     command('systemctl','clean','--what=fdstore',GUARD,check=False)
-    for unit in (GUARD,WORKER,'modelfc-api.service','modelfc-postmerge-tests.service'):
+    for unit in (GUARD,WORKER,API,WRONG_API,'modelfc-postmerge-tests.service'):
         (UNITS/unit).unlink(missing_ok=True)
     command('systemctl','daemon-reload')
-    command('systemctl','reset-failed',GUARD,WORKER,'modelfc-api.service','modelfc-postmerge-tests.service',check=False)
+    command('systemctl','reset-failed',GUARD,WORKER,API,WRONG_API,'modelfc-postmerge-tests.service',check=False)
     for path in (ROOT,STATE,CONTROL,Path('/srv/modelfc'),Path('/var/lib/modelfc'),Path('/etc/modelfc-validator'),Path('/etc/modelfc')):
         if path.exists(): shutil.rmtree(path)
     command('userdel','modelfc-deploy',check=False)
@@ -70,7 +72,7 @@ def prepare_host():
     if os.geteuid()!=0 or os.environ.get('GITHUB_ACTIONS')!='true': raise AssertionError('disposable GitHub VM only')
     if command('systemctl','--version').stdout.split()[1]!='255': raise AssertionError('requires actual systemd 255')
     paths=[ROOT,STATE,CONTROL,Path('/srv/modelfc'),Path('/var/lib/modelfc'),Path('/etc/modelfc-validator'),Path('/etc/modelfc'),CLAIM]
-    paths += [UNITS/u for u in (GUARD,WORKER,'modelfc-api.service')]
+    paths += [UNITS/u for u in (GUARD,WORKER,API,WRONG_API,'modelfc-postmerge-tests.service')]
     if any(p.exists() or p.is_symlink() for p in paths): raise AssertionError('preexisting fixture paths')
     try: pwd.getpwnam('modelfc-deploy')
     except KeyError: pass
@@ -90,9 +92,6 @@ def prepare_host():
     release=Path('/srv/modelfc/releases')/('d'*40+'-fixture')
     release.mkdir(parents=True)
     Path('/srv/modelfc/current').symlink_to(release)
-    (UNITS/'modelfc-api.service').write_text('[Service]\nType=simple\nExecStart=/usr/bin/sleep infinity\nWorkingDirectory=/srv/modelfc/current\n')
-    command('systemctl','daemon-reload')
-    command('systemctl','start','modelfc-api.service')
 
 
 def case_source(directory,mode,source,port):
@@ -146,7 +145,27 @@ def run(args):
     results=[]
     prepare_host()
     before=(CONTROL/'last-test-failure.json').read_bytes()
+    # Exercise real manager/proc identity before creating the correctly named fixture.
+    api_unit='[Service]\nType=simple\nExecStart=/usr/bin/sleep infinity\nWorkingDirectory=/srv/modelfc/current\n'
+    api_attestation={}
+    for case in ('missing', 'wrong_name'):
+        if case=='wrong_name':
+            (UNITS/WRONG_API).write_text(api_unit)
+            command('systemctl','daemon-reload');command('systemctl','start',WRONG_API)
+            assert active(WRONG_API)=='active'
+        try: guard.api_identity()
+        except guard.Rejected as error: assert str(error)=='API_NOT_RUNNING'
+        else: raise AssertionError('missing actual API unit accepted')
+        api_attestation[case]='REJECTED'
+    command('systemctl','stop',WRONG_API);(UNITS/WRONG_API).unlink()
+    (UNITS/API).write_text(api_unit)
+    command('systemctl','daemon-reload');command('systemctl','start',API)
     identity=guard.api_identity()
+    assert identity['Id']==API and identity['LoadState']=='loaded' and identity['ActiveState']=='active'
+    assert identity['MainPID']==command('systemctl','show',API,'-p','MainPID','--value').stdout.strip()
+    assert identity['selected']==identity['process_cwd']==str(Path('/srv/modelfc/current').resolve())
+    api_attestation['actual_identity']=identity
+    print(json.dumps(dict(api_attestation=api_attestation)),flush=True)
     with socket.socket() as listener, tempfile.TemporaryDirectory() as temporary:
         listener.bind(('127.0.0.1',0));listener.listen()
         port=listener.getsockname()[1]
@@ -186,7 +205,7 @@ def run(args):
                     unit=UNITS/WORKER;original=unit.read_bytes()
                     altered=original.replace(b'PrivateNetwork=yes',b'PrivateNetwork=no') if mode=='override' else original+b'BindReadOnlyPaths=/run:/run:norbind\n'
                     unit.write_bytes(altered)
-                    api_unit=UNITS/'modelfc-api.service';api_original=api_unit.read_bytes()
+                    api_unit=UNITS/API;api_original=api_unit.read_bytes()
                     api_unit.write_bytes(b'[Unit]\nAfter='+WORKER.encode()+b'\n'+api_original)
                     command('systemctl','daemon-reload')
                     unit.write_bytes(original)  # disk is reviewed; effective manager state is unsafe
@@ -262,7 +281,7 @@ def run(args):
             Path(args.output).write_text(json.dumps(dict(status='IN_PROGRESS',cases=results))+'\n')
             print(json.dumps(dict(case=mode,status='PASS',elapsed_seconds=results[-1]['elapsed_seconds'],
                                   terminal=reports[-1]['worker']['terminal'] if mode=='full' else None)),flush=True)
-    return dict(status='PASS',cases=results,candidate=args.candidate,source_sha=args.source_sha)
+    return dict(status='PASS',cases=results,candidate=args.candidate,source_sha=args.source_sha,api_attestation=api_attestation)
 
 
 if __name__=='__main__':

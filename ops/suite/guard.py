@@ -20,6 +20,7 @@ STATE = Path('/var/lib/modelfc-suite')
 DEPLOY_LOCK = Path('/var/lib/modelfc-deploy/deploy.lock')
 GUARD = 'modelfc-suite-guard.service'
 WORKER = 'modelfc-suite-worker.service'
+API = 'modelfc-corner-api.service'
 ENV = dict(PATH='/usr/sbin:/usr/bin:/sbin:/bin', LANG='C', HOME='/nonexistent')
 
 
@@ -205,8 +206,10 @@ def verify_bundle():
 
 
 def api_identity():
-    value = properties('modelfc-api.service', 'MainPID', 'InvocationID', 'ExecMainStartTimestampMonotonic')
-    if not value['MainPID'].isdigit() or int(value['MainPID']) < 1 or not value['InvocationID']:
+    value = properties(API, 'Id', 'LoadState', 'ActiveState', 'MainPID', 'InvocationID',
+                       'ExecMainStartTimestampMonotonic')
+    if (value['Id'] != API or value['LoadState'] != 'loaded' or value['ActiveState'] != 'active'
+            or not value['MainPID'].isdigit() or int(value['MainPID']) < 1 or not value['InvocationID']):
         raise Rejected('API_NOT_RUNNING')
     value['selected'] = os.readlink('/srv/modelfc/current')
     value['process_cwd'] = os.readlink('/proc/' + value['MainPID'] + '/cwd')
