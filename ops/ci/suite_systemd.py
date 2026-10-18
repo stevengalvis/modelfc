@@ -172,11 +172,15 @@ def run(args):
                 if mode=='override':
                     unit=UNITS/WORKER;original=unit.read_bytes()
                     unit.write_bytes(original.replace(b'PrivateNetwork=yes',b'PrivateNetwork=no'))
+                    api_unit=UNITS/'modelfc-api.service';api_original=api_unit.read_bytes()
+                    api_unit.write_bytes(b'[Unit]\nAfter='+WORKER.encode()+b'\n'+api_original)
                     command('systemctl','daemon-reload')
                     unit.write_bytes(original)  # disk is reviewed; effective manager state is unsafe
                 result=command('/usr/bin/python3','-I',str(ROOT/'guard.py'),'run',sha,check=False)
                 if mode=='override':
-                    assert result.returncode and guard.quiescent(WORKER)
+                    assert result.returncode and guard.quiescent(WORKER),result.stdout
+                    assert json.loads(result.stdout)['reason']=='WORKER_POLICY',result.stdout
+                    api_unit.write_bytes(api_original)
                     command('systemctl','daemon-reload')
                 else:
                     evidence=json.loads(next((STATE/'results').glob('*.json')).read_text())
@@ -233,7 +237,10 @@ def run(args):
             assert (CONTROL/'last-test-failure.json').read_bytes()==before
             assert guard.api_identity()==identity
             reports=[json.loads(p.read_text()) for p in sorted((STATE/'results').glob('*.json'))]
-            results.append(dict(case=mode,status='PASS',elapsed_seconds=round(time.monotonic()-started,3),reports=reports))
+            results.append(dict(case=mode,status='PASS',elapsed_seconds=round(time.monotonic()-started,3),reports=reports,
+                                worker_quiescent=guard.quiescent(WORKER),deployment_lock_available=lock_available(),
+                                api_unchanged=guard.api_identity()==identity,
+                                worker_lifecycle=guard.properties(WORKER,'InvocationID','Result','ExecMainCode','ExecMainStatus')))
             Path(args.output).write_text(json.dumps(dict(status='IN_PROGRESS',cases=results))+'\n')
             print(json.dumps(dict(case=mode,status='PASS',elapsed_seconds=results[-1]['elapsed_seconds'],
                                   terminal=reports[-1]['worker']['terminal'] if mode=='full' else None)),flush=True)
