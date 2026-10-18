@@ -7,6 +7,7 @@ on:
       - 'ops/vps/deploy_main.py'
       - 'tests/test_progress_acceptance.py'
       - 'tests/test_test_admission.py'
+      - 'tests/test_vps_runtime_boundaries.py'
       - 'tests/fixtures/vps/deploy_main_*.py.txt'
       - 'deploy/modelfc-postmerge-tests.service'
       - '.github/workflows/test-progress-systemd.yml'
