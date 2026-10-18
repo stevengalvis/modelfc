@@ -1,0 +1,63 @@
+name: Isolated suite runner acceptance
+on:
+  pull_request:
+    paths:
+      - 'ops/suite/**'
+      - 'ops/ci/suite_systemd.py'
+      - 'tests/test_suite_worker.py'
+      - '.github/workflows/suite-systemd.yml'
+permissions:
+  contents: read
+concurrency:
+  group: suite-runner-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+jobs:
+  acceptance:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      CANDIDATE_SHA: 471e4a36df2b47ba925e663252decff035d511af
+      SOURCE_SHA: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          ref: 471e4a36df2b47ba925e663252decff035d511af
+          path: candidate-input
+          persist-credentials: false
+      - name: Prepare reviewed locked runtime without privileges
+        run: |
+          /usr/bin/python3 -m venv --copies "$RUNNER_TEMP/suite-runtime"
+          "$RUNNER_TEMP/suite-runtime/bin/python3" -m pip install --require-hashes --only-binary=:all: --no-cache-dir -r requirements-deploy.lock
+          "$RUNNER_TEMP/suite-runtime/bin/python3" -m pip check
+          "$RUNNER_TEMP/suite-runtime/bin/python3" -B tests/test_deployment_dependencies.py --check-installed
+      - name: Build reproducible exact-candidate bundle
+        run: |
+          mkdir "$RUNNER_TEMP/suite-artifacts"
+          /usr/bin/python3 -I -B ops/suite/bundle.py --source candidate-input --sha "$CANDIDATE_SHA" --runtime "$RUNNER_TEMP/suite-runtime" --output "$RUNNER_TEMP/suite-artifacts/modelfc-suite.tar.gz" > "$RUNNER_TEMP/suite-artifacts/SHA256SUMS"
+          /usr/bin/python3 -I -B ops/suite/bundle.py --source candidate-input --sha "$CANDIDATE_SHA" --runtime "$RUNNER_TEMP/suite-runtime" --output "$RUNNER_TEMP/rebuilt.tar.gz"
+          cmp "$RUNNER_TEMP/rebuilt.tar.gz" "$RUNNER_TEMP/suite-artifacts/modelfc-suite.tar.gz"
+          cp ops/suite/install.py "$RUNNER_TEMP/suite-artifacts/install.py"
+          cd "$RUNNER_TEMP/suite-artifacts"
+          sha256sum install.py >> SHA256SUMS
+      - name: Real systemd 255 boundaries, crash recovery, 300-second timeout, and full candidate suite
+        run: |
+          sudo -n env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin LANG=C GITHUB_ACTIONS=true \
+            /usr/bin/python3 -I -B "$GITHUB_WORKSPACE/ops/ci/suite_systemd.py" \
+            --source "$GITHUB_WORKSPACE" --source-sha "$SOURCE_SHA" \
+            --runtime "$RUNNER_TEMP/suite-runtime" --candidate "$CANDIDATE_SHA" \
+            --bundle "$RUNNER_TEMP/suite-artifacts/modelfc-suite.tar.gz" \
+            --output "$RUNNER_TEMP/suite-artifacts/acceptance.json"
+      - name: Always clean only claimed disposable fixtures
+        if: always()
+        run: sudo -n env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin LANG=C GITHUB_ACTIONS=true /usr/bin/python3 -I -B "$GITHUB_WORKSPACE/ops/ci/suite_systemd.py" --cleanup
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: isolated-suite-${{ env.SOURCE_SHA }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/suite-artifacts/
+          retention-days: 7
+          if-no-files-found: error
