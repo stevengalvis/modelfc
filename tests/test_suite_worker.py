@@ -178,6 +178,18 @@ class DiagnosticPolicyTests(unittest.TestCase):
         self.assertIn('RuntimeMaxSec=720',rendered[dg.GUARD].decode())
         self.assertIn('diagnostic-supervise',rendered[dg.GUARD].decode())
 
+    def test_journal_lookup_matches_each_worker_unit_and_invocation(self):
+        rendered,dg,_=self.modules()
+        normal=load('bundle').runner_files()
+        for module,files in ((guard,normal),(dg,rendered)):
+            identifier=next(line.split('=',1)[1] for line in files[module.WORKER].decode().splitlines()
+                            if line.startswith('SyslogIdentifier='))
+            with patch.object(module,'command',return_value='result') as command:
+                self.assertEqual(module.worker_output('a'*32),'result')
+                command.assert_called_once_with(['/usr/bin/journalctl','--no-pager','-o','cat','-n','1',
+                    'SYSLOG_IDENTIFIER='+identifier,'_SYSTEMD_UNIT='+module.WORKER,
+                    '_SYSTEMD_INVOCATION_ID='+'a'*32])
+
     def test_modes_reject_each_others_commands_without_host_changes(self):
         _,dg,dw=self.modules()
         for module,action in ((dg,'run'),(dg,'recover'),(guard,'diagnostic-run'),(guard,'diagnostic-recover')):

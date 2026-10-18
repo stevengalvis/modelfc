@@ -87,6 +87,12 @@ def deployment_quiescent():
         if not quiescent(unit): raise Rejected('DEPLOYMENT_RECOVERY_REQUIRED')
 
 
+def worker_output(invocation):
+    return command(['/usr/bin/journalctl', '--no-pager', '-o', 'cat', '-n', '1',
+                    'SYSLOG_IDENTIFIER=' + NAME + '-worker', '_SYSTEMD_UNIT=' + WORKER,
+                    '_SYSTEMD_INVOCATION_ID=' + invocation])
+
+
 def typed_property(unit, interface, name):
     label = re.sub(r'[^a-zA-Z0-9]', lambda m: '_%02x' % ord(m[0]), unit)
     return json.loads(command(['/usr/bin/busctl', '--system', '--json=short', 'get-property',
@@ -300,9 +306,7 @@ def supervise():
             raise Rejected('WORKER_IDENTITY_UNKNOWN')
         stop_worker()
         report['cleanup'] = 'EMPTY_CGROUP'
-        output = command(['/usr/bin/journalctl', '--no-pager', '-o', 'cat', '-n', '1',
-                          'SYSLOG_IDENTIFIER=modelfc-suite-worker', '_SYSTEMD_UNIT=' + WORKER,
-                          '_SYSTEMD_INVOCATION_ID=' + lifecycle['InvocationID']])
+        output = worker_output(lifecycle['InvocationID'])
         if len(output) > 16384: raise Rejected('REPORT_LIMIT')
         result = json.loads(output)
         required = {'run_id','classification','complete','terminal','observed_completed','last_progress','slowest','issues','stderr_truncated','elapsed_seconds'}
