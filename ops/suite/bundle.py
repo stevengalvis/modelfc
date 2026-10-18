@@ -18,7 +18,29 @@ def git(source, *args, data=None):
                           check=True, env={'PATH':'/usr/bin:/bin','HOME':'/nonexistent','GIT_CONFIG_NOSYSTEM':'1'}).stdout
 
 
-def build(source, sha, runtime, destination):
+def runner_files(diagnostic=False):
+    """Render one of two fixed reviewed policies; no caller-supplied duration."""
+    result = {}
+    for name in ('guard.py', 'worker.py', 'modelfc-suite-guard.service', 'modelfc-suite-worker.service'):
+        text = (Path(__file__).parent/name).read_text()
+        if diagnostic:
+            if name.endswith('.py'):
+                if text.count('DIAGNOSTIC = False') != 1: raise ValueError('mode marker changed')
+                text = text.replace('DIAGNOSTIC = False', 'DIAGNOSTIC = True')
+            else:
+                text = text.replace('modelfc-suite', 'modelfc-suite-diag600')
+                name = name.replace('modelfc-suite', 'modelfc-suite-diag600')
+                if name.endswith('-guard.service'):
+                    text = text.replace('guard.py supervise', 'guard.py diagnostic-supervise').replace('RuntimeMaxSec=420', 'RuntimeMaxSec=720')
+                else:
+                    text = text.replace('worker.py\n', 'worker.py --diagnostic-600\n').replace('TimeoutStartSec=330', 'TimeoutStartSec=630')
+                    text = text.replace('-/var/lib/modelfc-suite-diag600', '-/var/lib/modelfc-suite')
+                    text = text.replace('-/etc/modelfc\n', '-/etc/modelfc -/var/lib/modelfc-suite-diag600\n')
+        result[name] = text.encode()
+    return result
+
+
+def build(source, sha, runtime, destination, diagnostic=False):
     source, runtime, destination = map(Path, (source, runtime, destination))
     if git(source, 'rev-parse', 'HEAD').decode().strip() != sha:
         raise ValueError('candidate head mismatch')
@@ -60,12 +82,13 @@ def build(source, sha, runtime, destination):
                 if relative.as_posix() == 'pyvenv.cfg':
                     output.write_text('\n'.join(line for line in output.read_text().splitlines() if not line.startswith('command =')) + '\n')
                 output.chmod(0o755 if path.stat().st_mode & 0o111 else 0o644)
-        for name in ('guard.py','worker.py','modelfc-suite-guard.service','modelfc-suite-worker.service'):
-            shutil.copyfile(Path(__file__).parent/name, stage/name)
+        for name, content in runner_files(diagnostic).items():
+            (stage/name).write_bytes(content)
         files = {p.relative_to(stage).as_posix():hashlib.sha256(p.read_bytes()).hexdigest()
                  for p in sorted(stage.rglob('*')) if p.is_file()}
         manifest = dict(version=1,candidate=sha,files=files,
                         host_python_sha256=hashlib.sha256((runtime/'bin/python3').read_bytes()).hexdigest())
+        if diagnostic: manifest['diagnostic_seconds'] = 600
         (stage/'manifest.json').write_text(json.dumps(manifest,sort_keys=True,separators=(',',':'))+'\n')
         destination.parent.mkdir(parents=True,exist_ok=True)
         with destination.open('wb') as stream, gzip.GzipFile(filename='',mode='wb',fileobj=stream,mtime=0) as zipped, tarfile.open(fileobj=zipped,mode='w') as archive:
@@ -83,5 +106,6 @@ if __name__ == '__main__':
     parser=argparse.ArgumentParser()
     parser.add_argument('--source',required=True);parser.add_argument('--sha',required=True)
     parser.add_argument('--runtime',required=True);parser.add_argument('--output',required=True)
+    parser.add_argument('--diagnostic-600',action='store_true')
     args=parser.parse_args()
-    print(build(args.source,args.sha,args.runtime,args.output)+'  '+Path(args.output).name)
+    print(build(args.source,args.sha,args.runtime,args.output,args.diagnostic_600)+'  '+Path(args.output).name)

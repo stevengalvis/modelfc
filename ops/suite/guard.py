@@ -15,11 +15,18 @@ import sys
 import time
 import uuid
 
-ROOT = Path('/usr/lib/modelfc-suite')
-STATE = Path('/var/lib/modelfc-suite')
+# The builder fixes this mode in hashed code; no runtime/environment override.
+DIAGNOSTIC = False
+NAME = 'modelfc-suite' + ('-diag600' if DIAGNOSTIC else '')
+ROOT = Path('/usr/lib') / NAME
+STATE = Path('/var/lib') / NAME
 DEPLOY_LOCK = Path('/var/lib/modelfc-deploy/deploy.lock')
-GUARD = 'modelfc-suite-guard.service'
-WORKER = 'modelfc-suite-worker.service'
+GUARD = NAME + '-guard.service'
+WORKER = NAME + '-worker.service'
+RUN = 'diagnostic-run' if DIAGNOSTIC else 'run'
+RECOVER = 'diagnostic-recover' if DIAGNOSTIC else 'recover'
+SUPERVISE = 'diagnostic-supervise' if DIAGNOSTIC else 'supervise'
+PASS = 'DIAGNOSTIC_PASS' if DIAGNOSTIC else 'PASS'
 API = 'modelfc-corner-api.service'
 ENV = dict(PATH='/usr/sbin:/usr/bin:/sbin:/bin', LANG='C', HOME='/nonexistent')
 
@@ -108,6 +115,7 @@ def execution_policy(unit, script, suffix):
         raise Rejected('EXECUTION_POLICY')
     expected_paths = ['-/srv', '-/var/lib/modelfc', '-/var/lib/modelfc-deploy',
                       '-/var/lib/modelfc-suite', '-/etc/modelfc-validator', '-/etc/modelfc'] if unit == WORKER else []
+    if DIAGNOSTIC and unit == WORKER: expected_paths.append('-' + str(STATE))
     if typed_property(unit, 'Service', 'InaccessiblePaths').get('data') != expected_paths:
         raise Rejected('EXECUTION_POLICY')
     nss_socket = '/run/systemd/userdb/io.systemd.DynamicUser'
@@ -160,7 +168,9 @@ def verify_bundle():
     for path in (ROOT, ROOT.parent, STATE, STATE.parent): trusted_path(path, True)
     trusted_path(ROOT/'manifest.json')
     manifest = json.loads((ROOT/'manifest.json').read_text())
-    if set(manifest) != {'version','candidate','files','host_python_sha256'} or manifest['version'] != 1 or not re.fullmatch('[0-9a-f]{40}', manifest['candidate']):
+    fields = {'version','candidate','files','host_python_sha256'} | ({'diagnostic_seconds'} if DIAGNOSTIC else set())
+    if DIAGNOSTIC and manifest.get('diagnostic_seconds') != 600: raise Rejected('MANIFEST_REJECTED')
+    if set(manifest) != fields or manifest['version'] != 1 or not re.fullmatch('[0-9a-f]{40}', manifest['candidate']):
         raise Rejected('MANIFEST_REJECTED')
     if hashlib.sha256(Path('/usr/bin/python3').read_bytes()).hexdigest() != manifest['host_python_sha256']:
         raise Rejected('HOST_PYTHON_MISMATCH')
@@ -189,19 +199,21 @@ def verify_bundle():
         raise Rejected('GUARD_POLICY')
     if properties(GUARD, 'User', 'Group', 'RootDirectory', 'RootImage') != dict(User='', Group='', RootDirectory='', RootImage=''):
         raise Rejected('GUARD_POLICY')
+    if DIAGNOSTIC and properties(GUARD, 'RuntimeMaxUSec', 'TimeoutStartUSec', 'TimeoutStopUSec', 'KillMode', 'SendSIGKILL', 'Restart') != dict(RuntimeMaxUSec='12min', TimeoutStartUSec='30s', TimeoutStopUSec='30s', KillMode='control-group', SendSIGKILL='yes', Restart='no'):
+        raise Rejected('GUARD_POLICY')
     expected = dict(DynamicUser='yes', PrivateNetwork='yes', PrivateTmp='yes',
                     PrivateDevices='yes', NoNewPrivileges='yes', CapabilityBoundingSet='',
                     ProtectSystem='strict', ProtectHome='yes', ProtectControlGroups='yes',
                     ProtectKernelTunables='yes', ProtectKernelModules='yes', ProtectKernelLogs='yes',
                     RestrictSUIDSGID='yes', ProtectProc='invisible', KillMode='control-group',
                     SendSIGKILL='yes', MemoryMax='2147483648', TasksMax='64',
-                    TimeoutStartUSec='5min 30s', TimeoutStopUSec='30s',
+                    TimeoutStartUSec='10min 30s' if DIAGNOSTIC else '5min 30s', TimeoutStopUSec='30s',
                     NetworkNamespacePath='', JoinsNamespaceOf='', RestrictNamespaces='yes',
-                    User='modelfc-suite-worker', Group='modelfc-suite-worker',
+                    User=NAME + '-worker', Group=NAME + '-worker',
                     RootDirectory='', RootImage='', WorkingDirectory=str(ROOT/'source'))
     if properties(WORKER, *expected) != expected: raise Rejected('WORKER_POLICY')
-    execution_policy(GUARD, 'guard.py', ['supervise'])
-    execution_policy(WORKER, 'worker.py', [])
+    execution_policy(GUARD, 'guard.py', [SUPERVISE])
+    execution_policy(WORKER, 'worker.py', ['--diagnostic-600'] if DIAGNOSTIC else [])
     return manifest
 
 
@@ -214,6 +226,17 @@ def api_identity():
     value['selected'] = os.readlink('/srv/modelfc/current')
     value['process_cwd'] = os.readlink('/proc/' + value['MainPID'] + '/cwd')
     return value
+
+
+def diagnostic_rotation_window(identity):
+    # No API restart/rotation change: refuse admission unless 13 minutes remain.
+    if not DIAGNOSTIC: return
+    if properties(API, 'RuntimeMaxUSec') != {'RuntimeMaxUSec': '30min'}:
+        raise Rejected('API_ROTATION_UNKNOWN')
+    start = identity['ExecMainStartTimestampMonotonic']
+    if not start.isdigit() or int(start) <= 0: raise Rejected('API_ROTATION_UNKNOWN')
+    age = time.monotonic() - int(start) / 1_000_000
+    if age < 0 or age > 1800 - 780: raise Rejected('API_ROTATION_WINDOW')
 
 
 def record(path, value):
@@ -234,6 +257,7 @@ def supervise():
     run_id = uuid.uuid4().hex
     report = dict(version=1, run_id=run_id, candidate=None, status='FAIL', reason='GUARD_ERROR',
                   worker=None, cleanup='UNKNOWN', deployment_lock='NOT_ACQUIRED', api_unchanged=None)
+    if DIAGNOSTIC: report.update(diagnostic_seconds=600, production_release_gate='NOT_SATISFIED')
     path = STATE/'results'/f'{run_id}.json'
     lock_fd = None
     worker_started = False
@@ -263,12 +287,13 @@ def supervise():
             raise Rejected('LOCK_STORE_REJECTED')
         report['deployment_lock'] = 'RETAINED'
         before = api_identity()
+        diagnostic_rotation_window(before)
         report['api_before'] = before
         record(path, report)
         (STATE/'worker.env').write_text('MODELFC_SUITE_RUN_ID=' + run_id + '\n')
         notify('READY=1')
         worker_started = True
-        command(['/usr/bin/systemctl', 'start', '--wait', WORKER], timeout=375, check=False)
+        command(['/usr/bin/systemctl', 'start', '--wait', WORKER], timeout=675 if DIAGNOSTIC else 375, check=False)
         lifecycle = properties(WORKER, 'InvocationID', 'Result', 'ExecMainCode', 'ExecMainStatus')
         report['worker_lifecycle'] = lifecycle
         if not re.fullmatch('[0-9a-f]{32}', lifecycle['InvocationID']):
@@ -281,18 +306,22 @@ def supervise():
         if len(output) > 16384: raise Rejected('REPORT_LIMIT')
         result = json.loads(output)
         required = {'run_id','classification','complete','terminal','observed_completed','last_progress','slowest','issues','stderr_truncated','elapsed_seconds'}
+        if DIAGNOSTIC:
+            required |= {'diagnostic_seconds', 'production_release_gate'}
+            if result.get('diagnostic_seconds') != 600 or result.get('production_release_gate') != 'NOT_SATISFIED':
+                raise Rejected('WORKER_REPORT_REJECTED')
         if type(result) is not dict or set(result) != required: raise Rejected('WORKER_REPORT_REJECTED')
         if result['run_id'] != run_id: raise Rejected('WORKER_IDENTITY_UNKNOWN')
         report['worker'] = result
         report['api_after'] = api_identity()
         report['api_unchanged'] = report['api_after'] == before
         if not report['api_unchanged']: raise Rejected('API_IDENTITY_CHANGED')
-        if result['classification'] != 'PASS' or result['complete'] is not True:
+        if result['classification'] != PASS or result['complete'] is not True:
             raise Rejected('SUITE_NOT_PASS')
         if lifecycle['Result'] != 'success' or lifecycle['ExecMainCode'] != '1' or lifecycle['ExecMainStatus'] != '0':
             raise Rejected('WORKER_LIFECYCLE_FAILED')
         if not quiescent(WORKER): raise Rejected('CLEANUP_UNKNOWN')
-        report.update(status='PASS', reason='OK')
+        report.update(status=PASS, reason='DIAGNOSTIC_ONLY' if DIAGNOSTIC else 'OK')
         record(path, report)
         notify('FDSTOREREMOVE=1\nFDNAME=deployment-interlock')
         barrier()
@@ -331,10 +360,10 @@ def recover():
 
 def main():
     if os.geteuid() != 0: raise Rejected('ROOT_OPERATOR_REQUIRED')
-    if sys.argv[1:] == ['supervise']: return supervise()
-    if sys.argv[1:] == ['recover']:
+    if sys.argv[1:] == [SUPERVISE]: return supervise()
+    if sys.argv[1:] == [RECOVER]:
         print(json.dumps(recover())); return 0
-    if len(sys.argv) == 3 and sys.argv[1] == 'run':
+    if len(sys.argv) == 3 and sys.argv[1] == RUN:
         manifest = verify_bundle()
         if sys.argv[2] != manifest['candidate']: raise Rejected('CANDIDATE_MISMATCH')
         fd = os.open(STATE/'admission.lock', os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
@@ -344,7 +373,7 @@ def main():
             if properties(GUARD, 'ActiveState')['ActiveState'] != 'inactive' or not quiescent(WORKER):
                 raise Rejected('RECOVERY_REQUIRED')
             command(['/usr/bin/systemctl', 'start', GUARD], timeout=35, check=False)
-            until = time.monotonic() + 450
+            until = time.monotonic() + (750 if DIAGNOSTIC else 450)
             while time.monotonic() < until:
                 if properties(GUARD, 'MainPID')['MainPID'] == '0': break
                 time.sleep(1)

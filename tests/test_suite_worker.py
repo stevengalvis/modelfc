@@ -146,3 +146,73 @@ class AdmissionTests(unittest.TestCase):
         self.assertNotIn('deploy_main',source)
         self.assertNotIn('LOCK_UN,',source)
         self.assertNotIn('last-test-failure',source)
+
+
+class DiagnosticPolicyTests(unittest.TestCase):
+    def modules(self):
+        import types
+        rendered=load('bundle').runner_files(True)
+        modules={}
+        for name in ('guard','worker'):
+            module=types.ModuleType('diagnostic_'+name)
+            exec(compile(rendered[name+'.py'],name+'.py','exec'),module.__dict__)
+            modules[name]=module
+        return rendered,modules['guard'],modules['worker']
+
+    def test_build_mode_is_fixed_and_default_policy_is_unchanged(self):
+        rendered,dg,dw=self.modules()
+        normal=load('bundle').runner_files()
+        self.assertEqual(normal['modelfc-suite-worker.service'],(ROOT/'ops/suite/modelfc-suite-worker.service').read_bytes())
+        self.assertEqual(normal['modelfc-suite-guard.service'],(ROOT/'ops/suite/modelfc-suite-guard.service').read_bytes())
+        self.assertFalse(guard.DIAGNOSTIC);self.assertFalse(worker.DIAGNOSTIC)
+        self.assertEqual(worker.capture.__defaults__,(300,))
+        self.assertEqual(dw.capture.__defaults__,(600,))
+        self.assertEqual(dg.ROOT,dw.ROOT)
+        self.assertNotEqual(dg.ROOT,guard.ROOT);self.assertNotEqual(dg.STATE,guard.STATE)
+        self.assertEqual(dg.DEPLOY_LOCK,guard.DEPLOY_LOCK)
+        self.assertLessEqual(len(dg.WORKER.removesuffix('.service')),31)
+        unit=rendered[dg.WORKER].decode()
+        for field in ('TimeoutStartSec=630','TimeoutStopSec=30','--diagnostic-600',
+                      '-/var/lib/modelfc-suite ', '-/var/lib/modelfc-suite-diag600'):
+            self.assertIn(field,unit)
+        self.assertIn('RuntimeMaxSec=720',rendered[dg.GUARD].decode())
+        self.assertIn('diagnostic-supervise',rendered[dg.GUARD].decode())
+
+    def test_modes_reject_each_others_commands_without_host_changes(self):
+        _,dg,dw=self.modules()
+        for module,action in ((dg,'run'),(dg,'recover'),(guard,'diagnostic-run'),(guard,'diagnostic-recover')):
+            with self.subTest(action=action),patch.object(module.os,'geteuid',return_value=0),patch.object(sys,'argv',['guard.py',action]),patch.object(module,'command') as command:
+                with self.assertRaisesRegex(module.Rejected,'INVALID_REQUEST'):module.main()
+                command.assert_not_called()
+        for module,args in ((dw,[]),(dw,['--seconds','900']),(worker,['--diagnostic-600'])):
+            with patch.object(sys,'argv',['worker.py',*args]),patch.object(module,'capture') as capture:
+                with self.assertRaises(ValueError):module.main()
+                capture.assert_not_called()
+
+    def test_diagnostic_pass_is_never_release_gate_pass(self):
+        from contextlib import redirect_stdout
+        from io import StringIO
+        _,_,dw=self.modules()
+        for classification,code in (('PASS',0),('TIMEOUT',1),('TEST_FAILURE',1)):
+            output=StringIO()
+            with patch.object(sys,'argv',['worker.py','--diagnostic-600']),patch.dict(os.environ,MODELFC_SUITE_RUN_ID='fixture',MODELFC_SUITE_DEADLINE='9999'),patch.object(dw,'capture',return_value={'classification':classification}) as capture,redirect_stdout(output):
+                self.assertEqual(dw.main(),code)
+            result=json.loads(output.getvalue())
+            self.assertEqual(result['diagnostic_seconds'],600)
+            self.assertEqual(result['production_release_gate'],'NOT_SATISFIED')
+            self.assertEqual(result['classification'],'DIAGNOSTIC_PASS' if classification=='PASS' else classification)
+            self.assertEqual(capture.call_args.args[0][0],str(dw.ROOT/'runtime/bin/python3'))
+            self.assertNotIn('MODELFC_SUITE_DEADLINE',capture.call_args.args[2])
+
+    def test_rotation_admission_requires_known_limit_and_thirteen_minutes(self):
+        _,dg,_=self.modules()
+        identity={'ExecMainStartTimestampMonotonic':'1000000'}
+        with patch.object(dg,'properties',return_value={'RuntimeMaxUSec':'30min'}),patch.object(dg.time,'monotonic',return_value=1021):
+            dg.diagnostic_rotation_window(identity)
+        for runtime,now,start in (('infinity',10,'1000000'),('30min',1022,'1000000'),('30min',0,'1000000'),('30min',10,'')):
+            with self.subTest(runtime=runtime,now=now,start=start),patch.object(dg,'properties',return_value={'RuntimeMaxUSec':runtime}),patch.object(dg.time,'monotonic',return_value=now):
+                with self.assertRaisesRegex(dg.Rejected,'API_ROTATION_'):
+                    dg.diagnostic_rotation_window({'ExecMainStartTimestampMonotonic':start})
+        with patch.object(guard,'properties') as query:
+            guard.diagnostic_rotation_window({})
+            query.assert_not_called()

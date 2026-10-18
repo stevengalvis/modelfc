@@ -13,6 +13,14 @@ concurrency:
   cancel-in-progress: false
 jobs:
   acceptance:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - mode: default
+            args: ''
+          - mode: diagnostic600
+            args: '--diagnostic-600'
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     env:
@@ -37,27 +45,27 @@ jobs:
       - name: Build reproducible exact-candidate bundle
         run: |
           mkdir "$RUNNER_TEMP/suite-artifacts"
-          /usr/bin/python3 -I -B ops/suite/bundle.py --source candidate-input --sha "$CANDIDATE_SHA" --runtime "$RUNNER_TEMP/suite-runtime" --output "$RUNNER_TEMP/suite-artifacts/modelfc-suite.tar.gz" > "$RUNNER_TEMP/suite-artifacts/SHA256SUMS"
-          /usr/bin/python3 -I -B ops/suite/bundle.py --source candidate-input --sha "$CANDIDATE_SHA" --runtime "$RUNNER_TEMP/suite-runtime" --output "$RUNNER_TEMP/rebuilt.tar.gz"
+          /usr/bin/python3 -I -B ops/suite/bundle.py ${{ matrix.args }} --source candidate-input --sha "$CANDIDATE_SHA" --runtime "$RUNNER_TEMP/suite-runtime" --output "$RUNNER_TEMP/suite-artifacts/modelfc-suite.tar.gz" > "$RUNNER_TEMP/suite-artifacts/SHA256SUMS"
+          /usr/bin/python3 -I -B ops/suite/bundle.py ${{ matrix.args }} --source candidate-input --sha "$CANDIDATE_SHA" --runtime "$RUNNER_TEMP/suite-runtime" --output "$RUNNER_TEMP/rebuilt.tar.gz"
           cmp "$RUNNER_TEMP/rebuilt.tar.gz" "$RUNNER_TEMP/suite-artifacts/modelfc-suite.tar.gz"
           cp ops/suite/install.py "$RUNNER_TEMP/suite-artifacts/install.py"
           cd "$RUNNER_TEMP/suite-artifacts"
           sha256sum install.py >> SHA256SUMS
-      - name: Real systemd 255 boundaries, crash recovery, 300-second timeout, and full candidate suite
+      - name: Real systemd 255 boundaries, crash recovery, fixed-cap timeout, and full candidate suite
         run: |
           sudo -n env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin LANG=C GITHUB_ACTIONS=true \
             /usr/bin/python3 -I -B "$GITHUB_WORKSPACE/ops/ci/suite_systemd.py" \
-            --source "$GITHUB_WORKSPACE" --source-sha "$SOURCE_SHA" \
+            ${{ matrix.args }} --source "$GITHUB_WORKSPACE" --source-sha "$SOURCE_SHA" \
             --runtime "$RUNNER_TEMP/suite-runtime" --candidate "$CANDIDATE_SHA" \
             --bundle "$RUNNER_TEMP/suite-artifacts/modelfc-suite.tar.gz" \
             --output "$RUNNER_TEMP/suite-artifacts/acceptance.json"
       - name: Always clean only claimed disposable fixtures
         if: always()
-        run: sudo -n env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin LANG=C GITHUB_ACTIONS=true /usr/bin/python3 -I -B "$GITHUB_WORKSPACE/ops/ci/suite_systemd.py" --cleanup
+        run: sudo -n env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin LANG=C GITHUB_ACTIONS=true /usr/bin/python3 -I -B "$GITHUB_WORKSPACE/ops/ci/suite_systemd.py" ${{ matrix.args }} --cleanup
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: isolated-suite-${{ env.SOURCE_SHA }}-${{ github.run_id }}-${{ github.run_attempt }}
+          name: isolated-suite-${{ matrix.mode }}-${{ env.SOURCE_SHA }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/suite-artifacts/
           retention-days: 7
           if-no-files-found: error

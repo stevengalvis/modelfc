@@ -6,10 +6,13 @@ import re
 import selectors
 import signal
 import subprocess
+import sys
 import time
 
-ROOT = Path('/usr/lib/modelfc-suite')
-DEADLINE = 300
+# Set only by the reviewed bundle builder; never by environment or candidate input.
+DIAGNOSTIC = False
+ROOT = Path('/usr/lib/modelfc-suite' + ('-diag600' if DIAGNOSTIC else ''))
+DEADLINE = 600 if DIAGNOSTIC else 300
 # Instrument only the stdlib runner; execute unchanged discovery and test bodies.
 BOOTSTRAP = r'''
 import json, os, re, time, unittest
@@ -59,7 +62,7 @@ unittest.main(module=None, argv=['unittest', 'discover', '-v', '-s', 'tests'])
 
 
 def capture(command, cwd, env, seconds=DEADLINE):
-    """Only tests use a shorter deadline; installed entrypoint always uses 300s."""
+    """Only tests use a shorter deadline; installed entrypoint uses its fixed, attested bundle cap."""
     origin = time.monotonic()
     read_fd, write_fd = os.pipe2(os.O_CLOEXEC)
     os.set_blocking(write_fd, False)
@@ -152,14 +155,19 @@ def capture(command, cwd, env, seconds=DEADLINE):
 
 
 def main():
+    if sys.argv[1:] != (['--diagnostic-600'] if DIAGNOSTIC else []):
+        raise ValueError('invalid fixed-mode worker arguments')
     env = dict(PATH='/usr/bin:/bin', HOME='/nonexistent', PYTHONPATH='src',
                PYTHONDONTWRITEBYTECODE='1', PYTHONNOUSERSITE='1',
                GIT_CONFIG_COUNT='1', GIT_CONFIG_KEY_0='safe.directory',
                GIT_CONFIG_VALUE_0=str(ROOT/'source'))
     result = capture([str(ROOT/'runtime/bin/python3'), '-B', '-c', BOOTSTRAP], ROOT/'source', env)
+    if DIAGNOSTIC:
+        result.update(diagnostic_seconds=600, production_release_gate='NOT_SATISFIED')
+        if result['classification'] == 'PASS': result['classification'] = 'DIAGNOSTIC_PASS'
     result['run_id'] = os.environ['MODELFC_SUITE_RUN_ID']
     print(json.dumps(result, sort_keys=True), flush=True)
-    return 0 if result['classification'] == 'PASS' else 1
+    return 0 if result['classification'] == ('DIAGNOSTIC_PASS' if DIAGNOSTIC else 'PASS') else 1
 
 
 if __name__ == '__main__':

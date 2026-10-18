@@ -22,10 +22,12 @@ API='modelfc-corner-api.service'
 WRONG_API='modelfc-api.service'
 UNITS=Path('/etc/systemd/system')
 CLAIM=Path('/run/modelfc-suite-ci-claim')
+DIAGNOSTIC=False
+RUN='run'
 ENV={'PATH':'/usr/sbin:/usr/bin:/sbin:/bin','LANG':'C','HOME':'/root'}
 
 
-def command(*args,check=True,timeout=480):
+def command(*args,check=True,timeout=780):
     return subprocess.run(args,env=ENV,capture_output=True,text=True,check=check,timeout=timeout)
 
 
@@ -56,13 +58,14 @@ def lock_available():
 def cleanup():
     if not CLAIM.is_file(): return
     if CLAIM.read_text()!='isolated-suite-ci-v1\n': raise AssertionError('claim mismatch')
-    command('systemctl','stop',GUARD,WORKER,API,WRONG_API,'modelfc-postmerge-tests.service',check=False)
-    command('systemctl','clean','--what=fdstore',GUARD,check=False)
-    for unit in (GUARD,WORKER,API,WRONG_API,'modelfc-postmerge-tests.service'):
+    fixture_units = tuple(dict.fromkeys((GUARD,WORKER,'modelfc-suite-guard.service','modelfc-suite-worker.service',API,WRONG_API,'modelfc-postmerge-tests.service')))
+    command('systemctl','stop',*fixture_units,check=False)
+    command('systemctl','clean','--what=fdstore',GUARD,'modelfc-suite-guard.service',check=False)
+    for unit in fixture_units:
         (UNITS/unit).unlink(missing_ok=True)
     command('systemctl','daemon-reload')
-    command('systemctl','reset-failed',GUARD,WORKER,API,WRONG_API,'modelfc-postmerge-tests.service',check=False)
-    for path in (ROOT,STATE,CONTROL,Path('/srv/modelfc'),Path('/var/lib/modelfc'),Path('/etc/modelfc-validator'),Path('/etc/modelfc')):
+    command('systemctl','reset-failed',*fixture_units,check=False)
+    for path in (ROOT,STATE,Path('/usr/lib/modelfc-suite'),Path('/var/lib/modelfc-suite'),CONTROL,Path('/srv/modelfc'),Path('/var/lib/modelfc'),Path('/etc/modelfc-validator'),Path('/etc/modelfc')):
         if path.exists(): shutil.rmtree(path)
     command('userdel','modelfc-deploy',check=False)
     CLAIM.unlink()
@@ -72,7 +75,8 @@ def prepare_host():
     if os.geteuid()!=0 or os.environ.get('GITHUB_ACTIONS')!='true': raise AssertionError('disposable GitHub VM only')
     if command('systemctl','--version').stdout.split()[1]!='255': raise AssertionError('requires actual systemd 255')
     paths=[ROOT,STATE,CONTROL,Path('/srv/modelfc'),Path('/var/lib/modelfc'),Path('/etc/modelfc-validator'),Path('/etc/modelfc'),CLAIM]
-    paths += [UNITS/u for u in (GUARD,WORKER,API,WRONG_API,'modelfc-postmerge-tests.service')]
+    paths += [Path('/usr/lib/modelfc-suite'),Path('/var/lib/modelfc-suite')]
+    paths += [UNITS/u for u in (GUARD,WORKER,'modelfc-suite-guard.service','modelfc-suite-worker.service',API,WRONG_API,'modelfc-postmerge-tests.service')]
     if any(p.exists() or p.is_symlink() for p in paths): raise AssertionError('preexisting fixture paths')
     try: pwd.getpwnam('modelfc-deploy')
     except KeyError: pass
@@ -128,10 +132,11 @@ class Boundary(unittest.TestCase):
     if mode=='failure': cases+=' def test_b_failure(self): self.fail("DO_NOT_PUBLISH_RAW_CANARY")\n'
     if mode in ('timeout','kill','stop','concurrent'):
         cases+=''' def test_b_descendant(self):
-  subprocess.Popen(['/usr/bin/python3','-c','import signal,time;signal.signal(signal.SIGTERM,signal.SIG_IGN);time.sleep(600)'],stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,start_new_session=True)
+  subprocess.Popen(['/usr/bin/python3','-c','import signal,time;signal.signal(signal.SIGTERM,signal.SIG_IGN);time.sleep(1200)'],stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,start_new_session=True)
   os.closerange(3,256)
-  time.sleep(600)
+  time.sleep(1200)
 '''
+    if DIAGNOSTIC: cases=cases.replace("'modelfc-suite-worker'", "'modelfc-suite-diag600-worker'")
     (directory/'tests/test_boundary.py').write_text(cases)
     command('git','-C',str(directory),'add','.')
     command('git','-C',str(directory),'-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-qm',mode)
@@ -143,10 +148,11 @@ def run(args):
     builder=load(source/'ops/suite/bundle.py');installer=load(source/'ops/suite/install.py')
     guard=load(source/'ops/suite/guard.py')
     results=[]
+    cross_mode=[]
     prepare_host()
     before=(CONTROL/'last-test-failure.json').read_bytes()
     # Exercise real manager/proc identity before creating the correctly named fixture.
-    api_unit='[Service]\nType=simple\nExecStart=/usr/bin/sleep infinity\nWorkingDirectory=/srv/modelfc/current\n'
+    api_unit='[Service]\nType=simple\nExecStart=/usr/bin/sleep infinity\nWorkingDirectory=/srv/modelfc/current\nRuntimeMaxSec=30min\n'
     api_attestation={}
     for case in ('missing', 'wrong_name'):
         if case=='wrong_name':
@@ -165,11 +171,25 @@ def run(args):
     assert identity['MainPID']==command('systemctl','show',API,'-p','MainPID','--value').stdout.strip()
     assert identity['selected']==identity['process_cwd']==str(Path('/srv/modelfc/current').resolve())
     api_attestation['actual_identity']=identity
-    print(json.dumps(dict(api_attestation=api_attestation)),flush=True)
+    print(json.dumps(dict(api_attestation=api_attestation,diagnostic_seconds=600 if DIAGNOSTIC else None,cross_mode=cross_mode)),flush=True)
     with socket.socket() as listener, tempfile.TemporaryDirectory() as temporary:
         listener.bind(('127.0.0.1',0));listener.listen()
         port=listener.getsockname()[1]
         tmp=Path(temporary)
+        default_guard=None
+        if DIAGNOSTIC:
+            # Install a real default runner alongside; exercise both lock directions.
+            fixture=tmp/'default-failure'
+            sha=case_source(fixture,'failure',source,port)
+            test=fixture/'tests/test_boundary.py'
+            test.write_text(test.read_text().replace('modelfc-suite-diag600-worker','modelfc-suite-worker'))
+            command('git','-C',str(fixture),'add','.')
+            command('git','-C',str(fixture),'-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-qm','default identity')
+            default_sha=command('git','-C',str(fixture),'rev-parse','HEAD').stdout.strip()
+            default_bundle=tmp/'default.tar.gz'
+            digest=builder.build(fixture,default_sha,args.runtime,default_bundle)
+            installer.install(default_bundle,digest,default_sha)
+            default_guard=load(Path('/usr/lib/modelfc-suite/guard.py'))
         for mode in ('pass','full','failure','busy','pending','abandoned','override','override_bind','kill','stop','concurrent','queued','timeout'):
             if ROOT.exists():
                 guard.recover()
@@ -183,15 +203,30 @@ def run(args):
                 fixture=tmp/mode
                 sha=case_source(fixture,mode,source,port)
                 bundle=tmp/(mode+'.tar.gz')
-                digest=builder.build(fixture,sha,args.runtime,bundle)
-            installer.install(bundle,digest,sha)
-            wrong=command('/usr/bin/python3','-I',str(ROOT/'guard.py'),'run','0'*40,check=False)
+                digest=builder.build(fixture,sha,args.runtime,bundle,DIAGNOSTIC)
+            installer.install(bundle,digest,sha,DIAGNOSTIC)
+            guard=load(ROOT/'guard.py')
+            if DIAGNOSTIC and mode=='pass':
+                # The other mode retains its lock after an intentional failure.
+                command('/usr/bin/python3','-I','/usr/lib/modelfc-suite/guard.py','run',default_sha)
+                assert not lock_available()
+                saved={p:p.read_bytes() for p in Path('/var/lib/modelfc-suite/results').glob('*.json')}
+                command('/usr/bin/python3','-I',str(ROOT/'guard.py'),RUN,sha)
+                rejected=json.loads(next((STATE/'results').glob('*.json')).read_text())
+                assert rejected['reason']=='DEPLOYMENT_BUSY' and rejected['worker'] is None
+                guard.recover()
+                assert not lock_available() and default_guard.properties(default_guard.GUARD,'NFileDescriptorStore')['NFileDescriptorStore']=='1'
+                assert all(p.read_bytes()==raw for p,raw in saved.items())
+                default_guard.recover();assert lock_available()
+                cross_mode.append('default_lock_blocks_diagnostic_and_survives_diagnostic_recovery')
+                for p in (STATE/'results').glob('*.json'): p.unlink()  # claimed CI fixture only
+            wrong=command('/usr/bin/python3','-I',str(ROOT/'guard.py'),RUN,'0'*40,check=False)
             assert wrong.returncode and not list((STATE/'results').iterdir())
             started=time.monotonic()
             if mode=='busy':
                 with (CONTROL/'deploy.lock').open('rb') as held:
                     fcntl.flock(held,fcntl.LOCK_EX|fcntl.LOCK_NB)
-                    command('/usr/bin/python3','-I',str(ROOT/'guard.py'),'run',sha)
+                    command('/usr/bin/python3','-I',str(ROOT/'guard.py'),RUN,sha)
                     evidence=json.loads(next((STATE/'results').glob('*.json')).read_text())
                     assert evidence['reason']=='DEPLOYMENT_BUSY' and evidence['worker'] is None
             elif mode in ('pending','abandoned','override','override_bind'):
@@ -209,7 +244,7 @@ def run(args):
                     api_unit.write_bytes(b'[Unit]\nAfter='+WORKER.encode()+b'\n'+api_original)
                     command('systemctl','daemon-reload')
                     unit.write_bytes(original)  # disk is reviewed; effective manager state is unsafe
-                result=command('/usr/bin/python3','-I',str(ROOT/'guard.py'),'run',sha,check=False)
+                result=command('/usr/bin/python3','-I',str(ROOT/'guard.py'),RUN,sha,check=False)
                 if mode in ('override','override_bind'):
                     assert result.returncode and guard.quiescent(WORKER),result.stdout
                     expected_reason='WORKER_POLICY' if mode=='override' else 'EXECUTION_POLICY'
@@ -237,7 +272,7 @@ def run(args):
                 time.sleep(1)
                 assert not lock_available()
                 if mode=='concurrent':
-                    other=command('/usr/bin/python3','-I',str(ROOT/'guard.py'),'run',sha,check=False)
+                    other=command('/usr/bin/python3','-I',str(ROOT/'guard.py'),RUN,sha,check=False)
                     assert other.returncode and active(WORKER)=='activating'
                 if mode=='stop': command('systemctl','stop','--no-block',GUARD)
                 else: command('systemctl','kill','--kill-whom=main','--signal=KILL',GUARD)
@@ -250,12 +285,12 @@ def run(args):
                 guard.recover()
                 assert lock_available()
             else:
-                command('/usr/bin/python3','-I',str(ROOT/'guard.py'),'run',sha)
+                command('/usr/bin/python3','-I',str(ROOT/'guard.py'),RUN,sha)
                 evidence=json.loads(next((STATE/'results').glob('*.json')).read_text())
                 assert evidence['candidate']==sha and evidence['cleanup']=='EMPTY_CGROUP',evidence
                 assert evidence['api_unchanged'] is True,evidence
                 if mode in ('pass','full'):
-                    assert evidence['status']=='PASS' and lock_available(),evidence
+                    assert evidence['status']==('DIAGNOSTIC_PASS' if DIAGNOSTIC else 'PASS') and lock_available(),evidence
                     assert evidence['worker']['terminal']['tests']>0
                     if mode=='full':
                         assert evidence['worker']['terminal']['tests']==1748,evidence
@@ -265,12 +300,27 @@ def run(args):
                     if mode=='timeout':
                         assert evidence['worker']['classification']=='TIMEOUT',evidence
                         assert evidence['worker']['terminal'] is None and evidence['worker']['observed_completed']>=1
-                        assert 300<=evidence['worker']['elapsed_seconds']<310
+                        deadline=600 if DIAGNOSTIC else 300
+                        assert deadline<=evidence['worker']['elapsed_seconds']<deadline+10
                     else: assert evidence['worker']['terminal']['failures']==1
+                    if DIAGNOSTIC and mode=='failure':
+                        retained=next((STATE/'results').glob('*.json')).read_bytes()
+                        command('/usr/bin/python3','-I','/usr/lib/modelfc-suite/guard.py','run',default_sha)
+                        default_guard.recover()
+                        assert not lock_available() and guard.properties(GUARD,'NFileDescriptorStore')['NFileDescriptorStore']=='1'
+                        assert next((STATE/'results').glob('*.json')).read_bytes()==retained
+                        cross_mode.append('diagnostic_lock_blocks_default_and_survives_default_recovery')
                     preserved=next((STATE/'results').glob('*.json')).read_bytes()
                     guard.recover()
                     assert next((STATE/'results').glob('*.json')).read_bytes()==preserved
                     assert lock_available()
+            if DIAGNOSTIC:
+                for report_path in (STATE/'results').glob('*.json'):
+                    report=json.loads(report_path.read_text())
+                    assert report['diagnostic_seconds']==600 and report['production_release_gate']=='NOT_SATISFIED'
+                    assert report['status']!='PASS'
+                    if report['worker'] is not None:
+                        assert report['worker']['diagnostic_seconds']==600 and report['worker']['production_release_gate']=='NOT_SATISFIED'
             assert (CONTROL/'last-test-failure.json').read_bytes()==before
             assert guard.api_identity()==identity
             reports=[json.loads(p.read_text()) for p in sorted((STATE/'results').glob('*.json'))]
@@ -281,7 +331,7 @@ def run(args):
             Path(args.output).write_text(json.dumps(dict(status='IN_PROGRESS',cases=results))+'\n')
             print(json.dumps(dict(case=mode,status='PASS',elapsed_seconds=results[-1]['elapsed_seconds'],
                                   terminal=reports[-1]['worker']['terminal'] if mode=='full' else None)),flush=True)
-    return dict(status='PASS',cases=results,candidate=args.candidate,source_sha=args.source_sha,api_attestation=api_attestation)
+    return dict(status='PASS',cases=results,candidate=args.candidate,source_sha=args.source_sha,api_attestation=api_attestation,diagnostic_seconds=600 if DIAGNOSTIC else None,cross_mode=cross_mode)
 
 
 if __name__=='__main__':
@@ -289,7 +339,12 @@ if __name__=='__main__':
     parser.add_argument('--source');parser.add_argument('--runtime');parser.add_argument('--bundle')
     parser.add_argument('--candidate');parser.add_argument('--source-sha');parser.add_argument('--output')
     parser.add_argument('--cleanup',action='store_true')
+    parser.add_argument('--diagnostic-600',action='store_true')
     args=parser.parse_args()
+    if args.diagnostic_600:
+        DIAGNOSTIC=True;RUN='diagnostic-run'
+        ROOT=Path('/usr/lib/modelfc-suite-diag600');STATE=Path('/var/lib/modelfc-suite-diag600')
+        GUARD='modelfc-suite-diag600-guard.service';WORKER='modelfc-suite-diag600-worker.service'
     if args.cleanup: cleanup();raise SystemExit(0)
     result=dict(status='FAIL',reason='ACCEPTANCE_ERROR')
     try:

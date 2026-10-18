@@ -71,3 +71,49 @@ The artifact includes `modelfc-suite.tar.gz`, `install.py`, `SHA256SUMS`, and
 artifact hashes will be supplied only after disposable acceptance and focused
 review complete. No VPS installation, execution or deployment is authorized by
 this draft. A successful cloud run does not establish VPS deadline compliance.
+
+## Explicit ten-minute diagnostic artifact
+
+`bundle.py --diagnostic-600` renders a separate, fixed policy. It does not modify
+production's 300-second gate or the default runner. Its hashed guard/worker code,
+manifest (`diagnostic_seconds: 600`), service names and exact ExecStart arguments
+must agree. No duration environment variable or arbitrary seconds argument exists.
+The builder changes only the explicit mode marker and reviewed unit fields.
+
+The passive installer requires `--diagnostic-600` for this artifact and creates
+only `/usr/lib/modelfc-suite-diag600`, `/var/lib/modelfc-suite-diag600`, and
+`modelfc-suite-diag600-{guard,worker}.service`. It refuses existing paths including
+dangling symlinks. It never upgrades the installed default runner. Both modes
+share the existing deployment lock inode, but have separate admission locks,
+reports, units and recovery. Either mode's retained descriptor blocks the other;
+recovery of one mode cannot release the other's lock or alter its reports.
+
+Only these fixed diagnostic commands are accepted by the diagnostic artifact:
+`guard.py diagnostic-run <exact-candidate>` and `guard.py diagnostic-recover`.
+Default `run`/`recover` commands are rejected by it. Its worker requires the fixed
+`--diagnostic-600` argument. Diagnostic success is `DIAGNOSTIC_PASS`, reason
+`DIAGNOSTIC_ONLY`; every diagnostic report and worker result has
+`diagnostic_seconds: 600` and `production_release_gate: NOT_SATISFIED`, even if the
+suite completes within 300 seconds. This is evidence collection, never release
+acceptance or authorization to deploy. Timeout still has unknown terminal totals.
+
+Bounds: child 600s, worker start/stop 630/30s, guard runtime 720s, synchronous
+worker wait 675s, client wait 750s. Cleanup/recovery retains the existing 65s
+stop-command bounds and proves no jobs/empty cgroups before descriptor release.
+Longer CPU/memory occupancy and deployment-lock retention are explicit risks;
+no privilege, memory/task cap or socket exception is expanded. The diagnostic
+worker also hides the default runner's state directory.
+
+Before worker launch, the diagnostic guard requires the actual API's effective
+30-minute runtime limit and at least 780 seconds remaining, calculated from its
+current monotonic start timestamp. Unknown or near-rotation identity rejects;
+no restart or rotation-setting change is performed. Before/after identity must
+still match. The operator must select a fresh stable window, never a historical
+PID. Rejection/failure after fdstore acquisition retains the lock for explicit
+runner-only recovery; it never silently retries.
+
+Disposable CI tests both fixed policies, full unchanged candidate discovery,
+real 300/600-second cutoffs with detached descendants, failure/crash/stop recovery,
+namespace denial, and cross-mode contention/recovery isolation. Each artifact is
+built twice and compared. Installation and one diagnostic run require separate
+approval of the exact accepted artifact; preparation approval is not host authority.
