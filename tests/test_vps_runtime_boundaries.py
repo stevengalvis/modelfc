@@ -117,7 +117,8 @@ class TestNetworkProof(unittest.TestCase):
         self.assertFalse(result)
         candidate.assert_not_called()
 
-    def test_controller_records_own_live_namespace_before_start(self):
+    @patch.object(deploy, "test_admission_window")
+    def test_controller_records_own_live_namespace_before_start(self, admission):
         def service(unit):
             self.assertEqual(json.loads(self.request.read_text())["controller_netns"], [4, 123])
             self.output.write_text(json.dumps({"sha": self.sha, "release_id": self.release.name,
