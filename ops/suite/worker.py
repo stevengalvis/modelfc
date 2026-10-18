@@ -12,7 +12,7 @@ ROOT = Path('/usr/lib/modelfc-suite')
 DEADLINE = 300
 # Instrument only the stdlib runner; execute unchanged discovery and test bodies.
 BOOTSTRAP = r'''
-import json, os, time, unittest
+import json, os, re, time, unittest
 fd = int(os.environ.pop('MODELFC_PROGRESS_FD'))
 def emit(value):
     raw = (json.dumps(value, separators=(',', ':')) + '\n').encode()
@@ -22,6 +22,20 @@ def emit(value):
 start = unittest.TextTestResult.startTest
 stop = unittest.TextTestResult.stopTest
 run = unittest.TextTestRunner.run
+add_error = unittest.TextTestResult.addError
+add_failure = unittest.TextTestResult.addFailure
+def issue(test, err):
+    name = test.id()
+    holder = re.fullmatch(r'(setUpClass|tearDownClass|setUpModule|tearDownModule) \(([A-Za-z0-9_.]+)\)', name)
+    if holder: name = holder[1] + '.' + holder[2]
+    if re.fullmatch(r'[A-Za-z0-9_.]{1,160}', name):
+        emit(dict(event='issue', test=name, error=err[0].__name__))
+def errored(self, test, err):
+    issue(test, err)
+    return add_error(self, test, err)
+def failed(self, test, err):
+    issue(test, err)
+    return add_failure(self, test, err)
 def started(self, test):
     self._suite_start = time.monotonic()
     return start(self, test)
@@ -35,6 +49,8 @@ def completed(self, suite):
               expected_failures=len(result.expectedFailures),
               unexpected_successes=len(result.unexpectedSuccesses)))
     return result
+unittest.TextTestResult.addError = errored
+unittest.TextTestResult.addFailure = failed
 unittest.TextTestResult.startTest = started
 unittest.TextTestResult.stopTest = stopped
 unittest.TextTestRunner.run = completed
@@ -50,7 +66,7 @@ def capture(command, cwd, env, seconds=DEADLINE):
     env = {**env, 'MODELFC_PROGRESS_FD': str(write_fd)}
     child = None
     observed, last, terminal, tail, pending = 0, None, None, b'', b''
-    slowest = []
+    slowest, issues = [], []
     truncated = False
     timed_out = False
     try:
@@ -92,6 +108,11 @@ def capture(command, cwd, env, seconds=DEADLINE):
                                 last = dict(test=name, elapsed_seconds=round(time.monotonic()-origin, 6))
                                 slowest.append(dict(test=name, seconds=round(duration, 6)))
                                 slowest = sorted(slowest, key=lambda x: x['seconds'], reverse=True)[:8]
+                            elif item.get('event') == 'issue':
+                                name, error = item['test'], item['error']
+                                if (len(issues) < 8 and re.fullmatch(r'[A-Za-z0-9_.]{1,160}', name)
+                                        and re.fullmatch(r'[A-Za-z0-9_]{1,80}', error)):
+                                    issues.append(dict(test=name, error=error))
                             elif item.get('event') == 'terminal' and set(item) == {
                                 'event','tests','failures','errors','skipped','expected_failures','unexpected_successes'
                             } and all(type(v) is int and 0 <= v <= 1000000 for k,v in item.items() if k != 'event'):
@@ -117,7 +138,7 @@ def capture(command, cwd, env, seconds=DEADLINE):
             classification = 'TEST_FAILURE'
         return dict(classification=classification, complete=complete,
                     terminal=terminal if complete else None, observed_completed=observed,
-                    last_progress=last, slowest=slowest, stderr_truncated=truncated,
+                    last_progress=last, slowest=slowest, issues=issues, stderr_truncated=truncated,
                     elapsed_seconds=round(time.monotonic()-origin, 6))
     finally:
         if child is not None:

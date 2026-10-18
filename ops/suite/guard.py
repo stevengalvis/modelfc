@@ -273,7 +273,7 @@ def supervise():
                           '_SYSTEMD_INVOCATION_ID=' + lifecycle['InvocationID']])
         if len(output) > 16384: raise Rejected('REPORT_LIMIT')
         result = json.loads(output)
-        required = {'run_id','classification','complete','terminal','observed_completed','last_progress','slowest','stderr_truncated','elapsed_seconds'}
+        required = {'run_id','classification','complete','terminal','observed_completed','last_progress','slowest','issues','stderr_truncated','elapsed_seconds'}
         if type(result) is not dict or set(result) != required: raise Rejected('WORKER_REPORT_REJECTED')
         if result['run_id'] != run_id: raise Rejected('WORKER_IDENTITY_UNKNOWN')
         report['worker'] = result

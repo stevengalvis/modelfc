@@ -37,6 +37,7 @@ class CaptureTests(unittest.TestCase):
         self.assertEqual(result['classification'],'TEST_FAILURE')
         self.assertEqual(result['terminal']['failures'],1)
         self.assertNotIn('private-canary',json.dumps(result))
+        self.assertEqual(result['issues'],[dict(test='test_example.Example.test_failure',error='AssertionError')])
 
     def test_timeout_has_no_terminal_total_or_invented_failures(self):
         result=self.run_case(' def test_a(self): pass\n def test_b(self): time.sleep(60)\n',.25)
@@ -53,6 +54,12 @@ class CaptureTests(unittest.TestCase):
                 result=self.run_case(body)
                 self.assertEqual(result['classification'],'TEST_FAILURE')
                 self.assertNotIn('secret',json.dumps(result))
+
+    def test_class_setup_error_reports_identity_without_exception_text(self):
+        result=self.run_case(' @classmethod\n def setUpClass(cls): raise RuntimeError("private-canary")\n def test_never_runs(self): pass\n')
+        self.assertNotEqual(result['classification'],'PASS')
+        self.assertEqual(result['issues'],[dict(test='setUpClass.test_example.Example',error='RuntimeError')])
+        self.assertNotIn('private-canary',json.dumps(result))
 
     def test_zero_tests_not_success(self):
         self.assertEqual(self.run_case(' pass\n')['classification'],'INCOMPLETE')

@@ -138,7 +138,7 @@ def run(args):
         listener.bind(('127.0.0.1',0));listener.listen()
         port=listener.getsockname()[1]
         tmp=Path(temporary)
-        for mode in ('pass','failure','busy','pending','abandoned','override','kill','stop','concurrent','queued','timeout','full'):
+        for mode in ('pass','full','failure','busy','pending','abandoned','override','kill','stop','concurrent','queued','timeout'):
             if ROOT.exists():
                 guard.recover()
                 for unit in (GUARD,WORKER): (UNITS/unit).unlink()
