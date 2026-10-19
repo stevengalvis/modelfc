@@ -7,7 +7,7 @@ from modelfc import btts_outcomes as btts
 from modelfc.btts_market_data import timestamp
 from modelfc.btts_research import digest
 from modelfc.corner_prospective_read import _inventory
-from modelfc.ledger_storage import LedgerError
+from modelfc.ledger_storage import LedgerError, ledger_read_lock
 from modelfc.research_predictions import records as research_records, load_prepared, _id
 from modelfc.research_outcomes import corner_results
 
@@ -90,19 +90,20 @@ def _corners(state, now, cohort):
             _corner_values(row, prediction, evidence["effective"], now)
             rows.append(row)
     if cohort in {"ALL", "ODDS_FREE"}:
-        outcomes = corner_results(state, as_of=now)
-        identities = {_id(p.forecast_id, m): p.forecast_id for p, m in load_prepared(state)}
-        for prediction in research_records(state, now=now, include_outcomes=False):
-            if prediction["prediction_type"] != "CORNER" or timestamp(prediction["created_at_utc"]) > now:
-                continue
-            row = _base(prediction, "CORNER", prediction["prediction_id"], ["ODDS_FREE"])
-            row["model_name"] = prediction["model_name"]
-            row["source_forecast_id"] = identities[prediction["prediction_id"]]
-            row["correction_support"] = "UNSUPPORTED"
-            row["source_references"].append(_reference("calendar", prediction["calendar_source_sha256"], prediction["calendar_retrieved_at_utc"]))
-            outcome = outcomes.get(row["fixture_id"])
-            _corner_values(row, prediction, outcome, now)
-            rows.append(row)
+        with ledger_read_lock(state):
+            outcomes = corner_results(state, as_of=now)
+            identities = {_id(p.forecast_id, m): p.forecast_id for p, m in load_prepared(state)}
+            for prediction in research_records(state, now=now, include_outcomes=False):
+                if prediction["prediction_type"] != "CORNER" or timestamp(prediction["created_at_utc"]) > now:
+                    continue
+                row = _base(prediction, "CORNER", prediction["prediction_id"], ["ODDS_FREE"])
+                row["model_name"] = prediction["model_name"]
+                row["source_forecast_id"] = identities[prediction["prediction_id"]]
+                row["correction_support"] = "UNSUPPORTED"
+                row["source_references"].append(_reference("calendar", prediction["calendar_source_sha256"], prediction["calendar_retrieved_at_utc"]))
+                outcome = outcomes.get(row["fixture_id"])
+                _corner_values(row, prediction, outcome, now)
+                rows.append(row)
     return rows
 
 
@@ -116,6 +117,12 @@ def _corner_values(row, prediction, outcome, now):
 
 
 def _btts(state, now, cohort):
+    # Both forecast stores and outcomes publish under state -> BTTS lock order.
+    with ledger_read_lock(state):
+        return _locked_btts(state, now, cohort)
+
+
+def _locked_btts(state, now, cohort):
     result = []
     originals = btts.inventory(state)
     original_outcomes = btts._originals(state, originals)
@@ -181,7 +188,7 @@ def read(state_dir, *, competition="ALL", market="ALL", cohort="ALL", as_of=None
     if state.is_symlink() or (state.exists() and not state.is_dir()):
         raise LedgerError("INVALID_RESEARCH_STATE")
     rows = []
-    if competition != "E0":
+    if competition != "E0" and state.exists():
         if market in {"ALL", "CORNER"}: rows.extend(_corners(state, now, cohort))
         if market in {"ALL", "BTTS"}: rows.extend(_btts(state, now, cohort))
     rows.sort(key=lambda r:(timestamp(r["frozen_at_utc"]), r["market"], r["forecast_id"]))

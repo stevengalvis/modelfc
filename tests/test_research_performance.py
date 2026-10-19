@@ -152,3 +152,53 @@ class ResearchPerformanceTests(unittest.TestCase):
                 idempotency_key='nonchronological',supersedes_outcome_id=root['outcome_id'],correction_reason='Synthetic backward clock')
         with self.assertRaises(LedgerError):
             reporting.read(fx.state,market='CORNER',as_of=earlier)
+
+    def assert_append_waits_for_snapshot(self, state, path, payload, hook_owner, hook_name, market, expected_before):
+        from concurrent.futures import ThreadPoolExecutor
+        from threading import Event
+        from modelfc.ledger_storage import ledger_lock, write_new_record
+        attempting, completed = Event(), Event()
+        original = getattr(hook_owner, hook_name)
+        started = False
+        def append():
+            attempting.set()
+            with ledger_lock(state):
+                write_new_record(path, payload)
+            completed.set()
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = None
+            def hooked(*args, **kwargs):
+                nonlocal started, future
+                result = original(*args, **kwargs)
+                if not started:
+                    started = True
+                    future = executor.submit(append)
+                    self.assertTrue(attempting.wait(2))
+                    self.assertFalse(completed.wait(.05), 'writer bypassed shared snapshot lock')
+                return result
+            with patch.object(hook_owner, hook_name, side_effect=hooked):
+                report = reporting.read(state, market=market)
+            self.assertEqual(report['forecast_cohorts'], expected_before)
+            future.result(timeout=2)
+        self.assertEqual(reporting.read(state, market=market)['forecast_cohorts'], expected_before+1)
+
+    def test_odds_free_append_waits_between_identities_and_rows(self):
+        import json
+        fx=self.fixture()
+        path=next(p for p in (fx.state/'research-predictions').glob('*.json') if json.loads(p.read_text())['model_type']=='CORNER')
+        payload=json.loads(path.read_text());path.unlink()
+        self.assert_append_waits_for_snapshot(fx.state,path,payload,reporting,'load_prepared','CORNER',0)
+
+    def test_btts_append_waits_between_inventory_and_performance(self):
+        import json
+        from tests import test_btts_outcomes as btts_fixture
+        from modelfc.btts_model import freeze_btts_forecast
+        from modelfc.btts_research import get_or_freeze_btts_forecast
+        fx=self.fixture(btts_fixture.BttsOutcomeTests)
+        other=fx.fixture.model_copy(update={'provider':'football-data.org','provider_fixture_id':'777'})
+        forecast=freeze_btts_forecast(other,btts_fixture.history(),frozen_at=datetime(2026,9,19,13,tzinfo=timezone.utc))
+        previous=set((fx.state/'btts-research').glob('*.json'))
+        get_or_freeze_btts_forecast(fx.state,other,lambda:forecast)
+        path=(set((fx.state/'btts-research').glob('*.json'))-previous).pop()
+        payload=json.loads(path.read_text());path.unlink()
+        self.assert_append_waits_for_snapshot(fx.state,path,payload,reporting.btts,'inventory','BTTS',1)
