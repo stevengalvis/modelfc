@@ -158,3 +158,7 @@ class PublicationHistoryTests(unittest.TestCase):
             response = fx.fx.client.get('/api/v1/prospective/performance?' + query)
             self.assertEqual(response.status_code, 422, response.text)
             self.assertEqual(response.headers['cache-control'], 'no-store')
+            error = response.json()['error']
+            self.assertEqual(set(error), {'code', 'message', 'details', 'retryable'})
+            self.assertTrue(error['message'])
+            self.assertFalse(error['retryable'])

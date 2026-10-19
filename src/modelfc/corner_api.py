@@ -857,16 +857,19 @@ def create_app(
                 if view == "legacy" or read_time > datetime.now(timezone.utc):
                     raise ValueError
             except (ValueError, TypeError, OverflowError):
-                return JSONResponse(status_code=422, content={"error": {"code": "INVALID_AS_OF",
-                    "message": "Publication history requires a timezone-aware cutoff no later than now."}},
-                    headers={"Cache-Control": "no-store"})
+                error = _error("INVALID_AS_OF",
+                    "Publication history requires a timezone-aware cutoff no later than now.", 422)
+                error.headers["Cache-Control"] = "no-store"
+                return error
         keys = list(request.query_params.keys())
         allowed = ({"view", "strategy", "scope", "market", "competition", "offset", "limit", "as_of"}
                    if view == "strategies" else {"view", "market", "competition", "as_of"}
                    if view == "model_picks" else {"view"})
         if (any(len(request.query_params.getlist(k)) != 1 for k in keys) or set(keys) - allowed):
-            return JSONResponse(status_code=422, content={"error": {"code": "INVALID_PUBLICATION_QUERY"}},
-                                headers={"Cache-Control": "no-store"})
+            error = _error("INVALID_PUBLICATION_QUERY",
+                           "Unknown, duplicate or unsupported parameter for this publication view.", 422)
+            error.headers["Cache-Control"] = "no-store"
+            return error
         try:
             if view == "strategies":
                 from modelfc.pick_strategies import read

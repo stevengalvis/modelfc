@@ -33,3 +33,13 @@ it("rejects publications after the echoed cutoff and accepts equivalent timezone
  const valid={asOf:"2026-09-20T05:00:30+03:00"};
  expect(()=>assertPublicationSelection({...report,selection:publicationSelection({asOf:"2026-09-20T02:00:30Z"})},valid)).not.toThrow();
 });
+
+it("preserves publication validation errors instead of reporting network failures",async()=>{
+ for(const code of ["INVALID_PUBLICATION_QUERY","INVALID_AS_OF"]){
+  vi.stubGlobal("fetch",vi.fn().mockResolvedValue(new Response(JSON.stringify({error:{
+   code,message:"Invalid publication filters",details:{},retryable:false,
+  }}),{status:422})));
+  await expect(createApiClient("live","https://api.example.test/api/v1").trackRecord(undefined,{asOf:"invalid"}))
+    .rejects.toMatchObject({code,status:422,retryable:false});
+ }
+});
