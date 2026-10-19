@@ -113,7 +113,7 @@ def read(state_dir, *, strategy="best_value", scope="current", market=None, comp
         row["simulated_stake_dollars"] = STAKE_DOLLARS
         row["profit_dollars"] = None if row["profit_units"] is None else row["profit_units"] * STAKE_DOLLARS
     return {"policy_version": POLICY, "strategy": strategy, "scope": scope,
-        "stake_dollars": STAKE_DOLLARS, "simulated": True, "void_settlement_supported": False,
+        "stake_dollars": STAKE_DOLLARS, "simulated": True, "void_settlement_supported": False, "simulation_void_supported": True,
         "summary_scope": "page", "summary": report["summary"],
         "totals": totals, "market_totals": market_totals, "total_profit_dollars": totals["profit_units"] * STAKE_DOLLARS,
         "profit_dollars": report["summary"]["profit_units"] * STAKE_DOLLARS,

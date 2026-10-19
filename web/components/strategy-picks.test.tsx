@@ -44,6 +44,25 @@ it("paginates only on user action",async()=>{
  expect(call).toHaveBeenCalledTimes(1);fireEvent.click(screen.getByText("Next picks"));
  await screen.findByText(/No published picks/);expect(call.mock.lastCall?.[0].offset).toBe(5);
 });
+it("renders reviewed simulation void accounting without calling it bookmaker grading",async()=>{
+ const page=decodeStrategyPage(structuredClone(fixture));
+ const row=page.publications[0];
+ row.result="SIMULATION_VOID";row.profit_units=0;row.profit_dollars=0;
+ row.simulation_void={policy:"reviewed-simulation-void-v1",record_hash:"c".repeat(64),reason:"Reviewed cancellation",recorded_at_utc:row.published_at_utc};
+ const summary={...page.summary,settled:0,wins:0,losses:0,pushes:0,pending:0,voids:1,profit_units:0,win_rate:null,roi:null};
+ const value={...page,simulation_void_supported:true,publications:[row],total:1,next_offset:null,
+  summary,totals:summary,profit_dollars:0,total_profit_dollars:0,
+  market_totals:page.market_totals.map(g=>({...g,summary})),by_league_market:page.by_league_market.map(g=>({...g,summary}))};
+ vi.spyOn(api,"strategyPicks").mockResolvedValue(decodeStrategyPage(value));
+ render(<StrategyPicks scope="history"/>);
+ expect(await screen.findByText(/1 voided picks/)).toBeInTheDocument();
+ expect(screen.getByText(/ROI: —/)).toHaveTextContent("$0.00");
+ expect(screen.getByText(/Voided pick · simulated/)).toBeInTheDocument();
+ expect(screen.getByText(/do not confirm a sportsbook refund/)).toBeInTheDocument();
+ expect(screen.getByText(/Simulated stake returned; review/)).toHaveTextContent("Reviewed cancellation");
+ expect(()=>decodeStrategyPage({...value,simulation_void_supported:false})).toThrow();
+ expect(()=>decodeStrategyPage({...value,totals:{...summary,settled:1}})).toThrow();
+});
 
 it("opens separately timestamped saved-price analysis from the Upcoming link",async()=>{
  window.history.replaceState({}, "", "/recommendations?view=shortlist");

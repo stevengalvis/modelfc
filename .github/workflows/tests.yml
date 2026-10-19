@@ -36,7 +36,7 @@ jobs:
       - name: Verify real Linux cross-user history ACL publication
         run: |
           sudo -n env PYTHONPATH=src "$RUNNER_TEMP/modelfc-locked/bin/python" -c 'import ctypes.util, os; from tests.test_team_history_acl import cross_uid_available; assert os.geteuid() == 0 and ctypes.util.find_library("acl") and cross_uid_available(), "cross-user ACL test must not skip in CI"'
-          sudo -n env PYTHONPATH=src "$RUNNER_TEMP/modelfc-locked/bin/python" -m unittest tests.test_team_history_acl.PublicHistoryAclTests.test_real_atomic_replacement_cross_uid_isolation tests.test_corner_api_capabilities.RestrictedCapabilityTests.test_real_readonly_identity_gets_functional_content_without_private_access -v
+          sudo -n env PYTHONPATH=src "$RUNNER_TEMP/modelfc-locked/bin/python" -m unittest tests.test_team_history_acl.PublicHistoryAclTests.test_real_atomic_replacement_cross_uid_isolation tests.test_corner_api_capabilities.RestrictedCapabilityTests.test_real_readonly_identity_gets_functional_content_without_private_access tests.test_settlement_review_access.ReviewCrossUserTests -v
 
       - name: Compile Python sources and tests
         run: '"$RUNNER_TEMP/modelfc-locked/bin/python" -m compileall -q src tests'

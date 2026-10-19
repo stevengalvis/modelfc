@@ -1,3 +1,6 @@
+> Reviewed exception extension: see [REVIEWED_SETTLEMENT.md](REVIEWED_SETTLEMENT.md).
+> Earlier V1 limitations below describe the unchanged original record format.
+
 # Championship BTTS outcomes (OFFLINE, research only)
 
 `GET /api/v1/research/btts/performance?competition=E1` and

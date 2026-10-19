@@ -91,23 +91,37 @@ def validate(record, source):
         raise LedgerError("INVALID_PUBLISHED_RECOMMENDATION")
 
 
-def result(record, state, source, now):
-    """Reuse validated goal evidence, binding it to this exact provider forecast."""
-    from modelfc.btts_outcomes import (_directory_outcomes, _load, _provider_binding,
-                                      fixture_identity, inventory)
+def result_inventory(state, now):
+    """Validate saved outcomes/revisions once for an entire published-record read."""
+    from modelfc.btts_outcomes import _originals, inventory
+    from modelfc.btts_corrections import chain, inventory as correction_inventory
+    try:
+        forecasts = inventory(state)
+        originals = _originals(state, forecasts)
+        revisions = correction_inventory(state, originals, forecasts)
+        return {identity: chain(state, original, forecasts, as_of=now,
+                                revisions=revisions)[0]
+                for identity, original in originals.items()}
+    except ImportError:
+        # Optional evidence decoder absent: never infer results.
+        return None
+    except (ValueError, KeyError, TypeError, AttributeError):
+        raise LedgerError("INVALID_BTTS_OUTCOME") from None
+
+
+def result(record, source, now, outcomes):
+    """Bind a shared validated outcome to this exact provider forecast."""
+    from modelfc.btts_outcomes import _provider_binding, fixture_identity
     value = record["offer"]
     forecasts = {digest(r.forecast): r.forecast for r in source}
     forecast = forecasts[value["forecast_id"]]
-    path = _directory_outcomes(state) / (digest(fixture_identity(forecast)) + ".json")
-    if not path.exists():
+    outcome = outcomes.get(digest(fixture_identity(forecast))) if outcomes is not None else None
+    if outcome is None:
         return "PENDING", None
-    # An outcome may select an odds-free forecast of the same exact fixture.
     try:
-        outcome = _load(path, inventory(state))
         _provider_binding(forecast, outcome["source"])
-    except ImportError:
-        # Optional provider evidence decoder absent: never infer a result.
-        return "PENDING", None
+    except (ValueError, KeyError, TypeError, AttributeError):
+        raise LedgerError("INVALID_BTTS_OUTCOME") from None
     if timestamp(outcome["recorded_at_utc"]) > now:
         return "PENDING", None
     won = value["side"] == outcome["actual_btts"]

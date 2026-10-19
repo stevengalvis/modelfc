@@ -238,7 +238,12 @@ def settle(state_dir, forecast_id, source, *, select_earliest=False, reconcile=F
         ensure_directory(directory, "BTTS outcomes")
         path = directory / f"{outcome_id}.json"
         if path.exists():
-            previous = _load(path, forecasts)
+            original = _load(path, forecasts)
+            from modelfc.btts_corrections import chain
+            previous, _ = chain(state, original, forecasts)
+            if original["source"] == source and original["result"] == result:
+                _sync_directories(directory, state)
+                return original, False
             _require(previous["result"] == result and (reconcile or previous["source"] == source),
                      "RESULT_CONFLICT")
             _sync_directories(directory, state)
@@ -267,14 +272,28 @@ def scores(rows):
                                 for p, y in pairs) / len(pairs), "calibration": bins}
 
 
+def _originals(state, forecasts):
+    directory = _directory_outcomes(state)
+    originals = {}
+    for path in sorted(directory.glob("*.json")) if directory.exists() else ():
+        record = _load(path, forecasts)
+        _require(record["outcome_id"] not in originals, "INVALID_BTTS_OUTCOME")
+        originals[record["outcome_id"]] = record
+    return originals
+
+
 def performance(state_dir, *, as_of=None):
     now = as_of or datetime.now(timezone.utc)
     _require(now.tzinfo is not None, "INVALID_BTTS_READ_TIME")
     forecasts = inventory(state_dir)
-    directory = _directory_outcomes(state_dir)
+    from modelfc.btts_corrections import chain, inventory as correction_inventory
+    originals = _originals(state_dir, forecasts)
+    correction_index = correction_inventory(state_dir, originals, forecasts)
     outcomes = {}
-    for path in sorted(directory.glob("*.json")) if directory.exists() else ():
-        record = _load(path, forecasts)
+    for original in originals.values():
+        record, revisions = chain(state_dir, original, forecasts, as_of=now,
+                                  revisions=correction_index)
+        record["corrections"] = revisions
         if timestamp(record["recorded_at_utc"]) <= now:
             outcomes[record["outcome_id"]] = record
     rows = []
@@ -301,6 +320,8 @@ def performance(state_dir, *, as_of=None):
             "home_goals": outcome["result"]["home_goals"] if outcome else None,
             "away_goals": outcome["result"]["away_goals"] if outcome else None,
             "outcome_id": outcome["outcome_id"] if outcome else None,
+            "effective_record_hash": outcome["record_hash"] if outcome else None,
+            "corrections": outcome.get("corrections", []) if outcome else [],
             "recorded_at_utc": outcome["recorded_at_utc"] if outcome else None,
             "result_provider": outcome["source"]["provider"] if outcome else None,
             "result_source_sha256": (outcome["source"].get("file_sha256") or
@@ -318,6 +339,8 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--state-dir", required=True)
     parser.add_argument("--forecast-id", required=True)
+    parser.add_argument("--supersedes-record-hash")
+    parser.add_argument("--reason")
     sources = parser.add_subparsers(dest="source", required=True)
     csv_parser = sources.add_parser("csv")
     csv_parser.add_argument("--csv-file", required=True)
@@ -338,7 +361,12 @@ def main(argv=None):
             evidence = load_saved_evidence(args.manifest, args.manifest_sha256,
                                            args.response_file, args.calendar_file)
             _, source, _ = evidence.for_settlement(fixture, timestamp(fixture["kickoff_utc"]))
-        record, created = settle(args.state_dir, args.forecast_id, source)
+        if args.supersedes_record_hash or args.reason:
+            from modelfc.btts_corrections import correct
+            record, created = correct(args.state_dir, args.forecast_id, source,
+                supersedes_record_hash=args.supersedes_record_hash, reason=args.reason)
+        else:
+            record, created = settle(args.state_dir, args.forecast_id, source)
         print(json.dumps({"status": "RECORDED" if created else "REUSED",
                           "outcome_id": record["outcome_id"], "provider_requests": 0}))
         return 0

@@ -47,9 +47,9 @@ function StrategyRows({scope,strategy,market,competition}: {scope:"current"|"his
   return <>
     <p>{data.total} picks match these filters. Showing {data.publications.length}.</p>
     {scope === "history" && <>
-      <h3>Results for these filters</h3><p>{data.totals.settled} settled · {data.totals.pending} pending · {data.totals.wins} wins · {data.totals.losses} losses · {data.totals.pushes} pushes</p>
+      <h3>Results for these filters</h3><p>{data.totals.settled} settled · {data.totals.pending} pending · {data.totals.wins} wins · {data.totals.losses} losses · {data.totals.pushes} pushes · {data.totals.voids} voided picks</p>
       <p>Simulated profit: {data.totals.profit_units.toFixed(2)} units / ${data.total_profit_dollars.toFixed(2)}. ROI: {data.totals.roi === null ? "—" : `${(data.totals.roi*100).toFixed(1)}%`}.</p>
-      <p>Includes all published picks matching these filters, across pages. Pushes return the stake; pending picks are excluded from settled ROI. Sportsbook voids and BTTS result corrections remain unavailable.</p>
+      <p>Includes all published picks matching these filters, across pages. Pushes return the stake; pending picks are excluded from settled ROI. Voided picks return the $2 stake, have zero profit and are excluded from ROI and win rate. They require explicit review, are excluded from Zeno’s tracked results and do not confirm a sportsbook refund. Corrected results retain an audit history.</p>
       {data.market_totals.map(g=><p key={`${g.competition}:${g.market_type}`}>{g.competition} · {g.market_type === "BTTS" ? "Both teams to score" : "Team corners"}: {g.summary.picks} picks, {g.summary.settled} settled</p>)}
     </>}
     {!data.publications.length && <p>No published picks for this strategy and filter yet. Historical subset picks are kept separately and are not reclassified.</p>}
@@ -58,7 +58,7 @@ function StrategyRows({scope,strategy,market,competition}: {scope:"current"|"his
       <PublishedPick row={row} now={now} />
       <details><summary>Evidence and simulated result</summary><p>Published {row.published_at_utc}; policy effective {row.policy_effective_at_utc}. Strategy version: {row.strategy_policy}.</p>
         <p>No-vig edge {(row.offer.no_vig_probability_edge*100).toFixed(1)} pp · estimated EV {(row.offer.expected_profit*100).toFixed(1)}%.</p>
-        <p>{row.result} · simulated $2 risked · {row.profit_units === null ? "Pending" : `${row.profit_units.toFixed(2)} units / $${row.profit_dollars?.toFixed(2)}`}</p></details>
+        <p>{row.result === "SIMULATION_VOID" ? "Voided pick" : row.result} · simulated $2 risked · {row.profit_units === null ? "Pending" : `${row.profit_units.toFixed(2)} units / $${row.profit_dollars?.toFixed(2)}`}</p>{row.simulation_void && <p>Reviewed {row.simulation_void.recorded_at_utc}: {row.simulation_void.reason}. Simulated stake returned; review {row.simulation_void.record_hash}.</p>}</details>
     </article>)}
     <button disabled={offset===0} onClick={()=>setOffset(Math.max(0,offset-5))}>Previous picks</button>
     <button disabled={data.next_offset===null} onClick={()=>data.next_offset!==null&&setOffset(data.next_offset)}>Next picks</button>
@@ -71,6 +71,6 @@ export function PublishedPick({ row, now }: { row: StrategyPick; now: number }) 
     <p>{row.offer.market_type === "BTTS" ? `Both teams to score: ${row.offer.side === "YES" ? "Yes" : "No"}` : `${row.offer.team} corners ${row.offer.direction.toLowerCase()} ${row.offer.line}`}</p>
     <p>{row.offer.bookmaker} · {row.offer.american_odds > 0 ? "+" : ""}{row.offer.american_odds} · {(row.offer.model_probability*100).toFixed(1)}% model probability</p>
     <p className="ledger-meta">Frozen publication price · Quote recorded <time dateTime={row.offer.retrieved_at_utc}>{row.offer.retrieved_at_utc}</time> · Published <time dateTime={row.published_at_utc}>{row.published_at_utc}</time></p>
-    <p className="ledger-meta">{now >= Date.parse(row.offer.kickoff_utc) ? "Started fixture · publication is historical, not an upcoming choice." : now - Date.parse(row.offer.retrieved_at_utc) > 300_000 ? "Stale quote · price needs rechecking." : "Saved quote · recheck price and availability."}</p>
+    <p className="ledger-meta">{row.result === "SIMULATION_VOID" ? "Voided pick · excluded from Zeno’s tracked results; this does not confirm a sportsbook refund." : now >= Date.parse(row.offer.kickoff_utc) ? "Started fixture · publication is historical, not an upcoming choice." : now - Date.parse(row.offer.retrieved_at_utc) > 300_000 ? "Stale quote · price needs rechecking." : "Saved quote · recheck price and availability."}</p>
   </div>;
 }

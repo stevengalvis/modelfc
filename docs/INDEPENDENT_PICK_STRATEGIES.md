@@ -1,3 +1,6 @@
+> Reviewed exception extension: see [REVIEWED_SETTLEMENT.md](REVIEWED_SETTLEMENT.md).
+> Earlier V1 limitations below describe the unchanged original record format.
+
 # Independent Model Picks strategies
 
 `independent-value-strategies-v1` starts when the existing live prospective writer
