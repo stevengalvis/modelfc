@@ -112,3 +112,43 @@ The normal test workflow runs genuine UID-65534 tests under its existing root AC
 acceptance step: writer-visible/private corrections and voids reject, then explicit
 read-only fixture ACLs expose the effective result without write access. These
 grants affect disposable test fixtures only, not installed production permissions.
+
+### Smallest read-only host acceptance handoff
+
+This is a proposed operator check, not evidence of host access or authorization to
+install this PR. Validator release acceptance and Friday collection activation are
+separate completed work; do not rerun their diagnostics or change their settings.
+
+1. Record UTC time and the running API's release SHA, PID and invocation identity
+   using the existing read-only release-adoption procedure. Inspect only service
+   identity properties (`MainPID`, `InvocationID`, `User`, `Group`,
+   `SupplementaryGroups`), not environment/credential contents. A selected release
+   alone does not prove the serving process uses it. If this PR is not running,
+   report `NOT_DEPLOYED`; baseline GET success cannot accept its new readers.
+2. Through the existing authorized operator path, inspect only metadata/access for
+   `btts-corrections` and `simulation-voids` and any already-existing review records.
+   Use the actual service identity, supplementary groups and sandbox restrictions;
+   a root read or a plain `sudo -u` outside the sandbox is not equivalent. Verify
+   traversal/enumeration/read access and absence of write grants from effective
+   permissions/ACLs, without opening a file for writing or changing any ACL. Do not
+   create synthetic reviews in production. Missing namespaces/records mean
+   `NO_REVIEW_DATA`, not proven corrected-result or void-reader acceptance.
+3. Make one bounded GET per relevant read, using the already-verified local API
+   listener (no guessed port): `/api/v1/research/btts/performance`,
+   `/api/v1/prospective/performance?view=model_picks`, and
+   `/api/v1/prospective/performance?view=strategies&strategy=best_value&scope=history&limit=5`.
+   Use a 10-second timeout and 1-MiB response cap; a cap/error is inconclusive, not
+   an empty cohort. Repeat the strategy read only for the other strategy/current
+   scope needed by an existing reviewed publication. Retain public response fields
+   and IDs/timestamps, never raw retained calendar evidence or credentials.
+4. For an already-existing reviewed record, compare its effective hash, correction
+   time/reason or void status with the matching API row and original frozen odds.
+   Check totals by identical filters: voids are outside settled/pending/ROI; a
+   correction contributes once. Then compare the hydrated corresponding UI row and
+   totals, preserving model quality versus published/strategy/legacy distinctions.
+   Without existing reviewed records or hydrated browser access, state the exact
+   unverified case. Do not infer live parity from disposable tests.
+
+No collection, settlement command, permission grant, service restart or provider
+request belongs in this check. If any read is denied, stop that read and report the
+path/endpoint, actual identity and status; do not broaden permissions to complete it.
