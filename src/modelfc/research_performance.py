@@ -6,8 +6,6 @@ from pathlib import Path
 from modelfc import btts_outcomes as btts
 from modelfc.btts_market_data import timestamp
 from modelfc.btts_research import digest
-from modelfc.corner_analysis_outcomes import load_outcome_chain_readonly
-from modelfc.corner_opportunities import prediction_records
 from modelfc.corner_prospective_read import _inventory
 from modelfc.ledger_storage import LedgerError
 from modelfc.research_predictions import records as research_records, load_prepared, _id
@@ -60,12 +58,12 @@ def _corners(state, now, cohort):
     rows = []
     if cohort in {"ALL", "BOOKMAKER_RESEARCH"}:
         # Reuse the established locked validation, target settlement and cutoff logic.
-        inv = _inventory(state, now=now, include_research=False, outcome_as_of=now)
-        originals = {p["prediction_id"]: p for p in prediction_records(state)}
+        inv = _inventory(state, now=now, include_research=False, outcome_as_of=now, include_outcome_history=True)
         for prediction in inv["predictions"]:
             if timestamp(prediction["created_at_utc"]) > now:
                 continue
-            original = originals[prediction["prediction_id"]]
+            evidence = inv["outcome_history"][prediction["prediction_id"]]
+            original = evidence["prediction"]
             row = _base(prediction, "CORNER", prediction["prediction_id"], ["BOOKMAKER_RESEARCH"])
             row["model_name"] = prediction["model_name"]
             row["source_forecast_id"] = original["forecast_id"]
@@ -86,13 +84,10 @@ def _corners(state, now, cohort):
                 row["probabilities"].append(dict(target_id=target["target_id"], team_side=target["team_side"],
                     direction=target["direction"], line=target["line"], probability=p, push_probability=push,
                     decisive_probability=decisive, recorded_at_utc=target["materialized_at_utc"], result=result))
-            chain, _ = load_outcome_chain_readonly(state, original["analysis_id"])
-            visible = [r for r in chain if timestamp(r["recorded_at_utc"]) <= now]
+            visible = [r for r in evidence["records"] if timestamp(r["recorded_at_utc"]) <= now]
             row["corrections"] = sorted([_revision(r) for r in visible], key=lambda r:(timestamp(r["recorded_at_utc"]),r["record_id"]))
-            # Select by chain ancestry (equal timestamps do not imply lexical revision order).
-            superseded = {r["supersedes_outcome_id"] for r in visible}
-            effective = next((r for r in visible if r["outcome_id"] not in superseded), None)
-            _corner_values(row, prediction, effective, now)
+            # Same validated, chronology-checked tip that graded the saved targets.
+            _corner_values(row, prediction, evidence["effective"], now)
             rows.append(row)
     if cohort in {"ALL", "ODDS_FREE"}:
         outcomes = corner_results(state, as_of=now)
@@ -132,6 +127,7 @@ def _btts(state, now, cohort):
         row = _base(forecast, "BTTS", forecast["forecast_id"], forecast["origins"])
         if forecast["forecast_id"] in prepared_btts:
             prepared = prepared_btts[forecast["forecast_id"]]
+            row["source_forecast_id"] = prepared.forecast_id
             evidence = research[_id(prepared.forecast_id, "BTTS")]
             row["source_references"].extend([
                 _reference("calendar", evidence["calendar_source_sha256"], evidence["calendar_retrieved_at_utc"]),

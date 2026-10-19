@@ -3,7 +3,7 @@
     "competition": "ALL",
     "market": "ALL",
     "cohort": "ALL",
-    "as_of_utc": "2026-10-19T23:15:29.062028+00:00"
+    "as_of_utc": "2026-10-19T23:20:16.672011+00:00"
   },
   "policy": "earliest-frozen-per-exact-fixture-and-market-v1",
   "coverage": "PARTIAL",
@@ -89,8 +89,8 @@
       "provider_fixture_id": "2488",
       "frozen_at_utc": "2026-10-08T12:00:00Z",
       "model_version": "deepfc-arithmetic-btts-v1",
-      "source_forecast_id": "3b8f8a4431fa74b1fa06ef82db73b88c97f537bf354f5512910a7f754c64bedf",
-      "effective_record_hash": "34f16233a64ee3d97da6138546bd7b1b7f7a3f7e7f2c8dabfdbeee3530b1d946",
+      "source_forecast_id": "4cb42c99155fec285d384ebab7b7fc86d5ce9256e4d1a90590f598c31e6ec332",
+      "effective_record_hash": "a5981f142736a9b42b99e261f9c4b2f6d39ea82a387deb7b34fafa478e512b99",
       "result_provider": "football-data.co.uk",
       "result_retrieved_at_utc": "2026-10-09T22:00:00Z",
       "selected_for_metrics": true,
@@ -154,12 +154,12 @@
         "away_goals": 1
       },
       "outcome_id": "b4ccd7ace8da6b14c7709e436a7f89d6add6112828066da1bd461f5ab59bb66c",
-      "outcome_recorded_at_utc": "2026-10-19T23:15:29.017562Z",
+      "outcome_recorded_at_utc": "2026-10-19T23:20:16.638907Z",
       "result_source_sha256": "6a67a45784fa9d6c7bb1a7e085e7d30a4372fc39de79cc9a8cedfae9ecd164b0",
       "corrections": [
         {
-          "record_id": "34f16233a64ee3d97da6138546bd7b1b7f7a3f7e7f2c8dabfdbeee3530b1d946",
-          "recorded_at_utc": "2026-10-19T23:15:29.017562Z",
+          "record_id": "a5981f142736a9b42b99e261f9c4b2f6d39ea82a387deb7b34fafa478e512b99",
+          "recorded_at_utc": "2026-10-19T23:20:16.638907Z",
           "supersedes_id": null,
           "reason": null,
           "source_sha256": "6a67a45784fa9d6c7bb1a7e085e7d30a4372fc39de79cc9a8cedfae9ecd164b0",
@@ -188,7 +188,7 @@
       "frozen_at_utc": "2026-10-08T12:00:00+00:00",
       "model_version": "frozen-team-count-distribution-v1",
       "source_forecast_id": "c48ceb26f21b1c784f0d4729199db3eaadebc73095f65d44fef1e6fcc27dd009",
-      "effective_record_hash": "e3cb43825e49ca7f72b6d2031daab1919e121e68e2ad5a246c5c1225f0c037ad",
+      "effective_record_hash": "ff7304afbeb265221d88728c4bfac7f67cd89c3dd0be268834a708ed7a9581c0",
       "result_provider": "football-data.co.uk",
       "result_retrieved_at_utc": "2026-10-09T22:00:00Z",
       "selected_for_metrics": true,
@@ -218,7 +218,7 @@
         "home_corners": 6
       },
       "outcome_id": "b4ccd7ace8da6b14c7709e436a7f89d6add6112828066da1bd461f5ab59bb66c",
-      "outcome_recorded_at_utc": "2026-10-19T23:15:29.026352Z",
+      "outcome_recorded_at_utc": "2026-10-19T23:20:16.643400Z",
       "result_source_sha256": "6a67a45784fa9d6c7bb1a7e085e7d30a4372fc39de79cc9a8cedfae9ecd164b0",
       "corrections": [],
       "correction_support": "UNSUPPORTED",

@@ -111,3 +111,44 @@ class ResearchPerformanceTests(unittest.TestCase):
         self.assertEqual(new['forecasts'][0]['corrections'][0]['result'],root['result'])
         self.assertEqual(new['forecasts'][0]['result']['actual_btts'],'NO')
         self.assertEqual(before,fx.snapshots())
+
+    def test_source_forecast_id_joins_the_original_prepared_btts_record(self):
+        from modelfc.research_predictions import load_prepared
+        from modelfc.btts_research import digest
+        fx=self.fixture()
+        prepared=next(p for p,m in load_prepared(fx.state) if m=='BTTS')
+        row=reporting.read(fx.state,market='BTTS')['forecasts'][0]
+        self.assertEqual(row['forecast_id'],digest(prepared.btts))
+        self.assertEqual(row['source_forecast_id'],prepared.forecast_id)
+        self.assertNotEqual(row['forecast_id'],row['source_forecast_id'])
+
+    def test_correction_append_after_inventory_cannot_split_scores_and_results(self):
+        fx=self.fixture(corner.ProspectiveApiTests)
+        first=datetime(2026,9,22,tzinfo=timezone.utc);later=first+timedelta(days=1);cutoff=later+timedelta(days=1)
+        with patch.object(outcomes,'utc_timestamp',return_value=first.isoformat()):root=fx.write_result()
+        old=reporting.read(fx.state,market='CORNER',as_of=cutoff)
+        original_inventory=reporting._inventory
+        def append_after_snapshot(*args,**kwargs):
+            snapshot=original_inventory(*args,**kwargs)
+            fx.setup.history.write_text('Div,Date,HomeTeam,AwayTeam,FTHG,FTAG,FTR,HC,AC\nE1,20/09/2026,Wolves,West Brom,2,1,H,1,12\n')
+            with patch.object(outcomes,'utc_timestamp',return_value=later.isoformat()):
+                outcomes.record_outcome(state_dir=fx.state,analysis_id=fx.analysis_id,data_config_path=fx.setup.config,
+                    idempotency_key='concurrent-correction',supersedes_outcome_id=root['outcome_id'],correction_reason='Synthetic concurrent append')
+            return snapshot
+        with patch.object(reporting,'_inventory',side_effect=append_after_snapshot):
+            self.assertEqual(reporting.read(fx.state,market='CORNER',as_of=cutoff),old)
+        new=reporting.read(fx.state,market='CORNER',as_of=cutoff)
+        self.assertNotEqual(new['forecasts'][0]['result'],old['forecasts'][0]['result'])
+        self.assertNotEqual(new['markets'][0]['probability_scores'],old['markets'][0]['probability_scores'])
+
+    def test_nonchronological_corner_correction_fails_closed(self):
+        from modelfc.ledger_storage import LedgerError
+        fx=self.fixture(corner.ProspectiveApiTests)
+        first=datetime(2026,9,22,tzinfo=timezone.utc);earlier=first-timedelta(days=1)
+        with patch.object(outcomes,'utc_timestamp',return_value=first.isoformat()):root=fx.write_result()
+        fx.setup.history.write_text('Div,Date,HomeTeam,AwayTeam,FTHG,FTAG,FTR,HC,AC\nE1,20/09/2026,Wolves,West Brom,2,1,H,1,12\n')
+        with patch.object(outcomes,'utc_timestamp',return_value=earlier.isoformat()):
+            outcomes.record_outcome(state_dir=fx.state,analysis_id=fx.analysis_id,data_config_path=fx.setup.config,
+                idempotency_key='nonchronological',supersedes_outcome_id=root['outcome_id'],correction_reason='Synthetic backward clock')
+        with self.assertRaises(LedgerError):
+            reporting.read(fx.state,market='CORNER',as_of=earlier)
