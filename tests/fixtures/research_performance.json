@@ -1,0 +1,228 @@
+{
+  "selection": {
+    "competition": "ALL",
+    "market": "ALL",
+    "cohort": "ALL",
+    "as_of_utc": "2026-10-19T23:20:16.672011+00:00"
+  },
+  "policy": "earliest-frozen-per-exact-fixture-and-market-v1",
+  "coverage": "PARTIAL",
+  "supported_competitions": [
+    "E1"
+  ],
+  "unavailable_competitions": [
+    "E0"
+  ],
+  "historical_store_membership": "UNVERIFIED",
+  "unique_fixtures": 1,
+  "forecast_cohorts": 2,
+  "markets": [
+    {
+      "market": "CORNER",
+      "unique_fixtures": 1,
+      "forecast_cohorts": 1,
+      "settled_fixtures": 1,
+      "unresolved_fixtures": 0,
+      "upcoming_fixtures": 0,
+      "probability_unit": "saved-decisive-team-total-target",
+      "saved_probability_targets": 0,
+      "pushes_excluded": 0,
+      "probability_scores": {
+        "sample_count": 0,
+        "brier_score": null,
+        "log_loss": null,
+        "calibration": []
+      },
+      "team_count_sample_count": 2,
+      "team_corner_mae": 0.9797903029935218,
+      "team_corner_rmse": 0.9897814449890823
+    },
+    {
+      "market": "BTTS",
+      "unique_fixtures": 1,
+      "forecast_cohorts": 1,
+      "settled_fixtures": 1,
+      "unresolved_fixtures": 0,
+      "upcoming_fixtures": 0,
+      "probability_unit": "fixture-yes",
+      "saved_probability_targets": 1,
+      "pushes_excluded": 0,
+      "probability_scores": {
+        "sample_count": 1,
+        "brier_score": 0.20559663926210184,
+        "log_loss": 0.6040886032559409,
+        "calibration": [
+          {
+            "lower": 0.4,
+            "upper": 0.6,
+            "sample_count": 1,
+            "mean_probability": 0.5465723439598089,
+            "observed_frequency": 1.0
+          }
+        ]
+      },
+      "team_count_sample_count": 0,
+      "team_corner_mae": null,
+      "team_corner_rmse": null
+    }
+  ],
+  "limitations": [
+    "Historical store membership and site visibility were not captured; current store origins are not historical membership.",
+    "Missing original training-file retrieval times remain unavailable; hashes do not establish retrieval time.",
+    "Odds-free corner forecasts have no saved line probabilities; none are generated for reporting.",
+    "Research corner outcome corrections are unsupported; bookmaker corner and BTTS revision chains are retained.",
+    "E0 evidence is unsupported. Overall coverage is partial E1 coverage, not zero EPL performance."
+  ],
+  "forecasts": [
+    {
+      "competition": "E1",
+      "home_team": "West Ham",
+      "away_team": "QPR",
+      "kickoff_utc": "2026-10-09T12:00:00+00:00",
+      "fixture_id": "b4ccd7ace8da6b14c7709e436a7f89d6add6112828066da1bd461f5ab59bb66c",
+      "forecast_id": "3b8f8a4431fa74b1fa06ef82db73b88c97f537bf354f5512910a7f754c64bedf",
+      "market": "BTTS",
+      "origins": [
+        "ODDS_FREE"
+      ],
+      "provider": "football-data.org",
+      "provider_fixture_id": "2488",
+      "frozen_at_utc": "2026-10-08T12:00:00Z",
+      "model_version": "deepfc-arithmetic-btts-v1",
+      "source_forecast_id": "4cb42c99155fec285d384ebab7b7fc86d5ce9256e4d1a90590f598c31e6ec332",
+      "effective_record_hash": "a5981f142736a9b42b99e261f9c4b2f6d39ea82a387deb7b34fafa478e512b99",
+      "result_provider": "football-data.co.uk",
+      "result_retrieved_at_utc": "2026-10-09T22:00:00Z",
+      "selected_for_metrics": true,
+      "source_references": [
+        {
+          "kind": "E1_2526.csv",
+          "sha256": "67d08543deb29b768c4942478633d1b654bb610ee2ec87cc962d246e4a847e07",
+          "retrieved_at_utc": null
+        },
+        {
+          "kind": "E1_2627.csv",
+          "sha256": "463bd3771f687ea08a1eb481343bd0fcf0eda7171645a9b89171a7dc6e11aa17",
+          "retrieved_at_utc": null
+        },
+        {
+          "kind": "calendar",
+          "sha256": "582e3c789e0022b0a9b687dd5adc3abd9dc45dec523251a95ff3a2d9efd5e307",
+          "retrieved_at_utc": "2026-10-08T12:00:00+00:00"
+        },
+        {
+          "kind": "research-prepared-forecast",
+          "sha256": "4cb42c99155fec285d384ebab7b7fc86d5ce9256e4d1a90590f598c31e6ec332",
+          "retrieved_at_utc": null
+        },
+        {
+          "kind": "research-prediction",
+          "sha256": "3610cb7e1c0688329562d8b18798571770f4acd7e7e368f05bbf7c3fb5129415",
+          "retrieved_at_utc": null
+        }
+      ],
+      "probabilities": [
+        {
+          "target_id": "3b8f8a4431fa74b1fa06ef82db73b88c97f537bf354f5512910a7f754c64bedf",
+          "team_side": null,
+          "direction": "YES",
+          "line": null,
+          "probability": 0.5465723439598089,
+          "push_probability": 0.0,
+          "decisive_probability": 0.5465723439598089,
+          "recorded_at_utc": "2026-10-08T12:00:00Z",
+          "result": "WIN"
+        },
+        {
+          "target_id": "3b8f8a4431fa74b1fa06ef82db73b88c97f537bf354f5512910a7f754c64bedf:NO",
+          "team_side": null,
+          "direction": "NO",
+          "line": null,
+          "probability": 0.4534276560401911,
+          "push_probability": 0.0,
+          "decisive_probability": 0.4534276560401911,
+          "recorded_at_utc": "2026-10-08T12:00:00Z",
+          "result": "LOSS"
+        }
+      ],
+      "expected_home_corners": null,
+      "expected_away_corners": null,
+      "status": "SETTLED",
+      "result": {
+        "actual_btts": "YES",
+        "home_goals": 2,
+        "away_goals": 1
+      },
+      "outcome_id": "b4ccd7ace8da6b14c7709e436a7f89d6add6112828066da1bd461f5ab59bb66c",
+      "outcome_recorded_at_utc": "2026-10-19T23:20:16.638907Z",
+      "result_source_sha256": "6a67a45784fa9d6c7bb1a7e085e7d30a4372fc39de79cc9a8cedfae9ecd164b0",
+      "corrections": [
+        {
+          "record_id": "a5981f142736a9b42b99e261f9c4b2f6d39ea82a387deb7b34fafa478e512b99",
+          "recorded_at_utc": "2026-10-19T23:20:16.638907Z",
+          "supersedes_id": null,
+          "reason": null,
+          "source_sha256": "6a67a45784fa9d6c7bb1a7e085e7d30a4372fc39de79cc9a8cedfae9ecd164b0",
+          "result": {
+            "away_goals": 1,
+            "home_goals": 2
+          }
+        }
+      ],
+      "correction_support": "SUPPORTED",
+      "model_name": "team-opponent-arithmetic-poisson-btts"
+    },
+    {
+      "competition": "E1",
+      "home_team": "West Ham",
+      "away_team": "QPR",
+      "kickoff_utc": "2026-10-09T12:00:00+00:00",
+      "fixture_id": "b4ccd7ace8da6b14c7709e436a7f89d6add6112828066da1bd461f5ab59bb66c",
+      "forecast_id": "754392cfb3bc8187c352b80913f7591c080004ceb31aafdfd8cf67c0c09e574b",
+      "market": "CORNER",
+      "origins": [
+        "ODDS_FREE"
+      ],
+      "provider": "football-data.org",
+      "provider_fixture_id": "2488",
+      "frozen_at_utc": "2026-10-08T12:00:00+00:00",
+      "model_version": "frozen-team-count-distribution-v1",
+      "source_forecast_id": "c48ceb26f21b1c784f0d4729199db3eaadebc73095f65d44fef1e6fcc27dd009",
+      "effective_record_hash": "ff7304afbeb265221d88728c4bfac7f67cd89c3dd0be268834a708ed7a9581c0",
+      "result_provider": "football-data.co.uk",
+      "result_retrieved_at_utc": "2026-10-09T22:00:00Z",
+      "selected_for_metrics": true,
+      "source_references": [
+        {
+          "kind": "E1_2526.csv",
+          "sha256": "67d08543deb29b768c4942478633d1b654bb610ee2ec87cc962d246e4a847e07",
+          "retrieved_at_utc": null
+        },
+        {
+          "kind": "E1_2627.csv",
+          "sha256": "463bd3771f687ea08a1eb481343bd0fcf0eda7171645a9b89171a7dc6e11aa17",
+          "retrieved_at_utc": null
+        },
+        {
+          "kind": "calendar",
+          "sha256": "582e3c789e0022b0a9b687dd5adc3abd9dc45dec523251a95ff3a2d9efd5e307",
+          "retrieved_at_utc": "2026-10-08T12:00:00+00:00"
+        }
+      ],
+      "probabilities": [],
+      "expected_home_corners": 5.160488957784893,
+      "expected_away_corners": 4.120069563771937,
+      "status": "SETTLED",
+      "result": {
+        "away_corners": 3,
+        "home_corners": 6
+      },
+      "outcome_id": "b4ccd7ace8da6b14c7709e436a7f89d6add6112828066da1bd461f5ab59bb66c",
+      "outcome_recorded_at_utc": "2026-10-19T23:20:16.643400Z",
+      "result_source_sha256": "6a67a45784fa9d6c7bb1a7e085e7d30a4372fc39de79cc9a8cedfae9ecd164b0",
+      "corrections": [],
+      "correction_support": "UNSUPPORTED",
+      "model_name": "venue-opponent-negative-binomial"
+    }
+  ]
+}

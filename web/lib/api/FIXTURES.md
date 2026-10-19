@@ -27,3 +27,9 @@ Mock analysis accepts only exact fixture, model, and market terms in these
 responses. It preserves all backend numbers and warnings, adapting only the
 requested fixed market subset/order and client correlation IDs. It cannot price
 arbitrary edits. Live mode uses HTTP exclusively.
+
+`tests/fixtures/research_performance.json` is synthetic saved corner/BTTS evidence
+from `ResearchOutcomeTests` projected through `research_performance.read` after
+its offline CSV settlement fixture. It demonstrates one fixture/two forecast
+cohorts, absent corner line probabilities and one BTTS scoring sample. It is not
+production coverage or historical retrieval evidence.
