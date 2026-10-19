@@ -188,6 +188,15 @@ class BttsCorrectionTests(unittest.TestCase):
         report=strategies.read(self.state,scope='history')
         self.assertEqual(report['totals']['losses'],1);self.assertEqual(report['total_profit_dollars'],-2)
         self.assertEqual(report['total'],1)
+        # Both independent strategy publications reuse one correction inventory.
+        before=self.fx.snapshots()
+        with patch.object(corrections,'load_record',wraps=corrections.load_record) as reads, \
+                patch.object(corrections,'review_entries',wraps=corrections.review_entries) as scans:
+            combined=published.read(self.state,directory_name=strategies.DIRECTORY)
+        self.assertEqual(len(combined['publications']),2)
+        self.assertEqual(combined['summary']['losses'],2)
+        self.assertEqual(reads.call_count,1);self.assertEqual(scans.call_count,1)
+        self.assertEqual(self.fx.snapshots(),before)
 
     def test_offline_correction_cli_records_and_reuses_without_network(self):
         args=['--supersedes-record-hash',self.root['record_hash'],'--reason','Reviewed CLI correction',

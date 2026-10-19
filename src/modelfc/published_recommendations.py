@@ -233,13 +233,14 @@ def read(state_dir, *, directory_name=DIRECTORY, record_filter=None):
             predictions = {p["prediction_id"]: p for p in inventory["predictions"]}
             targets = inventory["targets"]
             btts_source = btts.records(state) if any(r["offer"]["market_type"] == "BTTS" for r in records) else ()
+            btts_outcomes = btts.result_inventory(state, _now()) if btts_source else None
             for record in records:
                 offer = record["offer"]
                 if offer["market_type"] == "BTTS":
                     if _time(record["published_at_utc"]) > _now():
                         raise LedgerError("INVALID_PUBLISHED_RECOMMENDATION")
                     btts.validate(record, btts_source)
-                    result, profit = btts.result(record, state, btts_source, _now())
+                    result, profit = btts.result(record, btts_source, _now(), btts_outcomes)
                     rows.append({**record, "result": result, "profit_units": profit})
                     continue
                 try:
