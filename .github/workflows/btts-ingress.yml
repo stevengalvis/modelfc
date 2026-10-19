@@ -1,0 +1,28 @@
+name: BTTS ingress compatibility
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  gateway:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Fetch checksum-pinned disposable Caddy 2.10.2
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir "$RUNNER_TEMP/btts-caddy"
+          cd "$RUNNER_TEMP/btts-caddy"
+          curl --fail --silent --show-error --location --proto '=https' --max-time 60 \
+            https://github.com/caddyserver/caddy/releases/download/v2.10.2/caddy_2.10.2_linux_amd64.tar.gz -o caddy.tar.gz
+          echo '747df7ee74de188485157a383633a1a963fd9233b71fbb4a69ddcbcc589ce4e2cc82dacf5dbbe136cb51d17e14c59daeb5d9bc92487610b0f3b93680b2646546  caddy.tar.gz' | sha512sum --check --strict
+          tar -xzf caddy.tar.gz caddy
+          ./caddy version
+      - name: Exercise real gateway against synthetic loopback upstream
+        shell: bash
+        run: |
+          MODELFC_CADDY_BIN="$RUNNER_TEMP/btts-caddy/caddy" python3 -B -m unittest tests.test_btts_ingress -v
