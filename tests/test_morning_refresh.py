@@ -227,7 +227,7 @@ class MorningTests(unittest.TestCase):
             def __enter__(self): return self
             def __exit__(self,*args): pass
             def read(self,limit): return conflicting
-            def geturl(self): return 'https://www.football-data.co.uk/mmz4281/2627/E1.csv'
+            def geturl(self): return 'https://football-data.co.uk/mmz4281/2627/E1.csv'
         with patch.object(refresh,'urlopen',return_value=Response()):
             result=morning.run(self.f.config,self.f.state,{**morning.POLICY,'enabled':True},retain_result_evidence=True)
         row=result['report']['results'][0]
@@ -344,8 +344,8 @@ class TransportTests(unittest.TestCase):
             return value
         with patch('urllib.request.HTTPSHandler.https_open',new=response), patch('socket.socket.connect',side_effect=AssertionError('network forbidden')):
             with self.assertRaises(HTTPError):
-                refresh.download_csv('https://www.football-data.co.uk/mmz4281/2627/E1.csv')
-        self.assertEqual(calls,[('GET','https://www.football-data.co.uk/mmz4281/2627/E1.csv')])
+                refresh.download_csv('https://football-data.co.uk/mmz4281/2627/E1.csv')
+        self.assertEqual(calls,[('GET','https://football-data.co.uk/mmz4281/2627/E1.csv')])
 
 
 class ActualEntryTests(unittest.TestCase):
