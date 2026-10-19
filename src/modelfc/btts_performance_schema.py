@@ -52,7 +52,12 @@ class ForecastView(ResearchContract):
 
 
 class BttsPerformanceResponse(ResearchContract):
-    competition: Literal['E1']
+    competition: Literal["ALL", "E1", "E0"]
+    market: Literal["BTTS"]
+    as_of_utc: Text
+    coverage: Literal["SUPPORTED", "PARTIAL", "UNSUPPORTED"]
+    supported_competitions: list[Literal["E1"]]
+    unavailable_competitions: list[Literal["E0"]]
     research_only: Literal[True]
     selection_policy: Literal['e1-earliest-frozen-per-exact-fixture-v1']
     log_loss_epsilon: Literal[1e-15]

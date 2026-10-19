@@ -56,5 +56,14 @@
       "result_provider": "football-data.co.uk",
       "result_source_sha256": "5eebf45b2ca019e087408a6b8a0c08e3363619ac8b650149f0cb0fe05cf39946"
     }
+  ],
+  "market": "BTTS",
+  "as_of_utc": "2026-10-19T00:00:00Z",
+  "coverage": "SUPPORTED",
+  "supported_competitions": [
+    "E1"
+  ],
+  "unavailable_competitions": [
+    "E0"
   ]
 }

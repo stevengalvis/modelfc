@@ -1252,3 +1252,16 @@ workspace (seven reads per case), the previous two feeds required 24 observation
 reads/intelligence passes, 127,426 serialized bytes and 177.378 ms median; the
 shortlist required one pass, 5,688 bytes and 13.646 ms median. This synthetic
 comparison is reproducible, not a production latency guarantee.
+
+### BTTS forecast quality: league scope and historical cutoff
+
+`GET /api/v1/research/btts/performance?competition=ALL&as_of=2026-10-19T12:00:00Z`
+returns the existing immutable BTTS quality/history cohort. `competition` accepts
+`E1` (default), `ALL` (partial E1-only coverage), or `E0` (explicitly unsupported,
+empty rows, null scores). `as_of` must include a timezone and cannot be in the
+future; omission uses the request time. Responses echo `market`, `as_of_utc`,
+`coverage`, `supported_competitions` and `unavailable_competitions`. All reads and
+validation errors use `no-store`. The UI sends identical filters; client validation
+rejects scope/cutoff mismatches. This does not enable EPL production collection or
+combine forecast-quality samples with priced returns. See
+[BTTS reporting semantics and dependencies](docs/BTTS_OUTCOMES.md#zen-49-reporting-scope-and-historical-reads).

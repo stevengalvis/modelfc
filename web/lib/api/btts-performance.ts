@@ -1,6 +1,9 @@
 import { ModelFCApiError } from "./errors";
+export type BttsReportingScope = "ALL" | "E1" | "E0";
 export interface BttsPerformance {
-  competition: "E1"; research_only: true; selection_policy: string; log_loss_epsilon: number;
+  competition: BttsReportingScope; market: "BTTS"; as_of_utc: string;
+  coverage: "SUPPORTED" | "PARTIAL" | "UNSUPPORTED";
+  supported_competitions: ["E1"]; unavailable_competitions: ["E0"]; research_only: true; selection_policy: string; log_loss_epsilon: number;
   unique_fixtures: number; forecast_cohorts: number; settled_fixtures: number;
   unresolved_fixtures: number; upcoming_fixtures: number;
   metrics: { sample_count: number; brier_score: number | null; log_loss: number | null;
@@ -26,20 +29,26 @@ const close = (a: number, b: number) => Math.abs(a-b) < 1e-9;
 
 export function decodeBttsPerformance(value: unknown): BttsPerformance {
   const fail = (): never => { throw new ModelFCApiError("BTTS performance response is invalid.", "INVALID_RESPONSE", false, 502); };
-  if (!object(value) || value.competition !== "E1" || value.research_only !== true
+  if (!object(value) || !["ALL", "E1", "E0"].includes(value.competition as string) || value.research_only !== true
+    || value.market !== "BTTS" || !time(value.as_of_utc)
+    || value.coverage !== (value.competition === "E0" ? "UNSUPPORTED" : value.competition === "ALL" ? "PARTIAL" : "SUPPORTED")
+    || JSON.stringify(value.supported_competitions) !== '["E1"]' || JSON.stringify(value.unavailable_competitions) !== '["E0"]'
     || value.selection_policy !== "e1-earliest-frozen-per-exact-fixture-v1" || value.log_loss_epsilon !== 1e-15
     || ![value.unique_fixtures, value.forecast_cohorts, value.settled_fixtures, value.unresolved_fixtures, value.upcoming_fixtures].every(count)
     || !object(value.metrics) || !count(value.metrics.sample_count) || !Array.isArray(value.metrics.calibration)
     || !Array.isArray(value.forecasts)) return fail();
+  if (value.competition === "E0" && value.forecasts.length) return fail();
   for (const row of value.forecasts) {
     if (object(row) && row.corrections !== undefined && (!Array.isArray(row.corrections)
       || row.corrections.some(r => !object(r) || !hash(r.correction_id) || !hash(r.supersedes_record_hash)
         || !hash(r.record_hash) || !text(r.reason) || !time(r.recorded_at_utc) || !object(r.result)
+        || Date.parse(r.recorded_at_utc as string) > Date.parse(value.as_of_utc as string)
         || !count(r.result.home_goals) || !count(r.result.away_goals)))) return fail();
     if (!object(row) || row.competition !== "E1" || !hash(row.fixture_id) || !hash(row.forecast_id)
       || ![row.home_team, row.away_team, row.provider, row.provider_fixture_id, row.model_version].every(text)
       || row.home_team === row.away_team || !time(row.kickoff_utc) || !time(row.frozen_at_utc)
       || Date.parse(row.frozen_at_utc) >= Date.parse(row.kickoff_utc)
+      || Date.parse(row.frozen_at_utc) > Date.parse(value.as_of_utc)
       || !probability(row.yes_probability) || !probability(row.no_probability) || !close(row.yes_probability + row.no_probability, 1)
       || typeof row.selected_for_metrics !== "boolean" || !Array.isArray(row.origins) || !row.origins.length
       || new Set(row.origins).size !== row.origins.length || row.origins.some(v => !["BOOKMAKER_RESEARCH", "ODDS_FREE"].includes(v))
@@ -50,6 +59,7 @@ export function decodeBttsPerformance(value: unknown): BttsPerformance {
         || row.actual_btts !== (row.home_goals > 0 && row.away_goals > 0 ? "YES" : "NO")
         || !hash(row.outcome_id) || row.outcome_id !== row.fixture_id || !hash(row.result_source_sha256)
         || !time(row.recorded_at_utc) || Date.parse(row.recorded_at_utc) <= Date.parse(row.kickoff_utc)
+        || Date.parse(row.recorded_at_utc) > Date.parse(value.as_of_utc)
         || !["football-data.co.uk", "sportmonks"].includes(row.result_provider as string)) return fail();
     } else if (!["UPCOMING", "UNRESOLVED"].includes(row.status as string)
       || [row.home_goals, row.away_goals, row.actual_btts, row.outcome_id, row.recorded_at_utc, row.result_provider, row.result_source_sha256].some(v => v !== null)) return fail();
@@ -91,7 +101,8 @@ export function decodeBttsPerformance(value: unknown): BttsPerformance {
   return report;
 }
 export const emptyBttsPerformance: BttsPerformance = {
-  competition: "E1", research_only: true, selection_policy: "e1-earliest-frozen-per-exact-fixture-v1", log_loss_epsilon: 1e-15,
+  competition: "E1", market: "BTTS", as_of_utc: "2026-10-19T00:00:00Z",
+  coverage: "SUPPORTED", supported_competitions: ["E1"], unavailable_competitions: ["E0"], research_only: true, selection_policy: "e1-earliest-frozen-per-exact-fixture-v1", log_loss_epsilon: 1e-15,
   unique_fixtures: 0, forecast_cohorts: 0, settled_fixtures: 0, unresolved_fixtures: 0, upcoming_fixtures: 0,
   metrics: { sample_count: 0, brier_score: null, log_loss: null, calibration: [] }, forecasts: [],
 };

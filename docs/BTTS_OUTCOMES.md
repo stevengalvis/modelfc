@@ -133,3 +133,57 @@ written by settlement. Existing seven corner outcomes must remain byte-identical
    reviewed publication ACL mechanism; do not grant private capture/calendar or
    history access. Stop on failure. Merge, deployment and production settlements
    require separate parent approval.
+
+## ZEN-49 reporting scope and historical reads
+
+`GET /api/v1/research/btts/performance` accepts `competition=E1` (default),
+`ALL`, or `E0`, plus optional `as_of` with an explicit timezone. The UI at
+`/research/btts/performance` sends these same filters and displays the returned
+cohort, scores and cutoff; it does not filter an independently computed sample.
+Malformed, naive or future cutoffs return 422 with `Cache-Control: no-store`.
+Responses echo normalized `as_of_utc` and `market=BTTS`.
+
+- E1: `coverage=SUPPORTED` means the existing reporting contract is supported,
+  not that every fixture/result has been collected. Empty samples have null
+  Brier/log-loss and no calibration bins; unresolved and upcoming remain separate.
+- ALL: `coverage=PARTIAL`, covering only the supported E1 inventory. E0 contributes
+  no samples. This is overall **BTTS forecast quality**, not all-market performance.
+- E0: `coverage=UNSUPPORTED`, no forecast rows and null probability scores. Zero
+  returned counts mean no supported evidence, not zero EPL model performance.
+  This response is a capability declaration and does not inspect an E0 store.
+- `supported_competitions=["E1"]`, `unavailable_competitions=["E0"]` describe the
+  current production evidence contracts for every scope. They do not enable a league.
+
+As-of selection reuses the accepted reader: include frozen forecasts at or before
+that instant, select the earliest frozen cohort per exact fixture (forecast-ID tie
+break), and include outcomes/corrections only at or before their recorded times.
+Rows remain in frozen-time/ID order. Reusing the same cutoff and immutable evidence
+reproduces the report. Original identity, model/version, probabilities, source
+hashes, result provenance and correction chain remain retrievable. Integrity checks
+still validate the current E1 inventory, including later records, before reporting;
+a corrupted later record fails closed even for an earlier cutoff. `origins` identifies
+current store membership, not historical publication visibility. This endpoint does
+not reconstruct research observations or priced publication history as of that time.
+
+One fixture contributes at most one scored probability. Other frozen cohorts stay
+visible, while bookmakers, strategy publications and repeated observations add no
+samples. This endpoint has no ROI: it is not a priced-recommendation ledger. Existing
+Model Picks/strategy/legacy return contracts, original prices/publication times,
+void/push handling and null ROI without a settled denominator remain unchanged.
+
+### Remaining dependencies
+
+This is a bounded reporting slice of [ZEN-49](https://linear.app/galvis/issue/ZEN-49/complete-league-performance-and-history-parity),
+not completion of full league/market history parity. E0 BTTS forecast schema,
+collection and settlement remain E1-only. PR134 is a draft offline CSV coverage
+audit; PR177/ZEN-35 is a draft saved-PL-calendar validator. Neither provides
+production EPL forecasts. Genuine E0 source/calendar/history coverage, approved
+production evidence contracts and original retrievable forecasts are prerequisites
+for EPL scores; no historical forecasts may be fabricated. ZEN-40 retains original
+provenance/private-cache acceptance; broader cross-market research/history parity
+remains open. No draft integration, collection, settlement, ACL or scheduling change
+is included. ZEN-38's original October 13 cohort and scheduled recovery remain open.
+
+Backend must support the new response fields before this UI is released. No live
+acceptance is claimed by offline fixtures; later authorized acceptance targets
+https://zenofc.com and https://api.zenofc.com/api/v1.
