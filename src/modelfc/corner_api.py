@@ -1,6 +1,6 @@
 """FastAPI boundary for the Model FC V1 corner-analysis API."""
 
-from datetime import date
+from datetime import date, datetime, timezone
 import os
 from pathlib import Path
 from typing import Any, Literal
@@ -761,14 +761,23 @@ def create_app(
         return error
 
     @app.get("/api/v1/research/btts/performance", response_model=BttsPerformanceResponse)
-    def get_btts_performance(response: Response, competition: str = "E1"):
+    def get_btts_performance(response: Response, competition: str = "E1", as_of: str | None = None):
         from modelfc.btts_outcomes import performance
         response.headers["Cache-Control"] = "no-store"
-        if competition != "E1":
-            error = _error("UNSUPPORTED_COMPETITION", "BTTS research competition is not enabled.", 422)
+        if competition not in {"ALL", "E1", "E0"}:
+            error = _error("UNSUPPORTED_COMPETITION", "Unknown BTTS reporting scope.", 422)
         else:
             try:
-                return performance(state)
+                from modelfc.btts_market_data import timestamp
+                try:
+                    read_time = timestamp(as_of) if as_of is not None else datetime.now(timezone.utc)
+                    if read_time > datetime.now(timezone.utc):
+                        raise ValueError
+                except (ValueError, TypeError, OverflowError):
+                    return JSONResponse(status_code=422, content={"error": {
+                        "code": "INVALID_AS_OF", "message": "as_of must be a timezone-aware timestamp no later than now."}},
+                        headers={"Cache-Control": "no-store"})
+                return performance(state, competition=competition, as_of=read_time)
             except (LedgerError, ValueError, OSError, KeyError, TypeError):
                 error = _public_read_error(LedgerError("INVALID_BTTS_OUTCOME"))
         error.headers["Cache-Control"] = "no-store"

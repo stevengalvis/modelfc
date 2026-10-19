@@ -282,9 +282,13 @@ def _originals(state, forecasts):
     return originals
 
 
-def performance(state_dir, *, as_of=None):
+def performance(state_dir, *, as_of=None, competition="E1"):
+    """Read existing E1 evidence; E0 is an explicit unsupported reporting scope."""
+    _require(competition in {"ALL", "E1", "E0"}, "UNSUPPORTED_COMPETITION")
     now = as_of or datetime.now(timezone.utc)
     _require(now.tzinfo is not None, "INVALID_BTTS_READ_TIME")
+    if competition == "E0":
+        return _performance_report([], competition, now)
     forecasts = inventory(state_dir)
     from modelfc.btts_corrections import chain, inventory as correction_inventory
     originals = _originals(state_dir, forecasts)
@@ -326,9 +330,16 @@ def performance(state_dir, *, as_of=None):
             "result_provider": outcome["source"]["provider"] if outcome else None,
             "result_source_sha256": (outcome["source"].get("file_sha256") or
                                      outcome["source"].get("response_sha256")) if outcome else None})
+    return _performance_report(rows, competition, now)
+
+
+def _performance_report(rows, competition, now):
     primary = [r for r in rows if r["selected_for_metrics"]]
     settled = [r for r in primary if r["status"] == "SETTLED"]
-    return {"competition": "E1", "research_only": True, "selection_policy": POLICY,
+    return {"competition": competition, "research_only": True, "selection_policy": POLICY,
+        "market": "BTTS", "as_of_utc": now.astimezone(timezone.utc).isoformat(),
+        "coverage": "UNSUPPORTED" if competition == "E0" else "PARTIAL" if competition == "ALL" else "SUPPORTED",
+        "supported_competitions": ["E1"], "unavailable_competitions": ["E0"],
         "log_loss_epsilon": 1e-15, "unique_fixtures": len(primary), "forecast_cohorts": len(rows),
         "settled_fixtures": len(settled), "unresolved_fixtures": sum(r["status"] == "UNRESOLVED" for r in primary),
         "upcoming_fixtures": sum(r["status"] == "UPCOMING" for r in primary),

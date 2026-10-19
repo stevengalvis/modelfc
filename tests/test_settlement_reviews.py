@@ -109,7 +109,7 @@ class SimulationVoidTests(unittest.TestCase):
         self.review(publication_id=pick['publication_id'])
         after=published.read(self.state)
         self.assertEqual(next(r for r in after['publications'] if r['publication_id']==pick['publication_id'])['result'],'SIMULATION_VOID')
-        self.assertEqual(outcomes.performance(self.state),quality)
+        self.assertEqual(outcomes.performance(self.state,as_of=outcomes.timestamp(quality['as_of_utc'])),quality)
 
     def test_summary_keeps_push_and_void_separate(self):
         rows=[]
@@ -144,7 +144,7 @@ class BttsCorrectionTests(unittest.TestCase):
         self.assertEqual(report['forecasts'][0]['corrections'],[row])
         self.assertTrue(all(self.fx.snapshots()[k]==v for k,v in self.before.items()))
         self.assertEqual(outcomes.performance(self.state,as_of=outcomes.timestamp(self.root['recorded_at_utc']))['forecasts'][0]['actual_btts'],'YES')
-        response=TestClient(create_app(state_dir=self.state)).get('/api/v1/research/btts/performance')
+        response=TestClient(create_app(state_dir=self.state)).get('/api/v1/research/btts/performance', params={'as_of':report['as_of_utc']})
         self.assertEqual(response.status_code,200);self.assertEqual(response.json(),report)
         # An ordinary replay accepts effective evidence without another sample/write.
         self.assertFalse(outcomes.settle(self.state,self.fx.forecast_id,self.fx.source(),reconcile=True)[1])
@@ -246,7 +246,7 @@ class BttsCorrectionTests(unittest.TestCase):
         expected=outcomes.performance(self.state);before=self.fx.snapshots()
         with patch.object(corrections,'load_record',wraps=corrections.load_record) as reads, \
                 patch.object(corrections,'review_entries',wraps=corrections.review_entries) as scans:
-            actual=outcomes.performance(self.state)
+            actual=outcomes.performance(self.state,as_of=outcomes.timestamp(expected['as_of_utc']))
         self.assertEqual(reads.call_count,1);self.assertEqual(scans.call_count,1)
         self.assertEqual(actual,expected)
         self.assertEqual(actual['metrics']['sample_count'],2)

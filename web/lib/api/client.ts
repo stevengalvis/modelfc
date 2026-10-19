@@ -1,7 +1,7 @@
 import type { ShortlistRanking } from "./types";
 import { decodeTrackRecord, emptyTrackRecord, decodeStrategyPage } from "./track-record";
 import { decodeShortlist } from "./shortlist";
-import { decodeBttsPerformance, emptyBttsPerformance } from "./btts-performance";
+import { decodeBttsPerformance, emptyBttsPerformance, type BttsReportingScope } from "./btts-performance";
 import { decodeRecordedOffers } from "./recorded-offers";
 import { mockRecordedOffers } from "./mock-recorded-offers";
 import { decodeRecommendations } from "./recommendations";
@@ -231,11 +231,22 @@ export function createApiClient(
           { signal, cache: "no-store" });
       return decodeBttsResearch(value, competition);
     },
-    async bttsPerformance(signal?: AbortSignal) {
+    async bttsPerformance(signal?: AbortSignal, filters: { competition?: BttsReportingScope; asOf?: string } = {}) {
       checkConfiguration();
       signal?.throwIfAborted();
-      return decodeBttsPerformance(mode === "mock" ? structuredClone(emptyBttsPerformance)
-        : await requestJson<unknown>(baseUrl!, "/research/btts/performance", { signal, cache: "no-store" }));
+      const competition = filters.competition ?? "E1";
+      const params = new URLSearchParams();
+      if (filters.competition) params.set("competition", competition);
+      if (filters.asOf) params.set("as_of", filters.asOf);
+      const query = params.size ? `?${params}` : "";
+      const value = decodeBttsPerformance(mode === "mock" ? {...structuredClone(emptyBttsPerformance),
+        competition, as_of_utc: filters.asOf || new Date().toISOString(),
+        coverage: competition === "E0" ? "UNSUPPORTED" : competition === "ALL" ? "PARTIAL" : "SUPPORTED"}
+        : await requestJson<unknown>(baseUrl!, `/research/btts/performance${query}`, { signal, cache: "no-store" }));
+      if (value.competition !== competition || (filters.asOf && Date.parse(value.as_of_utc) !== Date.parse(filters.asOf))) {
+        throw new ModelFCApiError("BTTS report does not match the requested filters.", "INVALID_RESPONSE", false, 502);
+      }
+      return value;
     },
     async predictions(signal?: AbortSignal): Promise<ProspectivePrediction[]> {
       checkConfiguration();

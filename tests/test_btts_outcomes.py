@@ -160,7 +160,7 @@ sys.meta_path.insert(0, Block())
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(response.headers['cache-control'], 'no-store')
         self.assertEqual(response.json()['metrics']['sample_count'], 1)
-        self.assertEqual(client.get('/api/v1/research/btts/performance?competition=E0').status_code, 422)
+        self.assertEqual(client.get('/api/v1/research/btts/performance?competition=E0').json()['coverage'], 'UNSUPPORTED')
         self.assertEqual(client.post('/api/v1/research/btts/performance').status_code, 405)
         self.assertEqual(before, self.snapshots())
         path = next((self.state/'btts-outcomes').glob('*.json'))
@@ -334,3 +334,65 @@ sys.meta_path.insert(0, Block())
                 self.assertFalse((state/'btts-research').exists())
             future.result(timeout=5)
         self.assertTrue(completed.is_set())
+
+
+    def test_reporting_scopes_and_historical_api_are_readonly(self):
+        from modelfc import btts_corrections
+        with patch.object(outcomes, 'utc_timestamp', return_value='2026-09-20T16:00:00Z'):
+            original, _ = outcomes.settle(self.state, self.forecast_id, self.source())
+        self.retrieved = '2026-09-21T15:00:00Z'
+        self.write_csv(self.content.replace(',2,1,H,', ',0,1,A,'))
+        with patch.object(btts_corrections, 'utc_timestamp', return_value='2026-09-21T16:00:00Z'):
+            btts_corrections.correct(self.state, self.forecast_id, self.source(),
+                supersedes_record_hash=original['record_hash'], reason='Synthetic reviewed correction')
+        before = self.snapshots()
+        client = TestClient(create_app(state_dir=self.state))
+        path = '/api/v1/research/btts/performance'
+        for cutoff, count, status, actual, revisions in [
+            ('2026-09-19T11:59:59Z', 0, None, None, 0),
+            ('2026-09-19T12:00:00Z', 1, 'UPCOMING', None, 0),
+            ('2026-09-20T11:00:00Z', 1, 'UNRESOLVED', None, 0),
+            ('2026-09-20T16:00:00Z', 1, 'SETTLED', 'YES', 0),
+            ('2026-09-21T15:59:59Z', 1, 'SETTLED', 'YES', 0),
+            ('2026-09-21T16:00:00Z', 1, 'SETTLED', 'NO', 1),
+        ]:
+            with self.subTest(cutoff=cutoff), patch('socket.create_connection', side_effect=AssertionError('network')):
+                reports = {}
+                for scope in ('E1', 'ALL', 'E0'):
+                    response = client.get(path, params={'competition': scope, 'as_of': cutoff})
+                    self.assertEqual(response.status_code, 200, response.text)
+                    self.assertEqual(response.headers['cache-control'], 'no-store')
+                    report = response.json(); reports[scope] = report
+                    self.assertEqual(report, outcomes.performance(self.state, competition=scope, as_of=outcomes.timestamp(cutoff)))
+                    self.assertEqual(report['unique_fixtures'], 0 if scope == 'E0' else count)
+                    if scope == 'E0':
+                        self.assertEqual(report['coverage'], 'UNSUPPORTED')
+                        self.assertIsNone(report['metrics']['brier_score'])
+                        self.assertIsNone(report['metrics']['log_loss'])
+                        self.assertEqual(report['forecasts'], [])
+                    elif count:
+                        row = report['forecasts'][0]
+                        self.assertEqual((row['status'], row['actual_btts'], len(row['corrections'])), (status, actual, revisions))
+                        self.assertEqual(row['forecast_id'], self.forecast_id)
+                        self.assertEqual(row['yes_probability'], self.forecast.yes_probability)
+                self.assertEqual(reports['ALL']['coverage'], 'PARTIAL')
+                for key in ('metrics', 'forecasts', 'forecast_cohorts', 'settled_fixtures'):
+                    self.assertEqual(reports['ALL'][key], reports['E1'][key])
+        for invalid in ('bad', '2026-09-19', '2026-09-19T12:00:00', '2099-01-01T00:00:00Z'):
+            response = client.get(path, params={'as_of': invalid})
+            self.assertEqual(response.status_code, 422)
+            self.assertEqual(response.json()['error']['code'], 'INVALID_AS_OF')
+            self.assertEqual(response.headers['cache-control'], 'no-store')
+        self.assertEqual(client.get(path, params={'competition': 'E2'}).status_code, 422)
+        self.assertEqual(before, self.snapshots())
+
+    def test_overall_cohorts_are_chronological_not_publication_samples(self):
+        later_fixture = self.fixture.model_copy(update={'provider': 'another', 'provider_fixture_id': 'alias'})
+        later = freeze_btts_forecast(later_fixture, history(), frozen_at=datetime(2026,9,19,13,tzinfo=UTC))
+        get_or_freeze_btts_forecast(self.state, later_fixture, lambda: later)
+        cutoff = datetime(2026,9,19,13,tzinfo=UTC)
+        report = outcomes.performance(self.state, competition='ALL', as_of=cutoff)
+        self.assertEqual((report['unique_fixtures'], report['forecast_cohorts']), (1, 2))
+        self.assertEqual([r['forecast_id'] for r in report['forecasts']], [self.forecast_id, digest(later)])
+        self.assertEqual([r['selected_for_metrics'] for r in report['forecasts']], [True, False])
+        self.assertEqual(report['metrics'], outcomes.scores([]))
