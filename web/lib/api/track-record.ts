@@ -24,7 +24,31 @@ export interface Publication {
   qualification_policy: { version: string; minimum_american_odds: number; minimum_no_vig_edge: number };
   result: "WIN" | "LOSS" | "PUSH" | "PENDING" | "SIMULATION_VOID"; simulation_void?: { policy: string; record_hash: string; reason: string; recorded_at_utc: string }; profit_units: number | null;
 }
+export interface PublicationSelection {
+  as_of_utc: string | null; competition: string | null; market: string | null;
+  membership_basis: "recorded-publication-time"; historical_store_membership: "UNVERIFIED";
+}
+export interface PublicationFilters { asOf?: string; competition?: string; market?: string }
+export function publicationSelection(filters: PublicationFilters): PublicationSelection {
+  return { as_of_utc: filters.asOf || null, competition: filters.competition || null, market: filters.market || null,
+    membership_basis: "recorded-publication-time", historical_store_membership: "UNVERIFIED" };
+}
+export function assertPublicationSelection(report: { selection?: PublicationSelection; publications: Publication[] }, filters: PublicationFilters) {
+  const s = report.selection;
+  const filtered = !!(filters.asOf || filters.competition || filters.market);
+  const cutoff = filters.asOf ? Date.parse(filters.asOf) : null;
+  if ((filtered && !s) || (s && (s.membership_basis !== "recorded-publication-time" || s.historical_store_membership !== "UNVERIFIED"
+      || s.competition !== (filters.competition || null) || s.market !== (filters.market || null)
+      || (cutoff === null ? s.as_of_utc !== null : !timestamp(s.as_of_utc) || Date.parse(s.as_of_utc!) !== cutoff)))
+    || report.publications.some(r => (filters.competition && r.offer.competition !== filters.competition)
+      || (filters.market && r.offer.market_type !== filters.market)
+      || (cutoff !== null && (Date.parse(r.published_at_utc) > cutoff
+        || (r.simulation_void && Date.parse(r.simulation_void.recorded_at_utc) > cutoff))))) {
+    throw new ModelFCApiError("Publication history does not match the requested filters.", "TRACK_RECORD_CONTRACT_MISMATCH", false);
+  }
+}
 export interface TrackRecord {
+  selection?: PublicationSelection;
   policy_version: string; void_settlement_supported: false; simulation_void_supported?: boolean; summary: TrackSummary;
   by_view: Record<ShortlistRanking, TrackSummary>;
   by_league_market: { competition: string; market_type: string; summary: TrackSummary }[];
@@ -132,6 +156,7 @@ export interface StrategyPick extends Publication {
   selection_id: string; simulated_stake_dollars: 2; profit_dollars: number | null;
 }
 export interface StrategyPage {
+  selection?: PublicationSelection;
   policy_version: string; strategy: ShortlistRanking; scope: "current" | "history";
   stake_dollars: 2; simulated: true; summary_scope: "page"; summary: TrackSummary;
   totals: TrackSummary; market_totals: TrackRecord["by_league_market"]; total_profit_dollars: number;

@@ -1,5 +1,5 @@
 import type { ShortlistRanking } from "./types";
-import { decodeTrackRecord, emptyTrackRecord, decodeStrategyPage } from "./track-record";
+import { decodeTrackRecord, emptyTrackRecord, decodeStrategyPage, assertPublicationSelection, publicationSelection, type PublicationFilters } from "./track-record";
 import { decodeShortlist } from "./shortlist";
 import { decodeBttsPerformance, emptyBttsPerformance, type BttsReportingScope } from "./btts-performance";
 import { decodeRecordedOffers } from "./recorded-offers";
@@ -279,14 +279,15 @@ export function createApiClient(
       return decodePerformance(mode === "mock" ? structuredClone(mockPerformance)
         : await requestJson<unknown>(baseUrl!, "/prospective/performance", { signal }));
     },
-    async strategyPicks(query: { strategy: ShortlistRanking; scope: "current" | "history"; market?: string; competition?: string; offset: number }, signal?: AbortSignal) {
+    async strategyPicks(query: { strategy: ShortlistRanking; scope: "current" | "history"; market?: string; competition?: string; asOf?: string; offset: number }, signal?: AbortSignal) {
       checkConfiguration();
       signal?.throwIfAborted();
       const params = new URLSearchParams({view: "strategies", strategy: query.strategy, scope: query.scope, offset: String(query.offset), limit: "5"});
       if (query.market) params.set("market", query.market);
       if (query.competition) params.set("competition", query.competition);
+      if (query.asOf) params.set("as_of", query.asOf);
       const page = decodeStrategyPage(mode === "mock" ? {
-        ...emptyTrackRecord, policy_version:"independent-value-strategies-v1", strategy:query.strategy,
+        ...emptyTrackRecord, selection:publicationSelection(query), policy_version:"independent-value-strategies-v1", strategy:query.strategy,
         scope:query.scope, stake_dollars:2, simulated:true, summary_scope:"page", profit_dollars:0,
         totals:emptyTrackRecord.summary, market_totals:[], total_profit_dollars:0,
         total:0,offset:query.offset,limit:5,next_offset:null,
@@ -295,13 +296,20 @@ export function createApiClient(
         || page.publications.some(r => query.market && r.offer.market_type !== query.market || query.competition && r.offer.competition !== query.competition)) {
         throw new ModelFCApiError("Strategy response does not match the request.", "STRATEGY_CONTRACT_MISMATCH", false);
       }
+      assertPublicationSelection(page, query);
       return page;
     },
-    async trackRecord(signal?: AbortSignal) {
+    async trackRecord(signal?: AbortSignal, filters: PublicationFilters = {}) {
       checkConfiguration();
       signal?.throwIfAborted();
-      return decodeTrackRecord(mode === "mock" ? structuredClone(emptyTrackRecord)
-        : await requestJson<unknown>(baseUrl!, "/prospective/performance?view=model_picks", { signal, cache: "no-store" }));
+      const params = new URLSearchParams({ view: "model_picks" });
+      if (filters.asOf) params.set("as_of", filters.asOf);
+      if (filters.market) params.set("market", filters.market);
+      if (filters.competition) params.set("competition", filters.competition);
+      const report = decodeTrackRecord(mode === "mock" ? {...structuredClone(emptyTrackRecord), selection:publicationSelection(filters)}
+        : await requestJson<unknown>(baseUrl!, `/prospective/performance?${params}`, { signal, cache: "no-store" }));
+      assertPublicationSelection(report, filters);
+      return report;
     },
     async analyze(payload: AnalysisRequest, signal?: AbortSignal): Promise<AnalysisResponse> {
       checkConfiguration();

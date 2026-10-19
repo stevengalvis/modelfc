@@ -211,7 +211,12 @@ def _summary(rows):
             "roi": profit / len(settled) if settled else None}
 
 
-def read(state_dir, *, directory_name=DIRECTORY, record_filter=None):
+def read(state_dir, *, directory_name=DIRECTORY, record_filter=None, as_of=None):
+    """Replay recorded publication membership and results, not historical disk presence."""
+    current = _now()
+    if as_of is not None and (not isinstance(as_of, datetime) or as_of.tzinfo is None or as_of > current):
+        raise ValueError("INVALID_PUBLICATION_READ_TIME")
+    now = as_of if as_of is not None else current
     state = Path(state_dir)
     rows = []
     if state.is_symlink() or (state.exists() and not state.is_dir()):
@@ -222,25 +227,29 @@ def read(state_dir, *, directory_name=DIRECTORY, record_filter=None):
     if directory.exists():
         with existing_read_lock(state / "prospective" / "runner.lock"), ledger_read_lock(state):
             records = _records(state, directory_name=directory_name)
+            if any(_time(r["published_at_utc"]) > current for r in records):
+                raise LedgerError("INVALID_PUBLISHED_RECOMMENDATION")
+            if as_of is not None:
+                records = [r for r in records if _time(r["published_at_utc"]) <= now]
             if record_filter is not None:
                 records = record_filter(records)
             if not records:
                 return _report([])
             # Published corners never reference research-only forecasts. BTTS outcomes
             # are validated separately so absent optional provider code stays pending.
-            inventory = _locked_inventory(state, now=_now(), include_research=False)
+            inventory = _locked_inventory(state, now=now, include_research=False, outcome_as_of=as_of)
             events = {e["opportunity_id"]: e for e in inventory["opportunities"]}
             predictions = {p["prediction_id"]: p for p in inventory["predictions"]}
             targets = inventory["targets"]
             btts_source = btts.records(state) if any(r["offer"]["market_type"] == "BTTS" for r in records) else ()
-            btts_outcomes = btts.result_inventory(state, _now()) if btts_source else None
+            btts_outcomes = btts.result_inventory(state, now) if btts_source else None
             for record in records:
                 offer = record["offer"]
                 if offer["market_type"] == "BTTS":
-                    if _time(record["published_at_utc"]) > _now():
+                    if _time(record["published_at_utc"]) > current:
                         raise LedgerError("INVALID_PUBLISHED_RECOMMENDATION")
                     btts.validate(record, btts_source)
-                    result, profit = btts.result(record, btts_source, _now(), btts_outcomes)
+                    result, profit = btts.result(record, btts_source, now, btts_outcomes)
                     rows.append({**record, "result": result, "profit_units": profit})
                     continue
                 try:
@@ -255,7 +264,7 @@ def read(state_dir, *, directory_name=DIRECTORY, record_filter=None):
                             or record["forecast_created_at_utc"] != prediction["created_at_utc"]
                             or offer["model_probability"] != target["model_probability"]
                             or offer["push_probability"] != target["push_probability"]
-                            or _time(record["published_at_utc"]) > _now()):
+                            or _time(record["published_at_utc"]) > current):
                         raise ValueError
                     historical = get_market_intelligence(state, offer["prediction_id"],
                                                          as_of=_time(record["published_at_utc"]),
@@ -273,12 +282,12 @@ def read(state_dir, *, directory_name=DIRECTORY, record_filter=None):
                 rows.append({**record, "result": event["result"] or "PENDING",
                              "profit_units": event["realized_profit_units"]})
             from modelfc.settlement_reviews import apply_voids
-            rows = apply_voids(state, rows, directory_name)
+            rows = apply_voids(state, rows, directory_name, as_of=as_of)
     return _report(rows)
 
 
 def _report(rows):
-    rows.sort(key=lambda r: (r["published_at_utc"], r["publication_id"]), reverse=True)
+    rows.sort(key=lambda r: (_time(r["published_at_utc"]), r["publication_id"]), reverse=True)
     groups = []
     for competition, market in sorted({(r["offer"]["competition"], r["offer"]["market_type"]) for r in rows}):
         groups.append({"competition": competition, "market_type": market,
