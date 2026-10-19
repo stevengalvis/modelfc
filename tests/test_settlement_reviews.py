@@ -198,6 +198,52 @@ class BttsCorrectionTests(unittest.TestCase):
             self.assertEqual(receipt['provider_requests'],0)
         self.assertEqual(outcomes.performance(self.state)['metrics']['sample_count'],1)
 
+    def test_orphan_correction_rejects_metrics_and_api_without_writes(self):
+        row,_=self.correct()
+        path=self.state/'btts-corrections'/(row['correction_id']+'.json')
+        row['outcome_id']='0'*64
+        row['correction_id']=outcomes.digest({k:row[k] for k in
+            ('outcome_id','supersedes_record_hash','reason','source')})
+        row['record_hash']=outcomes.digest({k:v for k,v in row.items() if k!='record_hash'})
+        path.unlink()
+        (path.parent/(row['correction_id']+'.json')).write_text(json.dumps(row))
+        before=self.fx.snapshots()
+        with self.assertRaisesRegex(ValueError,'ORPHAN_BTTS_CORRECTION'):
+            outcomes.performance(self.state)
+        response=TestClient(create_app(state_dir=self.state)).get('/api/v1/research/btts/performance')
+        self.assertEqual(response.status_code,409)
+        self.assertEqual(self.fx.snapshots(),before)
+
+    def test_correction_without_any_original_outcome_is_rejected(self):
+        self.correct()
+        (self.state/'btts-outcomes'/(self.root['outcome_id']+'.json')).unlink()
+        before=self.fx.snapshots()
+        with self.assertRaisesRegex(ValueError,'ORPHAN_BTTS_CORRECTION'):
+            outcomes.performance(self.state,as_of=outcomes.timestamp(self.root['recorded_at_utc']))
+        self.assertEqual(self.fx.snapshots(),before)
+
+    def test_multiple_outcomes_read_each_correction_once_with_identical_totals(self):
+        fixture=self.fx.fixture.model_copy(update={'provider_fixture_id':'second',
+            'kickoff_utc':'2026-09-21T11:00:00Z'})
+        forecast=outcome_tests.freeze_btts_forecast(fixture,outcome_tests.history(),
+            frozen_at=outcomes.timestamp('2026-09-19T12:00:00Z'))
+        outcome_tests.get_or_freeze_btts_forecast(self.state,fixture,lambda:forecast)
+        self.fx.write_csv(self.fx.content.replace('20/09/2026','21/09/2026'))
+        source=outcomes.csv_evidence(self.fx.csv,self.fx.csv_hash,'2026-09-21T15:00:00Z',
+            outcomes.fixture_identity(forecast))
+        outcomes.settle(self.state,outcomes.digest(forecast),source)
+        self.fx.write_csv(self.fx.content.replace(',2,1,H,',',0,1,A,'))
+        self.correct()
+        expected=outcomes.performance(self.state);before=self.fx.snapshots()
+        with patch.object(corrections,'load_record',wraps=corrections.load_record) as reads, \
+                patch.object(corrections,'review_entries',wraps=corrections.review_entries) as scans:
+            actual=outcomes.performance(self.state)
+        self.assertEqual(reads.call_count,1);self.assertEqual(scans.call_count,1)
+        self.assertEqual(actual,expected)
+        self.assertEqual(actual['metrics']['sample_count'],2)
+        self.assertEqual(sorted(r['actual_btts'] for r in actual['forecasts']),['NO','YES'])
+        self.assertEqual(self.fx.snapshots(),before)
+
     def test_corrupt_revision_fails_closed_and_does_not_erase_original(self):
         row,_=self.correct();path=self.state/'btts-corrections'/(row['correction_id']+'.json')
         value=json.loads(path.read_bytes());value['result']['home_goals']=9

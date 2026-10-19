@@ -272,16 +272,27 @@ def scores(rows):
                                 for p, y in pairs) / len(pairs), "calibration": bins}
 
 
+def _originals(state, forecasts):
+    directory = _directory_outcomes(state)
+    originals = {}
+    for path in sorted(directory.glob("*.json")) if directory.exists() else ():
+        record = _load(path, forecasts)
+        _require(record["outcome_id"] not in originals, "INVALID_BTTS_OUTCOME")
+        originals[record["outcome_id"]] = record
+    return originals
+
+
 def performance(state_dir, *, as_of=None):
     now = as_of or datetime.now(timezone.utc)
     _require(now.tzinfo is not None, "INVALID_BTTS_READ_TIME")
     forecasts = inventory(state_dir)
-    directory = _directory_outcomes(state_dir)
+    from modelfc.btts_corrections import chain, inventory as correction_inventory
+    originals = _originals(state_dir, forecasts)
+    correction_index = correction_inventory(state_dir, originals, forecasts)
     outcomes = {}
-    for path in sorted(directory.glob("*.json")) if directory.exists() else ():
-        record = _load(path, forecasts)
-        from modelfc.btts_corrections import chain
-        record, revisions = chain(state_dir, record, forecasts, as_of=now)
+    for original in originals.values():
+        record, revisions = chain(state_dir, original, forecasts, as_of=now,
+                                  revisions=correction_index)
         record["corrections"] = revisions
         if timestamp(record["recorded_at_utc"]) <= now:
             outcomes[record["outcome_id"]] = record

@@ -11,10 +11,10 @@ from modelfc.settlement_reviews import directory, load_record, review_entries
 from modelfc.research_predictions import _sync_directories
 
 
-def chain(state, original, forecasts, *, as_of=None):
-    path = directory(state, 'btts-corrections')
+def inventory(state, originals, forecasts):
+    """Read every revision once and bind it to a validated original outcome."""
     entries = review_entries(state, 'btts-corrections')
-    records=[]
+    indexed={}
     for target in entries:
         r=load_record(target,65536)
         _require(set(r) == {'schema_version','correction_id','outcome_id','supersedes_record_hash',
@@ -22,15 +22,24 @@ def chain(state, original, forecasts, *, as_of=None):
             and r['correction_id']==target.stem and r['correction_id']==digest({k:r[k] for k in
                 ('outcome_id','supersedes_record_hash','reason','source')})
             and isinstance(r['reason'],str) and 0 < len(r['reason'].strip()) <= 2000, 'INVALID_BTTS_CORRECTION')
-        if r['outcome_id'] == original['outcome_id']:
-            recorded=timestamp(r['recorded_at_utc'])
-            _require(recorded <= datetime.now(timezone.utc), 'INVALID_BTTS_CORRECTION')
-            result=outcomes._source_result(r['source'],original['fixture'],recorded)
-            for forecast,_ in forecasts.values():
-                if outcomes.fixture_identity(forecast)==original['fixture']:
-                    outcomes._provider_binding(forecast,r['source'])
-            _require(result==r['result'] and all(type(v) is int for v in r['result'].values()),'INVALID_BTTS_CORRECTION')
-            records.append(r)
+        _require(isinstance(r['outcome_id'],str) and r['outcome_id'] in originals,
+                 'ORPHAN_BTTS_CORRECTION')
+        original=originals[r['outcome_id']]
+        recorded=timestamp(r['recorded_at_utc'])
+        _require(recorded <= datetime.now(timezone.utc), 'INVALID_BTTS_CORRECTION')
+        result=outcomes._source_result(r['source'],original['fixture'],recorded)
+        for forecast,_ in forecasts.values():
+            if outcomes.fixture_identity(forecast)==original['fixture']:
+                outcomes._provider_binding(forecast,r['source'])
+        _require(result==r['result'] and all(type(v) is int for v in r['result'].values()),'INVALID_BTTS_CORRECTION')
+        indexed.setdefault(r['outcome_id'],[]).append(r)
+    return indexed
+
+
+def chain(state, original, forecasts, *, as_of=None, revisions=None):
+    if revisions is None:
+        revisions=inventory(state,outcomes._originals(state,forecasts),forecasts)
+    records=revisions.get(original['outcome_id'],[])
     tip=original; history=[]
     while True:
         children=[r for r in records if r['supersedes_record_hash']==tip['record_hash']]
