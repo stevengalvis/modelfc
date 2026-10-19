@@ -107,7 +107,7 @@ def validate_void(record, pick, namespace):
     return {k:record[k] for k in ('policy','record_hash','reason','recorded_at_utc','evidence')}
 
 
-def apply_voids(state, rows, namespace):
+def apply_voids(state, rows, namespace, *, as_of=None):
     path = directory(state, 'simulation-voids')
     for row in rows:
         row["simulation_void"] = None
@@ -125,6 +125,8 @@ def apply_voids(state, rows, namespace):
                 review = validate_void(record, row, namespace)
             except (ValueError, KeyError, TypeError, AttributeError):
                 raise OutcomeError("INVALID_SIMULATION_VOID") from None
+            if as_of is not None and timestamp(review['recorded_at_utc']) > as_of:
+                continue
             row.update(result='SIMULATION_VOID', profit_units=0.0, simulation_void=review)
     return rows
 

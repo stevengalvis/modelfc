@@ -71,8 +71,19 @@ def _child_directories(directory: Path) -> set[str]:
     return children
 
 
-def _outcome_tip(state: Path, prediction: dict[str, Any]) -> dict[str, Any] | None:
-    _, tip = load_outcome_chain_readonly(state, prediction["analysis_id"])
+def _outcome_tip(state: Path, prediction: dict[str, Any], *, as_of: datetime | None = None) -> dict[str, Any] | None:
+    records, tip = load_outcome_chain_readonly(state, prediction["analysis_id"])
+    if as_of is not None:
+        # Follow the validated chain, never lexical IDs or file modification times.
+        by_id = {record["outcome_id"]: record for record in records}
+        cursor = tip
+        while cursor is not None:
+            parent = by_id.get(cursor["supersedes_outcome_id"])
+            if parent is not None and _time(parent["recorded_at_utc"]) > _time(cursor["recorded_at_utc"]):
+                raise LedgerError("INVALID_OUTCOME_CHRONOLOGY")
+            cursor = parent
+        while tip is not None and _time(tip["recorded_at_utc"]) > as_of:
+            tip = by_id.get(tip["supersedes_outcome_id"])
     if tip is None:
         return None
     return _validated_outcome(prediction, tip)
@@ -335,7 +346,7 @@ def _locked_inventory(
     state: Path, *, now: datetime, detail_id: str | None = None,
     include_recommendations: bool = False, include_recorded: bool = False,
     upcoming_only: bool = False, fixture_id: str | None = None,
-    include_research: bool = True,
+    include_research: bool = True, outcome_as_of: datetime | None = None,
 ) -> dict[str, Any]:
     _state_directory(state, "predictions")
     targets_dir = _state_directory(state, "prediction-targets")
@@ -400,7 +411,7 @@ def _locked_inventory(
             targets_by_id = {item["target_id"]: item for item in targets}
             if len(targets_by_id) != len(targets):
                 raise ValueError
-            outcome = _outcome_tip(state, prediction)
+            outcome = _outcome_tip(state, prediction, as_of=outcome_as_of)
             settlement_status = _status(kickoff, outcome, now)
             opportunities = opportunity_records(state, prediction_id)
             if include_recorded:
