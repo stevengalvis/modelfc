@@ -5,6 +5,8 @@ import os
 from pathlib import Path
 from typing import Any, Literal
 
+from modelfc.research_performance_schema import ResearchPerformanceResponse
+
 from fastapi import FastAPI, Query, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
@@ -836,16 +838,17 @@ def create_app(
 
     @app.get(
         "/api/v1/prospective/performance",
-        response_model=ProspectivePerformanceResponse | ModelPicksResponse | StrategyPageResponse,
+        response_model=ProspectivePerformanceResponse | ModelPicksResponse | StrategyPageResponse | ResearchPerformanceResponse,
         response_model_exclude_unset=True,
     )
     def get_prospective_performance(response: Response, request: Request,
                                    as_of: str | None = None,
-                                   view: Literal["legacy", "model_picks", "strategies"] = "legacy",
+                                   view: Literal["legacy", "model_picks", "strategies", "research"] = "legacy",
                                    strategy: Literal["best_value", "higher_probability"] = "best_value",
                                    scope: Literal["current", "history"] = "current",
-                                   market: Literal["TEAM_TOTAL", "BTTS"] | None = None,
-                                   competition: Literal["E1", "E0", "SP1"] | None = None,
+                                   market: Literal["TEAM_TOTAL", "BTTS", "CORNER", "ALL"] | None = None,
+                                   competition: Literal["E1", "E0", "SP1", "ALL"] | None = None,
+                                   cohort: Literal["ALL", "ODDS_FREE", "BOOKMAKER_RESEARCH"] = "ALL",
                                    offset: int = Query(0, ge=0, le=2000),
                                    limit: int = Query(5, ge=1, le=20)) -> dict[str, Any]:
         response.headers["Cache-Control"] = "no-store"
@@ -858,19 +861,26 @@ def create_app(
                     raise ValueError
             except (ValueError, TypeError, OverflowError):
                 error = _error("INVALID_AS_OF",
-                    "Publication history requires a timezone-aware cutoff no later than now.", 422)
+                    "History requires a timezone-aware cutoff no later than now.", 422)
                 error.headers["Cache-Control"] = "no-store"
                 return error
         keys = list(request.query_params.keys())
-        allowed = ({"view", "strategy", "scope", "market", "competition", "offset", "limit", "as_of"}
+        allowed = ({"view", "market", "competition", "cohort", "as_of"}
+                   if view == "research" else {"view", "strategy", "scope", "market", "competition", "offset", "limit", "as_of"}
                    if view == "strategies" else {"view", "market", "competition", "as_of"}
                    if view == "model_picks" else {"view"})
-        if (any(len(request.query_params.getlist(k)) != 1 for k in keys) or set(keys) - allowed):
+        if (any(len(request.query_params.getlist(k)) != 1 for k in keys) or set(keys) - allowed
+                or (view == "research" and (market == "TEAM_TOTAL" or competition == "SP1"))
+                or (view != "research" and (market in {"ALL", "CORNER"} or competition == "ALL"))):
             error = _error("INVALID_PUBLICATION_QUERY",
-                           "Unknown, duplicate or unsupported parameter for this publication view.", 422)
+                           "Unknown, duplicate or unsupported parameter for this reporting view.", 422)
             error.headers["Cache-Control"] = "no-store"
             return error
         try:
+            if view == "research":
+                from modelfc.research_performance import read
+                return read(state, competition=competition or "ALL", market=market or "ALL",
+                            cohort=cohort, as_of=read_time)
             if view == "strategies":
                 from modelfc.pick_strategies import read
                 result = read(state, strategy=strategy, scope=scope, market=market,

@@ -1,4 +1,5 @@
 "use client";
+import { ResearchQualityDashboard } from "./research-performance";
 import { PublishedTrackRecord } from "./track-record";
 import { StrategyPicks } from "./strategy-picks";
 
@@ -133,10 +134,12 @@ export function PerformanceDashboard() {
     <div role="tablist" aria-label="Performance area">
       <button role="tab" aria-selected={tab==="strategies"} onClick={()=>setTab("strategies")}>Strategy Results</button>
       <button role="tab" aria-selected={tab==="accuracy"} onClick={()=>setTab("accuracy")}>Model Accuracy</button>
+      <button role="tab" aria-selected={tab==="quotes"} onClick={()=>setTab("quotes")}>Legacy quote analysis</button>
       <button role="tab" aria-selected={tab==="legacy"} onClick={()=>setTab("legacy")}>Legacy subset picks</button>
     </div>
     {tab==="strategies" ? <><StrategyPicks scope="history" /><p>Closing-line value, drawdown and strategy benchmarks are not available. Model calibration belongs in Model Accuracy.</p></>
-      : tab==="accuracy" ? <ModelAccuracyDashboard />
+      : tab==="accuracy" ? <ResearchQualityDashboard />
+      : tab==="quotes" ? <ModelAccuracyDashboard />
       : <><p>Historical policy: Higher Probability was a subset of Best Value. These frozen records are not part of the new independent-strategy cohort.</p><PublishedTrackRecord /></>}
   </div>;
 }

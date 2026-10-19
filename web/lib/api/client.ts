@@ -1,3 +1,4 @@
+import { decodeResearchPerformance, defaultResearchFilters, type ResearchFilters } from "./research-performance";
 import type { ShortlistRanking } from "./types";
 import { decodeTrackRecord, emptyTrackRecord, decodeStrategyPage, assertPublicationSelection, publicationSelection, type PublicationFilters } from "./track-record";
 import { decodeShortlist } from "./shortlist";
@@ -230,6 +231,15 @@ export function createApiClient(
         : await requestJson<unknown>(baseUrl!, `/research/btts?competition=${encodeURIComponent(competition)}`,
           { signal, cache: "no-store" });
       return decodeBttsResearch(value, competition);
+    },
+    async researchPerformance(signal?: AbortSignal, filters: ResearchFilters = defaultResearchFilters) {
+      checkConfiguration(); signal?.throwIfAborted();
+      if (mode === "mock") throw new ModelFCApiError("Saved research evidence requires a live API.", "RESEARCH_UNAVAILABLE", false);
+      if (filters.asOf && (!/(?:Z|[+-]\d\d:\d\d)$/.test(filters.asOf) || !Number.isFinite(Date.parse(filters.asOf)) || Date.parse(filters.asOf)>Date.now()))
+        throw new ModelFCApiError("Enter a cutoff with timezone no later than now.", "INVALID_AS_OF", false);
+      const query = new URLSearchParams({view:"research", competition:filters.competition, market:filters.market, cohort:filters.cohort});
+      if (filters.asOf) query.set("as_of",filters.asOf);
+      return decodeResearchPerformance(await requestJson<unknown>(baseUrl!, `/prospective/performance?${query}`, { signal, cache:"no-store" }),filters);
     },
     async bttsPerformance(signal?: AbortSignal, filters: { competition?: BttsReportingScope; asOf?: string } = {}) {
       checkConfiguration();

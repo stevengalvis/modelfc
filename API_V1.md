@@ -1275,3 +1275,24 @@ strategy views accept `as_of`, `competition` and `market`. Filtered responses ec
 historical store membership. Historical cutoff is not supported by the legacy
 quote-simulation view. See [reporting acceptance](docs/ZEN49_REPORTING_ACCEPTANCE.md)
 for boundaries, supported query values and remaining production acceptance.
+
+
+### Saved research quality and history
+
+`GET /api/v1/prospective/performance?view=research` is a read-only projection of
+existing validated corner/BTTS forecasts and effective outcomes. Optional selections:
+`competition=ALL|E1|E0`, `market=ALL|CORNER|BTTS`,
+`cohort=ALL|ODDS_FREE|BOOKMAKER_RESEARCH`, and timezone-aware nonfuture `as_of`.
+Categorical defaults are ALL. All responses use no-store and echo the complete
+selection and effective cutoff. Unknown/duplicate or incompatible view parameters
+return 422. No collection, settlement, model fitting or historical reconstruction.
+
+The response separates unique fixtures, saved forecast cohorts and per-market
+primary-fixture/score denominators. `forecasts` retain chronological immutable IDs,
+source forecast IDs, original probabilities/timestamps/model versions, source
+references, effective results and visible root/correction records. `markets` expose
+Brier/log loss/calibration, corner team-count MAE/RMSE, settled/unresolved/upcoming
+counts and explicit probability units. Empty denominators yield null scores. No
+quality-view ROI or combined cross-market score is defined. E0 is unsupported; ALL
+is partial E1 coverage. See [ZEN-49 acceptance](docs/ZEN49_REPORTING_ACCEPTANCE.md)
+for cohort selection, missing historical evidence and deployment acceptance limits.

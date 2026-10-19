@@ -19,7 +19,7 @@ it("loads only current picks on Recommendations and labels simulated flat risk",
 });
 it("filters reset the query and results remain separate from model accuracy",async()=>{
  const call=vi.spyOn(api,"strategyPicks").mockResolvedValue(empty());
- const accuracy=vi.spyOn(api,"performance").mockImplementation(()=>new Promise(()=>{}));
+ const accuracy=vi.spyOn(api,"researchPerformance").mockImplementation(()=>new Promise(()=>{}));
  render(<PerformanceDashboard/>);
  await screen.findByText(/No published picks/); expect(accuracy).not.toHaveBeenCalled();
  fireEvent.click(screen.getByRole("tab",{name:"Higher Probability"}));

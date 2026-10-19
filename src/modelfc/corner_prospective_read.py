@@ -575,7 +575,8 @@ def _locked_inventory(
 def _inventory(state_dir: str | Path, *, now: datetime | None = None,
                detail_id: str | None = None, include_recommendations: bool = False,
                include_recorded: bool = False, upcoming_only: bool = False,
-               fixture_id: str | None = None) -> dict[str, Any]:
+               fixture_id: str | None = None, include_research: bool = True,
+               outcome_as_of: datetime | None = None) -> dict[str, Any]:
     state = Path(state_dir)
     if not state.exists():
         return _empty_inventory()
@@ -593,7 +594,8 @@ def _inventory(state_dir: str | Path, *, now: datetime | None = None,
         with ledger_read_lock(state):
             return _locked_inventory(state, now=now, detail_id=detail_id,
                                      include_recommendations=include_recommendations, include_recorded=include_recorded,
-                                     upcoming_only=upcoming_only, fixture_id=fixture_id)
+                                     upcoming_only=upcoming_only, fixture_id=fixture_id,
+                                     include_research=include_research, outcome_as_of=outcome_as_of)
 
 
 def read_recommendations(state_dir: str | Path) -> list[dict[str, Any]]:
