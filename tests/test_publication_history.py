@@ -121,3 +121,40 @@ class PublicationHistoryTests(unittest.TestCase):
         with patch.object(reader, 'load_outcome_chain_readonly', return_value=(records, records[1])):
             with self.assertRaisesRegex(LedgerError, 'INVALID_OUTCOME_CHRONOLOGY'):
                 reader._outcome_tip(fx.state, fx.fx.prediction, as_of=fx.now)
+
+    def test_api_shared_selection_and_no_mutation(self):
+        fx = self.corner(); cutoff = fx.now
+        with _lock(fx.state): strategies.publish_locked(fx.state)
+        before = fx.fx.state_bytes()
+        for view in ('model_picks', 'strategies'):
+            query = dict(view=view, as_of=cutoff.isoformat(), market='TEAM_TOTAL', competition='E1')
+            if view == 'strategies': query.update(scope='history', limit=1)
+            response = fx.fx.client.get('/api/v1/prospective/performance', params=query)
+            self.assertEqual(response.status_code, 200, response.text)
+            actual = response.json()
+            selection = actual.pop('selection')
+            self.assertEqual(selection, dict(as_of_utc=cutoff.isoformat(), market='TEAM_TOTAL', competition='E1',
+                membership_basis='recorded-publication-time', historical_store_membership='UNVERIFIED'))
+            expected = (strategies.read(fx.state, scope='history', market='TEAM_TOTAL', competition='E1', limit=1, as_of=cutoff)
+                        if view == 'strategies' else published.read(fx.state, as_of=cutoff))
+            self.assertEqual(actual, expected)
+            self.assertEqual(response.headers['cache-control'], 'no-store')
+            for change in (dict(competition='E0'), dict(market='BTTS'), dict(as_of=(cutoff-timedelta(microseconds=1)).isoformat())):
+                empty = fx.fx.client.get('/api/v1/prospective/performance', params=query | change).json()
+                self.assertEqual(empty['publications'], [])
+                self.assertIsNone(empty['summary']['roi'])
+                if view == 'strategies':
+                    self.assertEqual(empty['total'], 0)
+                    self.assertIsNone(empty['totals']['roi'])
+        self.assertEqual(before, fx.fx.state_bytes())
+
+    def test_api_rejects_invalid_ambiguous_and_unsupported_history_queries(self):
+        fx = self.corner()
+        for query in ('view=model_picks&as_of=', 'view=model_picks&as_of=2026-09-19T12:00:00',
+                      'view=model_picks&as_of=2999-01-01T00:00:00Z', 'view=legacy&as_of=2026-01-01T00:00:00Z',
+                      'view=model_picks&as_of=2026-01-01T00:00:00Z&as_of=2026-02-01T00:00:00Z',
+                      'view=model_picks&competition=E0&competition=E1', 'view=model_picks&unknown=x',
+                      'view=model_picks&scope=current', 'view=model_picks&competition=UNKNOWN'):
+            response = fx.fx.client.get('/api/v1/prospective/performance?' + query)
+            self.assertEqual(response.status_code, 422, response.text)
+            self.assertEqual(response.headers['cache-control'], 'no-store')

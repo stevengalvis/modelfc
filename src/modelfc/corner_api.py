@@ -560,7 +560,16 @@ class PublishedGroupResponse(StrictModel):
     summary: PublishedSummaryResponse
 
 
+class PublicationSelection(StrictModel):
+    as_of_utc: str | None
+    competition: str | None
+    market: Literal["TEAM_TOTAL", "BTTS"] | None
+    membership_basis: Literal["recorded-publication-time"]
+    historical_store_membership: Literal["UNVERIFIED"]
+
+
 class ModelPicksResponse(StrictModel):
+    selection: PublicationSelection | None = None
     policy_version: Literal["first-published-value-v2"]
     void_settlement_supported: Literal[False]
     simulation_void_supported: bool = False
@@ -581,6 +590,7 @@ class StrategyPickResponse(PublishedPickResponse):
 
 
 class StrategyPageResponse(StrictModel):
+    selection: PublicationSelection | None = None
     policy_version: Literal["independent-value-strategies-v1"]
     strategy: Literal["best_value", "higher_probability"]
     scope: Literal["current", "history"]
@@ -827,8 +837,10 @@ def create_app(
     @app.get(
         "/api/v1/prospective/performance",
         response_model=ProspectivePerformanceResponse | ModelPicksResponse | StrategyPageResponse,
+        response_model_exclude_unset=True,
     )
-    def get_prospective_performance(response: Response,
+    def get_prospective_performance(response: Response, request: Request,
+                                   as_of: str | None = None,
                                    view: Literal["legacy", "model_picks", "strategies"] = "legacy",
                                    strategy: Literal["best_value", "higher_probability"] = "best_value",
                                    scope: Literal["current", "history"] = "current",
@@ -837,23 +849,51 @@ def create_app(
                                    offset: int = Query(0, ge=0, le=2000),
                                    limit: int = Query(5, ge=1, le=20)) -> dict[str, Any]:
         response.headers["Cache-Control"] = "no-store"
+        read_time = None
+        if as_of is not None:
+            try:
+                from modelfc.btts_market_data import timestamp
+                read_time = timestamp(as_of)
+                if view == "legacy" or read_time > datetime.now(timezone.utc):
+                    raise ValueError
+            except (ValueError, TypeError, OverflowError):
+                return JSONResponse(status_code=422, content={"error": {"code": "INVALID_AS_OF",
+                    "message": "Publication history requires a timezone-aware cutoff no later than now."}},
+                    headers={"Cache-Control": "no-store"})
+        keys = list(request.query_params.keys())
+        allowed = ({"view", "strategy", "scope", "market", "competition", "offset", "limit", "as_of"}
+                   if view == "strategies" else {"view", "market", "competition", "as_of"}
+                   if view == "model_picks" else {"view"})
+        if (any(len(request.query_params.getlist(k)) != 1 for k in keys) or set(keys) - allowed):
+            return JSONResponse(status_code=422, content={"error": {"code": "INVALID_PUBLICATION_QUERY"}},
+                                headers={"Cache-Control": "no-store"})
         try:
             if view == "strategies":
                 from modelfc.pick_strategies import read
-                return read(state, strategy=strategy, scope=scope, market=market,
-                            competition=competition, offset=offset, limit=limit)
-            if view == "model_picks":
+                result = read(state, strategy=strategy, scope=scope, market=market,
+                              competition=competition, offset=offset, limit=limit, as_of=read_time)
+            elif view == "model_picks":
                 from modelfc.published_recommendations import read
-                return read(state)
-            return read_performance(state)
+                result = read(state, as_of=read_time, record_filter=lambda records: [r for r in records
+                    if (market is None or r["offer"]["market_type"] == market)
+                    and (competition is None or r["offer"]["competition"] == competition)])
+            else:
+                return read_performance(state)
+            if as_of is not None or market is not None or competition is not None:
+                result["selection"] = dict(as_of_utc=read_time.isoformat() if read_time else None,
+                    competition=competition, market=market, membership_basis="recorded-publication-time",
+                    historical_store_membership="UNVERIFIED")
+            return result
         except LedgerError as error:
-            return _public_read_error(error)
+            result = _public_read_error(error)
+            result.headers["Cache-Control"] = "no-store"
+            return result
 
     @app.middleware("http")
     async def team_error_cache(request: Request, call_next):
         response = await call_next(request)
         path = request.url.path
-        if response.status_code >= 400 and (path in ("/api/v1/teams", "/api/v1/team-insights")
+        if response.status_code >= 400 and (path in ("/api/v1/teams", "/api/v1/team-insights", "/api/v1/prospective/performance")
                                            or path.startswith("/api/v1/teams/")):
             response.headers["Cache-Control"] = "no-store"
         return response

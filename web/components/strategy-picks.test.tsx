@@ -90,3 +90,20 @@ it("updates a published current pick at kickoff without refetching or changing f
  expect(read).toHaveBeenCalledTimes(1);
  view.unmount(); expect(vi.getTimerCount()).toBe(0);
 });
+
+it("resets strategy pagination on cutoff and carries the same historical filters", async()=>{
+ const data={...empty(),total:10,next_offset:5};
+ const call=vi.spyOn(api,"strategyPicks").mockResolvedValue(data);
+ render(<StrategyPicks scope="history"/>);
+ await screen.findByText(/No published picks/);
+ fireEvent.click(screen.getByText("Next picks"));
+ await screen.findByText(/No published picks/);
+ expect(call.mock.lastCall?.[0].offset).toBe(5);
+ fireEvent.change(screen.getByLabelText(/Publication cutoff/),{target:{value:"2026-01-01T00:00:00Z"}});
+ fireEvent.click(screen.getByText("Apply publication cutoff"));
+ await screen.findByText(/No published picks/);
+ expect(call.mock.lastCall?.[0]).toMatchObject({asOf:"2026-01-01T00:00:00.000Z",offset:0,scope:"history"});
+ fireEvent.change(screen.getByLabelText("Market"),{target:{value:"BTTS"}});
+ await screen.findByText(/No published picks/);
+ expect(call.mock.lastCall?.[0]).toMatchObject({asOf:"2026-01-01T00:00:00.000Z",offset:0,market:"BTTS"});
+});

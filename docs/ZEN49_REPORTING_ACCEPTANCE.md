@@ -8,19 +8,19 @@ ZEN-49 remains open. This matrix distinguishes implementation from genuine evide
 | E1 BTTS fixture/cohort counts, Brier/log loss, corrections, frozen-time cutoff | Complete for delivered slice | PR182/183; canonical API/UI filter parity accepted. ALL is explicitly partial E1 coverage. |
 | EPL probability performance | Unsupported | No supported E0 BTTS frozen inventory/settlement adapter. Empty unavailable evidence is not zero performance. No activation in this work. |
 | Current priced Model Picks and independent strategies | Complete for existing reader semantics | Saved original prices, publication identity/time, flat stake rules, separate fixture/publication counts, null ROI without settled stakes; existing correction/void behavior. These are simulated returns, not forecast-quality scores. |
-| Historical publication membership and effective results | Code gap addressed by this branch | Optional Python reader cutoff for Model Picks and independent strategies; publication inclusion before filtering/pagination; outcome/correction/void visibility at recorded time. API/UI historical controls are not exposed by this branch. |
+| Historical publication membership and effective results | Code gap addressed by this branch | Optional Python reader cutoff for Model Picks and independent strategies; publication inclusion before filtering/pagination; outcome/correction/void visibility at recorded time. Shared API/UI historical controls now use this same reader; live acceptance remains pending. |
 | Historical physical store membership | Missing evidence / code gap | Existing embedded freeze/quote/publication timestamps do not prove when a forecast entered each store. No insertion times are inferred from mtime or reconstructed. Future capture design belongs with ZEN-40 provenance acceptance. |
 | Saved source → frozen forecast → publication/pick → outcome/correction | Missing evidence | Reuse ZEN-40 and PR172 audit: sampled genuine joins verified; complete original raw-odds chain, original CSV/metadata retrieval times and private-cache acceptance remain unproven. Hashes alone do not supply missing retrieval provenance. |
 | Cross-market research-quality and retrievable history API/UI parity | Code gap | Corner prospective/research readers and BTTS quality readers have separate cohorts/contracts. A unified declaration of supported coverage and matching historical filters remains necessary. Do not combine publication counts with forecast cohorts or legacy quote simulations. |
-| Expanded publication history API/UI | Code gap | Wire the shared historical reader to explicit validated query/response contracts, identical market/league/cohort filters and UI controls; separately verify ingress support. No gateway changes are included here. |
+| Expanded publication history API/UI | Implemented in this branch; runtime evidence pending | Model Picks and independent strategies share explicit cutoff/league/market selection, echoed evidence limits and client mismatch rejection. Local synthetic rendered acceptance is separate from canonical live acceptance. Installed ingress support remains unverified; no gateway change is included. |
 
 ## Shared historical publication reader
 
 `published_recommendations.read(state_dir, as_of=aware_datetime)` and
 `pick_strategies.read(state_dir, as_of=aware_datetime, ...)` are read-only Python
 interfaces. Omit the cutoff to retain existing current reads. Naive/future cutoffs
-are rejected. Callers retain the requested cutoff alongside the returned report;
-this patch does not change the public response schemas or claim API exposure.
+are rejected. Python callers retain the requested cutoff alongside the returned report. The API
+echoes an explicit `selection` when a cutoff, league or market is supplied.
 
 Publication membership uses each immutable record's actual `published_at_utc`,
 inclusive at the boundary, before strategy scope/league/market selection, totals
@@ -51,3 +51,29 @@ is a pinned CSV history audit. None is merged production reporting. Reuse their
 contracts/evidence without merging unrelated drafts or fabricating historical times.
 ZEN-38 retains the original October 13 reconciliation and ordinary refresh recovery.
 No closure of ZEN-38 or ZEN-49 follows from this branch.
+
+## API/UI historical selection
+
+`GET /api/v1/prospective/performance?view=model_picks` and `view=strategies`
+accept `as_of` (timezone-aware ISO timestamp, no later than now), `competition`
+(E1/E0/SP1; omit for all recorded leagues), and `market` (TEAM_TOTAL/BTTS;
+omit for both). Independent strategies retain their existing strategy, scope,
+offset and limit parameters; membership and totals are determined before pagination.
+The historical cutoff is rejected for the legacy quote-simulation endpoint.
+Duplicate and unknown parameters fail rather than silently changing selection.
+
+Filtered responses include `selection.as_of_utc`, `competition`, `market`,
+`membership_basis=recorded-publication-time` and
+`historical_store_membership=UNVERIFIED`. Null cutoff means current results.
+Unfiltered response compatibility is retained. Client readers reject missing or
+mismatched selection metadata on filtered requests, even for empty results, and
+reject publications/void reviews after the cutoff. No fallback to current or mock
+data is made for a failed live historical request. All requests use no-store.
+
+Strategy Results and Legacy subset picks expose the same cutoff control. Changes
+reset pagination and discard stale requests; invalid local timestamps do not fetch.
+The UI labels this as replay of recorded publication/result events in currently
+available evidence, not proof of what was physically stored or seen on the site.
+A league filter does not activate a league or establish production coverage.
+No new query matcher is installed: separately verify canonical ingress and hydrated
+API/UI agreement before claiming deployment acceptance.

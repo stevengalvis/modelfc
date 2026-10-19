@@ -1265,3 +1265,13 @@ validation errors use `no-store`. The UI sends identical filters; client validat
 rejects scope/cutoff mismatches. This does not enable EPL production collection or
 combine forecast-quality samples with priced returns. See
 [BTTS reporting semantics and dependencies](docs/BTTS_OUTCOMES.md#zen-49-reporting-scope-and-historical-reads).
+
+
+### Publication history filters (ZEN-49)
+
+The read-only `/api/v1/prospective/performance` Model Picks and independent
+strategy views accept `as_of`, `competition` and `market`. Filtered responses echo
+`selection`, including the recorded-publication-time basis and explicit unverified
+historical store membership. Historical cutoff is not supported by the legacy
+quote-simulation view. See [reporting acceptance](docs/ZEN49_REPORTING_ACCEPTANCE.md)
+for boundaries, supported query values and remaining production acceptance.
