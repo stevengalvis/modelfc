@@ -490,12 +490,13 @@ def _provider_cohort(path, control, state, config, summary, captured, market_dat
         _reason(summary, "DISCOVERY_INCOMPLETE")
         if key != "advance_discovery" or not discovery["fixtures"]:
             return
-    if discovery["status"] == "DONE":
-        diagnostics.discovery_observed = True
     summary["fixtures_discovered"] += len(discovery["fixtures"])
     fixtures = [market_data_type.cached_fixture(
         raw, datetime.combine(date.fromisoformat(day), datetime.min.time(), timezone.utc) - timedelta(seconds=1), "E1")
         for raw in discovery["fixtures"]]
+    # A failed advance refresh may retain a usable cache. Observing that cache
+    # does not clear DISCOVERY_INCOMPLETE or imply a successful fresh query.
+    diagnostics.discovery_observed = True
     for fixture in fixtures:
         diagnostics.add(fixture, "DISCOVERED", _now())
     if early_scope is not None:
