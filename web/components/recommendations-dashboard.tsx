@@ -55,7 +55,7 @@ export function RecommendationsDashboard() {
         <Information key={`help:${queryKey}`} label="How these picks are selected">
           <p>{strategy === "best_value" ? "Highest estimated EV among eligible selections." : "First restrict to at least 65% modeled win probability, then choose highest estimated EV."} One frozen choice per strategy and market. Odds at least −200, no-vig edge at least 5 percentage points, positive EV.</p>
           <p>Simulated flat $2 risked per pick, including favorites. No wagers are placed. Model probabilities are estimates, not proven hit rates.</p>
-          <p>The list is fixed at its initial read time while loading more picks. Reload the page for newly published picks. Price and kickoff warnings continue to update.</p>
+          <p>Loading more picks rechecks the displayed pages. If the published list has changed, reload it to restore the current order. Price and kickoff warnings continue to update.</p>
         </Information>
         {competition && competition !== "E1" && <p>No {competition} production coverage is established by this filter. Missing records are not zero model performance.</p>}
         <CurrentPicks key={queryKey} strategy={strategy} market={market} competition={competition} />
@@ -65,7 +65,7 @@ export function RecommendationsDashboard() {
 }
 
 function CurrentPicks({ strategy, market, competition }: { strategy: ShortlistRanking; market: string; competition: string }) {
-  const [request, setRequest] = useState(() => ({ offset: 0, attempt: 0, asOf: new Date(Date.now()).toISOString() }));
+  const [request, setRequest] = useState({ offset: 0, attempt: 0 });
   const [snapshot, setSnapshot] = useState<{ page: StrategyPage; rows: StrategyPick[] } | null>(null);
   const snapshotRef = useRef(snapshot);
   const [loading, setLoading] = useState(true);
@@ -83,13 +83,23 @@ function CurrentPicks({ strategy, market, competition }: { strategy: ShortlistRa
   useEffect(() => {
     const controller = new AbortController();
     setLoading(true); setChanged(false);
-    api.strategyPicks({ scope: "current", strategy, market, competition, offset: request.offset, asOf: request.asOf }, controller.signal)
-      .then(page => {
+    api.strategyPicks({ scope: "current", strategy, market, competition, offset: request.offset }, controller.signal)
+      .then(async page => {
+        if (controller.signal.aborted) return;
+        const previous = snapshotRef.current;
+        // Current membership can change between offset reads. Recheck only the
+        // already displayed prefix in bounded pages before accepting the next one.
+        // This needs neither a client-clock cutoff nor additional provider data.
+        const prefixPages = request.offset && previous ? await Promise.all(
+          Array.from({ length: Math.ceil(previous.rows.length / 5) }, (_, index) =>
+            api.strategyPicks({ scope: "current", strategy, market, competition, offset: index * 5 }, controller.signal))
+        ) : [];
         if (controller.signal.aborted) return;
         setError(false);
-        const previous = snapshotRef.current;
-        // Keep the existing publication-time cutoff across batches; fail closed if the retained store changes.
+        const prefix = prefixPages.flatMap(value => value.publications);
         if (request.offset && previous && (previous.page.total !== page.total
+          || prefixPages.some(value => value.total !== page.total)
+          || JSON.stringify(prefix) !== JSON.stringify(previous.rows)
           || page.publications.some(row => previous.rows.some(old => old.publication_id === row.publication_id)))) {
           setChanged(true);
         } else {
@@ -104,7 +114,7 @@ function CurrentPicks({ strategy, market, competition }: { strategy: ShortlistRa
   useEffect(() => {
     if (request.offset && snapshot?.page.offset === request.offset) firstNewCard.current?.focus();
   }, [snapshot, request.offset]);
-  const load = (offset: number) => { setLoading(true); setRequest(old => ({ offset, attempt: old.attempt + 1, asOf: offset === 0 ? new Date(Date.now()).toISOString() : old.asOf })); };
+  const load = (offset: number) => { setLoading(true); setRequest(old => ({ offset, attempt: old.attempt + 1 })); };
   return <>
     <p role="status" aria-atomic="true" className="pick-count">{loading ? snapshot ? "Loading more picks…" : "Loading strategy picks…"
       : snapshot ? `${snapshot.page.total} picks match these filters. Showing ${snapshot.rows.length}.${snapshot.rows.length && snapshot.page.next_offset === null ? " All matching picks shown." : ""}` : ""}</p>

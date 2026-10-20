@@ -62,20 +62,20 @@ it("reaches every pick in bounded batches, retains order, announces counts and f
   fireEvent.click(screen.getByRole("button", {name: "Show more picks"}));
   await screen.findByText(/All matching picks shown/);
   expect(screen.getAllByRole("article").map(a => within(a).getByRole("heading").textContent)).toEqual(Array.from({length: 12}, (_, i) => `Home ${i} vs ${base.publications[0].offer.away_team}`));
-  expect(read.mock.calls.map(c => c[0].offset)).toEqual([0, 5, 10]);
+  expect(read.mock.calls.map(c => c[0].offset)).toEqual([0, 5, 0, 10, 0, 5]);
   expect(screen.queryByRole("button", {name: "Show more picks"})).not.toBeInTheDocument();
 });
 
 it("retains loaded cards on failure and retries the same batch without duplicates", async () => {
   let resolve!: (p: StrategyPage) => void;
-  const read = vi.spyOn(api, "strategyPicks").mockResolvedValueOnce(page(0, 6)).mockRejectedValueOnce(new Error()).mockImplementationOnce(() => new Promise(r => {resolve = r;}));
+  const read = vi.spyOn(api, "strategyPicks").mockResolvedValueOnce(page(0, 6)).mockRejectedValueOnce(new Error()).mockImplementationOnce(() => new Promise(r => {resolve = r;})).mockResolvedValueOnce(page(0, 6));
   render(<RecommendationsDashboard />); await screen.findAllByRole("article");
   fireEvent.click(screen.getByRole("button", {name: "Show more picks"})); await screen.findByRole("alert");
   expect(screen.getAllByRole("article")).toHaveLength(5);
   fireEvent.click(screen.getByRole("button", {name: "Retry strategy picks"}));
   expect(screen.getByRole("button", {name: "Retry strategy picks"})).toBeDisabled();
   await act(async () => resolve(page(5, 6)));
-  expect(screen.getAllByRole("article")).toHaveLength(6); expect(read.mock.calls.map(c => c[0].offset)).toEqual([0, 5, 5]);
+  expect(screen.getAllByRole("article")).toHaveLength(6); expect(read.mock.calls.map(c => c[0].offset)).toEqual([0, 5, 5, 0]);
 });
 
 it("resets accumulated picks and disclosures on each filter/strategy and ignores aborted responses", async () => {
@@ -89,7 +89,7 @@ it("resets accumulated picks and disclosures on each filter/strategy and ignores
     expect(screen.getAllByRole("button", {name: /Pick information/})[0]).toHaveAttribute("aria-expanded", "false");
   }
   let resolve!: (p: StrategyPage) => void;
-  read.mockImplementationOnce(() => new Promise(r => {resolve = r;}));
+  read.mockImplementationOnce(() => new Promise(r => {resolve = r;})).mockResolvedValueOnce(page(0, 6));
   fireEvent.click(screen.getByRole("button", {name: "Show more picks"}));
   const signal = read.mock.lastCall?.[1];
   fireEvent.click(screen.getByRole("tab", {name: "Best Value"})); await screen.findByText(/Showing 5/);
@@ -141,27 +141,45 @@ it("shows an exact corner selection and preserves its evidence link inside close
   expect(screen.getByRole("link", {name: "Recorded opportunity evidence"})).toHaveAttribute("href", `/opportunities/${cornerFixture.publications[0].offer.opportunity_id}`);
 });
 
-it("pins the read cutoff when kickoff and a new publication would shift equal-total pages", async () => {
-  const clock = vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-10-20T12:00:00Z"));
-  const initialCutoff = new Date(Date.now()).toISOString();
+it("rejects equal-total non-overlapping pages when kickoff and a new pick change the prefix", async () => {
+  const first = page(0, 6), next = page(5, 6), changed = page(0, 6);
+  changed.publications[0].publication_id = "newly-published";
+  changed.publications[0].offer.home_team = "New highest-ranked pick";
+  const read = vi.spyOn(api, "strategyPicks").mockResolvedValueOnce(first)
+    .mockResolvedValueOnce(next).mockResolvedValueOnce(changed).mockResolvedValueOnce(changed);
+  render(<RecommendationsDashboard />); await screen.findAllByRole("article");
+  fireEvent.click(screen.getByRole("button", {name: "Show more picks"}));
+  expect(await screen.findByRole("alert")).toHaveTextContent("published list changed");
+  expect(screen.getAllByRole("article")).toHaveLength(5);
+  expect(screen.queryByText(/All matching picks shown/)).not.toBeInTheDocument();
+  expect(read.mock.calls.map(c => c[0].offset)).toEqual([0, 5, 0]);
+  fireEvent.click(screen.getByRole("button", {name: "Reload picks"}));
+  await screen.findByRole("heading", {name: /New highest-ranked pick/});
+  expect(screen.getAllByRole("article")).toHaveLength(5);
+});
+
+it("does not send a future cutoff when the browser clock is ahead of the server", async () => {
+  vi.spyOn(Date, "now").mockReturnValue(Date.parse("2099-01-01T00:00:00Z"));
   const read = vi.spyOn(api, "strategyPicks").mockImplementation(async query => {
-    const result = page(query.offset, 6);
-    // Without the original cutoff, kickoff removes a prefix pick while a new
-    // publication enters the list: the final offset can look entirely valid.
-    if (query.offset && query.asOf !== initialCutoff) {
-      result.publications[0].publication_id = "shifted-page";
-      result.publications[0].offer.home_team = "Shifted page omitting a new pick";
-    }
-    return result;
+    if (query.asOf) throw new Error("INVALID_AS_OF");
+    return page(query.offset, 6);
   });
   render(<RecommendationsDashboard />); await screen.findAllByRole("article");
-  clock.mockReturnValue(Date.parse("2026-10-20T12:01:00Z"));
   fireEvent.click(screen.getByRole("button", {name: "Show more picks"}));
   await screen.findByText(/All matching picks shown/);
-  expect(read.mock.calls.map(c => c[0].asOf)).toEqual([initialCutoff, initialCutoff]);
-  expect(screen.getAllByRole("article").map(a => within(a).getByRole("heading").textContent))
-    .toEqual(Array.from({length: 6}, (_, i) => `Home ${i} vs ${base.publications[0].offer.away_team}`));
-  fireEvent.change(screen.getByLabelText("Market"), {target: {value: "BTTS"}});
-  await screen.findByText(/Showing 5/);
-  expect(read.mock.lastCall?.[0].asOf).toBe("2026-10-20T12:01:00.000Z");
+  expect(screen.getAllByRole("article")).toHaveLength(6);
+  expect(read.mock.calls.every(c => c[0].asOf === undefined)).toBe(true);
+});
+
+it("retains the prefix and retries safely when prefix revalidation fails", async () => {
+  const read = vi.spyOn(api, "strategyPicks").mockResolvedValueOnce(page(0, 6))
+    .mockResolvedValueOnce(page(5, 6)).mockRejectedValueOnce(new Error("recheck failed"))
+    .mockResolvedValueOnce(page(5, 6)).mockResolvedValueOnce(page(0, 6));
+  render(<RecommendationsDashboard />); await screen.findAllByRole("article");
+  fireEvent.click(screen.getByRole("button", {name: "Show more picks"}));
+  await screen.findByRole("alert"); expect(screen.getAllByRole("article")).toHaveLength(5);
+  fireEvent.click(screen.getByRole("button", {name: "Retry strategy picks"}));
+  await screen.findByText(/All matching picks shown/);
+  expect(screen.getAllByRole("article")).toHaveLength(6);
+  expect(read.mock.calls.map(c => c[0].offset)).toEqual([0, 5, 0, 5, 0]);
 });
