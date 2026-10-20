@@ -24,9 +24,9 @@ def retain_history(row, prior):
     # An interrupted reservation is not an observed terminal failure.
     result = dict(row)
     for name, statuses in (('last_success', SUCCESS), ('last_failure', ('failed',))):
-        source = row if row.get('status') in statuses else (
-            prior if prior.get('status') in statuses
-            and prior.get('error') != INTERRUPTED_ATTEMPT else prior.get(name))
+        source = next((candidate for candidate in (row, prior)
+                       if candidate.get('status') in statuses
+                       and candidate.get('error') != INTERRUPTED_ATTEMPT), prior.get(name))
         if source:
             result[name] = {k: v for k, v in source.items()
                             if k not in ('last_success', 'last_failure')}

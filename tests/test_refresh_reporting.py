@@ -6,6 +6,8 @@ from unittest.mock import patch
 from urllib.error import HTTPError
 
 from modelfc import corner_refresh, refresh_reporting as reporting
+from modelfc.corner_data import CornerDataConfig
+from modelfc.production_status import _refresh
 from tests import test_corner_refresh as fixtures
 from tests.test_corner_refresh import NEW, TODAY
 
@@ -38,6 +40,13 @@ class ReportingTests(unittest.TestCase):
         prior = dict(league='E1', status='failed', error=reporting.INTERRUPTED_ATTEMPT)
         success = dict(league='E1', status='updated', checked_at='2026-10-20T00:00:00+00:00')
         self.assertNotIn('last_failure', reporting.retain_history(success, prior))
+
+    def test_interruption_materializes_legacy_failure_without_replacing_it(self):
+        prior = dict(league='E1', status='failed', error='HTTP 302',
+                     checked_at='2026-10-19T03:00:00+00:00')
+        interrupted = dict(league='E1', status='failed', error=reporting.INTERRUPTED_ATTEMPT,
+                           checked_at=None)
+        self.assertEqual(reporting.retain_history(interrupted, prior)['last_failure'], prior)
 
     def test_missing_invalid_and_stale_timestamps(self):
         row = dict(league='E1', status='updated', latest_match='2026-10-19')
@@ -132,6 +141,63 @@ class RefreshHistoryTests(unittest.TestCase):
         self.assertEqual(recovered['last_success']['checked_at'], recovered['checked_at'])
         self.assertFalse(terminal.exists())
         self.assertEqual({p: p.read_bytes() for p in receipts}, receipts)
+
+    def test_legacy_interruption_replay_and_recovery(self):
+        for status in ('updated', 'unchanged', 'failed'):
+            for timestamp in ('2026-09-15T03:00:00+00:00', None):
+                for recovery in ('success', 'failure'):
+                    with self.subTest(status=status, timestamp=timestamp, recovery=recovery):
+                        root = self.root / f'{status}-{timestamp is None}-{recovery}'
+                        config = CornerDataConfig(root, ('E1',), 14)
+                        state = root / 'data' / 'corner-refresh'
+                        state.mkdir(parents=True)
+                        prior = dict(league='E1', status=status, source='https://example.invalid/E1.csv',
+                                     file_sha256='a' * 64)
+                        if status == 'failed':
+                            prior['error'] = 'HTTP 302'
+                        else:
+                            prior.update(latest_match='2026-09-12', matches=2, added=0, corrected=0)
+                        if timestamp is not None:
+                            prior['checked_at'] = timestamp
+                        (state / 'status.json').write_text(json.dumps(dict(
+                            season='2627', max_age_days=14, checked_at='2026-09-15T03:00:00+00:00',
+                            results=[prior])))
+                        (state / 'daily-attempt-cap.json').write_text('{"version":1,"enabled":true}')
+                        with patch.object(corner_refresh, 'datetime', wraps=datetime) as clock, patch.object(
+                                corner_refresh.refresh_attempts, 'datetime', wraps=datetime) as attempt_clock:
+                            clock.now.return_value = attempt_clock.now.return_value = datetime(2026, 9, 16, tzinfo=timezone.utc)
+                            with corner_refresh.refresh_lock(state):
+                                terminal, reserved = corner_refresh.refresh_attempts.reserve(state, 'E1', 'test')
+                            self.assertTrue(reserved)
+                            immutable = {p: p.read_bytes() for p in state.glob('attempts/*/*.json')}
+                            snapshot_name = 'last_failure' if status == 'failed' else 'last_success'
+                            expected = dict(prior, checked_at=timestamp)
+                            for _ in range(2):
+                                with patch.object(corner_refresh, 'download_csv') as download:
+                                    report = corner_refresh.refresh_data(config, TODAY)
+                                download.assert_not_called()
+                                row = report['results'][0]
+                                self.assertIn('checked_at', row)
+                                self.assertIsNone(row['checked_at'])
+                                self.assertEqual(_refresh(state / 'status.json', clock.now.return_value, 14),
+                                                 dict(state='UNVERIFIED', last_attempt_at_utc=None, e1_result='FAILED'))
+                                self.assertEqual(row[snapshot_name], expected)
+                                self.assertEqual(report['invocation'][0]['status'], 'DAILY_CAP_CONSUMED')
+                            clock.now.return_value = attempt_clock.now.return_value = datetime(2026, 9, 17, tzinfo=timezone.utc)
+                            with patch.object(corner_refresh, 'download_csv',
+                                    return_value=NEW.replace(b'SP1,', b'E1,'),
+                                    side_effect=OSError('new failure') if recovery == 'failure' else None) as download:
+                                recovered = corner_refresh.refresh_data(config, date(2026, 9, 17))['results'][0]
+                            download.assert_called_once()
+                            # Only a genuine new outcome of the same kind supersedes history.
+                            superseded = (status == 'failed') == (recovery == 'failure')
+                            if not superseded:
+                                self.assertEqual(recovered[snapshot_name], expected)
+                            else:
+                                self.assertEqual(recovered[snapshot_name]['checked_at'], recovered['checked_at'])
+                            self.assertNotEqual(recovered.get('last_failure', {}).get('error'), reporting.INTERRUPTED_ATTEMPT)
+                            self.assertFalse(terminal.exists())
+                            self.assertEqual({p: p.read_bytes() for p in immutable}, immutable)
 
     def test_legacy_missing_time_is_not_replaced_by_invocation_time(self):
         self.state.mkdir(parents=True)

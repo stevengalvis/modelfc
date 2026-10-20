@@ -284,9 +284,9 @@ def refresh_data(config: CornerDataConfig, today: date | None = None,
                     # No terminal outcome was observed: retain known history,
                     # rather than replacing last_failure with this unknown attempt.
                     prior = previous.get(league, {})
-                    saved_result = {**{key: prior[key] for key in ('last_success', 'last_failure') if key in prior},
-                                    "league": league, "status": "failed",
-                                    "error": refresh_reporting.INTERRUPTED_ATTEMPT}
+                    saved_result = refresh_reporting.retain_history(
+                        {"league": league, "status": "failed", "checked_at": None,
+                         "error": refresh_reporting.INTERRUPTED_ATTEMPT}, prior)
                 saved_result = preserve_settlement_block(saved_result, previous.get(league, {}))
                 if assess_result and saved_result['status'] in ('updated', 'unchanged'):
                     saved_result = {**saved_result, **assess_result(league)}
