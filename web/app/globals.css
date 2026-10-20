@@ -535,3 +535,39 @@ label { font-size: 11px; }
   .recorded-metrics { grid-template-columns: 1fr; gap: 6px; }
   .recorded-metrics > div { display: flex; justify-content: space-between; gap: 10px; align-items: baseline; }
 }
+
+/* Published Recommendations: focused navigation and progressive information. */
+.recommendations-panel { padding: 24px; }
+.recommendations-panel > h2 { margin: 0 0 20px; font-size: 18px; }
+.pick-tabs { display: flex; gap: 6px; padding: 5px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel-raised); }
+.pick-tabs button { flex: 1; min-height: 48px; padding: 12px; border: 1px solid transparent; border-radius: 8px; background: transparent; color: var(--muted); font: 600 14px/1.4 var(--font-sans); cursor: pointer; }
+.pick-tabs button[aria-selected="true"] { color: var(--ink); background: var(--cyan-soft); border-color: var(--cyan); }
+.recommendations-panel :is(button, select, [tabindex]):focus-visible { outline: 2px solid var(--cyan); outline-offset: 4px; }
+.pick-filters { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin: 20px 0 12px; }
+.pick-filters label { display: grid; gap: 8px; color: var(--muted); font-size: 12px; }
+.pick-filters select { width: 100%; min-width: 0; min-height: 44px; }
+.pick-info-button { display: flex; align-items: center; gap: 10px; min-height: 44px; max-width: 100%; padding: 8px 0; border: 0; background: transparent; color: var(--cyan); font: inherit; font-size: 13px; text-align: left; cursor: pointer; overflow-wrap: anywhere; }
+.pick-information-content { font-size: 13px; line-height: 1.7; color: var(--muted); overflow-wrap: anywhere; }
+.pick-information-content a { color: var(--cyan); }
+.pick-count { margin: 20px 0; color: var(--muted); font-size: 13px; }
+.pick-list { display: grid; gap: 20px; }
+.pick-card { padding: 24px; min-width: 0; overflow-wrap: anywhere; }
+.pick-context { margin: 0 0 12px; color: var(--muted); font-size: 12px; line-height: 1.6; }
+.pick-card h3 { margin: 0; font-size: clamp(20px, 3vw, 26px); line-height: 1.35; }
+.pick-selection { margin: 18px 0; font-size: 17px; line-height: 1.5; }
+.pick-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; margin: 24px 0; }
+.pick-metrics dt { color: var(--muted); font-size: 12px; line-height: 1.5; }
+.pick-metrics dd { margin: 8px 0 0; font-size: 20px; font-weight: 600; }
+.pick-metrics small { color: var(--muted); font-size: 12px; font-weight: 400; }
+.pick-warning { color: var(--orange); font-size: 13px; line-height: 1.6; }
+.pick-card .pick-information { margin-top: 16px; padding-top: 8px; border-top: 1px solid var(--line); }
+.pick-more { margin-top: 24px; min-height: 44px; }
+@media (max-width: 560px) {
+  .recommendations-panel { padding: 16px; }
+  .pick-filters { grid-template-columns: 1fr; }
+  .pick-card { padding: 18px; }
+  .pick-metrics { grid-template-columns: 1fr; gap: 16px; }
+  .pick-metrics > div { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+  .pick-metrics dd { margin: 0; text-align: right; }
+}
+.pick-sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }

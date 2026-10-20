@@ -15,7 +15,7 @@ it("loads only current picks on Recommendations and labels simulated flat risk",
  await screen.findByText("Both teams to score: Yes");
  expect(call.mock.calls[0][0].scope).toBe("current");
  expect(analysis).not.toHaveBeenCalled();expect(history).not.toHaveBeenCalled();
- expect(screen.getByText(/Simulated flat \$2 risked/)).toBeInTheDocument();
+ expect(screen.getAllByText(/Simulated flat \$2 risked/)[0]).toBeInTheDocument();
 });
 it("filters reset the query and results remain separate from model accuracy",async()=>{
  const call=vi.spyOn(api,"strategyPicks").mockResolvedValue(empty());
@@ -64,13 +64,14 @@ it("renders reviewed simulation void accounting without calling it bookmaker gra
  expect(()=>decodeStrategyPage({...value,totals:{...summary,settled:1}})).toThrow();
 });
 
-it("opens separately timestamped saved-price analysis from the Upcoming link",async()=>{
+it("ignores former shortlist links and shows published picks",async()=>{
  window.history.replaceState({}, "", "/recommendations?view=shortlist");
  vi.spyOn(api,"strategyPicks").mockResolvedValue(empty());
  const shortlist=vi.spyOn(api,"shortlist").mockImplementation(()=>new Promise(()=>{}));
  render(<RecommendationsDashboard/>);
- expect(await screen.findByText("Saved-price analysis")).toBeInTheDocument();
- expect(shortlist).toHaveBeenCalled();
+ await screen.findByText(/No published picks/);
+ expect(screen.queryByText("Saved-price analysis")).not.toBeInTheDocument();
+ expect(shortlist).not.toHaveBeenCalled();
  window.history.replaceState({}, "", "/");
 });
 
@@ -82,7 +83,7 @@ it("updates a published current pick at kickoff without refetching or changing f
  const read=vi.spyOn(api,"strategyPicks").mockResolvedValue(data);
  const view=render(<RecommendationsDashboard/>);
  await act(async()=>{await vi.advanceTimersByTimeAsync(0);});
- const price=screen.getByText(/draftkings · \+120 · 67.0% model probability/).textContent;
+ const price=screen.getByText("+120").textContent;
  expect(screen.queryByText(/Started fixture/)).not.toBeInTheDocument();
  await act(async()=>{await vi.advanceTimersByTimeAsync(30000);});
  expect(screen.getByText(/Started fixture · publication is historical/)).toBeInTheDocument();
