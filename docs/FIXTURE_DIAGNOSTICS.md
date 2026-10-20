@@ -26,7 +26,11 @@ Explicit eligibility, retry, identity and budget decisions are recorded where
 they occur. An acquisition attempt is distinct from an unattempted budget block.
 An error in an attempted acquisition does not become a successful skipped fixture.
 If a loop stops, later discovered fixtures have UNKNOWN progression, not an
-invented per-fixture budget/error decision. Exceptions are sanitized fixed codes.
+invented per-fixture budget/error decision. Exceptions are sanitized fixed codes. Generic adapter FIXTURE_REVIEW covers
+identity, stale-quote and normalization errors, so its cause remains UNKNOWN.
+Only the explicit saved/current kickoff mismatch is IDENTITY_UNRESOLVED.
+MARKET_METADATA_INVALID remains distinct from an explicit PROVIDER_FAILURE;
+other collector errors do not imply a transport failure.
 All business ordering, model requirements, quote windows and reservations remain
 unchanged. Best-effort event collection cannot interrupt publication; collection
 failure or overflow is marked INCOMPLETE. The cap is 256 events/run and receipts

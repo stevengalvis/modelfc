@@ -16,7 +16,8 @@ REASONS = {
     'EXISTING_EVIDENCE': ('odds', 'NOT_ATTEMPTED', 'NONE'),
     'OUTSIDE_CAPTURE_POLICY': ('odds', 'NOT_ELIGIBLE', 'NONE'),
     'CAPTURE_WINDOW_CLOSED': ('odds', 'NOT_ELIGIBLE', 'NONE'),
-    'FIXTURE_REVIEW': ('odds', 'NOT_ELIGIBLE', 'IDENTITY_UNRESOLVED'),
+    'KICKOFF_CHANGED': ('odds', 'NOT_ELIGIBLE', 'IDENTITY_UNRESOLVED'),
+    'FIXTURE_REVIEW': ('collector', 'FAILED', 'UNKNOWN'),
     'ATTEMPT_INCOMPLETE': ('odds', 'NOT_ATTEMPTED', 'UNKNOWN'),
     'RETRY_NOT_ELIGIBLE': ('odds', 'NOT_ELIGIBLE', 'NONE'),
     'REQUEST_BUDGET': ('odds', 'NOT_ATTEMPTED', 'BUDGET_BLOCKED'),
@@ -29,7 +30,8 @@ REASONS = {
     'PROVIDER_FAILURE': ('odds', 'FAILED', 'ERROR'),
     'INSUFFICIENT_HISTORY': ('capture', 'NOT_ELIGIBLE', 'INPUT_REQUIREMENTS_NOT_MET'),
     'COLLECTOR_FAILED': ('collector', 'FAILED', 'ERROR'),
-    'IDENTITY_REJECTED': ('odds', 'FAILED', 'IDENTITY_UNRESOLVED'),
+    'MARKET_METADATA_INVALID': ('odds', 'FAILED', 'ERROR'),
+    'ACQUISITION_REQUEST_BUDGET': ('odds', 'FAILED', 'BUDGET_BLOCKED'),
 }
 FIELDS = {'fixture_id', 'provider', 'competition', 'market', 'stage', 'outcome',
           'category', 'reason', 'observed_at_utc', 'evidence_hash'}

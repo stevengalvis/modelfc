@@ -1026,7 +1026,8 @@ class PilotTests(unittest.TestCase):
         self.setup.history.write_text('\n'.join(rows[:3])+'\n')
         self.run_pilot()
         events = latest_receipt(self.state, now=self.now)['fixture_diagnostics']['events']
-        self.assertTrue(any(e['category'] == 'IDENTITY_UNRESOLVED' for e in events))
+        self.assertTrue(any(e['reason'] == 'FIXTURE_REVIEW' and e['category'] == 'UNKNOWN'
+                            for e in events))
         self.assertTrue(any(e['category'] == 'INPUT_REQUIREMENTS_NOT_MET' for e in events))
 
     def test_fixture_diagnostics_failure_does_not_stop_publication(self):
@@ -1062,6 +1063,44 @@ class PilotTests(unittest.TestCase):
         self.assertEqual(events[-1]['outcome'], 'FAILED')
         self.assertEqual(result['provider_requests'], 1)
         self.assertFalse(self.capture_paths())
+
+
+    def test_fixture_diagnostics_stale_capture_is_review_with_unknown_cause(self):
+        # Exercise the real capture adapter's broad OddsPapiError translation.
+        with patch.object(provider, '_validate_current_quotes',
+                          side_effect=provider.OddsPapiError('Stale or future quote snapshot; private')):
+            result = self.run_pilot()
+        events = latest_receipt(self.state, now=self.now)['fixture_diagnostics']['events']
+        self.assertEqual((events[-1]['reason'], events[-1]['category'], events[-1]['outcome']),
+                         ('FIXTURE_REVIEW', 'UNKNOWN', 'FAILED'))
+        self.assertNotIn('IDENTITY_UNRESOLVED', {e['category'] for e in events})
+        self.assertEqual(result['review_required'], 1)
+        self.assertEqual(result['provider_requests'], 3)
+        self.assertFalse(self.capture_paths())
+        self.assertNotIn('private', json.dumps(events))
+
+    def test_fixture_diagnostics_metadata_error_is_not_provider_failure(self):
+        with patch.object(provider.OddsPapiMarketData, 'get_corner_markets',
+                          side_effect=MarketDataError('MARKET_METADATA_INVALID')):
+            result = self.run_pilot()
+        events = latest_receipt(self.state, now=self.now)['fixture_diagnostics']['events']
+        self.assertEqual((events[-1]['reason'], events[-1]['category'], events[-1]['outcome']),
+                         ('MARKET_METADATA_INVALID', 'ERROR', 'FAILED'))
+        self.assertIn('MARKET_METADATA_INVALID', result['reasons'])
+        self.assertEqual(result['provider_requests'], 1)
+        self.assertFalse(self.capture_paths())
+
+    def test_fixture_diagnostics_kickoff_mismatch_has_specific_identity_evidence(self):
+        self.no_team_totals()
+        self.run_pilot()
+        self.now = self.now.replace(hour=10, minute=1, second=0)
+        fid = self.fixtures[0]['fixtureId']
+        self.write_control(lambda c: c['attempts'][fid].update(kickoff='2026-09-28T15:00:00+00:00'))
+        result = self.run_pilot()
+        events = latest_receipt(self.state, now=self.now)['fixture_diagnostics']['events']
+        self.assertEqual((events[-1]['reason'], events[-1]['category']),
+                         ('KICKOFF_CHANGED', 'IDENTITY_UNRESOLVED'))
+        self.assertEqual(result['provider_requests'], 0)
 
 
 if __name__ == "__main__":

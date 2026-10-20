@@ -536,7 +536,7 @@ def _provider_cohort(path, control, state, config, summary, captured, market_dat
             continue
         previous = control["attempts"].get(fid)
         if previous and previous.get("kickoff", fixture.kickoff_utc.isoformat()) != fixture.kickoff_utc.isoformat():
-            diagnostics.add(fixture, "FIXTURE_REVIEW", _now())
+            diagnostics.add(fixture, "KICKOFF_CHANGED", _now())
             _reason(summary, "FIXTURE_REVIEW")
             continue
         if phase == "afternoon" and sum(
@@ -692,11 +692,19 @@ def _provider_cohort(path, control, state, config, summary, captured, market_dat
             raise
         except MarketDataError as error:
             if str(error) != "FIXTURE_REVIEW":
-                diagnostics.add(fixture, "PROVIDER_FAILURE", _now())
+                # Only the adapter's explicit cause is evidence. Other errors
+                # must not be inferred to be transport/provider failures.
+                diagnostic = {"PROVIDER_FAILURE": "PROVIDER_FAILURE",
+                              "MARKET_METADATA_INVALID": "MARKET_METADATA_INVALID",
+                              "REQUEST_BUDGET": "ACQUISITION_REQUEST_BUDGET"}.get(
+                                  str(error), "COLLECTOR_FAILED")
+                diagnostics.add(fixture, diagnostic, _now())
                 raise RunnerError(str(error)) from None
             attempt["state"] = "REVIEW"
             summary["review_required"] += 1
-            diagnostics.add(fixture, "IDENTITY_REJECTED", _now())
+            # FIXTURE_REVIEW also wraps stale quotes and normalization failures;
+            # the adapter has not established an identity-specific cause.
+            diagnostics.add(fixture, "FIXTURE_REVIEW", _now())
             _reason(summary, "FIXTURE_REVIEW")
         except LedgerError:
             diagnostics.add(fixture, "COLLECTOR_FAILED", _now())
