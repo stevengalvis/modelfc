@@ -1,64 +1,79 @@
-# Private fixture diagnostics: first ZEN43 slice
+# Private shared fixture diagnostics (ZEN43 backend slice)
 
-New prospective completion receipts use schema version 2 and contain bounded
-fixture diagnostics. Existing version-1 receipts remain readable and immutable.
-No public API fields, access grants, database, provider calls or schedules change.
-The existing private receipt writer/reader and completion boundary are reused.
+The existing immutable prospective receipts and forecast-only receipts now share
+bounded fixture diagnostics for the **existing E1 corners and BTTS paths**.
+The private reader accepts E1/E0 identities and market/provider filters. Its support
+matrix marks E0 `UNSUPPORTED_BY_IMPLEMENTATION`: the production forecast/history
+and BTTS adapters still gate E1. This is a code capability statement, not a claim
+about live configuration, activation, provider coverage or EPL records.
 
-Coverage is **E1 corner collector only**: cached/provider discovery observed by
-this invocation, odds eligibility/reservations/acquisition, missing team totals,
-and newly persisted corner capture. These events do not instrument forecast-only,
-BTTS, strategy qualification/publication or settlement. In particular, no new
-opportunity does not imply NO_QUALIFYING_VALUE; that category and STALE_EVIDENCE
-need instrumentation at their actual decision sites in a later slice. Existing
-stale-history warnings do not become artificial skip reasons. E0 remains outside
-this collector. ZEN35's historical unexplained omissions remain UNKNOWN.
+No public endpoint, frontend, database, access grant, acquisition, eligibility,
+quota, settlement or scheduling change is included. ZEN43 remains open for broader
+operational reporting. Historical ZEN35 omissions remain UNKNOWN.
 
-Each event binds a namespaced fixture ID, market, stage, outcome, category, fixed
-reason and UTC observation time to the enclosing immutable run ID and hash.
-Odds-observation and capture events additionally retain the existing evidence
-record hash. No team names, raw exceptions, tokens, URLs or private paths are
-included. DISCOVERED can mean an existing discovery cache was observed; the event
-time is not a new provider retrieval timestamp. Empty observed provider discovery
-is distinguishable from no discovery evidence, but is not full calendar proof.
+## Evidence and limits
 
-Explicit eligibility, retry, identity and budget decisions are recorded where
-they occur. An acquisition attempt is distinct from an unattempted budget block.
-An error in an attempted acquisition does not become a successful skipped fixture.
-If a loop stops, later discovered fixtures have UNKNOWN progression, not an
-invented per-fixture budget/error decision. Exceptions are sanitized fixed codes. Generic adapter FIXTURE_REVIEW covers
-identity, stale-quote and normalization errors, so its cause remains UNKNOWN.
-Only the explicit saved/current kickoff mismatch is IDENTITY_UNRESOLVED.
-MARKET_METADATA_INVALID remains distinct from an explicit PROVIDER_FAILURE;
-other collector errors do not imply a transport failure.
-All business ordering, model requirements, quote windows and reservations remain
-unchanged. Best-effort event collection cannot interrupt publication; collection
-failure or overflow is marked INCOMPLETE. The cap is 256 events/run and receipts
-are limited to 256 KiB. Completed partial/failed runs retain their observed events;
-a process crash before the existing completion boundary produces no receipt.
-Absence therefore proves neither an empty day nor that nothing was attempted.
+Events bind provider + competition + fixture ID, market, stage, strategy where
+applicable, UTC decision time, fixed reason/category and evidence references to an
+immutable run receipt. Existing observation/capture/publication hashes and frozen
+forecast/comparison/publication IDs are retained as references. No team names, raw
+exceptions, tokens, URLs or paths are serialized in diagnostics.
 
-Read under the already-authorized private state identity:
+Instrumented decisions include existing discovery/capture/budget branches,
+forecast creation/reuse and explicit input/stale-history/identity failures,
+retained BTTS snapshots and unavailable/unknown pairs, actual strategy value
+qualification and publication selection/creation/existing-record/cutoff checks.
+NO_QUALIFYING_VALUE is emitted only at a qualification decision. It is an offer
+assessment, not a blanket explanation for a fixture without a publication; multiple
+books/sides and strategies can have different outcomes. Qualification is not
+publication. Stale-but-latest quotes retain the existing publication eligibility;
+quote age alone is not reclassified as a blocking reason.
+
+Generic adapter review failures retain UNKNOWN causes. A run-wide early failure
+is not assigned to every fixture. Forecast-only discovery events cover the existing
+eligible plan, not all calendar matches. Corner collector DISCOVERED can reflect
+an observed cache, not a fresh provider retrieval. No event is fabricated for a
+stage that was not reached. Settlement is not instrumented here. A crash before
+the existing receipt completion boundary still leaves no completion receipt.
+
+Diagnostics are best effort: invalid events, invalid clock intervals or overflow
+mark INCOMPLETE without changing business publication. The existing 256-event/run
+and 256-KiB receipt bounds remain. Events retain their original times and are sorted
+chronologically in the snapshot. Counts are observed lower bounds when incomplete,
+never full-calendar totals. Original forecast/quote/outcome/publication data and
+policy are unchanged.
+
+## Private read-only report
+
+Run under the already-authorized private state identity:
 
 ```
 PYTHONPATH=src python -B -m modelfc.fixture_diagnostics \
-  --state-dir EXISTING_PRIVATE_STATE --day 2026-10-20 [--fixture-id PROVIDER_ID]
+  --state-dir EXISTING_PRIVATE_STATE --day 2026-10-20 \
+  [--fixture-id PROVIDER_ID] [--provider oddspapi] \
+  [--competition E1] [--market BTTS]
 ```
 
-The date selects **UTC receipt completion day**, not fixture kickoff day. The
-reader validates bounded regular files, hashes, versions and intervals, uses the
-existing 1,000-files/day ceiling, and never modifies state or acquires data. Runs
-without matching fixture evidence remain visible with empty event lists, not
-inferred skips. Run reasons are run-wide and must not be assigned to fixtures.
-Results are deterministic for the same receipts and observation time. Each run's
-record_hash is the evidence reference for its decisions; evidence_hash links
-materialized observation/capture records without exposing their paths.
+The date selects UTC completion day. Legacy forecast-only receipts lack completion
+time and are explicitly labeled `LEGACY_RUN_START`; their diagnostics remain
+UNKNOWN. Old prospective v1 receipts and PR187 v2 corner-only diagnostics remain
+readable and immutable. New forecast-only receipts add a verified hash, completion
+time and diagnostics without relocating or replacing old receipts.
 
-Counts are distinct fixtures observed in the selected events, not sums across
-runs; fixture-market groups equal fixtures only because this slice has one
-market. They are observed evidence counts, potentially incomplete, not totals
-for an entire calendar. Legacy-only/missing evidence gives null fixture counts.
-Odds observed is not priced/usable: a retained response can lack team totals.
-Priced fixtures, forecast cohorts and publication-record counts remain null.
-Missing stage evidence remains UNKNOWN. This CLI is private diagnostics, not a
-new public endpoint or completion of the broader ZEN43 dashboard/pipeline scope.
+The reader validates bounded regular files, hashes, versions and intervals and
+makes zero provider requests or writes. The prospective limit remains 1,000 files
+per day. The existing flat forecast-only directory is scanned with a 1,000-file
+**total** ceiling and fails explicitly above that limit; scalable partitioning is
+follow-up work. Runs without matching filtered events stay visible, with empty
+events rather than inferred skips. Run reasons remain run-wide.
+
+Distinct fixtures use provider + competition + fixture ID. No cross-provider
+alias join is inferred. Market groups add market; forecast cohorts use original
+reference IDs within that namespace/market; publications additionally distinguish
+strategy. Repeated observed/reused/existing events do not inflate these counts.
+Filters apply before every event-derived count and stage summary. Forecast and
+publication counts remain null when their stage was not observed. Priced-fixture
+counts remain null: observing a payload is not proof of usable prices. Reported
+stage OBSERVED means a decision was recorded (including rejection/failure), not
+that the stage succeeded. Missing stage evidence remains UNKNOWN. No historical
+cause is inferred from today's records or from an absent publication.

@@ -84,6 +84,24 @@ class PublishedBttsTests(unittest.TestCase):
         boundary = value | {"american_odds": -200, "decimal_odds": 1.5, "no_vig_probability_edge": .05}
         self.assertTrue(btts.eligible(boundary))
 
+    def test_diagnostics_do_not_change_selection_and_distinguish_absent_odds(self):
+        from modelfc.fixture_diagnostics import Recorder
+        self.forecast = self.forecast.model_copy(update={'fixture': self.forecast.fixture.model_copy(update={'provider': 'oddspapi'})})
+        observed = type(observation()).model_validate_json(observation().model_dump_json().replace('test-provider', 'oddspapi'))
+        source = (record_btts_research(self.state, self.forecast, observed),)
+        recorder = Recorder()
+        self.assertEqual(btts.select(source, self.now), btts.select(source, self.now, diagnostics=recorder))
+        self.assertFalse(recorder.incomplete)
+        self.assertTrue({'VALUE_QUALIFIED', 'NO_QUALIFYING_VALUE'} <= {e['reason'] for e in recorder.events})
+        later = observation(retrieved=NOW+timedelta(seconds=10), prices={}, snapshot='unavailable')
+        later = type(later).model_validate_json(later.model_dump_json().replace('test-provider', 'oddspapi'))
+        latest = record_btts_research(self.state, self.forecast, later)
+        recorder = Recorder()
+        self.assertEqual(btts.select((*source, latest), self.now, diagnostics=recorder), {})
+        self.assertTrue(recorder.events)
+        self.assertTrue(all(e['reason'] in {'QUALIFICATION_ODDS_UNAVAILABLE', 'QUALIFICATION_UNKNOWN'}
+                            for e in recorder.events))
+
     def test_frozen_policy_and_tampering(self):
         self.capture(); self.publish()
         before = self.report()

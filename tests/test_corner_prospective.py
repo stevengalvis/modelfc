@@ -984,10 +984,10 @@ class PilotTests(unittest.TestCase):
         from modelfc.fixture_diagnostics import report
         first = self.run_pilot()
         receipt = latest_receipt(self.state, now=self.now)
-        events = receipt['fixture_diagnostics']['events']
+        events = [e for e in receipt['fixture_diagnostics']['events'] if e['market'] == 'CORNER_TEAM_TOTAL']
         self.assertEqual(receipt['schema_version'], 2)
         self.assertEqual([e['reason'] for e in events],
-                         ['DISCOVERED', 'ACQUISITION_STARTED', 'ODDS_OBSERVED', 'CAPTURED'])
+                         ['DISCOVERED', 'ACQUISITION_STARTED', 'ODDS_OBSERVED', 'CAPTURED', 'FORECAST_RECORDED'])
         self.assertTrue(events[-2]['evidence_hash'])
         original = {p: p.read_bytes() for p in (self.state/'prospective'/'run-receipts').rglob('*.json')}
         self.assertEqual(first['provider_requests'], 3)
@@ -1025,7 +1025,7 @@ class PilotTests(unittest.TestCase):
         rows = self.setup.history.read_text().splitlines()
         self.setup.history.write_text('\n'.join(rows[:3])+'\n')
         self.run_pilot()
-        events = latest_receipt(self.state, now=self.now)['fixture_diagnostics']['events']
+        events = [e for e in latest_receipt(self.state, now=self.now)['fixture_diagnostics']['events'] if e['market'] == 'CORNER_TEAM_TOTAL']
         self.assertTrue(any(e['reason'] == 'FIXTURE_REVIEW' and e['category'] == 'UNKNOWN'
                             for e in events))
         self.assertTrue(any(e['category'] == 'INPUT_REQUIREMENTS_NOT_MET' for e in events))
@@ -1057,7 +1057,7 @@ class PilotTests(unittest.TestCase):
         with patch.object(provider.OddsPapiMarketData, 'get_corner_markets',
                           side_effect=MarketDataError('PROVIDER_FAILURE')):
             result = self.run_pilot()
-        events = latest_receipt(self.state, now=self.now)['fixture_diagnostics']['events']
+        events = [e for e in latest_receipt(self.state, now=self.now)['fixture_diagnostics']['events'] if e['market'] == 'CORNER_TEAM_TOTAL']
         self.assertEqual([e['reason'] for e in events],
                          ['DISCOVERED', 'ACQUISITION_STARTED', 'PROVIDER_FAILURE'])
         self.assertEqual(events[-1]['outcome'], 'FAILED')
@@ -1070,7 +1070,7 @@ class PilotTests(unittest.TestCase):
         with patch.object(provider, '_validate_current_quotes',
                           side_effect=provider.OddsPapiError('Stale or future quote snapshot; private')):
             result = self.run_pilot()
-        events = latest_receipt(self.state, now=self.now)['fixture_diagnostics']['events']
+        events = [e for e in latest_receipt(self.state, now=self.now)['fixture_diagnostics']['events'] if e['market'] == 'CORNER_TEAM_TOTAL']
         self.assertEqual((events[-1]['reason'], events[-1]['category'], events[-1]['outcome']),
                          ('FIXTURE_REVIEW', 'UNKNOWN', 'FAILED'))
         self.assertNotIn('IDENTITY_UNRESOLVED', {e['category'] for e in events})
@@ -1083,7 +1083,7 @@ class PilotTests(unittest.TestCase):
         with patch.object(provider.OddsPapiMarketData, 'get_corner_markets',
                           side_effect=MarketDataError('MARKET_METADATA_INVALID')):
             result = self.run_pilot()
-        events = latest_receipt(self.state, now=self.now)['fixture_diagnostics']['events']
+        events = [e for e in latest_receipt(self.state, now=self.now)['fixture_diagnostics']['events'] if e['market'] == 'CORNER_TEAM_TOTAL']
         self.assertEqual((events[-1]['reason'], events[-1]['category'], events[-1]['outcome']),
                          ('MARKET_METADATA_INVALID', 'ERROR', 'FAILED'))
         self.assertIn('MARKET_METADATA_INVALID', result['reasons'])
@@ -1097,7 +1097,7 @@ class PilotTests(unittest.TestCase):
         fid = self.fixtures[0]['fixtureId']
         self.write_control(lambda c: c['attempts'][fid].update(kickoff='2026-09-28T15:00:00+00:00'))
         result = self.run_pilot()
-        events = latest_receipt(self.state, now=self.now)['fixture_diagnostics']['events']
+        events = [e for e in latest_receipt(self.state, now=self.now)['fixture_diagnostics']['events'] if e['market'] == 'CORNER_TEAM_TOTAL']
         self.assertEqual((events[-1]['reason'], events[-1]['category']),
                          ('KICKOFF_CHANGED', 'IDENTITY_UNRESOLVED'))
         self.assertEqual(result['provider_requests'], 0)

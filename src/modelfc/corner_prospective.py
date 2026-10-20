@@ -380,7 +380,7 @@ def _provider_cohort(path, control, state, config, summary, captured, market_dat
                      *, friday_review=False, early_scope=None, ordinary_only=False, session):
     diagnostics = session["diagnostics"]
     client, guard = session.get("client"), session.get("guard")
-    research = BttsResearchAcquisition(state, config, summary["btts_research"], _now)
+    research = BttsResearchAcquisition(state, config, summary["btts_research"], _now, diagnostics=diagnostics)
     def get_client():
         nonlocal client, guard
         if client is None:
@@ -669,8 +669,10 @@ def _provider_cohort(path, control, state, config, summary, captured, market_dat
                 response, created = client.capture(quotes, data_config_path=config,
                     state_dir=state, capture_key=f"prospective:v1:{fixture.provider}:E1:{fid}")
                 analysis_id = response["analysis_id"]
-                prediction, _ = store_prediction_from_capture(state, analysis_id)
+                prediction, prediction_created = store_prediction_from_capture(state, analysis_id)
                 diagnostics.add(fixture, "CAPTURED", _now(), prediction["record_hash"])
+                diagnostics.add(fixture, "FORECAST_RECORDED" if prediction_created else "FORECAST_REUSED",
+                                _now(), prediction["record_hash"], reference_id=prediction["prediction_id"])
                 assessment = assess_observation(state, prediction, observation)
                 _assessment_review(summary, assessment)
                 captured[fid] = {"prediction": prediction,
@@ -722,7 +724,7 @@ def _provider_cohort(path, control, state, config, summary, captured, market_dat
         # Checkpoint each successful subset while quotes are still fresh. A later
         # cap, provider failure or interruption cannot strand an earlier pick.
         from modelfc.pick_strategies import publish_locked
-        publish_locked(state, include_btts=summary["btts_research"]["status"] != "REVIEW")
+        publish_locked(state, include_btts=summary["btts_research"]["status"] != "REVIEW", diagnostics=diagnostics)
 
 
 def run_once(*, state_dir, data_config_path, market_data_type: type[MarketDataSource] = OddsPapiMarketData,
@@ -769,7 +771,7 @@ def run_once(*, state_dir, data_config_path, market_data_type: type[MarketDataSo
                 # Finish publication, including recovered evidence, at the real writer time.
                 # Inventory/replay and all GET handlers remain write-free.
                 from modelfc.pick_strategies import publish_locked
-                publish_locked(state_dir, include_btts=summary["btts_research"]["status"] != "REVIEW")
+                publish_locked(state_dir, include_btts=summary["btts_research"]["status"] != "REVIEW", diagnostics=diagnostics)
             except RunnerError as error:
                 code = str(error)
                 if code not in REASONS:

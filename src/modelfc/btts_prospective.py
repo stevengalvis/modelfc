@@ -32,9 +32,19 @@ def validate_summary(summary):
 
 
 class BttsResearchAcquisition:
-    def __init__(self, state, config, summary, clock):
+    def __init__(self, state, config, summary, clock, diagnostics=None):
         self.state, self.config, self.summary, self.clock = state, config, summary, clock
+        self.diagnostics = diagnostics
         self.history = None
+
+    def _diagnostic(self, fixture, reason, reference=None):
+        if self.diagnostics is not None:
+            try:
+                from modelfc.btts_research import digest
+                self.diagnostics.add(fixture, reason, self.clock(), market='BTTS',
+                                     reference_id=digest(reference) if reference is not None else None)
+            except Exception:
+                self.diagnostics.incomplete = True
 
     def _review(self, reason):
         self.summary["status"] = "REVIEW"
@@ -45,6 +55,7 @@ class BttsResearchAcquisition:
         """Freeze and durably publish before the caller makes its odds request."""
         if self.summary["status"] == "NOT_APPLICABLE":
             self.summary["status"] = "OK"
+        diagnostic = "FORECAST_REVIEW"
         try:
             require_competition(fixture.competition)
             identity = BttsFixture(competition=fixture.competition, provider=fixture.provider,
@@ -61,18 +72,23 @@ class BttsResearchAcquisition:
                 return freeze_btts_forecast(identity, self.history, frozen_at=self.clock())
             forecast, created = get_or_freeze_btts_forecast(self.state, identity, freeze)
             self.summary["forecasts_frozen"] += int(created)
+            self._diagnostic(fixture, "FORECAST_RECORDED" if created else "FORECAST_REUSED", forecast)
             return forecast
         except LedgerStorageUnavailable:
             # Covers inaccessible history lock as well as research storage. Fixed code only.
+            diagnostic = "FORECAST_HISTORY_UNAVAILABLE"
             self._review("HISTORY_UNAVAILABLE")
         except LedgerError:
             self._review("STORAGE_OR_INTEGRITY_FAILURE")
         except OSError:
+            diagnostic = "FORECAST_HISTORY_UNAVAILABLE"
             self._review("HISTORY_UNAVAILABLE")
         except csv.Error:
             self._review("FORECAST_REVIEW")
         except ValueError as error:
+            diagnostic = "FORECAST_INPUT_BLOCKED" if str(error) == "INSUFFICIENT_BTTS_HISTORY" else "FORECAST_REVIEW"
             self._review("HISTORY_INSUFFICIENT" if str(error) == "INSUFFICIENT_BTTS_HISTORY" else "FORECAST_REVIEW")
+        self._diagnostic(fixture, diagnostic)
         return None
 
     def observe(self, client, supplied_corner_observation, forecast):
@@ -83,13 +99,20 @@ class BttsResearchAcquisition:
                 historical_names={forecast.fixture.home_team, forecast.fixture.away_team}, as_of=self.clock())
         except (ValueError, TypeError, KeyError, AttributeError, OverflowError):
             self._review("SNAPSHOT_REVIEW")
+            self._diagnostic(forecast.fixture, "BTTS_SNAPSHOT_REVIEW")
             return
         try:
             record = record_btts_research(self.state, forecast, observation)
+            self._diagnostic(forecast.fixture, "BTTS_SNAPSHOT_RECORDED", observation)
+            for availability in observation.availability:
+                if availability.status != "AVAILABLE":
+                    self._diagnostic(forecast.fixture, "BTTS_PAIR_UNAVAILABLE" if availability.status == "UNAVAILABLE" else "BTTS_PAIR_UNKNOWN", observation)
             self.summary["snapshots_recorded"] += 1
             self.summary["comparisons_recorded"] += len(record.comparisons)
             self.summary["unavailable_incomplete"] += sum(s.status != "AVAILABLE" for s in observation.availability)
         except (LedgerError, OSError):
             self._review("STORAGE_OR_INTEGRITY_FAILURE")
+            self._diagnostic(forecast.fixture, "BTTS_STORAGE_ERROR")
         except (ValueError, TypeError, KeyError, AttributeError):
             self._review("SNAPSHOT_REVIEW")
+            self._diagnostic(forecast.fixture, "BTTS_SNAPSHOT_REVIEW")

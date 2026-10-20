@@ -59,12 +59,22 @@ def _identity(offer):
     return _canonical_hash([*_fixture(offer), offer["market_type"], offer.get("team_side")])
 
 
-def select(inventory, now, *, strategy="best_value"):
+def select(inventory, now, *, strategy="best_value", diagnostics=None):
     """Best book per exact selection, then existing value ranking per team market."""
     selected = {}
-    for offer in project_shortlist(inventory, now=now, limit=100000)["offers"]:
+    predictions = {p['prediction_id']: p for p in inventory['predictions']} if diagnostics is not None else {}
+    def observe(offer):
+        if diagnostics is not None:
+            try:
+                diagnostics.corner_qualification(offer, predictions[offer['prediction_id']], now, strategy)
+            except Exception:
+                diagnostics.incomplete = True
+    for offer in project_shortlist(inventory, now=now, limit=100000, on_offer=observe)["offers"]:
         if strategy != "higher_probability" or offer["model_probability"] >= .65:
             selected.setdefault(_identity(offer), offer)
+        elif diagnostics is not None:
+            diagnostics.identity(offer, 'STRATEGY_PROBABILITY_THRESHOLD', now,
+                                 market='CORNER_TEAM_TOTAL', strategy=strategy, reference_id=offer.get('observation_id'))
     return selected
 
 
@@ -126,7 +136,7 @@ def _views(offer):
     return ["best_value"] + (["higher_probability"] if offer["model_probability"] >= .65 else [])
 
 
-def publish_locked(state_dir, *, include_btts=True, independent=False):
+def publish_locked(state_dir, *, include_btts=True, independent=False, diagnostics=None):
     """Called only by the live writer under runner.lock, never by reads/replay.
 
     No caller-supplied time. Clock sampled after source validation and checked
@@ -149,9 +159,9 @@ def publish_locked(state_dir, *, include_btts=True, independent=False):
         source = btts.records(state) if include_btts else ()
         for strategy in VIEWS if independent else ("best_value",):
             candidates = {key: (value, predictions[value["prediction_id"]]["created_at_utc"])
-                          for key, value in select(inventory, selection_time, strategy=strategy).items()}
+                          for key, value in select(inventory, selection_time, strategy=strategy, diagnostics=diagnostics).items()}
             if include_btts:
-                candidates.update(btts.select(source, selection_time, strategy=strategy))
+                candidates.update(btts.select(source, selection_time, strategy=strategy, diagnostics=diagnostics))
             for key, (value, forecast_at) in candidates.items():
                 identity = strategies.publication_identity(value, strategy) if independent else key
                 chosen[identity] = (value, forecast_at, strategy)
@@ -159,12 +169,20 @@ def publish_locked(state_dir, *, include_btts=True, independent=False):
             raise LedgerError("PUBLICATION_CAPACITY_EXCEEDED")
         events = {e["opportunity_id"] for e in inventory["opportunities"]}
         created = 0
+        def diagnostic(offer, code, strategy, identity, evidence_hash=None, observed_at=None):
+            if diagnostics is not None:
+                diagnostics.identity(offer, code, observed_at or selection_time,
+                    market='BTTS' if offer['market_type'] == 'BTTS' else 'CORNER_TEAM_TOTAL',
+                    strategy=strategy, reference_id=identity, evidence_hash=evidence_hash)
         for identity, (offer, forecast_at, strategy) in chosen.items():
+            diagnostic(offer, 'PUBLICATION_SELECTED', strategy, identity)
             if identity in existing:
+                diagnostic(offer, "PUBLICATION_EXISTING", strategy, identity)
                 continue
             now = _now()
             kickoff = _time(offer["kickoff_utc"])
             if now >= kickoff:
+                diagnostic(offer, "PUBLICATION_WINDOW_CLOSED", strategy, identity, observed_at=now)
                 continue
             if (independent and _time(effective) > now
                     or offer["market_type"] != "BTTS" and offer["opportunity_id"] not in events
@@ -194,6 +212,7 @@ def publish_locked(state_dir, *, include_btts=True, independent=False):
                              evidence_state=state, evidence_lock_fd=lock_fd)
             _sync_directories(directory, state)
             created += 1
+            diagnostic(offer, "PUBLICATION_RECORDED", strategy, identity, record["record_hash"], now)
         return created
 
 

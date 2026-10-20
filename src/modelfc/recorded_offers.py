@@ -135,16 +135,20 @@ def upcoming_captures(predictions, *, now, fixture_id=None):
         raise LedgerError("INVALID_PROSPECTIVE_RECORD") from None
 
 
-def project_shortlist(inventory, *, now, limit, ranking="best_value"):
+def project_shortlist(inventory, *, now, limit, ranking="best_value", on_offer=None):
     if ranking not in {"best_value", "higher_probability"}:
         raise ValueError("Invalid shortlist ranking")
     public = project(inventory, now=now)
     # Relax exactly one UI constraint. All actual engine flags remain unchanged;
     # unknown/unavailable, invalid, unqualified and nonpositive EV stay excluded.
+    def observe(offer):
+        if on_offer is not None:
+            on_offer(offer)
+        return True
     candidates = [dict(offer, recommendation_eligible=True)
                   for view in inventory['recorded'].values()
                   for target in view['targets'] for offer in target['offers']
-                  if not (set(offer['recommendation_ineligible_reasons']) - {'STALE_RETRIEVAL'})]
+                  if observe(offer) and not (set(offer['recommendation_ineligible_reasons']) - {'STALE_RETRIEVAL'})]
     available = {(o['prediction_id'], o['target_id'], o['bookmaker']): dict(o, fixture_id=f['fixture_id'])
                  for f in public['fixtures'] if f['status'] == 'UPCOMING' for o in f['offers']}
     ranked = [available[key] for offer in best_recommendations(candidates)
