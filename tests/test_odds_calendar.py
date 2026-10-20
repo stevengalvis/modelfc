@@ -511,6 +511,37 @@ class FridayCalendarTests(unittest.TestCase):
     def test_ordinary_work_crossing_seventeen_new_york_skips_closed_advance_slot(self):
         self.closing_slot(21)
 
+    def test_slot_closes_after_entry_check_before_first_calendar_load(self):
+        from datetime import datetime, timezone
+        for utc_hour in (13, 21):
+            with self.subTest(utc_hour=utc_hour):
+                self.fx.now = datetime(2026, 9, 25, utc_hour-1, 59, 59, tzinfo=timezone.utc)
+                self.publish()  # Ordinary Friday is empty; Saturday is unobserved.
+                before = self.fx.path.read_bytes()
+                original_slot = runner.friday_slot
+                checks = []
+                def slot(now):
+                    result = original_slot(now)
+                    checks.append(result)
+                    if len(checks) == 2:
+                        # The advance entry check passes, then time reaches the
+                        # deadline before its first check_calendar invocation.
+                        self.fx.now = self.fx.now.replace(hour=utc_hour, minute=0, second=0)
+                    return result
+                with patch.object(runner, 'friday_slot', side_effect=slot), patch.object(
+                        bridge, 'load', wraps=bridge.load) as load:
+                    result = self.run_gate()
+                self.assertIsNotNone(checks[1])
+                self.assertIsNone(checks[2])
+                self.assertEqual(load.call_count, 1)  # Only the ordinary cohort.
+                self.assertEqual(result['status'], 'PARTIAL', result)
+                self.assertEqual(result['reasons'], ['CAPTURE_WINDOW_CLOSED'])
+                self.assertEqual(self.fx.calls, [])
+                self.assertEqual(self.fx.path.read_bytes(), before)
+                self.assertEqual([(d['target_date'], d['decision']) for d in result['calendar_cohorts']],
+                                 [('2026-09-25', 'EMPTY')])
+                self.assertEqual(latest(self.fx.state, now=self.fx.now)['summary'], result)
+
     def closing_slot_during_pacing(self, utc_hour):
         from datetime import datetime, timezone
         self.fx.now = datetime(2026, 9, 25, utc_hour-1, 59, 59, tzinfo=timezone.utc)

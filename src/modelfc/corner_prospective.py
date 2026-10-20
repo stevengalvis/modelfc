@@ -472,8 +472,14 @@ def _provider_cohort(path, control, state, config, summary, captured, market_dat
         decision = dict(target_date=target_day.isoformat(), phase=phase, decision="ELIGIBLE",
                         observed_at_utc=_now().isoformat(), bundle_sha256=None,
                         source_sha256=None, retrieved_at_utc=None)
-        summary.setdefault("calendar_cohorts", []).append(decision)
-        if not check_calendar():
+        try:
+            has_fixtures = check_calendar()
+        finally:
+            # A deadline exit before the first load observed no calendar state.
+            # Record only validated provenance or an actual unavailable result.
+            if decision["bundle_sha256"] is not None or decision["decision"] == "UNAVAILABLE":
+                summary.setdefault("calendar_cohorts", []).append(decision)
+        if not has_fixtures:
             return
         calendar_ready = True
         # Empty/unavailable cohorts must not mutate even the prior month's
