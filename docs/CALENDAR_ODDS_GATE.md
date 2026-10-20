@@ -47,6 +47,9 @@ last successfully checked provenance; they do not assert it remained usable.
 ZEN-43 diagnostic reports expose these cohort entries. Historical absence stays
 `UNKNOWN`; historical receipts are neither rewritten nor migrated. An empty
 cohort does not imply zero calls in another cohort or erase unrelated failures.
+Disabling the flag on this release keeps the new receipt reader available. A
+downgrade to an older strict reader can reject the new receipt extension;
+rollback acceptance must account for that without rewriting immutable history.
 
 `collect-early` dry-run remains the existing request/policy estimate; it does
 not prove calendar permission. Execution with the gate always rechecks evidence.
