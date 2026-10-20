@@ -237,6 +237,32 @@ class CalendarGateTests(unittest.TestCase):
         self.assertIn('CALENDAR_EVIDENCE_UNAVAILABLE', json.loads(result.stdout)['reasons'])
         self.assertEqual(json.loads(result.stdout)['provider_requests'], 0)
 
+    def test_empty_or_unavailable_month_boundary_does_not_roll_accounting(self):
+        from datetime import datetime, timezone
+        # Enroll a real v2 control/event pair, retaining a nonzero prior charge.
+        self.write_control(lambda c: c['period'].update(allowance=40, reserved=7))
+        runner.enroll_production_budget(self.state, 40, 7)
+        self.now = datetime(2026, 10, 1, 9, tzinfo=timezone.utc)
+        before = self.path.read_bytes()
+        events = {p: p.read_bytes() for p in (self.path.parent / 'budget-events').glob('*.json')}
+        self.assertIn('CALENDAR_EVIDENCE_UNAVAILABLE', self.run_gate()['reasons'])
+        self.assertEqual(self.path.read_bytes(), before)
+        self.publish(match=False)
+        report = self.run_gate()
+        self.assertEqual(report['status'], 'OK', report)
+        self.assertIsNone(report['prospective_budget_remaining'])
+        self.assertEqual(self.path.read_bytes(), before)
+        self.assertEqual(events, {p: p.read_bytes() for p in (self.path.parent / 'budget-events').glob('*.json')})
+        self.assertEqual(self.calls, [])
+        # The next valid nonempty cohort still rolls once and retains 180/month.
+        self.now += timedelta(seconds=1)
+        self.fixtures[0]['startTime'] = '2026-10-01T17:00:00Z'
+        self.publish()
+        report = self.run_gate()
+        self.assertEqual(report['provider_requests'], 1, report)
+        self.assertEqual(self.control()['period'], dict(start='2026-10-01', end='2026-11-01', allowance=180, reserved=1))
+        self.assertEqual(len(list((self.path.parent / 'budget-events').glob('*.json'))), 2)
+
     def test_gate_off_ignores_missing_calendar(self):
         report = runner.run_once(state_dir=self.state, data_config_path=self.config)
         self.assertEqual(report['captures_created'], 1)

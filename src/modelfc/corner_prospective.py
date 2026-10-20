@@ -465,6 +465,10 @@ def _provider_cohort(path, control, state, config, summary, captured, market_dat
         if not check_calendar():
             return
         calendar_ready = True
+        # Empty/unavailable cohorts must not mutate even the prior month's
+        # reservations. Enrolled accounting advances only once work is eligible.
+        if control["version"] == 2:
+            rollover_if_needed(path, control, now=_now(), save=_save)
     day = target_day.isoformat()
     discovery = control.get(key)
     new_day = discovery is None or discovery["date"] != day
@@ -829,7 +833,7 @@ def run_once(*, state_dir, data_config_path, market_data_type: type[MarketDataSo
                         # Initial-only means repeated manual execution does no
                         # acquisition; ordinary policy owns any second attempt.
                         early_scope = (early_scope[0], ())
-                if control["version"] == 2:
+                if control["version"] == 2 and not calendar_gate:
                     rollover_if_needed(path, control, now=_now(), save=_save)
                 captured = _inventory(Path(state_dir), data_config_path, summary, market_data_type)
                 _provider_work(path, control, Path(state_dir), data_config_path, summary, captured, market_data_type, release_sha,
@@ -849,7 +853,10 @@ def run_once(*, state_dir, data_config_path, market_data_type: type[MarketDataSo
                 summary["status"] = "FAIL"
                 _reason(summary, "STORAGE_OR_INTEGRITY_FAILURE")
             if control is not None:
-                summary["prospective_budget_remaining"] = control["period"]["allowance"] - control["period"]["reserved"]
+                period = control["period"]
+                # A deferred rollover has no established current-period balance.
+                if not calendar_gate or date.fromisoformat(period["start"]) <= _now().date() < date.fromisoformat(period["end"]):
+                    summary["prospective_budget_remaining"] = period["allowance"] - period["reserved"]
             # The completion boundary and immutable publication stay under the
             # same runner lock. A crash before this point publishes no receipt.
             try:

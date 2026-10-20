@@ -20,7 +20,10 @@ one request-budget guard and one reusable metadata client.
 
 * A complete, fresh calendar with no future scheduled/timed fixtures for that
   cohort returns before client construction, discovery, reservation or attempt
-  mutation. Empty Friday does not suppress Saturday.
+  mutation. Empty Friday does not suppress Saturday. At a UTC month boundary,
+  gated runs defer rollover until a cohort is valid and nonempty; the balance
+  remains unknown until the current period is established. Gate-off rollover
+  behavior is unchanged.
 * Missing, unsafe, malformed, partial, future or older-than-six-hour evidence
   fails closed. Freshness is measured against the current clock, including for
   Saturday advance work, never against midnight on the target date. Exactly six
