@@ -983,3 +983,23 @@ it nor authorizes a production retry. No external Codex review request or merge
 is part of this task. Track this work in
 [ZEN-52](https://linear.app/galvis/issue/ZEN-52/bound-deployment-admission-waits-and-diagnose-failures),
 which blocks ZEN-36 and relates to ZEN-45.
+
+The separate `Natural rotation admission acceptance` PR workflow now targets the
+new output identity through `ops/ci/build_admission.py`; the old production-budget
+workflow and its `08f7b8...` target are preserved. The new disposable Ubuntu VM
+checks the exact installed fixture bytes as the deployment UID, real boundary and
+candidate/local-Git eligibility, missing/inactive/wrong-limit rejection, unchanged
+test invocation and retained evidence. A synthetic `sleep infinity` API has the
+real 30-minute runtime limit and `Restart=always`: the harness waits until real age
+exceeds 17 minutes, then exercises the controller's real wait through systemd's
+runtime-triggered restart. It does not accelerate clocks or edit runtime properties
+during that case. The test holds the original lock, records the roughly 13-minute
+admission wait, and requires a changed invocation, fresh age, final revalidation,
+no test launch and complete fixture cleanup. The job budget is 40 minutes.
+
+That CI result must be read from the exact PR head and its
+`natural-admission-<head SHA>` artifact, including pinned input/patch/output and
+runtime information; old budget acceptance cannot substitute. Source-only harness
+tests merely check fixture syntax and guards. No real-systemd acceptance was run
+inside the coding environment, and disposable CI acceptance still does not attest
+installed VPS identity or authorize installation.
