@@ -228,6 +228,51 @@ class FreshReleaseTest(unittest.TestCase):
                              remote=str(self.remote), check_boundary=lambda: None,
                              test_runner=deploy.tests, tip_reader=lambda _: sha)
 
+    def test_wait_revalidation_retains_lock_and_rejects_changed_boundaries(self):
+        for fault,reason in (("source","SOURCE_INVALID"),("target","SUPERSEDED"),
+                             ("boundary","STATE_BOUNDARY_FAILED"),("interrupt",None)):
+            with self.subTest(fault=fault):
+                request=self.control/"test-request.json"
+                output=self.control/"reports/test-result.json"
+                failure=self.control/"last-test-failure.json"
+                for path in (request,output,failure):path.write_bytes(b"retained evidence")
+                changed=[False]
+                def boundary():
+                    if changed[0] and fault == "boundary":
+                        raise deploy.Failure("STATE_BOUNDARY_FAILED")
+                def tip(_):return self.a if changed[0] and fault == "target" else self.b
+                def admission(*,revalidate):
+                    # Another descriptor cannot take the still-held deployment lock.
+                    with (self.control/"deploy.lock").open("a+") as lock:
+                        with self.assertRaises(BlockingIOError):
+                            deploy.fcntl.flock(lock,deploy.fcntl.LOCK_EX|deploy.fcntl.LOCK_NB)
+                    changed[0]=True
+                    if fault == "source":
+                        (self.created[-1]/"example.txt").write_text("changed during wait")
+                    if fault == "interrupt":raise KeyboardInterrupt
+                    revalidate()
+                    self.fail("changed admission boundary accepted")
+                def runner(release,sha,*,revalidate):
+                    return self.real_tests(release,sha,request=request,output=output,revalidate=revalidate)
+                with patch.object(deploy,"tests",side_effect=runner), patch.object(
+                        deploy,"test_admission_window",side_effect=admission), patch.object(deploy,"run_service") as service:
+                    def invoke():
+                        return deploy.deploy(self.b,root=self.deploy_root,releases=self.releases,
+                            current=self.current,control=self.control,remote=str(self.remote),
+                            check_boundary=boundary,tip_reader=tip)
+                    if fault == "interrupt":
+                        with self.assertRaises(KeyboardInterrupt):invoke()
+                    else:
+                        result=invoke()
+                        self.assertEqual(result["reason"],reason)
+                        self.assertEqual(result["tests_run"],0)
+                        self.assertEqual(result["status"],"SUPERSEDED" if fault == "target" else "FAIL")
+                    service.assert_not_called()
+                for path in (request,output,failure):self.assertEqual(path.read_bytes(),b"retained evidence")
+                with (self.control/"deploy.lock").open("a+") as lock:
+                    deploy.fcntl.flock(lock,deploy.fcntl.LOCK_EX|deploy.fcntl.LOCK_NB)
+                self.assertEqual(list(self.releases.iterdir()),[])
+
     def test_acquisition_precedes_persistent_candidate_and_preserves_git(self):
         original = deploy.staged_acquisition
         def staged(*args, **kwargs):

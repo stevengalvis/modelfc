@@ -749,3 +749,19 @@ class DeploymentStatusTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AdmissionReportTests(unittest.TestCase):
+    def test_strict_admission_reason_compatibility(self):
+        from tests.test_test_admission import controller
+        with tempfile.TemporaryDirectory() as tmp:
+            path=Path(tmp)/"report.json"
+            for reason in controller.ADMISSION_REASONS:
+                value=report(reason)
+                value.update(tests_status="NOT_RUN",tests_run=0)
+                path.write_text(json.dumps(value))
+                self.assertEqual(reporting.read_report(path,SHA),value)
+                for mutation in ({"reason":reason+"_secret"},{"tests_run":1},
+                                 {"unexpected":"secret"},{"status":"PASS"}):
+                    path.write_text(json.dumps({**value,**mutation}))
+                    self.assertIsNone(reporting.read_report(path,SHA))

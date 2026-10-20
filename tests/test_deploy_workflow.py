@@ -138,6 +138,19 @@ class DeployWorkflowTest(unittest.TestCase):
                     "deploy stevengalvis/modelfc " + SHA])
             return result, events
 
+    def test_admission_reasons_remain_strict_and_sanitized(self):
+        from tests.test_test_admission import controller
+        for reason in controller.ADMISSION_REASONS:
+            value = self.report()
+            value.update(status="FAIL", reason=reason, promotion_status="NOT_ATTEMPTED")
+            result, events = self.exercise(self.encoded, accepted=True, report=value, ssh_status=1)
+            self.assertEqual(json.loads(result.stdout), value)
+            self.assertEqual(self.report_copy, value)
+            for mutation in ({"reason": reason + "_secret"}, {"tests_run": 1},
+                             {"unexpected": "secret"}, {"status": "PASS"}):
+                result, _ = self.exercise(self.encoded, accepted=True, report={**value, **mutation})
+                self.assertEqual(json.loads(result.stdout)["reason"], "INVALID_DEPLOYMENT_REPORT")
+
     def assert_rejected(self, value):
         result, events = self.exercise(value)
         self.assertEqual(result.returncode, 1)

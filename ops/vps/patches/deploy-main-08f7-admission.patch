@@ -1,0 +1,181 @@
+--- a/ops/vps/deploy_main.py
++++ b/ops/vps/deploy_main.py
+@@ -56,7 +56,8 @@
+           "release_created", "dependency_sync", "tests_status", "tests_run",
+           "promotion_status", "state_boundary_enforced", "reason")
+ REASONS = {"OK", "ALREADY_CURRENT", "SUPERSEDED", "INVALID_REQUEST", "DEPLOYMENT_BUSY",
+-           "STATE_BOUNDARY_FAILED", "SOURCE_INVALID", "FETCH_FAILED", "SHA_NOT_ON_MAIN",
++           "STATE_BOUNDARY_FAILED", "ADMISSION_QUERY_FAILED", "ADMISSION_PROPERTIES_INVALID",
++           "ADMISSION_AGE_WAIT_EXPIRED", "ADMISSION_IDENTITY_CHANGED", "SOURCE_INVALID", "FETCH_FAILED", "SHA_NOT_ON_MAIN",
+            "ACTIVE_SHA_NOT_ON_MAIN", "DEPENDENCY_SYNC_FAILED", "TESTS_FAILED",
+            "FINAL_SHA_MISMATCH", "PROMOTION_FAILED", "INTERNAL_ERROR", "STORAGE_LIMIT_FAILED"}
+ 
+@@ -1122,35 +1123,101 @@
+     return json.loads(contents)
+ 
+ 
+-def test_admission_window():
+-    """Read-only, fresh API rotation admission immediately before test staging."""
++ADMISSION_REASONS = {"ADMISSION_QUERY_FAILED", "ADMISSION_PROPERTIES_INVALID",
++                     "ADMISSION_AGE_WAIT_EXPIRED", "ADMISSION_IDENTITY_CHANGED"}
++ADMISSION_WAIT_NS = 900_000_000_000
++ADMISSION_MAX_AGE_NS = 1_020_000_000_000
++
++
++def admission_snapshot(*, timeout=15, waiting=False):
++    """Read only fixed API properties; never forward bus output or exceptions."""
+     unit = "modelfc-corner-api.service"
+-    keys = ("Id", "LoadState", "ActiveState", "MainPID", "InvocationID",
++    keys = ("Id", "LoadState", "ActiveState", "SubState", "MainPID", "InvocationID",
+             "ExecMainStartTimestampMonotonic", "RuntimeMaxUSec")
+     try:
+-        fields = unique_properties(line.split("=", 1) for line in command([
+-            "/usr/bin/systemctl", "show", unit, "--all",
+-            *[item for key in keys for item in ("-p", key)]], timeout=15).splitlines())
++        raw = command(["/usr/bin/systemctl", "show", unit, "--all",
++                       *[item for key in keys for item in ("-p", key)]], timeout=timeout)
++    except Failure:
++        raise Failure("ADMISSION_QUERY_FAILED") from None
++    try:
++        if len(raw) > 2048:
++            raise ValueError
++        fields = unique_properties(line.split("=", 1) for line in raw.splitlines())
+         now = time.monotonic_ns()
+-        if (set(fields) != set(keys) or fields["Id"] != unit
+-                or fields["LoadState"] != "loaded" or fields["ActiveState"] != "active"
+-                or not fields["MainPID"].isdigit() or int(fields["MainPID"]) < 1
+-                or re.fullmatch("[0-9a-f]{32}", fields["InvocationID"]) is None
++        if (type(now) is not int or now < 0 or set(fields) != set(keys)
++                or fields["Id"] != unit or fields["LoadState"] != "loaded"
+                 or fields["RuntimeMaxUSec"] != "30min"
+-                or not fields["ExecMainStartTimestampMonotonic"].isdigit()):
++                or re.fullmatch(r"[0-9]{1,20}", fields["MainPID"]) is None
++                or re.fullmatch(r"[0-9]{1,20}", fields["ExecMainStartTimestampMonotonic"]) is None):
+             raise ValueError
+         started = int(fields["ExecMainStartTimestampMonotonic"]) * 1000
+-        if started <= 0 or not 0 <= now - started <= 1_020_000_000_000:
++        pid = int(fields["MainPID"])
++        invocation = fields["InvocationID"]
++        if started > now:
+             raise ValueError
+-    except (Failure, ValueError, KeyError, TypeError, OverflowError):
+-        raise Failure("STATE_BOUNDARY_FAILED") from None
+-
+-
+-def tests(release, sha, *, request=REQUEST, output=TEST_OUTPUT, service=SERVICE):
++        state = (fields["ActiveState"], fields["SubState"])
++        # Only after an otherwise valid, over-age observation may normal restart
++        # transitions be observed. They can never admit tests themselves.
++        if waiting and state == ("activating", "auto-restart"):
++            if pid != 0 or (invocation and re.fullmatch("[0-9a-f]{32}", invocation) is None):
++                raise ValueError
++            return None
++        if (started <= 0 or pid <= 0
++                or re.fullmatch("[0-9a-f]{32}", invocation) is None):
++            raise ValueError
++        if waiting and state in {("deactivating", "stop-sigterm"), ("deactivating", "stop"),
++                                 ("activating", "start")}:
++            return None
++        if state != ("active", "running"):
++            raise ValueError
++        return (invocation, pid, started), now - started
++    except (ValueError, KeyError, TypeError, OverflowError):
++        raise Failure("ADMISSION_PROPERTIES_INVALID") from None
++
++
++def test_admission_window(*, revalidate=None):
++    """Wait under the caller's deployment lock only for an otherwise valid old API."""
++    snapshot = admission_snapshot()
++    if snapshot[1] <= ADMISSION_MAX_AGE_NS:
++        return
++    # No caller may wait and subsequently stage without rechecking its boundary.
++    if revalidate is None:
++        raise Failure("STATE_BOUNDARY_FAILED")
++    original_identity = snapshot[0]
++    deadline = time.monotonic_ns() + ADMISSION_WAIT_NS
++    while True:
++        remaining = deadline - time.monotonic_ns()
++        if remaining <= 0:
++            raise Failure("ADMISSION_AGE_WAIT_EXPIRED")
++        time.sleep(min(5, remaining / 1_000_000_000))
++        remaining = deadline - time.monotonic_ns()
++        if remaining <= 0:
++            raise Failure("ADMISSION_AGE_WAIT_EXPIRED")
++        snapshot = admission_snapshot(timeout=min(15, remaining / 1_000_000_000), waiting=True)
++        if time.monotonic_ns() >= deadline:
++            raise Failure("ADMISSION_AGE_WAIT_EXPIRED")
++        if snapshot is None or snapshot[1] > ADMISSION_MAX_AGE_NS:
++            continue
++        if snapshot[0][0] == original_identity[0] or snapshot[0][2] <= original_identity[2]:
++            raise Failure("ADMISSION_IDENTITY_CHANGED")
++        revalidate()
++        remaining = deadline - time.monotonic_ns()
++        if remaining <= 0:
++            raise Failure("ADMISSION_AGE_WAIT_EXPIRED")
++        final = admission_snapshot(timeout=min(15, remaining / 1_000_000_000))
++        if time.monotonic_ns() >= deadline:
++            raise Failure("ADMISSION_AGE_WAIT_EXPIRED")
++        if final[0] != snapshot[0]:
++            raise Failure("ADMISSION_IDENTITY_CHANGED")
++        if final[1] <= ADMISSION_MAX_AGE_NS:
++            return
++
++
++def tests(release, sha, *, request=REQUEST, output=TEST_OUTPUT, service=SERVICE, revalidate=None):
+     release_id = release.name
+     if RELEASE_ID.fullmatch(release_id) is None or release_id[:40] != sha:
+         raise Failure("STATE_BOUNDARY_FAILED")
+-    test_admission_window()
++    test_admission_window(revalidate=revalidate)
+     request.unlink(missing_ok=True)
+     output.unlink(missing_ok=True)
+     # A prior attempt must never masquerade as evidence for this attempt.
+@@ -1236,8 +1303,16 @@
+                 state_boundary_enforced=False, reason="INVALID_REQUEST")
+ 
+ 
++def latest_main(remote):
++    value = command(["git", "ls-remote", "--exit-code", remote, "refs/heads/main"],
++                    env=git_env(), timeout=30).split()
++    if len(value) != 2 or not SHA.fullmatch(value[0]) or value[1] != "refs/heads/main":
++        raise Failure("FETCH_FAILED")
++    return value[0]
++
++
+ def deploy(sha, *, root=ROOT, releases=RELEASES, current=CURRENT, control=CONTROL,
+-           remote=REMOTE, check_boundary=boundary, test_runner=tests):
++           remote=REMOTE, check_boundary=boundary, test_runner=None):
+     value = report(sha)
+     if not isinstance(sha, str) or SHA.fullmatch(sha) is None:
+         return value
+@@ -1280,7 +1355,20 @@
+             value["dependency_sync"] = dependencies(candidate)
+             verify_venv_size(candidate / ".venv")
+             verify_source(candidate, sha)
+-            value["tests_run"] = test_runner(candidate, sha)
++            def revalidate_admission():
++                check_boundary()
++                verify_source(candidate, sha)
++                verify_venv_size(candidate / ".venv")
++                if current_release(current=current, releases=releases) != (active, previous):
++                    raise Failure("STATE_BOUNDARY_FAILED")
++                if latest_main(remote) != sha:
++                    raise Failure("SUPERSEDED")
++
++            revalidate_admission()
++            if test_runner is None:
++                value["tests_run"] = tests(candidate, sha, revalidate=revalidate_admission)
++            else:
++                value["tests_run"] = test_runner(candidate, sha)
+             if type(value["tests_run"]) is not int or value["tests_run"] <= 0:
+                 raise Failure("TESTS_FAILED")
+             value["tests_status"] = "PASS"
+@@ -1291,6 +1379,8 @@
+                          promotion_status="PROMOTED")
+     except Failure as error:
+         value.update(status="FAIL", reason=error.code)
++        if error.code == "SUPERSEDED":
++            value.update(status="SUPERSEDED", promotion_status="SUPERSEDED")
+         if error.code == "TESTS_FAILED":
+             value["tests_status"] = "FAIL"
+             value["tests_run"] = error.tests_run

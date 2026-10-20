@@ -19,7 +19,8 @@ MAX_ERROR = 16 * 1024
 RUNNER_FAILURES = frozenset({"DEPLOY_CONFIG_INVALID", "DEPLOY_TEMPFILE_FAILED", "DEPLOY_KEY_INVALID",
                              "SSH_NONZERO_EXIT", "INVALID_DEPLOYMENT_REPORT"})
 REASONS = RUNNER_FAILURES | frozenset({"OK", "ALREADY_CURRENT", "SUPERSEDED", "INVALID_REQUEST",
-    "DEPLOYMENT_BUSY", "STATE_BOUNDARY_FAILED", "SOURCE_INVALID", "FETCH_FAILED",
+    "DEPLOYMENT_BUSY", "STATE_BOUNDARY_FAILED", "ADMISSION_QUERY_FAILED", "ADMISSION_PROPERTIES_INVALID",
+    "ADMISSION_AGE_WAIT_EXPIRED", "ADMISSION_IDENTITY_CHANGED", "SOURCE_INVALID", "FETCH_FAILED",
     "SHA_NOT_ON_MAIN", "ACTIVE_SHA_NOT_ON_MAIN", "DEPENDENCY_SYNC_FAILED", "TESTS_FAILED",
     "FINAL_SHA_MISMATCH", "PROMOTION_FAILED", "INTERNAL_ERROR", "STORAGE_LIMIT_FAILED"})
 FIELDS = frozenset({"status", "requested_sha", "previous_sha", "final_sha", "fetch_verified",
@@ -217,6 +218,10 @@ def read_report(path, sha):
                        ("fetch_verified", "release_created", "state_boundary_enforced"))
                 or any(value[k] is not None and (type(value[k]) is not str or not SHA.fullmatch(value[k]))
                        for k in ("previous_sha", "final_sha"))):
+            raise Rejected
+        if value["reason"].startswith("ADMISSION_") and (
+                value["status"] != "FAIL" or value["tests_status"] != "NOT_RUN"
+                or value["tests_run"] != 0 or value["promotion_status"] != "NOT_ATTEMPTED"):
             raise Rejected
         if value["reason"] in RUNNER_FAILURES and value != dict(
                 status="FAIL", requested_sha=sha, previous_sha=None, final_sha=None,
