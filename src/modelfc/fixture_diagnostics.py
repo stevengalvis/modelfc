@@ -9,6 +9,7 @@ import re
 MAX_EVENTS = 256
 # Fixed codes only: never serialize exception messages, names, URLs or paths.
 REASONS = {
+    'CALENDAR_FIXTURE_MISMATCH': ('discovery', 'NOT_ELIGIBLE', 'IDENTITY_UNRESOLVED'),
     'DISCOVERED': ('discovery', 'OBSERVED', 'NONE'),
     'ODDS_OBSERVED': ('odds', 'OBSERVED', 'NONE'),
     'NO_TEAM_TOTAL': ('odds', 'NOT_ELIGIBLE', 'MISSING_ODDS'),
@@ -217,6 +218,7 @@ def report(state, *, day, fixture_id=None, competition=None, market=None, provid
                      'time_basis': record.get('time_basis', 'COMPLETED'),
                      'status': record['summary']['status'],
                      'run_reasons': record['summary']['reasons'],
+                     'calendar_cohorts': record['summary'].get('calendar_cohorts', 'UNKNOWN'),
                      'diagnostics': diagnostics['status'] if diagnostics else 'UNKNOWN',
                      'discovery': diagnostics['discovery'] if diagnostics else 'UNKNOWN',
                      'events': selected})
