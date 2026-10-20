@@ -85,8 +85,35 @@ they are never deleted or rewritten as rollback behavior.
 ## Refresh-service finding
 
 The repository refresh command deliberately exits nonzero when the newest
-football-data.co.uk result exceeds the configured age limit. With the upstream E1
-CSV unchanged through 2026-09-20, a failed `modelfc-corner-refresh.service` is the
-intended stale-source alarm, not a launcher or permission defect established by
-this change. The forecast-only overlay does not rewrite the CSV and does not make a
-manual refresh appropriate.
+football-data.co.uk result exceeds the configured age limit. The September 20
+stale-source diagnosis in the original rollout was historical evidence, not a
+current freshness assertion. The October 13 refresh subsequently advanced E1
+results through October 11 and E0 through October 12.
+
+October 15–19 E1 HTTP302 failures are also historical: PR181 changed E1 to the
+publisher's bare HTTPS host while preserving one GET and no redirect following.
+A deployed URL correction is not proof of a successful later acquisition. Use
+actual ordinary-run receipts and retained HTTP200 provenance to assess recovery;
+never infer retrieval time from filesystem mtime or trigger a refresh to inspect it.
+
+The repository CSV timer is Monday/Thursday 06:00 UTC. The separate daily morning
+refresh is a distinct installed/proposed path, observed at 06:00 UTC in the
+October 20 read-only VPS audit; verify installed units/receipts for current state.
+Neither schedule is changed here. Forecast eligibility remains the rolling,
+inclusive 21–27-hour pre-kickoff window, not all fixtures on a London calendar day.
+
+The collector's existing `--require-calendar-budget` flag requires UTC-month
+quota enrollment. It does not activate retained-fixture-calendar gating. That
+consumer integration remains separate ZEN-36 work; retained calendars alone do
+not activate it. Keep existing launcher flags and defaults unchanged.
+
+## Calendar configuration validation
+
+Before constructing a provider client, the forecast runner validates the explicit
+football-data.org E1 binding roster with the same validator used for returned
+calendar bundles. Sportmonks retains its separate provider-specific validator.
+IDs are never substituted across providers. These checks establish consistency,
+not independent human approval of the bindings. Active calendar statuses
+IN_PLAY/PAUSED/SUSPENDED require kickoff at or before original retrieval; later
+audit time cannot legitimize a contradictory original response. Valid forecast
+windows, model inputs, immutable IDs and retention failure behavior are unchanged.

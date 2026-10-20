@@ -13,7 +13,7 @@ import stat
 from modelfc.acquisition_planner import Fixture, plan_acquisition, configured_leagues, utc
 from modelfc.acquisition_storage import AcquisitionRejected, shared_runner
 from modelfc.history_completeness import (CompletenessRejected, matchweek_cutoff,
-                                          parse_calendar, verify_completeness)
+                                          parse_calendar, verify_completeness, validate_calendar_bindings)
 from modelfc.ledger_storage import (LedgerError, ensure_directory, git_commit_sha,
                                     ledger_lock, read_json_record, write_new_record)
 from modelfc.odds_calendar import publish as publish_odds_calendar
@@ -58,12 +58,10 @@ def _config(value):
             or value["sportmonks_season_id"] <= 0):
         raise ForecastRunRejected("FORECAST_CONFIG_REJECTED")
     validate_bindings(value["sportmonks_team_bindings"])
-    bindings = value["football_data_team_bindings"]
-    if (not isinstance(bindings, list) or len(bindings) != 24
-            or any(not isinstance(row, dict)
-                   or set(row) != {"source_team_id", "source_name", "history_name"}
-                   for row in bindings)):
-        raise ForecastRunRejected("FORECAST_CONFIG_REJECTED")
+    try:
+        validate_calendar_bindings(value["football_data_team_bindings"])
+    except CompletenessRejected:
+        raise ForecastRunRejected("FORECAST_CONFIG_REJECTED") from None
     if not value["enabled"]:
         raise ForecastRunRejected("FORECAST_RUNNER_DISABLED")
     return value
