@@ -2,6 +2,7 @@
 from datetime import date, datetime
 
 SUCCESS = ('updated', 'unchanged')
+INTERRUPTED_ATTEMPT = 'RESERVED_WITHOUT_TERMINAL_RECEIPT; no retry'
 FAILURES = ('HTTP_RESPONSE_REJECTED', 'DELIVERY_FAILED', 'PUBLICATION_FAILED',
             'SOURCE_OR_PUBLICATION_REJECTED')
 
@@ -20,10 +21,12 @@ def outcome(status):
 
 def retain_history(row, prior):
     """Bounded snapshots, never modify a receipt or infer a missing timestamp."""
+    # An interrupted reservation is not an observed terminal failure.
     result = dict(row)
     for name, statuses in (('last_success', SUCCESS), ('last_failure', ('failed',))):
         source = row if row.get('status') in statuses else (
-            prior if prior.get('status') in statuses else prior.get(name))
+            prior if prior.get('status') in statuses
+            and prior.get('error') != INTERRUPTED_ATTEMPT else prior.get(name))
         if source:
             result[name] = {k: v for k, v in source.items()
                             if k not in ('last_success', 'last_failure')}

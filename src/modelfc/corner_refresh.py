@@ -286,7 +286,7 @@ def refresh_data(config: CornerDataConfig, today: date | None = None,
                     prior = previous.get(league, {})
                     saved_result = {**{key: prior[key] for key in ('last_success', 'last_failure') if key in prior},
                                     "league": league, "status": "failed",
-                                    "error": "RESERVED_WITHOUT_TERMINAL_RECEIPT; no retry"}
+                                    "error": refresh_reporting.INTERRUPTED_ATTEMPT}
                 saved_result = preserve_settlement_block(saved_result, previous.get(league, {}))
                 if assess_result and saved_result['status'] in ('updated', 'unchanged'):
                     saved_result = {**saved_result, **assess_result(league)}

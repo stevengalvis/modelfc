@@ -1,8 +1,9 @@
 """Synthetic offline invocation/history reporting contracts."""
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 import json
 import unittest
 from unittest.mock import patch
+from urllib.error import HTTPError
 
 from modelfc import corner_refresh, refresh_reporting as reporting
 from tests import test_corner_refresh as fixtures
@@ -32,6 +33,11 @@ class ReportingTests(unittest.TestCase):
         self.assertEqual(reporting.dataset_health(row, date(2026, 10, 20), 14), 'UNKNOWN')
         self.assertEqual(reporting.summarize(report, date(2026, 10, 20), 14)['dataset_health'], 'UNKNOWN')
         self.assertTrue(corner_refresh.format_report(report, date(2026, 10, 20), 14)[1])
+
+    def test_interruption_without_known_failure_does_not_invent_history(self):
+        prior = dict(league='E1', status='failed', error=reporting.INTERRUPTED_ATTEMPT)
+        success = dict(league='E1', status='updated', checked_at='2026-10-20T00:00:00+00:00')
+        self.assertNotIn('last_failure', reporting.retain_history(success, prior))
 
     def test_missing_invalid_and_stale_timestamps(self):
         row = dict(league='E1', status='updated', latest_match='2026-10-19')
@@ -91,7 +97,7 @@ class RefreshHistoryTests(unittest.TestCase):
 
     def test_interrupted_reservation_preserves_history_across_replays(self):
         self.refresh(NEW)
-        with patch.object(corner_refresh, 'download_csv', side_effect=OSError('old failure')):
+        with patch.object(corner_refresh, 'download_csv', side_effect=HTTPError('https://example.invalid', 302, 'redirect refused', {}, None)):
             old = corner_refresh.refresh_data(self.config, TODAY)['results'][0]
         (self.state / 'daily-attempt-cap.json').write_text('{"version":1,"enabled":true}')
         with corner_refresh.refresh_lock(self.state):
@@ -110,9 +116,22 @@ class RefreshHistoryTests(unittest.TestCase):
             self.assertEqual(reporting.summarize(report, TODAY, 14)['invocation_status'], 'NOT_ATTEMPTED')
             text, unhealthy = corner_refresh.format_report(report, TODAY, 14)
             self.assertTrue(unhealthy)
-            self.assertIn(f"last_failure {old['last_failure']['checked_at']}; failed; old failure", text)
+            self.assertIn(f"last_failure {old['last_failure']['checked_at']}; failed; {old['last_failure']['error']}", text)
             self.assertFalse(terminal.exists())
             self.assertEqual({p: p.read_bytes() for p in self.state.glob('attempts/*/*.json')}, receipts)
+
+        # A later real attempt must retain the actual failure, not promote the
+        # interrupted reservation's unknown outcome into failure history.
+        next_day = datetime.now(timezone.utc) + timedelta(days=1)
+        with patch.object(corner_refresh.refresh_attempts, 'datetime', wraps=datetime) as clock:
+            clock.now.return_value = next_day
+            success = self.refresh(NEW)
+        recovered = success['results'][0]
+        self.assertEqual(recovered['status'], 'unchanged')
+        self.assertEqual(recovered['last_failure'], old['last_failure'])
+        self.assertEqual(recovered['last_success']['checked_at'], recovered['checked_at'])
+        self.assertFalse(terminal.exists())
+        self.assertEqual({p: p.read_bytes() for p in receipts}, receipts)
 
     def test_legacy_missing_time_is_not_replaced_by_invocation_time(self):
         self.state.mkdir(parents=True)
