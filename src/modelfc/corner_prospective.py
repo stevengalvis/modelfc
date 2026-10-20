@@ -18,6 +18,7 @@ import tempfile
 import time
 import uuid
 
+from modelfc.fixture_diagnostics import Recorder
 from modelfc.btts_prospective import BttsResearchAcquisition, new_summary as new_btts_summary
 from modelfc.corner_analysis_store import load_analysis_capture
 from modelfc.corner_analysis_outcomes import OutcomeError, load_outcome_chain, record_outcome
@@ -363,8 +364,8 @@ def _inventory(state, config, summary, market_data_type):
 
 
 def _provider_work(path, control, state, config, summary, captured, market_data_type, release_sha,
-                   *, friday_review=False, early_scope=None):
-    session = {}
+                   *, friday_review=False, early_scope=None, diagnostics=None):
+    session = {"diagnostics": diagnostics or Recorder()}
     if friday_review and early_scope is None and friday_slot(_now()):
         # Imminent same-day work must not lose its only 90-minute opportunity
         # when a Friday advance window overlaps. Both cohorts share one guard
@@ -377,6 +378,7 @@ def _provider_work(path, control, state, config, summary, captured, market_data_
 
 def _provider_cohort(path, control, state, config, summary, captured, market_data_type, release_sha,
                      *, friday_review=False, early_scope=None, ordinary_only=False, session):
+    diagnostics = session["diagnostics"]
     client, guard = session.get("client"), session.get("guard")
     research = BttsResearchAcquisition(state, config, summary["btts_research"], _now)
     def get_client():
@@ -492,6 +494,11 @@ def _provider_cohort(path, control, state, config, summary, captured, market_dat
     fixtures = [market_data_type.cached_fixture(
         raw, datetime.combine(date.fromisoformat(day), datetime.min.time(), timezone.utc) - timedelta(seconds=1), "E1")
         for raw in discovery["fixtures"]]
+    # A failed advance refresh may retain a usable cache. Observing that cache
+    # does not clear DISCOVERY_INCOMPLETE or imply a successful fresh query.
+    diagnostics.discovery_observed = True
+    for fixture in fixtures:
+        diagnostics.add(fixture, "DISCOVERED", _now())
     if early_scope is not None:
         found = {f.provider_fixture_id for f in fixtures}
         if set(selected_ids) - found:
@@ -502,6 +509,7 @@ def _provider_cohort(path, control, state, config, summary, captured, market_dat
             bool(captured.get(f.provider_fixture_id)) if phase == "afternoon" or weekend_day else False,
             f.kickoff_utc, f.provider_fixture_id)):
         if slot and friday_slot(_now()) != slot:
+            diagnostics.add(fixture, "CAPTURE_WINDOW_CLOSED", _now())
             _reason(summary, "CAPTURE_WINDOW_CLOSED")
             break
         fid = fixture.provider_fixture_id
@@ -509,10 +517,12 @@ def _provider_cohort(path, control, state, config, summary, captured, market_dat
         existing_capture = captured.get(fid)
         if early_scope is not None and (existing_capture is not None or control["attempts"].get(fid)
                 or fixture_observations(state, fixture.provider, "E1", fid)):
+            diagnostics.add(fixture, "EXISTING_EVIDENCE", _now())
             continue
         if weekend_day and phase == "near_kickoff" and sum(
                 a.get("phase_attempts", a["count"]) for a in control["attempts"].values()
                 if a.get("phase") == "near_kickoff" and a.get("kickoff", "")[:10] == day) >= SATURDAY_LIMIT:
+            diagnostics.add(fixture, "SATURDAY_LIMIT", _now())
             _reason(summary, "SATURDAY_LIMIT")
             break
         initial_slot = existing_capture is None and (bool(slot) or
@@ -523,14 +533,17 @@ def _provider_cohort(path, control, state, config, summary, captured, market_dat
                        and existing_capture["observation_count"] < 2
                        and (phase == "afternoon" or 900 < seconds <= 5400))
         if not (initial_slot or latest_slot):
+            diagnostics.add(fixture, "OUTSIDE_CAPTURE_POLICY", _now())
             continue
         previous = control["attempts"].get(fid)
         if previous and previous.get("kickoff", fixture.kickoff_utc.isoformat()) != fixture.kickoff_utc.isoformat():
+            diagnostics.add(fixture, "KICKOFF_CHANGED", _now())
             _reason(summary, "FIXTURE_REVIEW")
             continue
         if phase == "afternoon" and sum(
                 a.get("phase") == "afternoon" and a.get("kickoff", "")[:10] == day
                 for a in control["attempts"].values()) >= AFTERNOON_LIMIT:
+            diagnostics.add(fixture, "AFTERNOON_LIMIT", _now())
             _reason(summary, "AFTERNOON_LIMIT")
             break
         # An afternoon first capture also consumes that fixture's afternoon
@@ -538,6 +551,7 @@ def _provider_cohort(path, control, state, config, summary, captured, market_dat
         if phase == "afternoon" and previous and previous.get("phase") == "afternoon":
             if previous["state"] == "RESERVED":
                 _reason(summary, "ATTEMPT_INCOMPLETE")
+            diagnostics.add(fixture, "ATTEMPT_INCOMPLETE" if previous["state"] == "RESERVED" else "RETRY_NOT_ELIGIBLE", _now())
             continue
         successful_latest = (latest_slot and (previous is None or previous["count"] == 1))
         late_no_team = False
@@ -552,6 +566,7 @@ def _provider_cohort(path, control, state, config, summary, captured, market_dat
         if previous and not (successful_latest or late_no_team):
             if previous["state"] == "RESERVED":
                 _reason(summary, "ATTEMPT_INCOMPLETE")
+            diagnostics.add(fixture, "ATTEMPT_INCOMPLETE" if previous["state"] == "RESERVED" else "RETRY_NOT_ELIGIBLE", _now())
             continue
         # Recheck evidence immediately before quotes, including manual captures.
         concurrent_capture = None
@@ -585,18 +600,22 @@ def _provider_cohort(path, control, state, config, summary, captured, market_dat
                 _shadow_assess(state, prediction, observation, summary)
         existing_capture = captured.get(fid)
         if initial_slot and existing_capture is not None:
+            diagnostics.add(fixture, "EXISTING_EVIDENCE", _now())
             continue
         if latest_slot and (existing_capture is None
                             or existing_capture["observation_count"] >= 2):
+            diagnostics.add(fixture, "RETRY_NOT_ELIGIBLE", _now())
             continue
         observed_count = len(fixture_observations(state, fixture.provider, "E1", fid))
         if observed_count >= 2:
+            diagnostics.add(fixture, "RETRY_NOT_ELIGIBLE", _now())
             continue
         client = get_client()
         request_count = getattr(client, "corner_market_request_count", lambda: 2)()
         if type(request_count) is not int or request_count not in (1, 2):
             raise RunnerError("REQUEST_BUDGET")
         if hold_reserve and control["period"]["allowance"] - control["period"]["reserved"] - request_count < SATURDAY_RESERVE:
+            diagnostics.add(fixture, "SATURDAY_BUDGET_RESERVED", _now())
             _reason(summary, "SATURDAY_BUDGET_RESERVED")
             break
         try:
@@ -604,6 +623,7 @@ def _provider_cohort(path, control, state, config, summary, captured, market_dat
         except RunnerError as error:
             if str(error) not in ("REQUEST_BUDGET", "WEEKEND_BUDGET", "MIDWEEK_BUDGET_RESERVED"):
                 raise
+            diagnostics.add(fixture, str(error), _now())
             _reason(summary, str(error))
             break
         attempt = {"count": max(observed_count, previous["count"] if previous else 0) + 1,
@@ -618,17 +638,21 @@ def _provider_cohort(path, control, state, config, summary, captured, market_dat
         supports_research = callable(getattr(client, "normalize_btts_snapshot", None))
         btts_forecast = (research.prepare(fixture, allow_new_forecast=not fixture_observations(
             state, fixture.provider, fixture.competition, fid)) if supports_research else None)
+        diagnostics.add(fixture, "ACQUISITION_STARTED", _now())
         try:
             quotes = client.get_corner_markets(fixture)
             if supports_research:
                 research.observe(client, quotes, btts_forecast)
             observation, observation_created = store_market_observation(state, quotes)
             summary["market_observations_created"] += int(observation_created)
+            diagnostics.add(fixture, "ODDS_OBSERVED", _now(), observation["record_hash"])
             _shadow_stamp(state, observation, release_sha, summary)
             if not any(s.request.market_type == "TEAM_TOTAL" for s in quotes.selections):
+                diagnostics.add(fixture, "NO_TEAM_TOTAL", _now())
                 attempt["state"] = "NO_TEAM_TOTAL"
                 summary["captures_skipped_no_team_totals"] += 1
             elif (fixture.kickoff_utc - _now()).total_seconds() <= 900:
+                diagnostics.add(fixture, "CAPTURE_WINDOW_CLOSED", _now())
                 attempt["state"] = "DONE"
                 _reason(summary, "CAPTURE_WINDOW_CLOSED")
             elif existing_capture is not None:
@@ -646,6 +670,7 @@ def _provider_cohort(path, control, state, config, summary, captured, market_dat
                     state_dir=state, capture_key=f"prospective:v1:{fixture.provider}:E1:{fid}")
                 analysis_id = response["analysis_id"]
                 prediction, _ = store_prediction_from_capture(state, analysis_id)
+                diagnostics.add(fixture, "CAPTURED", _now(), prediction["record_hash"])
                 assessment = assess_observation(state, prediction, observation)
                 _assessment_review(summary, assessment)
                 captured[fid] = {"prediction": prediction,
@@ -664,20 +689,34 @@ def _provider_cohort(path, control, state, config, summary, captured, market_dat
                 if _capture_shadow(state, config, analysis_id, summary):
                     _shadow_assess(state, prediction, observation, summary)
         except RunnerError:
+            diagnostics.add(fixture, "COLLECTOR_FAILED", _now())
             raise
         except MarketDataError as error:
             if str(error) != "FIXTURE_REVIEW":
+                # Only the adapter's explicit cause is evidence. Other errors
+                # must not be inferred to be transport/provider failures.
+                diagnostic = {"PROVIDER_FAILURE": "PROVIDER_FAILURE",
+                              "MARKET_METADATA_INVALID": "MARKET_METADATA_INVALID",
+                              "REQUEST_BUDGET": "ACQUISITION_REQUEST_BUDGET"}.get(
+                                  str(error), "COLLECTOR_FAILED")
+                diagnostics.add(fixture, diagnostic, _now())
                 raise RunnerError(str(error)) from None
             attempt["state"] = "REVIEW"
             summary["review_required"] += 1
+            # FIXTURE_REVIEW also wraps stale quotes and normalization failures;
+            # the adapter has not established an identity-specific cause.
+            diagnostics.add(fixture, "FIXTURE_REVIEW", _now())
             _reason(summary, "FIXTURE_REVIEW")
         except LedgerError:
+            diagnostics.add(fixture, "COLLECTOR_FAILED", _now())
             raise
         except ValueError as error:
             if str(error).startswith(("insufficient ", "not enough ")):
+                diagnostics.add(fixture, "INSUFFICIENT_HISTORY", _now())
                 attempt["state"] = "HISTORY"
                 _reason(summary, "INSUFFICIENT_HISTORY")
             else:
+                diagnostics.add(fixture, "COLLECTOR_FAILED", _now())
                 raise LedgerError("Invalid capture input") from None
         _save(path, control)
         # Checkpoint each successful subset while quotes are still fresh. A later
@@ -689,6 +728,7 @@ def _provider_cohort(path, control, state, config, summary, captured, market_dat
 def run_once(*, state_dir, data_config_path, market_data_type: type[MarketDataSource] = OddsPapiMarketData,
              require_calendar_budget=False, friday_review=False, early_scope=None):
     started = _now()
+    diagnostics = Recorder()
     summary = {"status": "OK", **dict.fromkeys(("fixtures_discovered", "captures_created",
         "captures_existing", "captures_skipped_no_team_totals", "captures_with_history_warnings",
         "captures_awaiting_kickoff", "outcomes_created", "outcomes_pending", "outcomes_settled",
@@ -725,7 +765,7 @@ def run_once(*, state_dir, data_config_path, market_data_type: type[MarketDataSo
                     rollover_if_needed(path, control, now=_now(), save=_save)
                 captured = _inventory(Path(state_dir), data_config_path, summary, market_data_type)
                 _provider_work(path, control, Path(state_dir), data_config_path, summary, captured, market_data_type, release_sha,
-                               friday_review=friday_review, early_scope=early_scope)
+                               friday_review=friday_review, early_scope=early_scope, diagnostics=diagnostics)
                 # Finish publication, including recovered evidence, at the real writer time.
                 # Inventory/replay and all GET handlers remain write-free.
                 from modelfc.pick_strategies import publish_locked
@@ -746,7 +786,8 @@ def run_once(*, state_dir, data_config_path, market_data_type: type[MarketDataSo
             # same runner lock. A crash before this point publishes no receipt.
             try:
                 publish_run_receipt(state_dir, started=started, completed=_now(),
-                                    summary=summary, release_sha=release_sha)
+                                    summary=summary, release_sha=release_sha,
+                                    fixture_diagnostics=diagnostics.snapshot())
             except (OSError, LedgerError, ReceiptError, ValueError):
                 summary["status"] = "FAIL"
                 _reason(summary, "RECEIPT_PUBLICATION_FAILED")

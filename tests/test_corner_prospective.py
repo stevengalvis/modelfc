@@ -980,5 +980,128 @@ class PilotTests(unittest.TestCase):
         self.assertNotIn("http", output.getvalue())
 
 
+    def test_fixture_diagnostics_capture_and_readonly_counts(self):
+        from modelfc.fixture_diagnostics import report
+        first = self.run_pilot()
+        receipt = latest_receipt(self.state, now=self.now)
+        events = receipt['fixture_diagnostics']['events']
+        self.assertEqual(receipt['schema_version'], 2)
+        self.assertEqual([e['reason'] for e in events],
+                         ['DISCOVERED', 'ACQUISITION_STARTED', 'ODDS_OBSERVED', 'CAPTURED'])
+        self.assertTrue(events[-2]['evidence_hash'])
+        original = {p: p.read_bytes() for p in (self.state/'prospective'/'run-receipts').rglob('*.json')}
+        self.assertEqual(first['provider_requests'], 3)
+        self.now += timedelta(seconds=1)
+        self.assertEqual(self.run_pilot()['provider_requests'], 0)
+        with patch('socket.socket', side_effect=AssertionError('no network')):
+            result = report(self.state, day=self.now.date(), now=self.now)
+        self.assertEqual(result['counts']['runs'], 2)
+        self.assertEqual(result['counts']['distinct_fixtures'], 1)
+        self.assertEqual(result['counts']['captured_fixtures'], 1)
+        self.assertIsNone(result['counts']['publication_records'])
+        self.assertEqual(result['stage_evidence'][0]['publication'], 'UNKNOWN')
+        self.assertEqual(original, {p: p.read_bytes() for p in original})
+        self.assertNotIn('offline-secret', json.dumps(result))
+        self.assertNotIn(str(self.state), json.dumps(result))
+        self.assertEqual(len(self.calls), 3)
+
+    def test_fixture_diagnostics_missing_odds_and_budget_decisions(self):
+        self.no_team_totals()
+        self.run_pilot()
+        receipt = latest_receipt(self.state, now=self.now)
+        event = receipt['fixture_diagnostics']['events'][-1]
+        self.assertEqual((event['reason'], event['category']), ('NO_TEAM_TOTAL', 'MISSING_ODDS'))
+        self.now = self.now.replace(hour=10, minute=1, second=0)
+        self.write_control(lambda c: c['period'].update(allowance=c['period']['reserved']))
+        self.run_pilot()
+        event = latest_receipt(self.state, now=self.now)['fixture_diagnostics']['events'][-1]
+        self.assertEqual((event['reason'], event['outcome'], event['category']),
+                         ('REQUEST_BUDGET', 'NOT_ATTEMPTED', 'BUDGET_BLOCKED'))
+        self.assertEqual(len(self.calls), 3)
+
+    def test_fixture_diagnostics_input_and_identity_decisions(self):
+        self.fixtures = [dict(self.fixtures[0], fixtureId='bad', participant1Name='Unknown',
+                              participant1Id=1000001), self.fixtures[0]]
+        rows = self.setup.history.read_text().splitlines()
+        self.setup.history.write_text('\n'.join(rows[:3])+'\n')
+        self.run_pilot()
+        events = latest_receipt(self.state, now=self.now)['fixture_diagnostics']['events']
+        self.assertTrue(any(e['reason'] == 'FIXTURE_REVIEW' and e['category'] == 'UNKNOWN'
+                            for e in events))
+        self.assertTrue(any(e['category'] == 'INPUT_REQUIREMENTS_NOT_MET' for e in events))
+
+    def test_fixture_diagnostics_failure_does_not_stop_publication(self):
+        from modelfc import fixture_diagnostics
+        with patch.object(fixture_diagnostics, '_validate_event', side_effect=ValueError('private-secret')):
+            result = self.run_pilot()
+        self.assertGreater(result['opportunities_created'], 0)
+        self.assertEqual(result['provider_requests'], 3)
+        receipt = latest_receipt(self.state, now=self.now)
+        self.assertEqual(receipt['fixture_diagnostics']['status'], 'INCOMPLETE')
+        self.assertEqual(receipt['fixture_diagnostics']['events'], [])
+        self.assertNotIn('private-secret', json.dumps(receipt))
+
+    def test_fixture_diagnostics_empty_discovery_distinct_from_failure(self):
+        self.fixtures = []
+        self.run_pilot()
+        diag = latest_receipt(self.state, now=self.now)['fixture_diagnostics']
+        self.assertEqual((diag['discovery'], diag['events']), ('OBSERVED', []))
+        self.now += timedelta(seconds=1)
+        with patch.object(runner, '_load', side_effect=runner.RunnerError('CONTROL_INVALID')):
+            self.run_pilot()
+        diag = latest_receipt(self.state, now=self.now)['fixture_diagnostics']
+        self.assertEqual((diag['discovery'], diag['events']), ('UNKNOWN', []))
+
+
+    def test_fixture_diagnostics_attempted_provider_failure(self):
+        with patch.object(provider.OddsPapiMarketData, 'get_corner_markets',
+                          side_effect=MarketDataError('PROVIDER_FAILURE')):
+            result = self.run_pilot()
+        events = latest_receipt(self.state, now=self.now)['fixture_diagnostics']['events']
+        self.assertEqual([e['reason'] for e in events],
+                         ['DISCOVERED', 'ACQUISITION_STARTED', 'PROVIDER_FAILURE'])
+        self.assertEqual(events[-1]['outcome'], 'FAILED')
+        self.assertEqual(result['provider_requests'], 1)
+        self.assertFalse(self.capture_paths())
+
+
+    def test_fixture_diagnostics_stale_capture_is_review_with_unknown_cause(self):
+        # Exercise the real capture adapter's broad OddsPapiError translation.
+        with patch.object(provider, '_validate_current_quotes',
+                          side_effect=provider.OddsPapiError('Stale or future quote snapshot; private')):
+            result = self.run_pilot()
+        events = latest_receipt(self.state, now=self.now)['fixture_diagnostics']['events']
+        self.assertEqual((events[-1]['reason'], events[-1]['category'], events[-1]['outcome']),
+                         ('FIXTURE_REVIEW', 'UNKNOWN', 'FAILED'))
+        self.assertNotIn('IDENTITY_UNRESOLVED', {e['category'] for e in events})
+        self.assertEqual(result['review_required'], 1)
+        self.assertEqual(result['provider_requests'], 3)
+        self.assertFalse(self.capture_paths())
+        self.assertNotIn('private', json.dumps(events))
+
+    def test_fixture_diagnostics_metadata_error_is_not_provider_failure(self):
+        with patch.object(provider.OddsPapiMarketData, 'get_corner_markets',
+                          side_effect=MarketDataError('MARKET_METADATA_INVALID')):
+            result = self.run_pilot()
+        events = latest_receipt(self.state, now=self.now)['fixture_diagnostics']['events']
+        self.assertEqual((events[-1]['reason'], events[-1]['category'], events[-1]['outcome']),
+                         ('MARKET_METADATA_INVALID', 'ERROR', 'FAILED'))
+        self.assertIn('MARKET_METADATA_INVALID', result['reasons'])
+        self.assertEqual(result['provider_requests'], 1)
+        self.assertFalse(self.capture_paths())
+
+    def test_fixture_diagnostics_kickoff_mismatch_has_specific_identity_evidence(self):
+        self.no_team_totals()
+        self.run_pilot()
+        self.now = self.now.replace(hour=10, minute=1, second=0)
+        fid = self.fixtures[0]['fixtureId']
+        self.write_control(lambda c: c['attempts'][fid].update(kickoff='2026-09-28T15:00:00+00:00'))
+        result = self.run_pilot()
+        events = latest_receipt(self.state, now=self.now)['fixture_diagnostics']['events']
+        self.assertEqual((events[-1]['reason'], events[-1]['category']),
+                         ('KICKOFF_CHANGED', 'IDENTITY_UNRESOLVED'))
+        self.assertEqual(result['provider_requests'], 0)
+
+
 if __name__ == "__main__":
     unittest.main()

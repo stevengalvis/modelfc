@@ -249,3 +249,19 @@ class FridayTests(unittest.TestCase):
         self.fx.now = self.fx.now.replace(hour=19, minute=5)
         self.assertIn('DISCOVERY_INVALID', self.run_collect()['reasons'])
         self.assertEqual({p:p.read_bytes() for p in self.fx.capture_paths()}, original)
+        retained = deepcopy(self.fx.control()['advance_discovery'])
+        self.assertEqual(retained['status'], 'FAILED')
+        self.fx.now = datetime(2026, 9, 26, 0, 5, tzinfo=timezone.utc)
+        result = self.run_collect()
+        self.assertIn('DISCOVERY_INCOMPLETE', result['reasons'])
+        self.assertEqual(result['provider_requests'], 0)
+        self.assertEqual(self.fx.control()['advance_discovery'], retained)
+        from modelfc.prospective_run_receipts import latest
+        receipt = latest(self.fx.state, now=self.fx.now)
+        diagnostics = receipt['fixture_diagnostics']
+        self.assertEqual(diagnostics['discovery'], 'OBSERVED')
+        discovered = [e for e in diagnostics['events'] if e['reason'] == 'DISCOVERED']
+        self.assertEqual(len(discovered), 1)
+        self.assertEqual(discovered[0]['fixture_id'], self.fx.fixtures[0]['fixtureId'])
+        self.assertIn('DISCOVERY_INCOMPLETE', receipt['summary']['reasons'])
+        self.assertEqual({p:p.read_bytes() for p in self.fx.capture_paths()}, original)

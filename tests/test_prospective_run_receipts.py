@@ -117,5 +117,58 @@ class ReceiptTests(unittest.TestCase):
             receipts.latest(self.state, now=NOW)
 
 
+    def test_fixture_report_old_receipts_and_absence_are_unknown(self):
+        from modelfc.fixture_diagnostics import report
+        missing = report(self.state, day=NOW.date(), now=NOW)
+        self.assertEqual(missing['evidence_state'], 'UNKNOWN')
+        self.assertIsNone(missing['counts']['distinct_fixtures'])
+        original = self.publish()
+        result = report(self.state, day=NOW.date(), fixture_id='123', now=NOW)
+        self.assertEqual(result['count_scope'], 'UNKNOWN')
+        self.assertEqual(result['runs'][0]['diagnostics'], 'UNKNOWN')
+        self.assertEqual(receipts.latest(self.state, now=NOW), original)
+
+    def test_fixture_diagnostic_bounds_and_validation(self):
+        from types import SimpleNamespace
+        from modelfc.fixture_diagnostics import Recorder, MAX_EVENTS, report
+        recorder = Recorder()
+        fixture = SimpleNamespace(provider_fixture_id='123', provider='oddspapi', competition='E1')
+        for _ in range(MAX_EVENTS+1):
+            recorder.add(fixture, 'DISCOVERED', NOW)
+        self.assertEqual(len(recorder.events), MAX_EVENTS)
+        self.assertEqual(recorder.snapshot()['status'], 'INCOMPLETE')
+        record = receipts.publish(self.state, started=NOW, completed=NOW, summary=self.summary,
+                                  release_sha=SHA, fixture_diagnostics=recorder.snapshot())
+        self.assertEqual(receipts.latest(self.state, now=NOW), record)
+        self.assertEqual(report(self.state, day=NOW.date(), now=NOW)['counts']['distinct_fixtures'], 1)
+        from copy import deepcopy
+        for change in [{'reason':'secret/path'}, {'fixture_id':'../private'},
+                       {'observed_at_utc':(NOW+timedelta(seconds=1)).isoformat()},
+                       {'category':'NO_QUALIFYING_VALUE'}, {'evidence_hash':'secret'}]:
+            invalid = deepcopy(record)
+            invalid['fixture_diagnostics']['events'][0].update(change)
+            invalid['record_hash'] = receipts._hash(invalid)
+            with self.assertRaises(receipts.ReceiptError):
+                receipts.validate(invalid)
+
+    def test_fixture_report_rejects_symlinks_and_tampered_records(self):
+        from modelfc.fixture_diagnostics import report
+        self.publish()
+        path = next(self.state.rglob('*.json'))
+        before = path.read_bytes()
+        path.unlink()
+        target = self.state/'private'
+        target.write_bytes(before)
+        path.symlink_to(target)
+        with self.assertRaises(receipts.ReceiptError):
+            report(self.state, day=NOW.date(), now=NOW)
+        path.unlink()
+        data = json.loads(before)
+        data['summary']['provider_requests'] += 1
+        path.write_text(json.dumps(data))
+        with self.assertRaises(receipts.ReceiptError):
+            report(self.state, day=NOW.date(), now=NOW)
+
+
 if __name__ == "__main__":
     unittest.main()
