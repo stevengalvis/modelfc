@@ -26,6 +26,11 @@ spec=importlib.util.spec_from_file_location('controller','/opt/modelfc-deploy/de
 m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
 assert os.geteuid()!=0
 mode,sha,expected=sys.argv[1:]
+stage='identity'
+observed_reason='NONE'
+def failed(kind,error,tb):
+    print(json.dumps(dict(stage=stage,reason=error.code if isinstance(error,m.Failure) else 'ASSERTION',observed_reason=observed_reason)))
+sys.excepthook=failed
 assert hashlib.sha256(Path(m.__file__).read_bytes()).hexdigest()==expected
 release=m.RELEASES/(sha+'-0123456789ab')
 files=[m.REQUEST,m.TEST_OUTPUT,m.CONTROL/'last-test-failure.json']
@@ -37,17 +42,26 @@ with (m.CONTROL/'deploy.lock').open('a+') as lock:
     selected=m.current_release()
     checks=[]
     def validate():
+        global stage
+        stage='boundary'
         m.boundary()
+        stage='source'
         m.verify_source(release,sha)
+        stage='venv'
         m.verify_venv_size(release/'.venv')
+        stage='selected_release'
         assert m.current_release()==selected
         # Disposable local Git remote: never contact a provider or production.
+        stage='target'
         assert m.latest_main(str(m.ROOT/'origin.git'))==sha
         checks.append(time.monotonic_ns())
     validate()
     if mode in ('missing','inactive','wrong_limit'):
+        stage='rejection'
         try:m.tests(release,sha,revalidate=validate)
-        except m.Failure as error:assert error.code=='ADMISSION_PROPERTIES_INVALID'
+        except m.Failure as error:
+            observed_reason=error.code
+            assert error.code=='ADMISSION_PROPERTIES_INVALID'
         else:raise AssertionError('rejection admitted')
         unchanged()
         result=dict(mode=mode,status='PASS',reason='ADMISSION_PROPERTIES_INVALID')
@@ -148,7 +162,17 @@ def main():
             result=subprocess.run(['/usr/sbin/runuser','-u','modelfc-deploy','--',
                 '/usr/bin/python3','-I','-B','-c',CHILD,mode,sha,expected],
                 env=budget.ENV,capture_output=True,text=True,timeout=timeout)
-            budget.require(result.returncode==0,'ADMISSION_CASE_'+mode.upper())
+            if result.returncode:
+                # Only fixed fixture stages and allowlisted controller reasons.
+                detail=json.loads(result.stdout) if len(result.stdout)<=2048 else {}
+                stages={'identity','boundary','source','venv','selected_release','target','rejection'}
+                reasons={'NONE','ASSERTION','STATE_BOUNDARY_FAILED','SOURCE_INVALID','STORAGE_LIMIT_FAILED',
+                         'FETCH_FAILED','INTERNAL_ERROR','ADMISSION_QUERY_FAILED','ADMISSION_PROPERTIES_INVALID'}
+                if (set(detail)=={'stage','reason','observed_reason'} and detail['stage'] in stages
+                        and detail['reason'] in reasons and detail['observed_reason'] in reasons):
+                    report['failure']=dict(case=mode,**detail)
+                    print(json.dumps(report['failure']),flush=True)
+                raise RuntimeError('ADMISSION_CASE_'+mode.upper())
             budget.require(invocation()==initial_test,'TEST_SERVICE_LAUNCHED')
             report['cases'].append(json.loads(result.stdout))
         run('missing')
