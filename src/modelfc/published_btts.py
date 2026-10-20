@@ -50,16 +50,25 @@ def eligible(value):
         and value["expected_profit"] > 0)
 
 
-def select(source, now, *, strategy="best_value"):
+def select(source, now, *, strategy="best_value", diagnostics=None):
     # Like corner saved-price picks, age alone does not remove an otherwise latest,
     # available pair. Never resurrect an older pair after unavailable/unknown coverage.
     candidates = []
+    def diagnostic(comparison, reason, side=None):
+        if diagnostics is not None:
+            diagnostics.add(comparison.fixture, reason, now, market='BTTS', strategy=strategy,
+                            reference_id=comparison.comparison_id, selection=side)
     for comparison in research_views(source, "E1", as_of=now):
         if comparison.current_status not in ("AVAILABLE", "STALE"):
+            diagnostic(comparison, 'QUALIFICATION_ODDS_UNAVAILABLE' if comparison.current_status == 'UNAVAILABLE' else 'QUALIFICATION_UNKNOWN')
             continue
         for side in ("YES", "NO"):
             value = offer(comparison, side, now)
-            if eligible(value) and (strategy != "higher_probability" or value["model_probability"] >= .65):
+            qualifies = eligible(value)
+            strategy_passes = qualifies and (strategy != "higher_probability" or value["model_probability"] >= .65)
+            diagnostic(comparison, 'NO_QUALIFYING_VALUE' if not qualifies else
+                       'VALUE_QUALIFIED' if strategy_passes else 'STRATEGY_PROBABILITY_THRESHOLD', side)
+            if qualifies and strategy_passes:
                 candidates.append((value, comparison.frozen_at_utc))
     best = {}
     for value, frozen in sorted(candidates, key=lambda item: (-item[0]["decimal_odds"],

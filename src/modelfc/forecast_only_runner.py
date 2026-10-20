@@ -115,7 +115,24 @@ def _sync_directories(*directories):
             os.close(descriptor)
 
 
-def _publish_receipt(state, receipt):
+def _publish_receipt(state, receipt, *, diagnostics=None, completed=None):
+    if diagnostics is not None:
+        from modelfc.fixture_diagnostics import validate_diagnostics
+        from modelfc.prospective_run_receipts import _hash
+        value = diagnostics.snapshot()
+        start = datetime.fromisoformat(receipt['run_at_utc'])
+        receipt.pop('completion_time_basis', None)
+        if completed < start:
+            # Keep the receipt readable without pretending the clock was valid.
+            completed = start
+            receipt['completion_time_basis'] = 'RUN_START_CLOCK_REGRESSION'
+            value.update(status='INCOMPLETE', discovery='UNKNOWN', events=[])
+        try:
+            validate_diagnostics(value, start=start, end=completed)
+        except ValueError:
+            value.update(status='INCOMPLETE', events=[])
+        receipt.update(schema_version=2, completed_at_utc=completed.isoformat(), fixture_diagnostics=value)
+        receipt['record_hash'] = _hash(receipt)
     path = _receipt_path(state, datetime.fromisoformat(receipt["run_at_utc"]),
                          receipt["deployed_sha"])
     ensure_directory(path.parent, "forecast receipt directory")
@@ -205,6 +222,8 @@ def run_once(*, state_dir, data_config_path, configuration, sportmonks_token,
              football_data_token, clock=now, calendar_client_type=FootballDataCalendarClient,
              results_client_type=SportmonksRecentResultsClient, history_loader=load_history_bytes):
     """Prepare durable forecasts with zero sportsbook requests."""
+    from modelfc.fixture_diagnostics import Recorder
+    diagnostics = Recorder()
     started = utc(clock())
     receipt = {"status": "REJECTED", "reason": None, "deployed_sha": git_commit_sha(),
                "run_at_utc": started.isoformat(), "eligible_fixture_count": 0,
@@ -251,9 +270,14 @@ def run_once(*, state_dir, data_config_path, configuration, sportmonks_token,
             eligible = [obligation.fixture for batch in plan.batches
                         for obligation in batch.obligations]
             receipt["eligible_fixture_count"] = len(eligible)
+            diagnostics.discovery_observed = True
+            for fixture in eligible:
+                for market in ('CORNER_TEAM_TOTAL', 'BTTS'):
+                    diagnostics.identity(fixture, 'DISCOVERED', utc(clock()), market=market,
+                                         provider='football-data.org', competition='E1')
             if not eligible:
                 receipt["status"] = "NO_ELIGIBLE_FIXTURES"
-                _publish_receipt(state, receipt)
+                _publish_receipt(state, receipt, diagnostics=diagnostics, completed=utc(clock()))
                 return receipt
             entries = _entries(calendar, eligible)
             base_sources = history_loader(Path(data_config_path), "E1")
@@ -365,6 +389,9 @@ def run_once(*, state_dir, data_config_path, configuration, sportmonks_token,
                         if old is not None:
                             prepared_for_run.append((old, model.upper(), False))
                             receipt["forecasts_reused"] += 1
+                            diagnostics.identity(fixture, 'FORECAST_REUSED', utc(clock()),
+                                market='BTTS' if model == 'btts' else 'CORNER_TEAM_TOTAL',
+                                provider='football-data.org', competition='E1', reference_id=old.forecast_id)
                             continue
                         prepared = prepare_forecast(entry, sources, frozen_at=utc(clock()),
                             cutoff=cutoff, models=(model,), history_calendar=calendar,
@@ -375,6 +402,14 @@ def run_once(*, state_dir, data_config_path, configuration, sportmonks_token,
                                 "FORECAST_TEAM_IDENTITY_REVIEW", "STALE_HISTORY",
                                 "INSUFFICIENT_HISTORY", "FORECAST_CONFLICT"} else "MODEL_INPUT_REQUIREMENTS_NOT_MET"})
                         receipt["blocks"] += 1
+                        code = {'STALE_HISTORY': 'FORECAST_STALE_HISTORY',
+                                'INSUFFICIENT_HISTORY': 'FORECAST_INPUT_BLOCKED',
+                                'MODEL_INPUT_REQUIREMENTS_NOT_MET': 'FORECAST_INPUT_BLOCKED',
+                                'FORECAST_TEAM_IDENTITY_REVIEW': 'FORECAST_IDENTITY_REVIEW'}.get(
+                                    str(error), 'FORECAST_REVIEW')
+                        diagnostics.identity(fixture, code, utc(clock()),
+                            market='BTTS' if model == 'btts' else 'CORNER_TEAM_TOTAL',
+                            provider='football-data.org', competition='E1')
                         continue
                     prepared_for_run.append((prepared, model.upper(), True))
             if not prepared_for_run:
@@ -388,12 +423,15 @@ def run_once(*, state_dir, data_config_path, configuration, sportmonks_token,
                 published = publish_prediction(state, prepared, model,
                                                supplemental_sources=relevant,
                                                calendar=calendar)
+                diagnostics.identity(prepared.fixture.identity, 'FORECAST_RECORDED' if published else 'FORECAST_REUSED',
+                    utc(clock()), market='BTTS' if model == 'BTTS' else 'CORNER_TEAM_TOTAL',
+                    provider='football-data.org', competition='E1', reference_id=prepared.forecast_id)
                 if published:
                     receipt["forecasts_prepared"] += 1
                 else:
                     receipt["forecasts_reused"] += 1
             receipt["status"] = "RECORDED"
-            _publish_receipt(state, receipt)
+            _publish_receipt(state, receipt, diagnostics=diagnostics, completed=utc(clock()))
             return receipt
     except ProviderUnavailable as error:
         receipt["status"] = "BLOCKED"
@@ -405,7 +443,7 @@ def run_once(*, state_dir, data_config_path, configuration, sportmonks_token,
         receipt["reason"] = "FORECAST_RUN_REJECTED"
     try:
         if state.exists() and state.is_dir():
-            _publish_receipt(state, receipt)
+            _publish_receipt(state, receipt, diagnostics=diagnostics, completed=utc(clock()))
     except (OSError, LedgerError):
         pass
     return receipt

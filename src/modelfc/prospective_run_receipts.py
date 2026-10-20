@@ -131,6 +131,12 @@ def publish(state, *, started, completed, summary, release_sha, fixture_diagnost
               "completion": "COMPLETED", "release_sha": release_sha,
               "summary": summary}
     if fixture_diagnostics is not None:
+        from modelfc.fixture_diagnostics import validate_diagnostics
+        try:
+            validate_diagnostics(fixture_diagnostics, start=started, end=completed)
+        except ValueError:
+            # Diagnostic faults cannot invalidate already completed business work.
+            fixture_diagnostics = dict(fixture_diagnostics, status='INCOMPLETE', events=[])
         record.update(schema_version=2, fixture_diagnostics=fixture_diagnostics)
     record["record_hash"] = _hash(record)
     validate(record)

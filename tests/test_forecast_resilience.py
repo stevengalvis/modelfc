@@ -32,12 +32,13 @@ class ResilienceTests(unittest.TestCase):
         self.calendar_value = bundle()
         self.clock = lambda: self.at
 
-    def execute(self, token='fake'):
+    def execute(self, token='fake', *, calendar_delay=timedelta()):
         owner = self
         class Calendar:
             def __init__(self, *args, on_request, **kwargs): self.count = on_request
             def fetch(self, *args, **kwargs):
                 self.count()
+                owner.at += calendar_delay
                 value = dict(owner.calendar_value); value['retrieved_at'] = owner.at.isoformat()
                 return CalendarFetch(raw(value), hashlib.sha256(value['payload'].encode()).hexdigest(), owner.at, 1)
         class Opener:
@@ -136,9 +137,8 @@ class ResilienceTests(unittest.TestCase):
         self.assertEqual(paths[0].read_bytes(),original)
 
     def test_cooldown_uses_actual_attempt_time_after_slow_calendar(self):
-        times=iter([NOW,NOW+timedelta(seconds=25)])
-        self.clock=lambda:next(times)
-        result=self.execute()
+        result=self.execute(calendar_delay=timedelta(seconds=25))
+        self.assertEqual(result['fixture_diagnostics']['status'], 'RECORDED')
         self.assertEqual(result['retry_after_utc'],(NOW+timedelta(hours=1,seconds=25)).isoformat())
         self.at=NOW+timedelta(hours=1); self.clock=lambda:self.at
         self.assertEqual(self.execute()['reason'],'SPORTMONKS_RETRY_WAIT')

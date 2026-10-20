@@ -101,6 +101,41 @@ class ForecastOnlyRunnerTests(unittest.TestCase):
         self.assertTrue(all(row["source_observation_id"] is None and row["expected_value"] is None
                             for row in body))
 
+    def test_shared_diagnostics_both_markets_reuse_and_readonly_reader(self):
+        from modelfc.fixture_diagnostics import report
+        first = self.execute()
+        second = self.execute(NOW + timedelta(seconds=1))
+        self.assertEqual(first['fixture_diagnostics']['status'], 'RECORDED')
+        self.assertEqual(second['fixture_diagnostics']['status'], 'RECORDED')
+        events = first['fixture_diagnostics']['events']
+        self.assertEqual({e['market'] for e in events}, {'BTTS', 'CORNER_TEAM_TOTAL'})
+        self.assertTrue(any(e['reason'] == 'FORECAST_RECORDED' for e in events))
+        self.assertTrue(any(e['reason'] == 'FORECAST_REUSED' for e in second['fixture_diagnostics']['events']))
+        before = self.state_bytes()
+        with patch.object(socket, 'socket', side_effect=AssertionError('network')):
+            result = report(self.state, day=NOW.date(), now=NOW + timedelta(seconds=1))
+        self.assertEqual(result['counts']['forecast_cohorts'], first['forecasts_prepared'])
+        self.assertEqual(result['counts']['fixture_market_groups'], first['eligible_fixture_count'] * 2)
+        self.assertEqual(result['counts']['distinct_fixtures'], first['eligible_fixture_count'])
+        self.assertEqual(result['provider_requests'], 0)
+        self.assertEqual(before, self.state_bytes())
+        empty = report(self.state, day=NOW.date(), competition='E0', now=NOW + timedelta(seconds=1))
+        self.assertIsNone(empty['counts']['distinct_fixtures'])
+        self.assertTrue(all(not r['events'] for r in empty['runs']))
+
+    def test_shared_diagnostics_preserve_explicit_input_causes_and_unknown_errors(self):
+        for index, (error, expected) in enumerate((('STALE_HISTORY', 'FORECAST_STALE_HISTORY'),
+                ('INSUFFICIENT_HISTORY', 'FORECAST_INPUT_BLOCKED'),
+                ('private/path/token', 'FORECAST_REVIEW'))):
+            with self.subTest(error=error), patch('modelfc.forecast_only_runner.prepare_forecast',
+                                                  side_effect=ValueError(error)):
+                result = self.execute(NOW + timedelta(seconds=index))
+            events = [e for e in result['fixture_diagnostics']['events'] if e['stage'] == 'forecast']
+            self.assertTrue(events)
+            self.assertEqual({e['reason'] for e in events}, {expected})
+            self.assertEqual({e['market'] for e in events}, {'BTTS', 'CORNER_TEAM_TOTAL'})
+            self.assertNotIn('private/path/token', json.dumps(result))
+
     def test_completeness_uses_truthful_post_calendar_retrieval_time(self):
         calls = 0
         def advancing_clock():
