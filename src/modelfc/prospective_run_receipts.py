@@ -19,7 +19,8 @@ COUNTERS = ("fixtures_discovered", "captures_created", "captures_existing",
             "captures_awaiting_kickoff", "outcomes_created", "outcomes_pending",
             "outcomes_settled", "market_observations_created", "opportunities_created",
             "review_required", "provider_requests")
-REASONS = frozenset(("PERIOD_EXPIRED", "REQUEST_BUDGET", "SATURDAY_BUDGET_RESERVED", "AFTERNOON_LIMIT", "SATURDAY_LIMIT", "WEEKEND_BUDGET", "MIDWEEK_BUDGET_RESERVED", "FIXTURE_NOT_DISCOVERED", "SETTLEMENT_REVIEW",
+REASONS = frozenset(("CALENDAR_EVIDENCE_UNAVAILABLE", "CALENDAR_NO_RELEVANT_FIXTURES",
+                     "CALENDAR_FIXTURE_UNMAPPED", "CALENDAR_FIXTURE_MISMATCH", "PERIOD_EXPIRED", "REQUEST_BUDGET", "SATURDAY_BUDGET_RESERVED", "AFTERNOON_LIMIT", "SATURDAY_LIMIT", "WEEKEND_BUDGET", "MIDWEEK_BUDGET_RESERVED", "FIXTURE_NOT_DISCOVERED", "SETTLEMENT_REVIEW",
                      "DISCOVERY_INVALID", "DISCOVERY_INCOMPLETE", "ATTEMPT_INCOMPLETE",
                      "CAPTURE_WINDOW_CLOSED", "FIXTURE_REVIEW", "INSUFFICIENT_HISTORY",
                      "PROVIDER_FAILURE", "PROVIDER_CONFIGURATION", "MARKET_METADATA_INVALID",
@@ -85,7 +86,7 @@ def validate(record, *, path=None, now=None):
         from modelfc.fixture_diagnostics import validate_diagnostics
         validate_diagnostics(record["fixture_diagnostics"], start=start, end=end)
     summary = record["summary"]
-    if (not isinstance(summary, dict) or set(summary) - {"btts_research"} != {"status", "reasons",
+    if (not isinstance(summary, dict) or set(summary) - {"btts_research", "calendar_cohorts"} != {"status", "reasons",
             "prospective_budget_remaining", *COUNTERS}
             or summary["status"] not in ("OK", "PARTIAL", "FAIL")
             or not isinstance(summary["reasons"], list)
@@ -95,6 +96,9 @@ def validate(record, *, path=None, now=None):
             or any(reason not in REASONS for reason in summary["reasons"])
             or (summary["status"] == "OK") != (not summary["reasons"])):
         raise ReceiptError("invalid receipt summary")
+    if "calendar_cohorts" in summary:
+        from modelfc.odds_calendar import validate_decisions
+        validate_decisions(summary["calendar_cohorts"], start=start, end=end)
     if "btts_research" in summary:
         try:
             validate_btts_summary(summary["btts_research"])

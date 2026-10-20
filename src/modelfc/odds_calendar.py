@@ -1,4 +1,4 @@
-"""Private retained calendar evidence; no network or enabled consumers.
+"""Private retained calendar evidence and opt-in consumer; no network.
 
 The publisher must hold the existing shared prospective runner lock.
 Only the trusted forecast fetcher publishes; hashes bind bytes, not authenticity.
@@ -121,3 +121,61 @@ def publish(state, raw, *, as_of):
     finally:
         if temporary is not None: temporary.unlink(missing_ok=True)
 
+
+class CalendarGateRejected(ValueError):
+    pass
+
+
+def load(state, *, as_of):
+    """Use wall-clock freshness, independently of the requested fixture date."""
+    try:
+        raw = retained(state)
+        return raw, parse_calendar(raw, as_of=as_of)
+    except (OSError, ValueError, TypeError, KeyError, UnicodeError):
+        raise CalendarGateRejected('CALENDAR_EVIDENCE_UNAVAILABLE') from None
+
+
+def active(calendar, as_of, target_day):
+    # UTC is the collector's cohort boundary, not the calendar's London day.
+    return {(m.kickoff, m.home, m.away): m.fixture_id for m in calendar.matches
+            if m.status in {'SCHEDULED', 'TIMED'} and m.kickoff > as_of
+            and m.kickoff.date() == target_day}
+
+
+def identity(fixture):
+    return fixture.kickoff_utc, fixture.home_team, fixture.away_team
+
+
+def validate_decisions(decisions, *, start, end):
+    """Optional immutable receipt extension; absence in history stays UNKNOWN."""
+    from datetime import date
+    from modelfc.prospective_run_receipts import ReceiptError, _timestamp
+    if not isinstance(decisions, list) or not 1 <= len(decisions) <= 2:
+        raise ReceiptError('invalid calendar cohorts')
+    seen = set()
+    for item in decisions:
+        fields = {'target_date', 'phase', 'decision', 'observed_at_utc',
+                  'bundle_sha256', 'source_sha256', 'retrieved_at_utc'}
+        if not isinstance(item, dict) or set(item) != fields:
+            raise ReceiptError('invalid calendar cohort')
+        try:
+            if date.fromisoformat(item['target_date']).isoformat() != item['target_date']:
+                raise ValueError()
+            key = (item['target_date'], item['phase'])
+            if key in seen or item['phase'] not in ('near_kickoff', 'morning', 'afternoon', 'manual_early'):
+                raise ValueError()
+            seen.add(key)
+            if item['decision'] not in ('ELIGIBLE', 'EMPTY', 'UNAVAILABLE', 'MISMATCH'):
+                raise ValueError()
+            observed = _timestamp(item['observed_at_utc'])
+            if not start <= observed <= end:
+                raise ValueError()
+            proof = [item[k] for k in ('bundle_sha256', 'source_sha256', 'retrieved_at_utc')]
+            if proof == [None, None, None] and item['decision'] == 'UNAVAILABLE':
+                continue
+            if any(not isinstance(v, str) or not re.fullmatch('[0-9a-f]{64}', v) for v in proof[:2]):
+                raise ValueError()
+            if _timestamp(proof[2]) > observed:
+                raise ValueError()
+        except (ValueError, TypeError, KeyError):
+            raise ReceiptError('invalid calendar cohort') from None
