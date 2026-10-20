@@ -2,6 +2,8 @@
 import importlib.util
 from pathlib import Path
 import unittest
+import subprocess
+import tempfile
 from unittest.mock import patch
 
 ROOT=Path(__file__).resolve().parents[1]
@@ -31,6 +33,26 @@ class AdmissionAcceptanceTests(unittest.TestCase):
         budget=acceptance.load('budget_guard',ROOT/'ops/ci/test_progress_systemd.py')
         with patch.dict(budget.os.environ,{},clear=True),self.assertRaisesRegex(RuntimeError,'NOT_DISPOSABLE'):
             budget.guard()
+
+    def test_candidate_remains_source_valid_after_venv_creation(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)
+            builder=acceptance.load('new_builder',ROOT/'ops/ci/build_admission.py')
+            controller=acceptance.load('exact_controller',builder.build(ROOT,root/'controller.py'))
+            repo=root/'candidate';repo.mkdir()
+            acceptance.write_candidate_source(repo)
+            def git(*args):
+                return subprocess.check_output(['git','-C',str(repo),*args],stderr=subprocess.DEVNULL,text=True).strip()
+            git('init','-q')
+            git('add','.')
+            git('-c','user.name=CI','-c','user.email=ci@example.invalid','commit','-qm','fixture')
+            sha=git('rev-parse','HEAD')
+            (repo/'.venv/bin').mkdir(parents=True)
+            (repo/'.venv/bin/python').write_text('synthetic interpreter')
+            controller.verify_source(repo,sha)
+            (repo/'unexpected').write_text('unexpected')
+            with self.assertRaisesRegex(controller.Failure,'SOURCE_INVALID'):
+                controller.verify_source(repo,sha)
 
     def test_workflow_has_only_exact_head_disposable_pr_execution(self):
         source=(ROOT/'.github/workflows/admission-systemd.yml').read_text()

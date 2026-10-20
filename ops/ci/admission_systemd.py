@@ -98,6 +98,11 @@ with (m.CONTROL/'deploy.lock').open('a+') as lock:
 '''
 
 
+def write_candidate_source(staging):
+    (staging/'.gitignore').write_text('.venv/\n')
+    (staging/'fixture.txt').write_text('synthetic admission candidate\n')
+
+
 def prepare_candidate(budget):
     account = pwd.getpwnam('modelfc-deploy')
     root = Path('/srv/modelfc')
@@ -111,7 +116,7 @@ def prepare_candidate(budget):
         Path(path).chmod(0o700)
     staging = root/'staging'
     staging.mkdir()
-    (staging/'fixture.txt').write_text('synthetic admission candidate\n')
+    write_candidate_source(staging)
     budget.command(['git','init','-q','--initial-branch=main',str(staging)])
     budget.command(['git','-C',str(staging),'add','.'])
     budget.command(['git','-C',str(staging),'-c','user.name=CI','-c','user.email=ci@example.invalid','commit','-qm','Admission fixture'])
