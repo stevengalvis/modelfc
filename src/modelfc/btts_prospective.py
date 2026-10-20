@@ -76,12 +76,12 @@ class BttsResearchAcquisition:
             return forecast
         except LedgerStorageUnavailable:
             # Covers inaccessible history lock as well as research storage. Fixed code only.
-            diagnostic = "FORECAST_HISTORY_UNAVAILABLE"
+            diagnostic = "FORECAST_EVIDENCE_UNAVAILABLE"
             self._review("HISTORY_UNAVAILABLE")
         except LedgerError:
             self._review("STORAGE_OR_INTEGRITY_FAILURE")
         except OSError:
-            diagnostic = "FORECAST_HISTORY_UNAVAILABLE"
+            diagnostic = "FORECAST_EVIDENCE_UNAVAILABLE"
             self._review("HISTORY_UNAVAILABLE")
         except csv.Error:
             self._review("FORECAST_REVIEW")
