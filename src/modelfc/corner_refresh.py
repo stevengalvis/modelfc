@@ -17,7 +17,7 @@ from urllib.request import build_opener, HTTPRedirectHandler
 from urllib.error import HTTPError
 import hashlib
 
-from modelfc import refresh_attempts
+from modelfc import refresh_attempts, refresh_reporting
 
 from modelfc.corner_data import CornerDataConfig, load_data_config
 from modelfc.providers.football_data import load_corner_observations
@@ -255,7 +255,7 @@ def refresh_data(config: CornerDataConfig, today: date | None = None,
             try:
                 saved = json.loads((state / "status.json").read_text())
                 if saved.get('season') == current_season(today):
-                    previous = {r['league']: {**r, 'checked_at': r.get('checked_at', saved['checked_at'])}
+                    previous = {r['league']: {**r, 'checked_at': r.get('checked_at')}
                                 for r in saved['results']}
             except (OSError, ValueError, KeyError, TypeError, AttributeError):
                 # A broken summary cannot prevent baseline recovery. Unselected
@@ -281,7 +281,12 @@ def refresh_data(config: CornerDataConfig, today: date | None = None,
                     if retained.get('checked_at') == saved_result.get('checked_at') and retained.get('file_sha256') == saved_result.get('file_sha256'):
                         saved_result = retained
                 else:
-                    saved_result = {"league": league, "status": "failed", "error": "RESERVED_WITHOUT_TERMINAL_RECEIPT; no retry"}
+                    # No terminal outcome was observed: retain known history,
+                    # rather than replacing last_failure with this unknown attempt.
+                    prior = previous.get(league, {})
+                    saved_result = refresh_reporting.retain_history(
+                        {"league": league, "status": "failed", "checked_at": None,
+                         "error": refresh_reporting.INTERRUPTED_ATTEMPT}, prior)
                 saved_result = preserve_settlement_block(saved_result, previous.get(league, {}))
                 if assess_result and saved_result['status'] in ('updated', 'unchanged'):
                     saved_result = {**saved_result, **assess_result(league)}
@@ -311,6 +316,7 @@ def refresh_data(config: CornerDataConfig, today: date | None = None,
             if row['status'] == 'failed':
                 row = preserve_settlement_block(row, previous.get(league, {}))
             row = {**row, "checked_at": datetime.now(timezone.utc).isoformat()}
+            row = refresh_reporting.retain_history(row, previous.get(league, {}))
             if terminal:
                 refresh_attempts.finish(terminal, {"league": league, "delivery": delivery, "result": row})
             results.append(row)
@@ -325,9 +331,23 @@ def refresh_data(config: CornerDataConfig, today: date | None = None,
 
 
 def format_report(report: dict, today: date, max_age_days: int) -> tuple[str, bool]:
-    lines = [f"Last refresh attempt: {report['checked_at']}"]
-    unhealthy = False
+    summary = refresh_reporting.summarize(report, today, max_age_days)
+    lines = [f"Last refresh invocation: {report.get('checked_at', 'UNKNOWN')}",
+             f"Invocation status: {summary['invocation_status']}; dataset health: {summary['dataset_health']}"]
+    states = {row['league']: row for row in summary['leagues']}
+    unhealthy = summary['dataset_health'] != 'HEALTHY'
     for item in report["results"]:
+        state = states[item['league']]
+        lines.append(f"{item['league']}: invocation {state['invocation_outcome']}; "
+                     f"dataset {state['dataset_health']}; last attempt {item.get('checked_at') or 'UNKNOWN'}")
+        for name in ('last_success', 'last_failure'):
+            statuses = refresh_reporting.SUCCESS if name == 'last_success' else ('failed',)
+            history = item.get(name) or (item if item.get('status') in statuses else None)
+            if history:
+                lines.append(f"{item['league']}: {name} {history.get('checked_at') or 'UNKNOWN'}; "
+                             f"{history['status']}" + (f"; {history['error']}" if history.get('error') else ''))
+            else:
+                lines.append(f"{item['league']}: {name} UNKNOWN")
         if item["status"] == "unknown":
             lines.append(f"{item['league']}: UNKNOWN: no saved refresh result")
             unhealthy = True
@@ -339,6 +359,9 @@ def format_report(report: dict, today: date, max_age_days: int) -> tuple[str, bo
         if item.get('settlement_eligibility') in ('FINAL_SCORE_CONFLICT', 'CALENDAR_UNVERIFIED', 'UNVERIFIED_FINAL_STATES'):
             lines.append(f"{item['league']}: settlement blocked: {item['settlement_eligibility']}")
             unhealthy = True
+        if state['dataset_health'] == 'UNKNOWN':
+            lines.append(f"{item['league']}: UNKNOWN: missing or invalid dated evidence")
+            continue
         age = (today - date.fromisoformat(item["latest_match"])).days
         stale = age > max_age_days
         unhealthy |= stale

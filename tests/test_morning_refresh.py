@@ -195,7 +195,7 @@ class MorningTests(unittest.TestCase):
             first=refresh.refresh_data(self.config)
         self.cap.write_text('{"version":1,"enabled":true}')
         self.f.config_file.write_text(json.dumps({'data_directory':str(self.f.history),'leagues':['E1','SP1'],'max_age_days':14}))
-        # Retained legacy rows also keep their original report time on migration.
+        # Missing per-league times cannot inherit the new invocation time.
         first['results'][1].pop('checked_at')
         first.pop('invocation')
         (self.f.refresh_state/'status.json').write_text(json.dumps(first))
@@ -207,9 +207,12 @@ class MorningTests(unittest.TestCase):
         self.assertEqual(projection['last_attempt_at_utc'],current['results'][0]['checked_at'])
         capabilities=api_capabilities(self.f.config_file,today=now.date(),min_history=1,min_venue_history=1)
         shown=next(row for row in capabilities['competitions'] if row['code']=='SP1')
-        self.assertEqual(shown['last_refresh_at'],first['checked_at'])
+        self.assertIsNone(shown['last_refresh_at'])
         self.assertNotEqual(shown['last_refresh_at'],current['checked_at'])
         self.assertEqual(shown['last_refresh_status'],'SUCCEEDED')
+        current['results'][0]['checked_at'] = None
+        (self.f.refresh_state/'status.json').write_text(json.dumps(current))
+        self.assertEqual(_refresh(self.f.refresh_state/'status.json',now,14)['state'], 'UNVERIFIED')
         current['results'][0]={'league':'E1','status':'unknown'}
         (self.f.refresh_state/'status.json').write_text(json.dumps(current))
         self.assertEqual(_refresh(self.f.refresh_state/'status.json',now,14),

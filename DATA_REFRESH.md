@@ -162,3 +162,36 @@ Actions continues running offline tests; it never refreshes the VPS datasets.
 No credentials, paid services or runtime dependencies are added. Refresh metadata
 and backups under `data/corner-refresh/` are ignored by Git. If using a custom
 data directory, keep it outside the repository or ignore it locally.
+
+### Invocation outcomes versus retained health
+
+`status.json` keeps the existing `results` (last attempt per league) and
+`invocation` (this dispatch only) contracts. `VALIDATED_SOURCE_RESPONSE` means
+current success; delivery/source/publication rejection means current failure.
+`NOT_SELECTED` is not a new attempt; `DAILY_CAP_CONSUMED` means not attempted
+in this invocation, even when a retained terminal receipt failed. Neither skip
+clears an unresolved failure. An interrupted reservation without a terminal
+receipt remains unhealthy, with unknown completion time.
+
+New attempts retain bounded `last_success` and `last_failure` snapshots on each
+result. These preserve original `checked_at`, source/hash and error fields when
+available; they are not a complete audit log. Existing immutable receipts are
+never rewritten. Missing per-league timestamps remain null/UNKNOWN on migration,
+not the current report time. Historical failures remain visible after recovery,
+but do not make a subsequent successful, fresh dataset unhealthy by themselves.
+
+The read-only `refresh_reporting.summarize` helper and CLI distinguish aggregate
+invocation status from dataset health. Invocation SUCCESS means at least one
+success and no failures/unknown outcomes; skipped leagues remain explicit.
+All skipped means NOT_ATTEMPTED; absent legacy invocation evidence means UNKNOWN.
+Dataset precedence is UNHEALTHY, UNKNOWN, STALE, HEALTHY. A failure or settlement
+block is unhealthy; missing/invalid dated success evidence is unknown. Freshness
+uses both latest match age and last-attempt age against `max_age_days` and is
+recomputed when read. No provider calls are required.
+
+CLI exit 1 still reflects dataset health, not invocation success: unresolved
+retained failures and stale data remain nonzero even on an all-skipped dispatch.
+Missing dated evidence and an empty report now also fail closed as UNKNOWN.
+The production reader accepts a null migrated attempt time as UNVERIFIED.
+This reporting change does not establish timer activation, source repair,
+E0 pipeline coverage or genuine post-merge production receipt verification.

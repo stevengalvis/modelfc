@@ -36,7 +36,9 @@ class CornerRefreshTests(unittest.TestCase):
         self.state = self.root / "data" / "corner-refresh"
 
     def refresh(self, payload):
-        with patch.object(corner_refresh, "download_csv", return_value=payload):
+        with patch.object(corner_refresh, "download_csv", return_value=payload), patch.object(
+                corner_refresh, "datetime", wraps=datetime) as clock:
+            clock.now.return_value = datetime(2026, 9, 16, tzinfo=timezone.utc)
             return corner_refresh.refresh_data(self.config, TODAY)
 
     def test_growth_corrections_and_unchanged_preserve_recovery_copy(self):
@@ -270,7 +272,9 @@ class CornerDataConfigTests(unittest.TestCase):
         from contextlib import redirect_stderr
         output = StringIO()
         config = load_data_config(self.path)
-        with patch.object(corner_refresh, "download_csv", return_value=OLD):
+        with patch.object(corner_refresh, "download_csv", return_value=OLD), patch.object(
+                corner_refresh, "datetime", wraps=datetime) as clock:
+            clock.now.return_value = datetime(2026, 9, 16, tzinfo=timezone.utc)
             corner_refresh.refresh_data(config, TODAY)
         with patch.object(sys, "argv", ["corner_refresh", "--config", str(self.path), "--status"]), patch.object(corner_refresh, "datetime") as clock, patch.object(corner_refresh, "download_csv") as download, redirect_stdout(output), redirect_stderr(StringIO()):
             clock.now.return_value = datetime(2026, 9, 16, tzinfo=timezone.utc)

@@ -76,6 +76,9 @@ def _refresh(report_path: Path, now: datetime, max_age_days: int) -> dict[str, A
     row = matches[0]
     if row['status'] == 'unknown':
         return {'state': 'UNVERIFIED', 'last_attempt_at_utc': None, 'e1_result': 'UNKNOWN'}
+    if 'checked_at' in row and row['checked_at'] is None:
+        return {'state': 'UNVERIFIED', 'last_attempt_at_utc': None,
+                'e1_result': row['status'].upper()}
     attempted = _utc(row.get('checked_at', report['checked_at']))
     if attempted > checked:
         raise ValueError('invalid E1 refresh timestamp')
