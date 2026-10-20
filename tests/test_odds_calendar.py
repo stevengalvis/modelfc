@@ -444,6 +444,94 @@ class FridayCalendarTests(unittest.TestCase):
                          participant2Name=E1_TEAMS_BY_ID[ids[2*i+1]][0], startTime='2026-09-26T16:00:00Z')
                 self.fx.fixtures.append(f)
 
+    def seed_staggered(self):
+        from modelfc.providers.oddspapi import OddsPapiMarketData
+        self.both_days()
+        self.fx.fixtures[0]['startTime'] = '2026-09-25T15:00:00Z'
+        self.fx.fixtures[1]['startTime'] = '2026-09-25T12:00:00Z'
+        self.publish()
+        cached = [OddsPapiMarketData.cache_fixture(OddsPapiMarketData.fixture_from_provenance(
+            f, self.fx.now, 'E1')) for f in self.fx.fixtures]
+        self.fx.write_control(lambda c: c.update(discovery=dict(date='2026-09-25', status='DONE',
+            fixtures=cached, queries=2, last_attempt_at=self.fx.now.isoformat())))
+        self.fx.now = self.fx.now.replace(hour=12, minute=5)
+
+    def test_started_cached_fixture_does_not_reject_later_collection(self):
+        self.seed_staggered()
+        result = runner.run_once(state_dir=self.fx.state, data_config_path=self.fx.config, calendar_gate=True)
+        self.assertEqual(result['status'], 'OK', result)
+        self.assertEqual(result['captures_created'], 1)
+        self.assertEqual([c[0] for c in self.fx.calls], ['markets', 'odds'])
+        self.assertEqual(self.fx.control()['period']['reserved'], 2)
+        self.assertEqual(self.fx.control()['period']['allowance'], 180)
+        self.assertEqual(set(self.fx.control()['attempts']), {self.fx.fixtures[0]['fixtureId']})
+        receipt = latest(self.fx.state, now=self.fx.now)
+        events = receipt['fixture_diagnostics']['events']
+        self.assertTrue(any(e['fixture_id'] == self.fx.fixtures[1]['fixtureId'] and
+                            e['reason'] == 'OUTSIDE_CAPTURE_POLICY' for e in events))
+        self.assertNotIn('CALENDAR_FIXTURE_MISMATCH', result['reasons'])
+
+    def test_selected_fixture_crossing_kickoff_still_blocks_quote(self):
+        self.seed_staggered()
+        original_sleep = self.fx.sleep
+        def sleep(seconds):
+            original_sleep(seconds)
+            if self.fx.calls and self.fx.calls[-1][0] == 'markets':
+                self.fx.now = self.fx.now.replace(hour=15, minute=0, second=0, microsecond=0)
+        with patch.object(runner.time, 'sleep', side_effect=sleep):
+            result = runner.run_once(state_dir=self.fx.state, data_config_path=self.fx.config, calendar_gate=True)
+        self.assertIn('CALENDAR_FIXTURE_MISMATCH', result['reasons'])
+        self.assertEqual([c[0] for c in self.fx.calls], ['markets'])
+        self.assertEqual(self.fx.control()['period']['reserved'], 2)
+        self.assertEqual(next(iter(self.fx.control()['attempts'].values()))['state'], 'RESERVED')
+        latest(self.fx.state, now=self.fx.now)
+
+    def closing_slot(self, utc_hour):
+        from datetime import datetime, timezone
+        self.both_days()
+        self.fx.now = datetime(2026, 9, 25, utc_hour-1, 59, 59, tzinfo=timezone.utc)
+        self.fx.fixtures[0]['startTime'] = f'2026-09-25T{utc_hour+1:02}:30:00Z'
+        self.publish()
+        result = self.run_gate()
+        self.assertGreaterEqual(self.fx.now.hour, utc_hour)
+        self.assertEqual(result['status'], 'OK', result)
+        self.assertEqual(result['captures_created'], 1)
+        self.assertEqual([c[0] for c in self.fx.calls], ['fixtures', 'markets', 'odds'])
+        self.assertEqual(self.fx.control()['period']['reserved'], 3)
+        self.assertNotIn('advance_discovery', self.fx.control())
+        self.assertEqual([(d['target_date'], d['phase']) for d in result['calendar_cohorts']],
+                         [('2026-09-25', 'near_kickoff')])
+        receipt = latest(self.fx.state, now=self.fx.now)
+        self.assertEqual(receipt['summary'], result)
+        self.assertNotIn('RECEIPT_PUBLICATION_FAILED', result['reasons'])
+
+    def test_ordinary_work_crossing_nine_new_york_skips_closed_advance_slot(self):
+        self.closing_slot(13)
+
+    def test_ordinary_work_crossing_seventeen_new_york_skips_closed_advance_slot(self):
+        self.closing_slot(21)
+
+    def closing_slot_during_pacing(self, utc_hour):
+        from datetime import datetime, timezone
+        self.fx.now = datetime(2026, 9, 25, utc_hour-1, 59, 59, tzinfo=timezone.utc)
+        self.publish()  # Empty Friday, nonempty Saturday.
+        self.fx.write_control(lambda c: c.update(last_request=self.fx.now.timestamp()))
+        result = self.run_gate()
+        self.assertEqual(result['status'], 'PARTIAL', result)
+        self.assertEqual(result['reasons'], ['CAPTURE_WINDOW_CLOSED'])
+        self.assertEqual(self.fx.calls, [])
+        self.assertEqual(self.fx.control()['period']['reserved'], 1)
+        cohorts = result['calendar_cohorts']
+        self.assertEqual([d['target_date'] for d in cohorts], ['2026-09-25', '2026-09-26'])
+        self.assertEqual(len({(d['target_date'], d['phase']) for d in cohorts}), 2)
+        self.assertEqual(latest(self.fx.state, now=self.fx.now)['summary'], result)
+
+    def test_nine_new_york_deadline_during_discovery_pacing_blocks_http(self):
+        self.closing_slot_during_pacing(13)
+
+    def test_seventeen_new_york_deadline_during_discovery_pacing_blocks_http(self):
+        self.closing_slot_during_pacing(21)
+
     def test_mixed_cohorts_share_metadata_and_budget(self):
         self.both_days(); self.publish()
         result = self.run_gate()

@@ -50,9 +50,15 @@ last successfully checked provenance; they do not assert it remained usable.
 ZEN-43 diagnostic reports expose these cohort entries. Historical absence stays
 `UNKNOWN`; historical receipts are neither rewritten nor migrated. An empty
 cohort does not imply zero calls in another cohort or erase unrelated failures.
-Disabling the flag on this release keeps the new receipt reader available. A
-downgrade to an older strict reader can reject the new receipt extension;
-rollback acceptance must account for that without rewriting immutable history.
+The proposed safe rollout boundary is to deploy this reader with the gate OFF,
+verify it, and establish that reader-capable release as the minimum supported
+rollback target before separately approving activation. Gate-off writes the
+existing version-2 format without the calendar extension. Gate-on receipts use
+version 2 with the extension, which older strict readers reject. Disabling later
+does not remove previously retained gate-on receipts. If rollback to the old base
+must remain supported, activation remains blocked. Retained history must not be
+rewritten. These are reviewed rollout conditions, not permission to deploy or
+activate.
 
 `collect-early` dry-run remains the existing request/policy estimate; it does
 not prove calendar permission. Execution with the gate always rechecks evidence.

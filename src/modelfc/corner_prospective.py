@@ -382,16 +382,19 @@ def _provider_work(path, control, state, config, summary, captured, market_data_
             if not str(error).startswith("CALENDAR_"):
                 raise
             _reason(summary, str(error))
-    if friday_review and early_scope is None and friday_slot(_now()):
+    planned_slot = friday_slot(_now()) if friday_review and early_scope is None else None
+    if planned_slot:
         # Imminent same-day work must not lose its only 90-minute opportunity
         # when a Friday advance window overlaps. Both cohorts share one guard
         # and metadata instance, so the whole invocation still costs at most 8.
         cohort(friday_review=True, ordinary_only=True)
-    cohort(friday_review=friday_review, early_scope=early_scope)
+    cohort(friday_review=friday_review, early_scope=early_scope,
+           planned_slot=planned_slot if calendar_gate else None)
 
 
 def _provider_cohort(path, control, state, config, summary, captured, market_data_type, release_sha,
-                     *, friday_review=False, early_scope=None, ordinary_only=False, session):
+                     *, friday_review=False, early_scope=None, ordinary_only=False, session,
+                     planned_slot=None):
     diagnostics = session["diagnostics"]
     client, guard = session.get("client"), session.get("guard")
     research = BttsResearchAcquisition(state, config, summary["btts_research"], _now, diagnostics=diagnostics)
@@ -414,8 +417,12 @@ def _provider_cohort(path, control, state, config, summary, captured, market_dat
     if early_scope is not None and not early_scope[1]:
         return
     current = _now()
+    # Ordinary work may cross the original advance deadline. Never reinterpret
+    # that planned Saturday cohort as another ordinary same-day collection.
+    if planned_slot is not None and friday_slot(current) != planned_slot:
+        return
     hold_reserve = friday_review and current.astimezone(NEW_YORK).weekday() == 4
-    slot = friday_slot(current) if friday_review and not ordinary_only else None
+    slot = planned_slot or (friday_slot(current) if friday_review and not ordinary_only else None)
     target_day = slot[0] if slot else current.date()
     phase = slot[1] if slot else "near_kickoff"
     key = "advance_discovery" if slot else "discovery"
@@ -440,6 +447,10 @@ def _provider_cohort(path, control, state, config, summary, captured, market_dat
     selected_source_id = None
     def check_calendar():
         nonlocal calendar
+        # Includes the post-pacing boundary: a precharged Saturday request must
+        # not leave after its originally planned Friday window has closed.
+        if slot and friday_slot(_now()) != slot:
+            raise RunnerError("CAPTURE_WINDOW_CLOSED")
         try:
             _, calendar = odds_calendar.load(state, as_of=_now())
         except odds_calendar.CalendarGateRejected:
@@ -569,6 +580,9 @@ def _provider_cohort(path, control, state, config, summary, captured, market_dat
             f.kickoff_utc, f.provider_fixture_id)):
         if session["calendar_gate"]:
             selected_fixture = None
+            if fixture.kickoff_utc <= _now():
+                diagnostics.add(fixture, "OUTSIDE_CAPTURE_POLICY", _now())
+                continue
             check_calendar()
             eligible = odds_calendar.active(calendar, _now(), target_day)
             identity = odds_calendar.identity(fixture)
