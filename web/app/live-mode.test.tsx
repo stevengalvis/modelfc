@@ -17,14 +17,14 @@ describe("site modes", () => {
     vi.stubEnv("NEXT_PUBLIC_MODELFC_API_MODE", "live");
     vi.stubEnv("NEXT_PUBLIC_MODELFC_API_URL", "https://api.example.test/api/v1");
     const { emptyTrackRecord } = await import("@/lib/api/track-record");
-    const empty = {...emptyTrackRecord, policy_version:"independent-value-strategies-v1", strategy:"best_value", scope:"current",
+    const empty = {...emptyTrackRecord, policy_version:"independent-value-strategies-v1", strategy:"higher_probability", scope:"current",
       stake_dollars:2,simulated:true,summary_scope:"page",profit_dollars:0,totals:emptyTrackRecord.summary,
       market_totals:[],total_profit_dollars:0,total:0,offset:0,limit:5,next_offset:null};
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify(empty),{status:200})));
     const { default: Recommendations } = await import("./recommendations/page");
     render(<Recommendations />);
     await screen.findByText("No published picks for this strategy and filter yet. Historical subset picks are kept separately and are not reclassified.");
-    expect(fetch).toHaveBeenCalledWith("https://api.example.test/api/v1/prospective/performance?view=strategies&strategy=best_value&scope=current&offset=0&limit=5", expect.objectContaining({cache:"no-store"}));
+    expect(fetch).toHaveBeenCalledWith("https://api.example.test/api/v1/prospective/performance?view=strategies&strategy=higher_probability&scope=current&offset=0&limit=5", expect.objectContaining({cache:"no-store"}));
     expect(screen.getByText("Live API")).toBeInTheDocument();
     expect(screen.queryByText("Mock data")).not.toBeInTheDocument();
     expect(screen.queryByText(/Demo West Ham/)).not.toBeInTheDocument();
