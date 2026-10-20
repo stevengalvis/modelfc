@@ -872,8 +872,9 @@ loaded/active identity, positive PID/start timestamp, valid invocation ID and
 effective RuntimeMaxSec=30min are required. Monotonic time sampled after the
 bounded15-second query must leave at least780 seconds before scheduled rotation.
 Missing, unavailable, malformed, future or insufficient values reject with
-STATE_BOUNDARY_FAILED before any test-stage writes or service launch. No restart,
-waiting for a new window, retry, alias, credential or privilege change is made.
+STATE_BOUNDARY_FAILED before any test-stage writes or service launch. At this
+pinned baseline no restart, waiting for a new window, retry, alias, credential or
+privilege change is made; the ZEN-52 draft below proposes bounded waiting.
 Earlier dependency/acquisition work is not included in this stage-specific window.
 This reduces scheduled-rotation risk; it cannot prevent manual restarts or crashes
 and is not an API-adoption proof. Existing deployment cleanup still applies.
@@ -895,3 +896,153 @@ deployment. Verify actual production test result, cleanup, promotion and
 process-bound API adoption; diagnostic success cannot substitute for those.
 PR179 remains a separate reviewed fixture optimization. No further diagnostic
 run, deployment, API restart or host operation is authorized by this draft.
+
+### ZEN-52: bounded natural-rotation admission (draft; not installed)
+
+This change is separate from merged ZEN-36 PR191. PR190's
+[retained diagnosis](https://github.com/stevengalvis/modelfc/pull/190#issuecomment-6296001061)
+proves API age of at least 28m52s after dependency installation, beyond the
+17-minute admission cutoff; a separately approved retry later passed. PR189 run
+39467974292 and PR191 run 39471896581 failed STATE_BOUNDARY_FAILED before tests
+and promotion; their precise historical causes remain UNKNOWN. The selected VPS
+release is reported as `c0080d1b07f01bebfdeb7d8ed925c94fd58b43f1`; actual serving
+identity is unverified. ZEN-50 and ZEN-51 remain Done.
+
+The proposed controller first rechecks the full deployment boundary, immutable
+candidate source, venv size, unchanged selected release and canonical-main target
+eligibility after dependencies. Immediately before test-stage writes it queries
+fixed API properties. Age <=1020 seconds admits immediately. Only an otherwise
+valid active/running API older than that starts a 900-second monotonic wait,
+retaining the existing exclusive deployment lock. Each sleep is at most 5 seconds;
+each API query is at most 15 seconds and is shortened to the remaining deadline.
+A query or final revalidation completing at or after the deadline cannot admit.
+The callback uses existing bounded boundary/source/target queries; if those
+checks consume the remaining interval, admission expires after they return.
+The deadline bounds admission eligibility, not instantaneous cancellation of
+existing filesystem/source checks. No API restart or deployment retry is issued.
+
+During that age-only wait, loaded units with the exact 30-minute runtime limit
+may be observed in activating/auto-restart (PID zero, empty or valid invocation),
+activating/start, or deactivating/stop or stop-sigterm (positive PID/start and valid
+invocation). Those states never admit. Inactive, failed, missing, other transitional
+states, malformed/duplicate/extra properties, future timestamps and unexpected
+limits fail closed. A fresh active/running invocation must differ from the old
+invocation and have a later start. After observing it, the controller repeats the
+full boundary/source/target checks and then queries API identity and age again.
+Identity change during that revalidation rejects. Manual restart/crash prevention
+and process-bound serving verification are not implied by an admission PASS.
+
+Five fixed reasons extend the existing exact report schema and allowlists:
+`ADMISSION_QUERY_FAILED`, `ADMISSION_PROPERTIES_INVALID`,
+`ADMISSION_AGE_WAIT_EXPIRED`, `ADMISSION_IDENTITY_CHANGED`, and
+`ADMISSION_TARGET_SUPERSEDED`. Other boundary,
+source and target failures retain their existing codes. The workflow sanitizer
+and deployment observer accept the new reasons only as FAIL, NOT_RUN, zero tests,
+and NOT_ATTEMPTED promotion; arbitrary strings/properties and raw query errors
+remain rejected. No test request, result or last-failure evidence is deleted and
+no test service launches before admission. Existing cleanup, pending markers,
+isolation, promotion and recovery contracts remain in force.
+
+The lock can now be held up to 15 minutes longer, plus the bounded final checks.
+Competing requests continue to fail with DEPLOYMENT_BUSY; no queue or automatic
+retry is introduced. A target superseded while waiting cannot stage tests. The
+75-minute deployment step timeout is unchanged. Operators must account for the
+longer exclusion interval when coordinating separately approved operations.
+
+#### Exact compatibility artifact and readiness
+
+Never install main's whole controller. `ops/ci/build_admission.py` reconstructs the
+retained production-budget candidate through the existing hash-verified builder,
+then applies only `patches/deploy-main-08f7-admission.patch`. Its required input is
+SHA256 `08f7b8df9f7807249a2057fc72e64ae0326bce85e9ee633c386d7f1bae37f785`.
+`patches/deploy-main-08f7-admission.json` pins input, patch and output SHA256.
+The patch adds only admission logic, its revalidation callback, a bounded
+canonical-main eligibility query and fixed report reasons; it does not import
+main's API handoff/adoption/recovery or privileged helper dependencies. No unit,
+permission, timer or service configuration changes are included.
+
+For a local artifact only, with a new output path:
+
+```bash
+.venv/bin/python -B ops/ci/build_admission.py --output /tmp/admission-controller.py
+sha256sum /tmp/admission-controller.py
+```
+
+Code-ready requires focused tests for both main and reconstructed compatibility
+bytes, strict workflow/reader tests, full CI and independent review. Tests use
+synthetic clocks and properties and local disposable Git repositories; they do
+not establish actual systemd transition semantics or installed behavior.
+Install-ready additionally requires separately approved read-only confirmation
+of current installed bytes and effective units, disposable real-systemd acceptance
+of these exact new bytes (including natural rotation and rejection evidence),
+review of the pinned patch and reader rollout ordering, and separate explicit
+installation approval with the existing backup/exclusion/atomic-replacement and
+rollback protocol. The coding environment has `tail` as PID1, so real-systemd
+acceptance is unavailable here and remains a blocker. Existing production-budget
+acceptance artifacts are not evidence for this new patch. Merging neither installs
+it nor authorizes a production retry. No external Codex review request or merge
+is part of this task. Track this work in
+[ZEN-52](https://linear.app/galvis/issue/ZEN-52/bound-deployment-admission-waits-and-diagnose-failures),
+which blocks ZEN-36 and relates to ZEN-45.
+
+The separate `Natural rotation admission acceptance` PR workflow now targets the
+new output identity through `ops/ci/build_admission.py`; the old production-budget
+workflow and its `08f7b8...` target are preserved. The new disposable Ubuntu VM
+checks the exact installed fixture bytes as the deployment UID, real boundary and
+candidate/local-Git eligibility, missing/inactive/wrong-limit rejection, unchanged
+test invocation and retained evidence. A synthetic `sleep infinity` API has the
+real 30-minute runtime limit and `Restart=always`: the harness waits until real age
+exceeds 17 minutes, then exercises the controller's real wait through systemd's
+runtime-triggered restart. It does not accelerate clocks or edit runtime properties
+during that case. The test holds the original lock, records the roughly 13-minute
+admission wait, and requires a changed invocation, fresh age, final revalidation,
+no test launch and complete fixture cleanup. The job budget is 40 minutes.
+
+That CI result must be read from the exact PR head and its
+`natural-admission-<head SHA>` artifact, including pinned input/patch/output and
+runtime information; old budget acceptance cannot substitute. Source-only harness
+tests merely check fixture syntax and guards. No real-systemd acceptance was run
+inside the coding environment, and disposable CI acceptance still does not attest
+installed VPS identity or authorize installation.
+
+
+#### First-deployment supersession report correction
+
+If admission revalidation finds that main advanced and there was no selected
+release at entry, the controller reports `FAIL / ADMISSION_TARGET_SUPERSEDED`.
+`previous_sha` and `final_sha` both remain null; tests are `NOT_RUN` with count zero
+and promotion is `NOT_ATTEMPTED`. It never substitutes the requested or new main
+SHA for an unobserved active release. Supersession with an existing selected
+release retains the prior `SUPERSEDED` report and actual selected SHA.
+
+Both strict readers explicitly allow the new reason only with those null
+identities, a verified fetch, created candidate, installed dependencies, and an
+enforced boundary. They continue rejecting `SUPERSEDED` with null `final_sha`.
+This is a fixed failure reason, not a nullable-success schema relaxation. The
+producer regression drives real admission waiting and post-rotation revalidation
+with deterministic system queries, then passes the resulting reports through the
+workflow sanitizer and status reader. It checks the no-active and active cases,
+prior evidence, candidate cleanup, and zero test-service/promotion calls. The same
+producer tests run against reconstructed compatibility bytes.
+
+The compatibility input remains
+`08f7b8df9f7807249a2057fc72e64ae0326bce85e9ee633c386d7f1bae37f785`.
+After this correction, the patch SHA256 is
+`c99286caf022763311289e2fa317e9306356f6f2f7bccc48f08f2aee8291b8d0`
+and output SHA256 is
+`26b7acb8ca99268e2710cf5cc89f82f395087ba1d69a8c98d1fcc6b5e66e797c`.
+The manifest and local builder enforce these exact identities.
+
+Prior evidence remains historical, not acceptance for the corrected head/bytes:
+full CI and Trusted OFFLINE run 39482204717 belong to head
+`4c1b7c8fc2c169cceff3dd8351b35fcc17a5853a`; natural-rotation run 39476961035 and
+artifact 12291019606 accepted output `5f9fba95...77b58bd`, not the corrected output.
+Required next checks are full CI on the new head, the separate
+`Natural rotation admission acceptance` workflow on exact output
+`26b7acb8...e66e797c`, and renewed review plus exact-head Trusted OFFLINE acceptance
+when separately authorized. The old budget workflow still targets input `08f7b8...`
+and cannot replace new-output acceptance. No external review/OFFLINE request,
+installation, deployment, provider call, or merge is authorized by this correction.
+The inherited cleanup assurance caveat remains: its stop return is ignored and
+only the test-unit cgroup is checked, so a passing cleanup step is not full proof
+that the synthetic API cgroup was emptied.

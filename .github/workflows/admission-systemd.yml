@@ -1,0 +1,43 @@
+name: Natural rotation admission acceptance
+on:
+  pull_request:
+    paths:
+      - 'ops/ci/admission_systemd.py'
+      - 'ops/ci/build_admission.py'
+      - 'ops/ci/test_progress_systemd.py'
+      - 'ops/vps/patches/*.patch'
+      - 'ops/vps/patches/deploy-main-08f7-admission.json'
+      - 'tests/fixtures/vps/deploy_main_882c.py.txt'
+      - 'tests/test_admission_acceptance.py'
+      - 'deploy/modelfc-postmerge-tests.service'
+      - '.github/workflows/admission-systemd.yml'
+permissions:
+  contents: read
+concurrency:
+  group: natural-admission-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  acceptance:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Accept exact new compatibility bytes through real runtime rotation
+        run: |
+          sudo -n env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin LANG=C GITHUB_ACTIONS=true RUNNER_ENVIRONMENT="$RUNNER_ENVIRONMENT" \
+            /usr/bin/python3 -I -B ops/ci/admission_systemd.py --source "$GITHUB_WORKSPACE" --output "$RUNNER_TEMP/natural-admission"
+      - name: Always clean disposable fixtures
+        if: always()
+        run: |
+          sudo -n env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin LANG=C GITHUB_ACTIONS=true RUNNER_ENVIRONMENT="$RUNNER_ENVIRONMENT" \
+            /usr/bin/python3 -I -B ops/ci/admission_systemd.py --source "$GITHUB_WORKSPACE" --cleanup
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: natural-admission-${{ github.event.pull_request.head.sha }}
+          path: ${{ runner.temp }}/natural-admission
+          retention-days: 7
+          if-no-files-found: error
