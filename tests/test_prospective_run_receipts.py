@@ -201,6 +201,22 @@ class ReceiptTests(unittest.TestCase):
         with self.assertRaises(receipts.ReceiptError):
             report(self.state, day=NOW.date(), now=later)
 
+    def test_forecast_blocked_run_reasons_remain_run_wide_and_sanitized(self):
+        from modelfc.forecast_only_runner import _publish_receipt
+        from modelfc.fixture_diagnostics import Recorder, report
+        for index, reason in enumerate(('SPORTMONKS_RETRY_WAIT', 'HISTORY_RESULTS_MISSING',
+                                        'private/path/token', ['SPORTMONKS_RETRY_WAIT'])):
+            when = NOW + timedelta(seconds=index)
+            _publish_receipt(self.state, dict(run_at_utc=when.isoformat(), deployed_sha=SHA,
+                             status='BLOCKED', reason=reason), diagnostics=Recorder(), completed=when)
+        result = report(self.state, day=NOW.date(), now=when, fixture_id='123')
+        self.assertEqual([run['run_reasons'] for run in result['runs']],
+                         [['SPORTMONKS_RETRY_WAIT'], ['HISTORY_RESULTS_MISSING'], ['UNKNOWN'], ['UNKNOWN']])
+        self.assertTrue(all(not run['events'] for run in result['runs']))
+        self.assertEqual(result['stage_evidence'], [])
+        self.assertNotIn('private/path/token', json.dumps(result))
+        self.assertIsNone(result['counts']['distinct_fixtures'])
+
     def test_invalid_diagnostic_clock_degrades_without_losing_receipt(self):
         from types import SimpleNamespace
         from modelfc.fixture_diagnostics import Recorder

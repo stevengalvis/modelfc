@@ -28,6 +28,36 @@ class StrategyTests(unittest.TestCase):
             self.assertEqual(next(iter(published.select({}, self.now).values())), high_ev)
             self.assertEqual(next(iter(published.select({}, self.now, strategy='higher_probability').values())), high_prob)
 
+    def test_diagnostics_distinguish_base_and_strategy_gates_with_source_reference(self):
+        from modelfc.fixture_diagnostics import Recorder
+        original = published._locked_inventory(self.state, now=self.now,
+                                               include_recorded=True, upcoming_only=True)
+        for probability in (.60, .65):
+            inventory = deepcopy(original)
+            for view in inventory['recorded'].values():
+                for target in view['targets']:
+                    for offer in target['offers']:
+                        offer['model_probability'] = probability
+            for strategy in ('best_value', 'higher_probability'):
+                with self.subTest(probability=probability, strategy=strategy):
+                    expected = published.select(inventory, self.now, strategy=strategy)
+                    recorder = Recorder()
+                    actual = published.select(inventory, self.now, strategy=strategy, diagnostics=recorder)
+                    self.assertEqual(actual, expected)
+                    self.assertFalse(recorder.incomplete)
+                    base = [e for e in recorder.events if e['reason'] == 'BASE_VALUE_QUALIFIED']
+                    self.assertTrue(base)
+                    self.assertTrue(all(e['strategy'] is None for e in base))
+                    decisions = [e for e in recorder.events if e['strategy'] == strategy]
+                    self.assertTrue(decisions)
+                    self.assertTrue(all(e['reference_id'] for e in decisions))
+                    self.assertTrue({e['reference_id'] for e in decisions} <= {e['reference_id'] for e in base})
+                    blocked = strategy == 'higher_probability' and probability == .60
+                    self.assertEqual({e['reason'] for e in decisions},
+                                     {'STRATEGY_PROBABILITY_THRESHOLD' if blocked else 'VALUE_QUALIFIED'})
+                    self.assertEqual(bool(actual), not blocked)
+                    self.assertTrue(all('observation_id' not in value for value in actual.values()))
+
     def test_legacy_immutable_new_epoch_and_independent_slots(self):
         self.publish()
         original = {p:p.read_bytes() for p in (self.state/published.DIRECTORY).glob('*.json')}

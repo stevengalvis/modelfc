@@ -23,6 +23,10 @@ Instrumented decisions include existing discovery/capture/budget branches,
 forecast creation/reuse and explicit input/stale-history/identity failures,
 retained BTTS snapshots and unavailable/unknown pairs, actual strategy value
 qualification and publication selection/creation/existing-record/cutoff checks.
+Corner BASE_VALUE_QUALIFIED events are strategy-neutral; strategy-tagged
+VALUE_QUALIFIED events occur only after the strategy gate. Both passing and
+rejected strategy decisions retain the original observation reference internally,
+without adding fields to public offers.
 NO_QUALIFYING_VALUE is emitted only at a qualification decision. It is an offer
 assessment, not a blanket explanation for a fixture without a publication; multiple
 books/sides and strategies can have different outcomes. Qualification is not
@@ -65,7 +69,9 @@ makes zero provider requests or writes. The prospective limit remains 1,000 file
 per day. The existing flat forecast-only directory is scanned with a 1,000-file
 **total** ceiling and fails explicitly above that limit; scalable partitioning is
 follow-up work. Runs without matching filtered events stay visible, with empty
-events rather than inferred skips. Run reasons remain run-wide.
+events rather than inferred skips. Forecast run reasons are allowlisted fixed
+codes (unknown/future values become UNKNOWN), and remain run-wide rather than
+being assigned to individual fixtures.
 
 Distinct fixtures use provider + competition + fixture ID. No cross-provider
 alias join is inferred. Market groups add market; forecast cohorts use original

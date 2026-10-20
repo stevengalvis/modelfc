@@ -46,6 +46,7 @@ REASONS.update({
     'BTTS_PAIR_UNKNOWN': ('odds', 'NOT_ELIGIBLE', 'UNKNOWN'),
     'BTTS_SNAPSHOT_REVIEW': ('odds', 'FAILED', 'UNKNOWN'),
     'BTTS_STORAGE_ERROR': ('odds', 'FAILED', 'ERROR'),
+    'BASE_VALUE_QUALIFIED': ('qualification', 'OBSERVED', 'NONE'),
     'VALUE_QUALIFIED': ('qualification', 'OBSERVED', 'NONE'),
     'NO_QUALIFYING_VALUE': ('qualification', 'NOT_ELIGIBLE', 'NO_QUALIFYING_VALUE'),
     'QUALIFICATION_ODDS_UNAVAILABLE': ('qualification', 'NOT_ELIGIBLE', 'MISSING_ODDS'),
@@ -102,7 +103,7 @@ class Recorder:
         except Exception:
             self.incomplete = True
 
-    def corner_qualification(self, offer, fixture, now, strategy):
+    def corner_qualification(self, offer, fixture, now):
         try:
             reasons = set(offer['recommendation_ineligible_reasons']) - {'STALE_RETRIEVAL'}
             if offer['status'] != 'SUPPORTED':
@@ -114,12 +115,12 @@ class Recorder:
             elif offer['current_availability'] != 'AVAILABLE':
                 reason = 'QUALIFICATION_UNKNOWN'
             elif not reasons:
-                reason = 'VALUE_QUALIFIED'
+                reason = 'BASE_VALUE_QUALIFIED'
             elif reasons <= {'NOT_QUALIFIED', 'NONPOSITIVE_OR_UNAVAILABLE_EV'} and offer['expected_profit'] is not None:
                 reason = 'NO_QUALIFYING_VALUE'
             else:
                 reason = 'QUALIFICATION_UNKNOWN'
-            self.identity(fixture, reason, now, market='CORNER_TEAM_TOTAL', strategy=strategy,
+            self.identity(fixture, reason, now, market='CORNER_TEAM_TOTAL',
                           reference_id=offer['observation_id'])
         except Exception:
             self.incomplete = True
@@ -254,6 +255,36 @@ def report(state, *, day, fixture_id=None, competition=None, market=None, provid
             'uncovered_stages': ['settlement'], 'provider_requests': 0}
 
 
+
+# Only producer-defined run-level codes may leave private forecast receipts.
+# Unknown/future codes remain UNKNOWN; never expose arbitrary exception strings.
+FORECAST_RUN_REASONS = frozenset("""
+FORECAST_CONFIG_REJECTED FORECAST_RUNNER_DISABLED HISTORY_REJECTED
+SPORTMONKS_ATTEMPT_REJECTED SPORTMONKS_RETRY_WAIT FORECAST_CONFLICT
+PROVIDER_REQUEST_ACCOUNTING_REJECTED CALENDAR_PROVENANCE_REJECTED
+MATCHWEEK_CUTOFF_CONFLICT HISTORY_CALENDAR_INCOMPLETE SPORTMONKS_CREDENTIAL_MISSING
+SPORTMONKS_RANGE_REJECTED FORECAST_CLOCK_REJECTED SPORTMONKS_EVIDENCE_REJECTED
+SPORTMONKS_PROVENANCE_REJECTED SUPPLEMENTAL_RESULT_CONFLICT HISTORY_RESULTS_MISSING
+FORECAST_PREPARATION_BLOCKED FORECAST_RUN_REJECTED
+SPORTMONKS_HTTP_401 SPORTMONKS_HTTP_403 SPORTMONKS_HTTP_429 SPORTMONKS_HTTP_408
+SPORTMONKS_HTTP_500 SPORTMONKS_HTTP_502 SPORTMONKS_HTTP_503 SPORTMONKS_HTTP_504
+SPORTMONKS_TRANSPORT_REJECTED HISTORY_CALENDAR_FIXTURE_MISSING
+HISTORY_CALENDAR_FIXTURE_UNAVAILABLE HISTORY_CALENDAR_MATCHDAY_REJECTED
+HISTORY_CALENDAR_REJECTED HISTORY_CALENDAR_STALE HISTORY_CALENDAR_UNRESOLVED
+HISTORY_RESULTS_CONFLICTING HISTORY_RESULTS_MISSING_OR_CONFLICTING HISTORY_RESULTS_REJECTED
+STALE_HISTORY AUTHORIZATION_FILE_REJECTED BUSY FILE_REJECTED LOCK_REJECTED PATH_REJECTED
+PRIVATE_INVENTORY_REJECTED PRIVATE_STORE_REJECTED RECORD_CONFLICT RECORD_INTEGRITY_REJECTED
+RECORD_NAME_REJECTED RECORD_SIZE_REJECTED RUNTIME_IDENTITY_REJECTED SESSION_REJECTED
+""".split())
+
+
+def _forecast_run_reasons(record):
+    reason = record.get('reason')
+    if reason is None:
+        return ['UNKNOWN'] if record['status'] in ('BLOCKED', 'REJECTED') else []
+    return [reason if isinstance(reason, str) and reason in FORECAST_RUN_REASONS else 'UNKNOWN']
+
+
 def _forecast_receipts(state, *, day, now):
     """Bounded private legacy/new receipt reader; never infers legacy fixture causes."""
     import stat
@@ -302,7 +333,7 @@ def _forecast_receipts(state, *, day, now):
             if end.date() == day:
                 normalized = dict(run_id=entry.name[:-5], record_hash=record.get('record_hash'),
                     completed_at_utc=end.isoformat(),
-                    summary={'status': record['status'], 'reasons': []},
+                    summary={'status': record['status'], 'reasons': _forecast_run_reasons(record)},
                     time_basis='COMPLETED' if diagnostics is not None else 'LEGACY_RUN_START')
                 if diagnostics is not None:
                     normalized['fixture_diagnostics'] = diagnostics

@@ -63,18 +63,29 @@ def select(inventory, now, *, strategy="best_value", diagnostics=None):
     """Best book per exact selection, then existing value ranking per team market."""
     selected = {}
     predictions = {p['prediction_id']: p for p in inventory['predictions']} if diagnostics is not None else {}
+    references = {}
+    def offer_key(offer):
+        return (offer['prediction_id'], offer['target_id'], offer['bookmaker'])
     def observe(offer):
         if diagnostics is not None:
             try:
-                diagnostics.corner_qualification(offer, predictions[offer['prediction_id']], now, strategy)
+                references[offer_key(offer)] = offer['observation_id']
+                diagnostics.corner_qualification(offer, predictions[offer['prediction_id']], now)
+            except Exception:
+                diagnostics.incomplete = True
+    def strategy_diagnostic(offer, reason):
+        if diagnostics is not None:
+            try:
+                diagnostics.identity(offer, reason, now, market='CORNER_TEAM_TOTAL',
+                                     strategy=strategy, reference_id=references[offer_key(offer)])
             except Exception:
                 diagnostics.incomplete = True
     for offer in project_shortlist(inventory, now=now, limit=100000, on_offer=observe)["offers"]:
         if strategy != "higher_probability" or offer["model_probability"] >= .65:
+            strategy_diagnostic(offer, 'VALUE_QUALIFIED')
             selected.setdefault(_identity(offer), offer)
-        elif diagnostics is not None:
-            diagnostics.identity(offer, 'STRATEGY_PROBABILITY_THRESHOLD', now,
-                                 market='CORNER_TEAM_TOTAL', strategy=strategy, reference_id=offer.get('observation_id'))
+        else:
+            strategy_diagnostic(offer, 'STRATEGY_PROBABILITY_THRESHOLD')
     return selected
 
 
