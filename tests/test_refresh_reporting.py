@@ -25,6 +25,14 @@ class ReportingTests(unittest.TestCase):
         del report['invocation']
         self.assertEqual(reporting.summarize(report, date(2026, 10, 20), 14)['invocation_status'], 'UNKNOWN')
 
+    def test_future_attempt_timestamp_is_unknown_and_unhealthy(self):
+        row = dict(league='E1', status='updated', latest_match='2026-10-19',
+                   checked_at='2099-01-01T00:00:00+00:00')
+        report = dict(results=[row], invocation=[dict(league='E1', status='NOT_SELECTED')])
+        self.assertEqual(reporting.dataset_health(row, date(2026, 10, 20), 14), 'UNKNOWN')
+        self.assertEqual(reporting.summarize(report, date(2026, 10, 20), 14)['dataset_health'], 'UNKNOWN')
+        self.assertTrue(corner_refresh.format_report(report, date(2026, 10, 20), 14)[1])
+
     def test_missing_invalid_and_stale_timestamps(self):
         row = dict(league='E1', status='updated', latest_match='2026-10-19')
         for stamp in (None, '', 'bad', '2026-10-20T00:00:00'):
@@ -80,6 +88,31 @@ class RefreshHistoryTests(unittest.TestCase):
         self.assertEqual(replay['results'], first['results'])
         self.assertEqual(reporting.summarize(replay, TODAY, 14)['invocation_status'], 'NOT_ATTEMPTED')
         self.assertEqual({p: p.read_bytes() for p in receipts}, receipts)
+
+    def test_interrupted_reservation_preserves_history_across_replays(self):
+        self.refresh(NEW)
+        with patch.object(corner_refresh, 'download_csv', side_effect=OSError('old failure')):
+            old = corner_refresh.refresh_data(self.config, TODAY)['results'][0]
+        (self.state / 'daily-attempt-cap.json').write_text('{"version":1,"enabled":true}')
+        with corner_refresh.refresh_lock(self.state):
+            terminal, reserved = corner_refresh.refresh_attempts.reserve(self.state, 'SP1', 'test')
+        self.assertTrue(reserved)
+        receipts = {p: p.read_bytes() for p in self.state.glob('attempts/*/*.json')}
+        for _ in range(2):
+            with patch.object(corner_refresh, 'download_csv') as download:
+                report = corner_refresh.refresh_data(self.config, TODAY)
+            download.assert_not_called()
+            row = report['results'][0]
+            self.assertEqual(row['last_success'], old['last_success'])
+            self.assertEqual(row['last_failure'], old['last_failure'])
+            self.assertIsNone(row.get('checked_at'))
+            self.assertIn('RESERVED_WITHOUT_TERMINAL_RECEIPT', row['error'])
+            self.assertEqual(reporting.summarize(report, TODAY, 14)['invocation_status'], 'NOT_ATTEMPTED')
+            text, unhealthy = corner_refresh.format_report(report, TODAY, 14)
+            self.assertTrue(unhealthy)
+            self.assertIn(f"last_failure {old['last_failure']['checked_at']}; failed; old failure", text)
+            self.assertFalse(terminal.exists())
+            self.assertEqual({p: p.read_bytes() for p in self.state.glob('attempts/*/*.json')}, receipts)
 
     def test_legacy_missing_time_is_not_replaced_by_invocation_time(self):
         self.state.mkdir(parents=True)

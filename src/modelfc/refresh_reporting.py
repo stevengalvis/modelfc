@@ -39,7 +39,7 @@ def dataset_health(item, today, max_age_days):
     try:
         checked = datetime.fromisoformat(item['checked_at'])
         latest = date.fromisoformat(item['latest_match'])
-        if checked.tzinfo is None or latest > today:
+        if checked.tzinfo is None or checked.date() > today or latest > today:
             return 'UNKNOWN'
     except (KeyError, TypeError, ValueError):
         return 'UNKNOWN'

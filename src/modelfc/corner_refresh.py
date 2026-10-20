@@ -281,7 +281,12 @@ def refresh_data(config: CornerDataConfig, today: date | None = None,
                     if retained.get('checked_at') == saved_result.get('checked_at') and retained.get('file_sha256') == saved_result.get('file_sha256'):
                         saved_result = retained
                 else:
-                    saved_result = {"league": league, "status": "failed", "error": "RESERVED_WITHOUT_TERMINAL_RECEIPT; no retry"}
+                    # No terminal outcome was observed: retain known history,
+                    # rather than replacing last_failure with this unknown attempt.
+                    prior = previous.get(league, {})
+                    saved_result = {**{key: prior[key] for key in ('last_success', 'last_failure') if key in prior},
+                                    "league": league, "status": "failed",
+                                    "error": "RESERVED_WITHOUT_TERMINAL_RECEIPT; no retry"}
                 saved_result = preserve_settlement_block(saved_result, previous.get(league, {}))
                 if assess_result and saved_result['status'] in ('updated', 'unchanged'):
                     saved_result = {**saved_result, **assess_result(league)}
@@ -337,7 +342,7 @@ def format_report(report: dict, today: date, max_age_days: int) -> tuple[str, bo
                      f"dataset {state['dataset_health']}; last attempt {item.get('checked_at') or 'UNKNOWN'}")
         for name in ('last_success', 'last_failure'):
             statuses = refresh_reporting.SUCCESS if name == 'last_success' else ('failed',)
-            history = item if item.get('status') in statuses else item.get(name)
+            history = item.get(name) or (item if item.get('status') in statuses else None)
             if history:
                 lines.append(f"{item['league']}: {name} {history.get('checked_at') or 'UNKNOWN'}; "
                              f"{history['status']}" + (f"; {history['error']}" if history.get('error') else ''))
