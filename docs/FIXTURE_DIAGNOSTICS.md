@@ -62,7 +62,10 @@ The date selects UTC completion day. Legacy forecast-only receipts lack completi
 time and are explicitly labeled `LEGACY_RUN_START`; their diagnostics remain
 UNKNOWN. Old prospective v1 receipts and PR187 v2 corner-only diagnostics remain
 readable and immutable. New forecast-only receipts add a verified hash, completion
-time and diagnostics without relocating or replacing old receipts.
+time and diagnostics without relocating or replacing old receipts. If the completion
+clock regresses before run start, the writer uses run start as a conservative
+completion bound, explicitly labels RUN_START_CLOCK_REGRESSION and marks diagnostics
+INCOMPLETE with UNKNOWN discovery; this cannot masquerade as an observed empty run.
 
 The reader validates bounded regular files, hashes, versions and intervals and
 makes zero provider requests or writes. The prospective limit remains 1,000 files

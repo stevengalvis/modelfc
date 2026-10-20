@@ -217,6 +217,30 @@ class ReceiptTests(unittest.TestCase):
         self.assertNotIn('private/path/token', json.dumps(result))
         self.assertIsNone(result['counts']['distinct_fixtures'])
 
+    def test_backward_forecast_completion_clock_cannot_poison_reader(self):
+        from types import SimpleNamespace
+        from modelfc.forecast_only_runner import _publish_receipt
+        from modelfc.fixture_diagnostics import Recorder, report, validate_diagnostics
+        for index, with_events in enumerate((False, True)):
+            started = NOW + timedelta(seconds=index)
+            recorder = Recorder()
+            if with_events:
+                recorder.add(SimpleNamespace(provider_fixture_id='123', provider='oddspapi', competition='E1'),
+                             'DISCOVERED', started)
+            with self.assertRaises(receipts.ReceiptError):
+                validate_diagnostics(recorder.snapshot(), start=started, end=started-timedelta(seconds=1))
+            receipt = dict(run_at_utc=started.isoformat(), deployed_sha=SHA, status='RECORDED')
+            _publish_receipt(self.state, receipt, diagnostics=recorder, completed=started-timedelta(seconds=1))
+            self.assertEqual(receipt['completed_at_utc'], started.isoformat())
+            self.assertEqual(receipt['completion_time_basis'], 'RUN_START_CLOCK_REGRESSION')
+            self.assertEqual(receipt['status'], 'RECORDED')
+        result = report(self.state, day=NOW.date(), now=NOW+timedelta(seconds=1))
+        self.assertEqual(len(result['runs']), 2)
+        self.assertTrue(all(run['time_basis'] == 'RUN_START_CLOCK_REGRESSION' and
+                            run['diagnostics'] == 'INCOMPLETE' and run['discovery'] == 'UNKNOWN' and
+                            not run['events'] for run in result['runs']))
+        self.assertIsNone(result['counts']['distinct_fixtures'])
+
     def test_invalid_diagnostic_clock_degrades_without_losing_receipt(self):
         from types import SimpleNamespace
         from modelfc.fixture_diagnostics import Recorder

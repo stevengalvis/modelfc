@@ -120,8 +120,15 @@ def _publish_receipt(state, receipt, *, diagnostics=None, completed=None):
         from modelfc.fixture_diagnostics import validate_diagnostics
         from modelfc.prospective_run_receipts import _hash
         value = diagnostics.snapshot()
+        start = datetime.fromisoformat(receipt['run_at_utc'])
+        receipt.pop('completion_time_basis', None)
+        if completed < start:
+            # Keep the receipt readable without pretending the clock was valid.
+            completed = start
+            receipt['completion_time_basis'] = 'RUN_START_CLOCK_REGRESSION'
+            value.update(status='INCOMPLETE', discovery='UNKNOWN', events=[])
         try:
-            validate_diagnostics(value, start=datetime.fromisoformat(receipt['run_at_utc']), end=completed)
+            validate_diagnostics(value, start=start, end=completed)
         except ValueError:
             value.update(status='INCOMPLETE', events=[])
         receipt.update(schema_version=2, completed_at_utc=completed.isoformat(), fixture_diagnostics=value)

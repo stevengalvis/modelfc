@@ -162,6 +162,8 @@ def validate_diagnostics(value, *, start, end):
             or value['discovery'] not in ('OBSERVED', 'UNKNOWN')
             or not isinstance(value['events'], list) or len(value['events']) > MAX_EVENTS):
         raise ReceiptError('invalid fixture diagnostics')
+    if start > end:
+        raise ReceiptError('invalid fixture diagnostic interval')
     previous = start
     for event in value['events']:
         observed = _validate_event(event)
@@ -324,17 +326,23 @@ def _forecast_receipts(state, *, day, now):
                 if record.get('record_hash') != receipts._hash(record):
                     raise receipts.ReceiptError('invalid forecast receipt hash')
                 validate_diagnostics(diagnostics, start=start, end=end)
+                time_basis = record.get('completion_time_basis', 'COMPLETED')
+                if (time_basis not in ('COMPLETED', 'RUN_START_CLOCK_REGRESSION')
+                        or (time_basis == 'RUN_START_CLOCK_REGRESSION' and
+                            (end != start or diagnostics['status'] != 'INCOMPLETE' or diagnostics['events']))):
+                    raise receipts.ReceiptError('invalid forecast completion basis')
             elif any(key in record for key in ('schema_version', 'fixture_diagnostics', 'record_hash', 'completed_at_utc')):
                 raise receipts.ReceiptError('invalid forecast receipt version')
             else:
                 end = start  # Legacy completion time is unavailable; label this explicitly below.
+                time_basis = 'LEGACY_RUN_START'
             if start > end or end > now or record.get('status') not in ('REJECTED', 'BLOCKED', 'RECORDED', 'NO_ELIGIBLE_FIXTURES'):
                 raise receipts.ReceiptError('invalid forecast receipt interval/status')
             if end.date() == day:
                 normalized = dict(run_id=entry.name[:-5], record_hash=record.get('record_hash'),
                     completed_at_utc=end.isoformat(),
                     summary={'status': record['status'], 'reasons': _forecast_run_reasons(record)},
-                    time_basis='COMPLETED' if diagnostics is not None else 'LEGACY_RUN_START')
+                    time_basis=time_basis)
                 if diagnostics is not None:
                     normalized['fixture_diagnostics'] = diagnostics
                 records.append(normalized)
