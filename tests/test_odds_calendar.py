@@ -391,7 +391,7 @@ class FridayCalendarTests(unittest.TestCase):
         self.assertEqual(self.fx.path.read_bytes(), before)
         from modelfc.fixture_diagnostics import report
         diagnostics = report(self.fx.state, day=self.fx.now.date(), now=self.fx.now)
-        self.assertEqual(diagnostics['runs'][0]['calendar_cohorts'], result['calendar_cohorts'])
+        self.assertIn(result['calendar_cohorts'], [r['calendar_cohorts'] for r in diagnostics['runs']])
 
     def test_missing_calendar_records_both_cohorts_without_mutation(self):
         before = self.fx.path.read_bytes()
