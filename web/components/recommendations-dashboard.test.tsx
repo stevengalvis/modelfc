@@ -140,3 +140,28 @@ it("shows an exact corner selection and preserves its evidence link inside close
   fireEvent.click(screen.getByRole("button", {name: /Pick information/}));
   expect(screen.getByRole("link", {name: "Recorded opportunity evidence"})).toHaveAttribute("href", `/opportunities/${cornerFixture.publications[0].offer.opportunity_id}`);
 });
+
+it("pins the read cutoff when kickoff and a new publication would shift equal-total pages", async () => {
+  const clock = vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-10-20T12:00:00Z"));
+  const initialCutoff = new Date(Date.now()).toISOString();
+  const read = vi.spyOn(api, "strategyPicks").mockImplementation(async query => {
+    const result = page(query.offset, 6);
+    // Without the original cutoff, kickoff removes a prefix pick while a new
+    // publication enters the list: the final offset can look entirely valid.
+    if (query.offset && query.asOf !== initialCutoff) {
+      result.publications[0].publication_id = "shifted-page";
+      result.publications[0].offer.home_team = "Shifted page omitting a new pick";
+    }
+    return result;
+  });
+  render(<RecommendationsDashboard />); await screen.findAllByRole("article");
+  clock.mockReturnValue(Date.parse("2026-10-20T12:01:00Z"));
+  fireEvent.click(screen.getByRole("button", {name: "Show more picks"}));
+  await screen.findByText(/All matching picks shown/);
+  expect(read.mock.calls.map(c => c[0].asOf)).toEqual([initialCutoff, initialCutoff]);
+  expect(screen.getAllByRole("article").map(a => within(a).getByRole("heading").textContent))
+    .toEqual(Array.from({length: 6}, (_, i) => `Home ${i} vs ${base.publications[0].offer.away_team}`));
+  fireEvent.change(screen.getByLabelText("Market"), {target: {value: "BTTS"}});
+  await screen.findByText(/Showing 5/);
+  expect(read.mock.lastCall?.[0].asOf).toBe("2026-10-20T12:01:00.000Z");
+});
