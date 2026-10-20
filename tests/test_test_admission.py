@@ -1,5 +1,6 @@
 """Deterministic, provider-free admission checks; no systemd service launches."""
 import importlib.util
+from contextlib import ExitStack
 from pathlib import Path
 import tempfile
 import unittest
@@ -10,7 +11,73 @@ controller = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(controller)
 
 
+def superseded_after_wait(module, *, active):
+    """Drive the real deploy/admission/report path with a rotating API fixture."""
+    sha='a'*40
+    previous='c'*40 if active else None
+    with tempfile.TemporaryDirectory() as tmp, ExitStack() as stack:
+        root=Path(tmp);releases=root/'releases';releases.mkdir()
+        control=root/'control';control.mkdir()
+        current=root/'current'
+        selected=releases/(previous+'-'+'c'*12) if active else None
+        if selected is not None:selected.mkdir()
+        candidate=releases/(sha+'-'+'a'*12);candidate.mkdir()
+        request=control/'test-request.json';output=control/'test-result.json'
+        evidence=(request,output,control/'last-test-failure.json')
+        for path in evidence:path.write_bytes(b'prior evidence\n')
+        rotated=[False]
+        def snapshot(**kwargs):
+            if not rotated[0]:
+                rotated[0]=True
+                return ('a'*32,123,100_000_000_000), module.ADMISSION_MAX_AGE_NS+1
+            return ('b'*32,124,1125_000_000_000), 0
+        # Initial admission observes the old API; the first poll also advances main.
+        stale=[False]
+        def query(**kwargs):
+            result=snapshot(**kwargs)
+            if result[1]==0:stale[0]=True
+            return result
+        real_tests=module.tests
+        def tests(release, requested, *, revalidate):
+            return real_tests(release,requested,request=request,output=output,revalidate=revalidate)
+        for name,value in dict(recover_service=None,storage_preflight=None,verify_source=None,
+                               verify_venv_size=None,dependencies='INSTALLED').items():
+            stack.enter_context(patch.object(module,name,return_value=value))
+        stack.enter_context(patch.object(module,'current_release',return_value=(selected,previous)))
+        stack.enter_context(patch.object(module,'create_release',return_value=(candidate,sha)))
+        stack.enter_context(patch.object(module,'latest_main',side_effect=lambda _: 'b'*40 if stale[0] else sha))
+        stack.enter_context(patch.object(module,'tests',side_effect=tests))
+        stack.enter_context(patch.object(module,'admission_snapshot',side_effect=query))
+        stack.enter_context(patch.object(module.time,'sleep'))
+        service=stack.enter_context(patch.object(module,'run_service'))
+        promote=stack.enter_context(patch.object(module,'promote'))
+        boundary=Mock()
+        result=module.deploy(sha,root=root,releases=releases,current=current,control=control,check_boundary=boundary)
+        assert stale[0] and boundary.call_count==3
+        service.assert_not_called();promote.assert_not_called()
+        assert all(path.read_bytes()==b'prior evidence\n' for path in evidence)
+        assert not candidate.exists()
+        assert selected is None or selected.is_dir()
+        return result
+
+
 class AdmissionTests(unittest.TestCase):
+    def test_superseded_after_wait_keeps_truthful_reader_compatible_identity(self):
+        import json
+        from tests.test_deployment_status import reporting
+        for active in (False,True):
+            with self.subTest(active=active):
+                result=superseded_after_wait(controller,active=active)
+                expected='c'*40 if active else None
+                self.assertEqual((result['previous_sha'],result['final_sha']),(expected,expected))
+                self.assertEqual(result['reason'],'SUPERSEDED' if active else 'ADMISSION_TARGET_SUPERSEDED')
+                self.assertEqual(result['status'],'SUPERSEDED' if active else 'FAIL')
+                self.assertEqual(result['promotion_status'],'SUPERSEDED' if active else 'NOT_ATTEMPTED')
+                self.assertEqual((result['tests_status'],result['tests_run']),('NOT_RUN',0))
+                with tempfile.TemporaryDirectory() as tmp:
+                    path=Path(tmp)/'report.json';path.write_text(json.dumps(result))
+                    self.assertEqual(reporting.read_report(path,'a'*40),result)
+
     def fields(self, **changes):
         return dict(dict(Id='modelfc-corner-api.service', LoadState='loaded', ActiveState='active',
                     SubState='running', MainPID='123', InvocationID='a'*32,

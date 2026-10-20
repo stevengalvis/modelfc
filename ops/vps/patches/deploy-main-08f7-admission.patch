@@ -6,18 +6,19 @@
  REASONS = {"OK", "ALREADY_CURRENT", "SUPERSEDED", "INVALID_REQUEST", "DEPLOYMENT_BUSY",
 -           "STATE_BOUNDARY_FAILED", "SOURCE_INVALID", "FETCH_FAILED", "SHA_NOT_ON_MAIN",
 +           "STATE_BOUNDARY_FAILED", "ADMISSION_QUERY_FAILED", "ADMISSION_PROPERTIES_INVALID",
-+           "ADMISSION_AGE_WAIT_EXPIRED", "ADMISSION_IDENTITY_CHANGED", "SOURCE_INVALID", "FETCH_FAILED", "SHA_NOT_ON_MAIN",
++           "ADMISSION_AGE_WAIT_EXPIRED", "ADMISSION_IDENTITY_CHANGED", "ADMISSION_TARGET_SUPERSEDED", "SOURCE_INVALID", "FETCH_FAILED", "SHA_NOT_ON_MAIN",
             "ACTIVE_SHA_NOT_ON_MAIN", "DEPENDENCY_SYNC_FAILED", "TESTS_FAILED",
             "FINAL_SHA_MISMATCH", "PROMOTION_FAILED", "INTERNAL_ERROR", "STORAGE_LIMIT_FAILED"}
  
-@@ -1122,35 +1123,101 @@
+@@ -1122,35 +1123,102 @@
      return json.loads(contents)
  
  
 -def test_admission_window():
 -    """Read-only, fresh API rotation admission immediately before test staging."""
 +ADMISSION_REASONS = {"ADMISSION_QUERY_FAILED", "ADMISSION_PROPERTIES_INVALID",
-+                     "ADMISSION_AGE_WAIT_EXPIRED", "ADMISSION_IDENTITY_CHANGED"}
++                     "ADMISSION_AGE_WAIT_EXPIRED", "ADMISSION_IDENTITY_CHANGED",
++                     "ADMISSION_TARGET_SUPERSEDED"}
 +ADMISSION_WAIT_NS = 900_000_000_000
 +ADMISSION_MAX_AGE_NS = 1_020_000_000_000
 +
@@ -130,7 +131,7 @@
      request.unlink(missing_ok=True)
      output.unlink(missing_ok=True)
      # A prior attempt must never masquerade as evidence for this attempt.
-@@ -1236,8 +1303,16 @@
+@@ -1236,8 +1304,16 @@
                  state_boundary_enforced=False, reason="INVALID_REQUEST")
  
  
@@ -148,7 +149,7 @@
      value = report(sha)
      if not isinstance(sha, str) or SHA.fullmatch(sha) is None:
          return value
-@@ -1280,7 +1355,20 @@
+@@ -1280,7 +1356,22 @@
              value["dependency_sync"] = dependencies(candidate)
              verify_venv_size(candidate / ".venv")
              verify_source(candidate, sha)
@@ -160,7 +161,9 @@
 +                if current_release(current=current, releases=releases) != (active, previous):
 +                    raise Failure("STATE_BOUNDARY_FAILED")
 +                if latest_main(remote) != sha:
-+                    raise Failure("SUPERSEDED")
++                    # No selected release cannot satisfy the readers' SUPERSEDED
++                    # contract. Preserve both null identities and fail explicitly.
++                    raise Failure("ADMISSION_TARGET_SUPERSEDED" if previous is None else "SUPERSEDED")
 +
 +            revalidate_admission()
 +            if test_runner is None:
@@ -170,7 +173,7 @@
              if type(value["tests_run"]) is not int or value["tests_run"] <= 0:
                  raise Failure("TESTS_FAILED")
              value["tests_status"] = "PASS"
-@@ -1291,6 +1379,8 @@
+@@ -1291,6 +1382,8 @@
                           promotion_status="PROMOTED")
      except Failure as error:
          value.update(status="FAIL", reason=error.code)

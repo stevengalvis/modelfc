@@ -229,7 +229,7 @@ class FreshReleaseTest(unittest.TestCase):
                              test_runner=deploy.tests, tip_reader=lambda _: sha)
 
     def test_wait_revalidation_retains_lock_and_rejects_changed_boundaries(self):
-        for fault,reason in (("source","SOURCE_INVALID"),("target","SUPERSEDED"),
+        for fault,reason in (("source","SOURCE_INVALID"),("target","ADMISSION_TARGET_SUPERSEDED"),
                              ("boundary","STATE_BOUNDARY_FAILED"),("interrupt",None)):
             with self.subTest(fault=fault):
                 request=self.control/"test-request.json"
@@ -266,7 +266,7 @@ class FreshReleaseTest(unittest.TestCase):
                         result=invoke()
                         self.assertEqual(result["reason"],reason)
                         self.assertEqual(result["tests_run"],0)
-                        self.assertEqual(result["status"],"SUPERSEDED" if fault == "target" else "FAIL")
+                        self.assertEqual(result["status"],"FAIL")
                     service.assert_not_called()
                 for path in (request,output,failure):self.assertEqual(path.read_bytes(),b"retained evidence")
                 with (self.control/"deploy.lock").open("a+") as lock:

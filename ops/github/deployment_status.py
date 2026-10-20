@@ -20,7 +20,7 @@ RUNNER_FAILURES = frozenset({"DEPLOY_CONFIG_INVALID", "DEPLOY_TEMPFILE_FAILED", 
                              "SSH_NONZERO_EXIT", "INVALID_DEPLOYMENT_REPORT"})
 REASONS = RUNNER_FAILURES | frozenset({"OK", "ALREADY_CURRENT", "SUPERSEDED", "INVALID_REQUEST",
     "DEPLOYMENT_BUSY", "STATE_BOUNDARY_FAILED", "ADMISSION_QUERY_FAILED", "ADMISSION_PROPERTIES_INVALID",
-    "ADMISSION_AGE_WAIT_EXPIRED", "ADMISSION_IDENTITY_CHANGED", "SOURCE_INVALID", "FETCH_FAILED",
+    "ADMISSION_AGE_WAIT_EXPIRED", "ADMISSION_IDENTITY_CHANGED", "ADMISSION_TARGET_SUPERSEDED", "SOURCE_INVALID", "FETCH_FAILED",
     "SHA_NOT_ON_MAIN", "ACTIVE_SHA_NOT_ON_MAIN", "DEPENDENCY_SYNC_FAILED", "TESTS_FAILED",
     "FINAL_SHA_MISMATCH", "PROMOTION_FAILED", "INTERNAL_ERROR", "STORAGE_LIMIT_FAILED"})
 FIELDS = frozenset({"status", "requested_sha", "previous_sha", "final_sha", "fetch_verified",
@@ -222,6 +222,11 @@ def read_report(path, sha):
         if value["reason"].startswith("ADMISSION_") and (
                 value["status"] != "FAIL" or value["tests_status"] != "NOT_RUN"
                 or value["tests_run"] != 0 or value["promotion_status"] != "NOT_ATTEMPTED"):
+            raise Rejected
+        if value["reason"] == "ADMISSION_TARGET_SUPERSEDED" and (
+                value["previous_sha"] is not None or value["final_sha"] is not None
+                or not value["fetch_verified"] or not value["release_created"]
+                or value["dependency_sync"] != "INSTALLED" or not value["state_boundary_enforced"]):
             raise Rejected
         if value["reason"] in RUNNER_FAILURES and value != dict(
                 status="FAIL", requested_sha=sha, previous_sha=None, final_sha=None,

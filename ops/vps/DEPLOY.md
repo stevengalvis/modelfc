@@ -932,9 +932,10 @@ full boundary/source/target checks and then queries API identity and age again.
 Identity change during that revalidation rejects. Manual restart/crash prevention
 and process-bound serving verification are not implied by an admission PASS.
 
-Four fixed reasons extend the existing exact report schema and allowlists:
+Five fixed reasons extend the existing exact report schema and allowlists:
 `ADMISSION_QUERY_FAILED`, `ADMISSION_PROPERTIES_INVALID`,
-`ADMISSION_AGE_WAIT_EXPIRED`, and `ADMISSION_IDENTITY_CHANGED`. Other boundary,
+`ADMISSION_AGE_WAIT_EXPIRED`, `ADMISSION_IDENTITY_CHANGED`, and
+`ADMISSION_TARGET_SUPERSEDED`. Other boundary,
 source and target failures retain their existing codes. The workflow sanitizer
 and deployment observer accept the new reasons only as FAIL, NOT_RUN, zero tests,
 and NOT_ATTEMPTED promotion; arbitrary strings/properties and raw query errors
@@ -1003,3 +1004,45 @@ runtime information; old budget acceptance cannot substitute. Source-only harnes
 tests merely check fixture syntax and guards. No real-systemd acceptance was run
 inside the coding environment, and disposable CI acceptance still does not attest
 installed VPS identity or authorize installation.
+
+
+#### First-deployment supersession report correction
+
+If admission revalidation finds that main advanced and there was no selected
+release at entry, the controller reports `FAIL / ADMISSION_TARGET_SUPERSEDED`.
+`previous_sha` and `final_sha` both remain null; tests are `NOT_RUN` with count zero
+and promotion is `NOT_ATTEMPTED`. It never substitutes the requested or new main
+SHA for an unobserved active release. Supersession with an existing selected
+release retains the prior `SUPERSEDED` report and actual selected SHA.
+
+Both strict readers explicitly allow the new reason only with those null
+identities, a verified fetch, created candidate, installed dependencies, and an
+enforced boundary. They continue rejecting `SUPERSEDED` with null `final_sha`.
+This is a fixed failure reason, not a nullable-success schema relaxation. The
+producer regression drives real admission waiting and post-rotation revalidation
+with deterministic system queries, then passes the resulting reports through the
+workflow sanitizer and status reader. It checks the no-active and active cases,
+prior evidence, candidate cleanup, and zero test-service/promotion calls. The same
+producer tests run against reconstructed compatibility bytes.
+
+The compatibility input remains
+`08f7b8df9f7807249a2057fc72e64ae0326bce85e9ee633c386d7f1bae37f785`.
+After this correction, the patch SHA256 is
+`c99286caf022763311289e2fa317e9306356f6f2f7bccc48f08f2aee8291b8d0`
+and output SHA256 is
+`26b7acb8ca99268e2710cf5cc89f82f395087ba1d69a8c98d1fcc6b5e66e797c`.
+The manifest and local builder enforce these exact identities.
+
+Prior evidence remains historical, not acceptance for the corrected head/bytes:
+full CI and Trusted OFFLINE run 39482204717 belong to head
+`4c1b7c8fc2c169cceff3dd8351b35fcc17a5853a`; natural-rotation run 39476961035 and
+artifact 12291019606 accepted output `5f9fba95...77b58bd`, not the corrected output.
+Required next checks are full CI on the new head, the separate
+`Natural rotation admission acceptance` workflow on exact output
+`26b7acb8...e66e797c`, and renewed review plus exact-head Trusted OFFLINE acceptance
+when separately authorized. The old budget workflow still targets input `08f7b8...`
+and cannot replace new-output acceptance. No external review/OFFLINE request,
+installation, deployment, provider call, or merge is authorized by this correction.
+The inherited cleanup assurance caveat remains: its stop return is ignored and
+only the test-unit cgroup is checked, so a passing cleanup step is not full proof
+that the synthetic API cgroup was emptied.

@@ -138,11 +138,35 @@ class DeployWorkflowTest(unittest.TestCase):
                     "deploy stevengalvis/modelfc " + SHA])
             return result, events
 
+    def test_real_post_wait_supersession_reports_survive_sanitizer(self):
+        from tests.test_test_admission import controller,superseded_after_wait
+        for active in (False,True):
+            with self.subTest(active=active):
+                value=superseded_after_wait(controller,active=active)
+                result,_=self.exercise(self.encoded,accepted=True,report=value,ssh_status=0 if active else 1)
+                self.assertEqual(json.loads(result.stdout),value)
+                self.assertEqual(self.report_copy,value)
+                self.assertEqual(result.returncode,0 if active else 1)
+
+    def test_no_active_supersession_cannot_claim_an_active_sha_or_skip_prechecks(self):
+        from tests.test_test_admission import controller,superseded_after_wait
+        value=superseded_after_wait(controller,active=False)
+        for mutation in ({"previous_sha":SHA},{"final_sha":SHA},{"fetch_verified":False},
+                         {"release_created":False},{"dependency_sync":"NOT_ATTEMPTED"},
+                         {"state_boundary_enforced":False},
+                         {"status":"SUPERSEDED","reason":"SUPERSEDED","promotion_status":"SUPERSEDED"}):
+            with self.subTest(mutation=mutation):
+                result,_=self.exercise(self.encoded,accepted=True,report={**value,**mutation})
+                self.assertEqual(json.loads(result.stdout)["reason"],"INVALID_DEPLOYMENT_REPORT")
+
     def test_admission_reasons_remain_strict_and_sanitized(self):
         from tests.test_test_admission import controller
         for reason in controller.ADMISSION_REASONS:
             value = self.report()
             value.update(status="FAIL", reason=reason, promotion_status="NOT_ATTEMPTED")
+            if reason == "ADMISSION_TARGET_SUPERSEDED":
+                value.update(previous_sha=None,final_sha=None,fetch_verified=True,
+                             release_created=True,dependency_sync="INSTALLED")
             result, events = self.exercise(self.encoded, accepted=True, report=value, ssh_status=1)
             self.assertEqual(json.loads(result.stdout), value)
             self.assertEqual(self.report_copy, value)

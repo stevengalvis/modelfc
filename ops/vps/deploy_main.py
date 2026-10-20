@@ -57,7 +57,7 @@ FIELDS = ("status", "requested_sha", "previous_sha", "final_sha", "fetch_verifie
           "promotion_status", "state_boundary_enforced", "reason")
 REASONS = {"OK", "ALREADY_CURRENT", "SUPERSEDED", "INVALID_REQUEST", "DEPLOYMENT_BUSY",
            "STATE_BOUNDARY_FAILED", "ADMISSION_QUERY_FAILED", "ADMISSION_PROPERTIES_INVALID",
-           "ADMISSION_AGE_WAIT_EXPIRED", "ADMISSION_IDENTITY_CHANGED", "SOURCE_INVALID",
+           "ADMISSION_AGE_WAIT_EXPIRED", "ADMISSION_IDENTITY_CHANGED", "ADMISSION_TARGET_SUPERSEDED", "SOURCE_INVALID",
            "FETCH_FAILED", "SHA_NOT_ON_MAIN",
            "ACTIVE_SHA_NOT_ON_MAIN", "DEPENDENCY_SYNC_FAILED", "TESTS_FAILED",
            "FINAL_SHA_MISMATCH", "PROMOTION_FAILED", "INTERNAL_ERROR", "STORAGE_LIMIT_FAILED"}
@@ -1125,7 +1125,8 @@ def read_test_report(path):
 
 
 ADMISSION_REASONS = {"ADMISSION_QUERY_FAILED", "ADMISSION_PROPERTIES_INVALID",
-                     "ADMISSION_AGE_WAIT_EXPIRED", "ADMISSION_IDENTITY_CHANGED"}
+                     "ADMISSION_AGE_WAIT_EXPIRED", "ADMISSION_IDENTITY_CHANGED",
+                     "ADMISSION_TARGET_SUPERSEDED"}
 ADMISSION_WAIT_NS = 900_000_000_000
 ADMISSION_MAX_AGE_NS = 1_020_000_000_000
 
@@ -1416,7 +1417,9 @@ def deploy(sha, *, root=ROOT, releases=RELEASES, current=CURRENT, control=CONTRO
                 if current_release(current=current, releases=releases) != (active, previous):
                     raise Failure("STATE_BOUNDARY_FAILED")
                 if read_tip(remote) != sha:
-                    raise Failure("SUPERSEDED")
+                    # No selected release cannot satisfy the readers' SUPERSEDED
+                    # contract. Preserve both null identities and fail explicitly.
+                    raise Failure("ADMISSION_TARGET_SUPERSEDED" if previous is None else "SUPERSEDED")
 
             revalidate_admission()
             if test_runner is None:

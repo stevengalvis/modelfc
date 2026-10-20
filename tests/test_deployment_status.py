@@ -759,9 +759,25 @@ class AdmissionReportTests(unittest.TestCase):
             for reason in controller.ADMISSION_REASONS:
                 value=report(reason)
                 value.update(tests_status="NOT_RUN",tests_run=0)
+                if reason == "ADMISSION_TARGET_SUPERSEDED":
+                    value.update(previous_sha=None,final_sha=None)
                 path.write_text(json.dumps(value))
                 self.assertEqual(reporting.read_report(path,SHA),value)
                 for mutation in ({"reason":reason+"_secret"},{"tests_run":1},
                                  {"unexpected":"secret"},{"status":"PASS"}):
+                    path.write_text(json.dumps({**value,**mutation}))
+                    self.assertIsNone(reporting.read_report(path,SHA))
+
+
+    def test_no_active_supersession_preserves_strict_null_and_stage_contract(self):
+        from tests.test_test_admission import controller,superseded_after_wait
+        value=superseded_after_wait(controller,active=False)
+        with tempfile.TemporaryDirectory() as tmp:
+            path=Path(tmp)/'report.json'
+            for mutation in ({"previous_sha":SHA},{"final_sha":SHA},{"fetch_verified":False},
+                             {"release_created":False},{"dependency_sync":"NOT_ATTEMPTED"},
+                             {"state_boundary_enforced":False},
+                             {"status":"SUPERSEDED","reason":"SUPERSEDED","promotion_status":"SUPERSEDED"}):
+                with self.subTest(mutation=mutation):
                     path.write_text(json.dumps({**value,**mutation}))
                     self.assertIsNone(reporting.read_report(path,SHA))
