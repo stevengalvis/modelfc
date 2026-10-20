@@ -166,7 +166,7 @@ def main():
         def run(mode,timeout=45):
             result=subprocess.run(['/usr/sbin/runuser','-u','modelfc-deploy','--',
                 '/usr/bin/python3','-I','-B','-c',CHILD,mode,sha,expected],
-                env=budget.ENV,capture_output=True,text=True,timeout=timeout)
+                env=budget.ENV,cwd="/",capture_output=True,text=True,timeout=timeout)
             if result.returncode:
                 # Only fixed fixture stages and allowlisted controller reasons.
                 detail=json.loads(result.stdout) if len(result.stdout)<=2048 else {}
