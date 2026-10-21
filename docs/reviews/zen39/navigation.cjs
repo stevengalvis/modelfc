@@ -20,11 +20,16 @@ const routes = [['Next matches','/upcoming'],['Recommendations','/recommendation
       await page.waitForURL(`**${route}`);
       assert.equal(await nav.locator('[aria-current="page"]').textContent(),label);
       assert.equal(await nav.locator('[aria-current="page"]').count(),1);
-      // At 320px the unchanged Recommendations heading already overflows; verify the header independently.
-      if (!(width === 320 && route === '/recommendations')) assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `overflow at ${width} ${route}`);
+      assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `overflow at ${width} ${route}`);
       for (const link of await nav.getByRole('link').all()) {
         const box = await link.boundingBox();
         assert(box && box.height >= 44 && box.x >= 0 && box.x + box.width <= width);
+      }
+      if (route === '/recommendations') {
+        const heading = page.getByRole('heading', {name:'Recommendations', exact:true});
+        const box = await heading.boundingBox();
+        assert(box && box.x >= 0 && box.x + box.width <= width, `heading bounds at ${width}`);
+        if (width === 320) await page.screenshot({path:path.join(__dirname,'recommendations-320.png')});
       }
       await page.reload(); // direct route compatibility
       await page.getByRole('navigation').waitFor();
@@ -54,7 +59,7 @@ const routes = [['Next matches','/upcoming'],['Recommendations','/recommendation
     assert.equal(await page.locator('nav [aria-current="page"]').textContent(),'BTTS Value');
     assert.deepEqual(errors,[]);
     await page.close();
-    console.log(`PASS ${width}px: primary links, active states, direct URLs, back, fixture/detail and keyboard navigation; header fits, no page errors (known 320px Recommendations heading overflow excluded)`);
+    console.log(`PASS ${width}px: primary links, active states, direct URLs, back, fixture/detail and keyboard navigation; no horizontal overflow or page errors`);
   }
   await browser.close();
 })().catch(e => { console.error(e); process.exit(1); });

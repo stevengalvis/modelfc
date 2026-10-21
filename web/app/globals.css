@@ -264,6 +264,7 @@ label { font-size: 11px; }
 @media (max-width: 560px) {
   .brand { font-size: 13px; }
   .page-heading h1 { font-size: 38px; }
+  .recommendations-workspace .page-heading h1 { font-size: clamp(28px, 10vw, 38px); }
   .fixture-grid { grid-template-columns: 1fr; }
   .fixture-editor { grid-template-columns: 1fr 1fr; padding-left: 15px; padding-right: 15px; }
   .section-title, .fixture-grid, .market-row, .market-header, .analyze-bar { padding-left: 15px; padding-right: 15px; }
@@ -432,6 +433,7 @@ label { font-size: 11px; }
 @media (max-width: 560px) { .ti-primary article { padding: 18px 14px; } .ti-primary strong { font-size: 27px; } .ti-thresholds { gap: 10px; padding-inline: 15px; } .ti-pattern-grid, .ti-split, .ti-recent { padding-inline: 15px; } }
 
 .recommendations-workspace { max-width: 1060px; }
+.recommendations-workspace .page-heading h1 { max-width: 100%; overflow-wrap: anywhere; }
 .recommendation-list { list-style: none; padding: 0; margin: 28px 0 0; display: grid; gap: 18px; }
 .recommendation-card { padding: 24px; min-width: 0; }
 .recommendation-card h2 { margin: 20px 0 0; font-size: clamp(20px, 3vw, 28px); text-transform: uppercase; overflow-wrap: anywhere; }
