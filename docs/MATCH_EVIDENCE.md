@@ -92,3 +92,54 @@ host/ChatGPT service acceptance remain future gates. No persistent connection,
 permission expansion or production write is needed for these offline tests.
 PR174 settlement and PR176 controller diagnostics have no changed-path overlap:
 this addition touches only its new module, tests, benchmark and documentation.
+
+## Championship website continuation
+
+`public_match_evidence.read` binds an existing independent-strategy publication
+through the existing validated publication reader. The public request accepts
+only its 64-character publication digest, never a fixture, snapshot, path or
+provider parameter. `GET /api/v1/publications/{publication_id}/evidence` rejects
+query parameters, returns `no-store`, and sanitizes storage errors. Unknown
+publications return 404; unsupported league/market returns `UNSUPPORTED`.
+
+The public projection explicitly allowlists fixture display fields, frozen
+publication forecast probability/time and quote, descriptive season/venue
+corner samples, and saved BTTS bookmaker quotes/forecasts/statuses. It excludes
+private source records, paths, internal source/forecast/observation identifiers,
+hashes and provider metadata. The 16 KiB bound remains. Frontend decoding checks
+the exact displayed fixture and frozen publication values and rejects additional
+fields. The disclosure opens on demand and aborts reads when closed. Existing
+price/started-fixture warnings stay outside it; ZEN-51 and PR194/195 remain intact.
+
+Publications do not bind a PR178 research snapshot. The adapter deliberately
+passes no inferred snapshot to `match_evidence`; `NOT_BOUND_TO_PUBLICATION` is
+explicit. The frozen publication forecast/quote come from validated publication
+evidence, not a newer research forecast. Model version/history cutoff are not
+included in the publication projection. Saved BTTS inventory and configured
+current-season CSV remain separate observations, not an atomic snapshot or
+complete calendar. Unknown CSV acquisition freshness and errors are explicit;
+no provider fetch, model call, snapshot creation or mutable publication rewrite.
+
+### Verification and release boundary
+
+All repository evidence used here is synthetic. Regenerate the frontend fixture
+with `PYTHONPATH=src:. .venv/bin/python tests/generate_public_match_evidence_fixture.py`.
+Tests cover saved-store HTTP reads, immutable bytes, allowlist/privacy, strict
+identity, stale/conflicting/missing/unsupported/error states, and disclosure
+loading/abort/retry. No representative real saved Championship fixture was
+available; canonical real team/fixture mapping, actual coverage and measured
+production latency remain acceptance gaps. Unmapped teams remain explicit.
+
+Production routing is **not enabled** by this change. A separately approved
+operator change would need only GET on
+`^/api/v1/publications/[0-9a-f]{64}/evidence$`, no query parameters, `no-store`,
+and the existing API upstream. Verify the existing restricted reader can read
+validated strategy publications and their already-authorized saved dependencies,
+plus the configured E1 history under its existing shared lock. Do not grant broad
+state-directory access, expose research snapshots, or relax path guards. If the
+existing identity lacks access, obtain a separate narrow permission review.
+No Caddy, systemd, secrets, host ACLs or deployment files are changed here.
+
+Before release: independent review, exact-head CI and trusted OFFLINE acceptance,
+representative saved real-fixture acceptance, then separately authorized routing,
+installation and browser acceptance. MCP and EPL remain deferred.

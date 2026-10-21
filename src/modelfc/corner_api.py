@@ -2,6 +2,7 @@
 
 from datetime import date, datetime, timezone
 import os
+import re
 from pathlib import Path
 from typing import Any, Literal
 
@@ -794,6 +795,20 @@ def create_app(
                 error = _public_read_error(LedgerError("INVALID_BTTS_OUTCOME"))
         error.headers["Cache-Control"] = "no-store"
         return error
+
+    @app.get("/api/v1/publications/{publication_id}/evidence")
+    def get_publication_evidence(publication_id: str, request: Request):
+        from modelfc.public_match_evidence import read
+        headers = {"Cache-Control": "no-store"}
+        if request.query_params or re.fullmatch(r"[0-9a-f]{64}", publication_id) is None:
+            return JSONResponse({"state": "INVALID_REQUEST"}, status_code=422, headers=headers)
+        try:
+            result = read(state, publication_id, config)
+            return JSONResponse(result if result is not None else {"state": "MISSING"},
+                                status_code=200 if result is not None else 404, headers=headers)
+        except (ValueError, LedgerError, OSError):
+            # No raw storage exceptions, paths, or private evidence in public errors.
+            return JSONResponse({"state": "ERROR"}, status_code=503, headers=headers)
 
     @app.get("/api/v1/recommendations", response_model=list[RecommendationResponse] | RecordedOffersResponse | ShortlistResponse)
     def get_recommendations(response: Response,

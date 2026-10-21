@@ -1,3 +1,5 @@
+import { decodeMatchEvidence } from "./match-evidence";
+import type { StrategyPick } from "./track-record";
 import { decodeResearchPerformance, defaultResearchFilters, type ResearchFilters } from "./research-performance";
 import type { ShortlistRanking } from "./types";
 import { decodeTrackRecord, emptyTrackRecord, decodeStrategyPage, assertPublicationSelection, publicationSelection, type PublicationFilters } from "./track-record";
@@ -288,6 +290,12 @@ export function createApiClient(
       signal?.throwIfAborted();
       return decodePerformance(mode === "mock" ? structuredClone(mockPerformance)
         : await requestJson<unknown>(baseUrl!, "/prospective/performance", { signal }));
+    },
+    async matchEvidence(pick: StrategyPick, signal?: AbortSignal) {
+      checkConfiguration();
+      if (mode === "mock") throw new Error("No saved evidence is configured in mock mode.");
+      if (!/^[a-f0-9]{64}$/.test(pick.publication_id)) throw new Error("INVALID_PUBLICATION_ID");
+      return decodeMatchEvidence(await requestJson<unknown>(baseUrl!, `/publications/${pick.publication_id}/evidence`, { signal, cache: "no-store" }), pick);
     },
     async strategyPicks(query: { strategy: ShortlistRanking; scope: "current" | "history"; market?: string; competition?: string; asOf?: string; offset: number }, signal?: AbortSignal) {
       checkConfiguration();
