@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useId, useRef, useState, type ReactNode, type Ref } from "react";
+import { MatchEvidenceDisclosure } from "./match-evidence-disclosure";
 import { api } from "@/lib/api/client";
 import type { StrategyPage, StrategyPick } from "@/lib/api/track-record";
 import type { ShortlistRanking } from "@/lib/api/types";
@@ -12,14 +13,14 @@ const utcFormatter = new Intl.DateTimeFormat("en-GB", {
 });
 const utc = (value: string) => utcFormatter.format(new Date(value)) + " UTC";
 
-function Information({ label, context, children }: { label: string; context?: string; children: ReactNode }) {
+function Information({ label, context, children }: { label: string; context?: string; children: ReactNode | ((open: boolean) => ReactNode) }) {
   const [open, setOpen] = useState(false);
   const id = useId();
   return <div className="pick-information">
     <button className="pick-info-button" aria-expanded={open} aria-controls={id} onClick={() => setOpen(!open)}>
       <span aria-hidden="true">ⓘ</span> {label}{context && <span className="pick-sr-only"> for {context}</span>} <span aria-hidden="true">{open ? "−" : "+"}</span>
     </button>
-    <div id={id} hidden={!open} className="pick-information-content">{children}</div>
+    <div id={id} hidden={!open} className="pick-information-content">{typeof children === "function" ? children(open) : children}</div>
   </div>;
 }
 
@@ -142,7 +143,8 @@ function PickCard({ row, now, cardRef }: { row: StrategyPick; now: number; cardR
     <p className="pick-warning">{row.result === "SIMULATION_VOID" ? "Voided pick · excluded from Zeno’s tracked results; this does not confirm a sportsbook refund."
       : now >= Date.parse(offer.kickoff_utc) ? "Started fixture · publication is historical, not an upcoming choice."
       : now - Date.parse(offer.retrieved_at_utc) > 300_000 ? "Stale quote · price needs rechecking." : "Saved quote · recheck price and availability."}</p>
-    <Information label="Pick information" context={title}>
+    <Information label="Pick information" context={title}>{open => <>
+      <MatchEvidenceDisclosure pick={row} open={open} />
       <p>Frozen publication price · Quote recorded <time dateTime={offer.retrieved_at_utc}>{offer.retrieved_at_utc}</time> · Published <time dateTime={row.published_at_utc}>{row.published_at_utc}</time></p>
       <p>Availability is not verified live. Last recorded check: {offer.availability_checked_at_utc}. Newer prices never replace this publication.</p>
       <p>Published {row.published_at_utc}; policy effective {row.policy_effective_at_utc}. Strategy version: {row.strategy_policy}.</p>
@@ -153,6 +155,6 @@ function PickCard({ row, now, cardRef }: { row: StrategyPick; now: number; cardR
       <p>Publication: {row.publication_id} · Selection: {row.selection_id} · Provider: {offer.provider} · Fixture: {offer.provider_fixture_id}</p>
       {offer.market_type === "BTTS" ? <p>Forecast: {offer.forecast_id} · Comparison: {offer.comparison_id} · Observation: {offer.observation_id}</p>
         : <a href={`/opportunities/${offer.opportunity_id}`}>Recorded opportunity evidence</a>}
-    </Information>
+    </>}</Information>
   </article>;
 }
