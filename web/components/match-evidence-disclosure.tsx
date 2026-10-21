@@ -16,7 +16,7 @@ export function MatchEvidenceDisclosure({ pick, open }: { pick: StrategyPick; op
     const controller = new AbortController();
     setData(null); setError(false); setMissing(false);
     api.matchEvidence(pick, controller.signal).then(result => { if (!controller.signal.aborted) setData(result); })
-      .catch(cause => { if (!controller.signal.aborted) { if (cause instanceof ModelFCApiError && cause.status === 404) setMissing(true); else setError(true); } });
+      .catch(cause => { if (!controller.signal.aborted) { if (cause instanceof ModelFCApiError && cause.status === 404 && cause.code === 'PUBLICATION_EVIDENCE_NOT_FOUND') setMissing(true); else setError(true); } });
     return () => controller.abort();
   }, [open, supported, pick, attempt]);
   if (!open) return null;

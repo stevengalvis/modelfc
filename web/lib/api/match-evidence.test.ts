@@ -28,3 +28,31 @@ it('requests only the public digest route, without cache or fixture paths',async
   await expect(client.matchEvidence({...pick,publication_id:'../../private'})).rejects.toThrow();
   expect(fetcher).toHaveBeenCalledTimes(1); fetcher.mockRestore();
 });
+
+it('rejects inconsistent forecast times, probabilities, sides and sample denominators', () => {
+  const mutations: ((v: typeof raw) => void)[] = [
+    v => { v.publication.forecast_created_at_utc = '2099-01-01T00:00:00Z'; },
+    v => { v.saved_btts.comparisons[0].yes.model_probability = 42; },
+    v => { v.saved_btts.comparisons[0].yes.side = 'NO'; },
+    v => { v.saved_btts.comparisons[0].yes.decimal_odds = 0; },
+    v => { v.saved_btts.omitted = -1; },
+    v => { v.saved_btts.comparisons[0].current_status = 'LIVE'; },
+    v => { v.team_corners.teams[0].season.n = 1; v.team_corners.teams[0].season.completed = 0; },
+    v => { v.team_corners.teams[0].missing_corner_rows = -1; },
+    v => { v.team_corners.teams[0].small_sample = false; },
+    v => { v.team_corners.teams[1] = structuredClone(v.team_corners.teams[0]); },
+  ];
+  for (const mutate of mutations) {
+    const malformed = structuredClone(raw); mutate(malformed);
+    expect(()=>decodeMatchEvidence(malformed,pick)).toThrow('MATCH_EVIDENCE_CONTRACT_MISMATCH');
+  }
+});
+it('keeps generic route errors distinct from explicit saved-publication absence', async () => {
+  const fetcher = vi.spyOn(globalThis,'fetch');
+  const client = createApiClient('live','http://local/api/v1');
+  fetcher.mockResolvedValueOnce(new Response('Not Found',{status:404}));
+  await expect(client.matchEvidence(pick)).rejects.toMatchObject({status:404,code:'NETWORK_ERROR'});
+  fetcher.mockResolvedValueOnce(new Response(JSON.stringify({error:{code:'PUBLICATION_EVIDENCE_NOT_FOUND',message:'No saved publication evidence was found.',retryable:false}}),{status:404}));
+  await expect(client.matchEvidence(pick)).rejects.toMatchObject({status:404,code:'PUBLICATION_EVIDENCE_NOT_FOUND'});
+  fetcher.mockRestore();
+});

@@ -26,11 +26,19 @@ it('loads on demand, aborts on close and displays separate partial stale evidenc
   expect(screen.queryByRole('region')).not.toBeInTheDocument();
 });
 it('distinguishes error with retry, missing and unsupported',async()=>{
-  const read=vi.spyOn(api,'matchEvidence').mockRejectedValueOnce(new Error()).mockRejectedValueOnce(new ModelFCApiError('missing','MISSING',false,404));
+  const read=vi.spyOn(api,'matchEvidence').mockRejectedValueOnce(new Error()).mockRejectedValueOnce(new ModelFCApiError('missing','PUBLICATION_EVIDENCE_NOT_FOUND',false,404));
   const view=render(<MatchEvidenceDisclosure pick={pick} open/>);
   await screen.findByRole('alert'); fireEvent.click(screen.getByRole('button',{name:'Retry evidence'}));
   await screen.findByText('No saved publication evidence was found.');
   view.rerender(<MatchEvidenceDisclosure pick={{...pick,offer:{...pick.offer,competition:'E0'}} as typeof pick} open/>);
   expect(screen.getByText(/summary unsupported/)).toBeInTheDocument();
   expect(read).toHaveBeenCalledTimes(2);
+});
+
+it('does not infer missing evidence from an unavailable ingress route', async () => {
+  vi.spyOn(api,'matchEvidence').mockRejectedValue(new ModelFCApiError('not found','NETWORK_ERROR',false,404));
+  render(<MatchEvidenceDisclosure pick={pick} open/>);
+  await screen.findByRole('alert');
+  expect(screen.queryByText('No saved publication evidence was found.')).not.toBeInTheDocument();
+  expect(screen.getByRole('button',{name:'Retry evidence'})).toBeInTheDocument();
 });

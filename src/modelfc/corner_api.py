@@ -804,8 +804,11 @@ def create_app(
             return JSONResponse({"state": "INVALID_REQUEST"}, status_code=422, headers=headers)
         try:
             result = read(state, publication_id, config)
-            return JSONResponse(result if result is not None else {"state": "MISSING"},
-                                status_code=200 if result is not None else 404, headers=headers)
+            if result is None:
+                response = _error("PUBLICATION_EVIDENCE_NOT_FOUND", "No saved publication evidence was found.", 404)
+                response.headers.update(headers)
+                return response
+            return JSONResponse(result, headers=headers)
         except (ValueError, LedgerError, OSError):
             # No raw storage exceptions, paths, or private evidence in public errors.
             return JSONResponse({"state": "ERROR"}, status_code=503, headers=headers)

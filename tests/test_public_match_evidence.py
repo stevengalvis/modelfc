@@ -49,7 +49,10 @@ class PublicTests(unittest.TestCase):
 
     def test_missing_invalid_queries_and_sanitized_errors(self):
         url = '/api/v1/publications/' + '0'*64 + '/evidence'
-        self.assertEqual(self.fx.client.get(url).status_code, 404)
+        missing = self.fx.client.get(url)
+        self.assertEqual(missing.status_code, 404)
+        self.assertEqual(missing.json()['error']['code'], 'PUBLICATION_EVIDENCE_NOT_FOUND')
+        self.assertEqual(missing.headers['cache-control'], 'no-store')
         self.assertEqual(self.fx.client.get(url+'?fixture=../../private').status_code, 422)
         with patch.object(public.published, 'read') as read:
             with self.assertRaises(ValueError):
