@@ -67,8 +67,12 @@ class FrozenPLBtts:
         sources = e['sources']
         require(isinstance(sources, list) and len(sources) == 5, 'SOURCES_REJECTED')
         for source in sources:
-            require(isinstance(source, dict) and set(source) == {'filename', 'sha256', 'retrieved_at_utc',
-                    'age_seconds_at_observation', 'columns'}, 'SOURCES_REJECTED')
+            fields = {'filename', 'sha256', 'retrieved_at_utc', 'age_seconds_at_observation', 'columns'}
+            require(isinstance(source, dict) and set(source) in (fields,
+                    fields | {'validation_scope', 'unvalidated_statistics'}), 'SOURCES_REJECTED')
+            if 'validation_scope' in source:
+                require(source['validation_scope'] == 'GOALS' and source['unvalidated_statistics'] ==
+                        ['corners', 'shots', 'shots_on_target', 'xg'], 'SOURCES_REJECTED')
             require(isinstance(source['sha256'], str) and re.fullmatch('[0-9a-f]{64}', source['sha256']), 'SOURCES_REJECTED')
             retrieved = timestamp(source['retrieved_at_utc'])
             age = source['age_seconds_at_observation']
@@ -123,7 +127,7 @@ def prepare(raw, *, sources=(), enabled=False, **options):
             'contract_raw', 'reviewed_contract_sha256', 'competition', 'season_year')})
         require(bool(sources), 'HISTORY_MISSING')
         records, provenance = validated_sources('E0', sources, before=day,
-            observed_at=observed, allow_unknown=True, enforce_seasons=True)
+            observed_at=observed, allow_unknown=True, enforce_seasons=True, validation_scope='GOALS')
         required = {f'E0_{y%100:02d}{(y+1)%100:02d}.csv' for y in range(year-4, year+1)}
         require({p['filename'] for p in provenance} == required, 'SEASON_SOURCES_INCOMPLETE')
         require(all(p['retrieved_at_utc'] for p in provenance), 'PROVENANCE_UNKNOWN')

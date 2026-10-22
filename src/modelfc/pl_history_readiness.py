@@ -43,7 +43,7 @@ def assess(raw, *, sources=(), enabled=False, **options):
             result['history_validity'] = 'MISSING'
             return result
         records, provenance = validated_sources('E0', sources, before=day,
-            observed_at=observed, allow_unknown=True, enforce_seasons=True)
+            observed_at=observed, allow_unknown=True, enforce_seasons=True, validation_scope='GOALS_CORNERS')
         result['history_validity'] = 'VALID'
         result['sources'] = provenance
         result['history_provenance'] = ('SUPPLIED' if all(p['retrieved_at_utc'] for p in provenance) else 'UNKNOWN')

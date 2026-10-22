@@ -14,7 +14,7 @@ from modelfc.history_coverage import validated_sources, MAX_SOURCE_BYTES, MAX_SO
 from modelfc.history_completeness import parse_calendar, matchweek_cutoff, verify_completeness
 from modelfc.offline_forecasts import KnownFixture, prepare_forecast
 from modelfc.pl_history_readiness import assess as assess_pl
-from modelfc.providers.football_data import load_team_match_stats_history
+from modelfc.providers.football_data import load_team_match_stats_history, unvalidated_statistics
 from modelfc.providers.mls import _read_corner_observations as read_mls
 from modelfc.shared_odds import snapshot_from_bytes
 
@@ -111,6 +111,16 @@ def _scope(e, c, league):
 
 
 def _history(e, c, observed):
+    # E1 keeps its existing completed-corner BTTS cohort. Other goals-only
+    # consumers must not inherit corner validation failures.
+    corners, records = _history_for_scope(e, c, observed, 'GOALS_CORNERS')
+    if c.history_adapter == 'MLS_KAGGLE' or c.competition == 'E1':
+        return corners, records
+    goals, _ = _history_for_scope(e, c, observed, 'GOALS')
+    return {'corners': corners['corners'], 'btts': goals['btts']}, records
+
+
+def _history_for_scope(e, c, observed, validation_scope):
     """Observed coverage only. Eligibility is owned by the existing consumer."""
     if not e.sources:
         return {m: gate('MISSING', 'HISTORY_MISSING') for m in MARKETS}, None
@@ -129,7 +139,7 @@ def _history(e, c, observed):
         if c.competition in {'E1', 'E0'}:
             records, _ = validated_sources(c.competition, e.sources,
                 before=min(e.selected_day, observed.astimezone(ZoneInfo('Europe/London')).date()),
-                observed_at=observed, allow_unknown=True, enforce_seasons=True)
+                observed_at=observed, allow_unknown=True, enforce_seasons=True, validation_scope=validation_scope)
         elif c.history_adapter == 'FOOTBALL_DATA':
             # Existing strict path adapter, with bounded private temporary copies.
             with tempfile.TemporaryDirectory(prefix='modelfc-readiness-') as root:
@@ -146,11 +156,11 @@ def _history(e, c, observed):
                         raise ValueError
                     path = Path(root)/name
                     path.write_bytes(raw); paths.append(path)
-                    file_rows = load_team_match_stats_history([path], competition=c.competition)
+                    file_rows = load_team_match_stats_history([path], competition=c.competition, validation_scope=validation_scope)
                     if any(r.season != f'{year}/{year+1}' or
                            retrieved is not None and r.match_date > utc(retrieved).date() for r in file_rows):
                         raise ValueError
-                records = load_team_match_stats_history(paths, competition=c.competition)
+                records = load_team_match_stats_history(paths, competition=c.competition, validation_scope=validation_scope)
         else:
             if len(e.sources) != 1 or e.sources[0][0] != 'matches.csv':
                 raise ValueError
@@ -187,6 +197,9 @@ def _history(e, c, observed):
             output[market] = {**gate(state, reason, refs), 'complete_team_observations': count,
                               'latest_result': latest.isoformat() if latest else None}
         for value in output.values():
+            if c.history_adapter == 'FOOTBALL_DATA':
+                value.update(validation_scope=validation_scope,
+                             unvalidated_statistics=list(unvalidated_statistics(validation_scope)))
             value['sources'] = [{'filename': name, 'sha256': pin,
                 'retrieved_at': utc(retrieved).isoformat() if retrieved is not None else None}
                 for name, _, pin, retrieved in sorted(e.sources, key=lambda source: source[0])]
