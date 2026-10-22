@@ -296,12 +296,15 @@ def _quotes(saved, observed):
         return None, gate('INVALID', 'QUOTES_REJECTED')
 
 
-def report(evidence, *, as_of, quotes=None, contracts=CONTRACTS):
+def report(evidence, *, as_of, quotes=None, contracts=CONTRACTS, spain_italy=False):
     """Evaluate supplied bytes only; supplied provenance is never genuine acceptance.
 
     Exactly five configured leagues. All output is JSON-compatible and canonical
     encoding uses acquisition_storage. No files, snapshots or forecasts persist.
+    spain_italy=True opts into supplied SP1/I1 calendar gates, not qualification.
     """
+    if type(spain_italy) is not bool:
+        raise ValueError('SPAIN_ITALY_OPT_IN_REJECTED')
     observed = utc(as_of)
     config = _contracts(tuple(contracts))
     if not isinstance(evidence, dict) or set(evidence)-set(config):
@@ -360,6 +363,11 @@ def report(evidence, *, as_of, quotes=None, contracts=CONTRACTS):
         if detail is not None:
             row['zen56'] = detail
         output['leagues'].append(row)
+    if spain_italy:
+        # SP1/I1 registration only. E0 and MLS registrations have separate owners.
+        from modelfc.spain_italy_readiness import _apply
+        _apply(output, evidence, observed=observed, snapshot=snap,
+               quote_gate=quote_gate, contracts=config)
     # Also rejects non-finite accidental values before handing the report back.
     encoded(output)
     return output
