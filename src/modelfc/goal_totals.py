@@ -203,6 +203,16 @@ def implementation_hash():
         for name in ('goal_totals.py', 'btts_model.py')}))
 
 
+def aggregate_goals(fixture, prior):
+    """Shared score arithmetic after the caller validates chronology and identity."""
+    home = [r for r in prior if r.fixture.home == fixture.home]
+    away = [r for r in prior if r.fixture.away == fixture.away]
+    require(len(home) >= 5 and len(away) >= 5, 'GOAL_VENUE_HISTORY_INSUFFICIENT')
+    return GoalAggregates(len(prior), sum(r.home_goals for r in prior), sum(r.away_goals for r in prior),
+        len(home), sum(r.home_goals for r in home), sum(r.away_goals for r in home),
+        len(away), sum(r.away_goals for r in away), sum(r.home_goals for r in away))
+
+
 def freeze(fixture, observations, *, frozen_at, cutoff):
     """Shared five-league research fit, using only prior local-day known results.
 
@@ -224,12 +234,7 @@ def freeze(fixture, observations, *, frozen_at, cutoff):
                     and r.retrieved_at <= frozen_at), key=lambda r: (r.fixture.kickoff, r.fixture.provider, r.fixture.fixture_id, r.fixture.home, r.fixture.away))
     require(len(prior) >= MIN_HISTORY, 'INSUFFICIENT_GOAL_HISTORY')
     require(frozen_at-max(r.completed_at for r in prior) <= timedelta(days=14), 'GOAL_HISTORY_STALE')
-    home = [r for r in prior if r.fixture.home == fixture.home]
-    away = [r for r in prior if r.fixture.away == fixture.away]
-    require(len(home) >= 5 and len(away) >= 5, 'GOAL_VENUE_HISTORY_INSUFFICIENT')
-    inputs = GoalAggregates(len(prior), sum(r.home_goals for r in prior), sum(r.away_goals for r in prior),
-        len(home), sum(r.home_goals for r in home), sum(r.away_goals for r in home),
-        len(away), sum(r.away_goals for r in away), sum(r.home_goals for r in away))
+    inputs = aggregate_goals(fixture, prior)
     rates = arithmetic_rates(inputs)
     history_hash = fingerprint(encoded(_wire([asdict(r) for r in prior])))
     return FrozenGoals(fixture, frozen_at, cutoff, *rates, tuple(sorted({r.source_sha256 for r in prior})),
