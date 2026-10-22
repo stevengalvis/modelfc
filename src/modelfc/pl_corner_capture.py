@@ -161,10 +161,13 @@ def capture(store_dir, raw, *, enabled=False, sources=(), **options):
 def main(argv=None):
     parser = _Parser(description=__doc__)
     parser.add_argument('--enable-offline-capture', action='store_true')
-    for name in ('store', 'bundle', 'bundle-sha256', 'contract', 'reviewed-contract-sha256', 'season-year', 'day', 'as-of'):
-        parser.add_argument('--'+name, required=True)
+    required_inputs = ('store', 'bundle', 'bundle-sha256', 'contract', 'reviewed-contract-sha256', 'season-year', 'day', 'as-of')
+    for name in required_inputs:
+        parser.add_argument('--'+name)
     parser.add_argument('--source', nargs=3, action='append', default=[])
     args = parser.parse_args(argv)
+    if args.enable_offline_capture and any(getattr(args, name.replace('-', '_')) is None for name in required_inputs):
+        parser.error('enabled capture requires all evidence and store arguments')
     try:
         if not args.enable_offline_capture:
             result = prepare(None)
