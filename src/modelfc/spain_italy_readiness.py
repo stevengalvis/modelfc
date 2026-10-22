@@ -6,11 +6,9 @@ authentication claim. Original source bytes are pinned separately in the bundle.
 from datetime import date
 from zoneinfo import ZoneInfo
 
-from modelfc.acquisition_planner import LEAGUES, utc
-from modelfc.acquisition_storage import fingerprint, encoded
+from modelfc.acquisition_planner import LEAGUES
 from modelfc.five_league_readiness import (
-    Evidence, CONTRACTS, report as shared_report, gate, _pin, _scope,
-    _history_for_scope, _quotes,
+    Evidence, report as shared_report, gate, _pin, _scope, _history_for_scope,
 )
 from modelfc.history_completeness import MAX_CALENDAR_BYTES, MAX_CALENDAR_AGE
 from modelfc.matches import Venue
@@ -130,17 +128,19 @@ def coverage(rows, records, e, market, observed):
 
 
 def report(evidence, *, as_of, quotes=None):
-    """Add SP1/I1 gates to an unchanged shared report; all consumers unqualified."""
-    observed = utc(as_of)
-    result = shared_report(evidence, as_of=observed, quotes=quotes)
-    snapshot, quote_gate = _quotes(quotes, observed)
+    """Compatibility entry point explicitly opting into the shared SP1/I1 gates."""
+    return shared_report(evidence, as_of=as_of, quotes=quotes, spain_italy=True)
+
+
+def _apply(result, evidence, *, observed, snapshot, quote_gate, contracts):
+    """Enrich only SP1/I1 rows of a newly built report; never call report again."""
     for row in result['leagues']:
         code = row['competition']
         if code not in CONFIG:
             continue
         e = evidence.get(code)
         cal, mapping, rows = gate('MISSING', 'CALENDAR_MISSING'), gate('MISSING', 'MAPPING_MISSING'), None
-        c = next(c for c in CONTRACTS if c.competition == code)
+        c = contracts[code]
         league = next(l for l in LEAGUES if l.competition == code)
         valid_scope = isinstance(e, Evidence) and _scope(e, c, league) is None
         if valid_scope:
@@ -176,5 +176,3 @@ def report(evidence, *, as_of, quotes=None):
             row['markets'][market] = {**row['markets'][base_market], 'gates': gates,
                 'capability': 'UNQUALIFIED', 'input_state': 'UNSUPPORTED', 'validated': False, 'live': False}
         row['saved_calendar_adapter'] = 'SP1_I1_SAVED_V1'
-    encoded(result)
-    return result

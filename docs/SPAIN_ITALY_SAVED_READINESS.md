@@ -1,13 +1,23 @@
 # ZEN60/61: Spain and Italy saved inputs
 
-`spain_italy_readiness.report(evidence, as_of=..., quotes=...)` wraps the existing
-five-league report. It adds the same saved-calendar adapter to SP1 and I1 and
+`five_league_readiness.report(evidence, as_of=..., quotes=..., spain_italy=True)`
+explicitly enables the supplied SP1/I1 calendar gates. The default is false and
+other values are rejected. The compatibility entry point
+`spain_italy_readiness.report(evidence, as_of=..., quotes=...)` delegates to that
+same opt-in. Both use one report and one saved-quote normalization, adding
+the same saved-calendar adapter to SP1 and I1 and
 separate corners, BTTS and goal-totals gates. E1, E0 and MLS rows are unchanged.
 The original five-tournament maximum and acquisition registry remain unchanged;
 SP1=8 and I1=23 are OddsPapi identities, never calendar-provider IDs.
 The shared qualification registry deliberately keeps `calendar_adapter=null`;
 the additional `saved_calendar_adapter` field identifies this structural evidence
 boundary, not a newly qualified shared consumer.
+
+Registration ownership is limited to the SP1/I1 opt-in and its enrichment helper.
+EPL consumer registration and MLS registration are separate coordinated work;
+their rows are not enriched here. `goal_totals.readiness` is unchanged and does
+not opt in automatically. This follow-up enables the wrapper's existing totals
+evidence gates for SP1/I1 only, not a totals model consumer or priced forecast.
 
 This is a supplied **normalized saved input schema**, not a parser for a native
 provider response. A later source-specific normalization must be reviewed against
