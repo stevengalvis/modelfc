@@ -21,3 +21,11 @@ Remaining genuine-data acceptance:
 5. Separately qualify current calendar completeness, mappings, model suitability and pre-match evidence before any readiness integration or activation. Synthetic normalization and totals integration tests are not league validation.
 
 No provider calls, credentials, odds acquisition, production writes, forecasts, public recommendations, schedules, deployment or activation are part of this slice.
+
+## Public-source investigation (22 October 2026)
+
+The dataset author's [MLS Data Examples](https://www.kaggle.com/code/josephvm/mls-data-examples) publicly indexes `home_score`, `away_score` and `shootout`. These are candidate authentic fields, not verification of a retained CSV version. The [version 66 data card](https://www.kaggle.com/datasets/josephvm/major-league-soccer-dataset/versions/66) describes matches from 2001–2021; the repository's partial-2022 benchmark evidently refers to a different retained version. Do not substitute version 66 for that evidence or invent its hash/retrieval time.
+
+A populated `shootout` field now vetoes FT eligibility unless its value is explicitly false/zero (`False`, `0`, `0.0`, case-insensitive). Blank/absent values still depend on the reviewed REGULATION contract; other encodings are excluded for review. This is conservative parser behavior, not a claim that all authentic marker encodings have been inventoried.
+
+[MLS's official calendar announcement](https://www.mlssoccer.com/news/mls-to-align-calendar-with-top-leagues-around-the-world) establishes a 2027 transition and a 2027–28 cross-year season. This historical adapter therefore excludes all years from 2027 onward until season semantics receive a separate review. [Official competition guidelines](https://www.mlssoccer.com/about/competition-guidelines) distinguish regular-season ties from playoff shootouts/extra time; a final score alone cannot establish regulation goals.

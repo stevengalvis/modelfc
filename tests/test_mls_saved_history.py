@@ -104,6 +104,18 @@ class MLSSavedTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'SEMANTICS'):
                 normalize(**(args | dict(contract_raw=raw, contract_sha256=fingerprint(raw))))
 
+    def test_shootout_marker_overrides_ft_and_transition_seasons_excluded(self):
+        for marker in ('True', '1', '4-3', 'unknown'):
+            b = normalize(**arguments([match(shootout=marker)]))
+            self.assertEqual(b['matches'], ())
+            self.assertEqual(b['excluded'][0]['reason'], 'SHOOTOUT_MARKER_UNSUPPORTED')
+        for marker in ('', 'False', '0', '0.0'):
+            self.assertEqual(normalize(**arguments([match(shootout=marker)]))['goal_rows'], 1)
+        at = datetime(2028, 8, 2, tzinfo=timezone.utc)
+        b = normalize(**arguments([match(year='2028', league='2028 MLS',
+            part_of_competition='Regular Season', date='Tuesday, August 1')], as_of=at, retrieved_at=at))
+        self.assertEqual(b['excluded'][0]['reason'], 'TRANSITION_SEASON_UNSUPPORTED')
+
     def test_unknown_and_impossible_provenance(self):
         b = normalize(**arguments(retrieved_at=None))
         self.assertEqual(b['provenance'], 'UNKNOWN')

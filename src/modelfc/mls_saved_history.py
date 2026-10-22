@@ -108,6 +108,10 @@ def normalize(raw=None, *, source_sha256=None, contract_raw=None, contract_sha25
         # Limit this adapter to the documented corner benchmark era; earlier rules are unreviewed.
         elif year < 2008:
             reason = 'PRE_BENCHMARK_SEASON_UNSUPPORTED'
+        elif year >= 2027:
+            reason = 'TRANSITION_SEASON_UNSUPPORTED'
+        elif row.get('shootout', '').strip().lower() not in {'', 'false', '0', '0.0'}:
+            reason = 'SHOOTOUT_MARKER_UNSUPPORTED'
         if reason:
             excluded.append({'row': number, 'source_id': sid, 'reason': reason})
             continue
