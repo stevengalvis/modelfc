@@ -106,10 +106,13 @@ def assess(raw, *, sources=(), enabled=False, **options):
 def main(argv=None):
     parser = _Parser(description=__doc__)
     parser.add_argument('--enable-offline-audit', action='store_true')
-    for name in ('bundle', 'bundle-sha256', 'contract', 'reviewed-contract-sha256', 'season-year', 'day', 'as-of'):
-        parser.add_argument('--'+name, required=True)
+    required_inputs = ('bundle', 'bundle-sha256', 'contract', 'reviewed-contract-sha256', 'season-year', 'day', 'as-of')
+    for name in required_inputs:
+        parser.add_argument('--'+name)
     parser.add_argument('--source', action='append', nargs=3, default=[], metavar=('CSV', 'SHA256', 'RETRIEVED_AT_OR_UNKNOWN'))
     args = parser.parse_args(argv)
+    if args.enable_offline_audit and any(getattr(args, name.replace('-', '_')) is None for name in required_inputs):
+        parser.error('enabled audit requires all evidence arguments')
     try:
         if not args.enable_offline_audit:
             report = assess(None)
