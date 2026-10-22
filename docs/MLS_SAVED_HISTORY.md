@@ -1,0 +1,46 @@
+# ZEN62: saved MLS history normalization
+
+This opt-in offline module adds no runtime caller or shared-contract changes. It builds on PR199 `83dea6cbd0322012e110c7a661c67e5e30ff2999`. Existing MLS corner loading, E1 behavior and shared five-league readiness remain unchanged; the latter still reports MLS goals unsupported until a separately reviewed integration.
+
+`mls_saved_history.normalize` consumes pinned original CSV bytes and a separately pinned, explicitly supplied schema contract. Without `enabled=True` it returns DISABLED without inputs. Metadata and corner column names reuse the existing Kaggle matches.csv adapter. The authentic file remains unavailable in this workspace. The VPS inventory linked below now verifies `home_score` and `away_score` headers, but not their regulation semantics. Original tests use `synthetic_home_score` and `synthetic_away_score`; additional inventory-schema tests reproduce the observed headers with explicitly synthetic values and attestations. The schema contract must identify actual reviewed goal columns and attest REGULATION / REGULAR_SEASON semantics, bound to the exact source hash. A pin identifies bytes; it does not establish that an attestation is true.
+
+The contract fields are `version` (1), `source_sha256`, `home_goals_column`, `away_goals_column`, `score_period` (REGULATION), and `stage` (REGULAR_SEASON). No numeric score-column guessing or alias matching occurs. Calendar years are integers, not European YYYY/YYYY seasons; named dates and weekdays reuse the existing MLS parser. This initial scope excludes years before the documented 2008 benchmark era. Only exact MLS league/year, regular-season/year and FT status qualify. Playoffs, extra time, shootouts and other statuses/stages receive explicit exclusions. They are never interpreted as regulation finals.
+
+Each match carries independent goals/corners pairs and reasons. Missing columns, blank pairs, partial pairs and invalid counts are distinct; zero is a valid count. Invalid or absent corners cannot suppress valid goals, and absent goals cannot suppress valid corners. Unrelated statistics are not assessed. Duplicate normalized source IDs or duplicate date/ordered-team identities reject the batch even if statistics are missing. No historical aliases, physical-venue continuity, season completeness or current coverage are inferred.
+
+Retrieval time is supplied original provenance, never file modification time. UNKNOWN provenance permits normalization for inspection but blocks both corner-observation and GoalObservation conversion. Future retrieval or dates later than retrieval/observation reject. SUPPLIED means a timestamp was provided and checked, not that its authenticity was verified.
+
+The CSV's known schema does not establish exact kickoff, completion timestamps or cross-provider identity. `goal_observations` requires separate pinned JSON bindings covering every goal-complete normalized match. Top-level fields are `source_sha256`, `contract_sha256`, `fixtures`; each fixture has `source_id`, `provider`, `fixture_id`, exact `home`/`away`, `kickoff`, `timezone`, `completed_at`. The provider must be the identity source actually supplied by the caller; the adapter invents none. The match date must equal kickoff's local date. Existing GoalFixture/GoalObservation validation enforces timezone, regulation period and kickoff < completion <= original retrieval. GoalObservation.source_sha256 identifies the composite receipt of original source, schema contract and binding hashes. Those original pinned artifacts must be retained alongside observations. No model is fitted or activated by normalization. Generic totals retain their existing prior-day, known-at-freeze, freshness and coverage gates.
+
+Remaining genuine-data acceptance:
+
+1. Supply original matches.csv, hash and authentic retrieval receipt (or preserve UNKNOWN); verify actual goal column names and regulation score interpretation against the dataset documentation and rows.
+2. Review the pinned schema contract and unsupported stage/status/year inventory. The documented historical corner benchmark ends in partial 2022; it does not establish current MLS coverage.
+3. Supply genuine exact identity, timezone, kickoff and completion evidence with reviewed bindings and pins. Do not synthesize midnight kickoffs, completion offsets or provider IDs.
+4. Measure separate goal/corner coverage, zero/missing/partial counts, duplicate and alias conflicts, calendar-year/stage boundaries, and negative cases against real saved inputs.
+5. Separately qualify current calendar completeness, mappings, model suitability and pre-match evidence before any readiness integration or activation. Synthetic normalization and totals integration tests are not league validation.
+
+No provider calls, credentials, odds acquisition, production writes, forecasts, public recommendations, schedules, deployment or activation are part of this slice.
+
+## Public-source investigation (22 October 2026)
+
+The dataset author's [MLS Data Examples](https://www.kaggle.com/code/josephvm/mls-data-examples) publicly indexes `home_score`, `away_score` and `shootout`. These are candidate authentic fields, not verification of a retained CSV version. The [version 66 data card](https://www.kaggle.com/datasets/josephvm/major-league-soccer-dataset/versions/66) describes matches from 2001–2021; the repository's partial-2022 benchmark evidently refers to a different retained version. Do not substitute version 66 for that evidence or invent its hash/retrieval time.
+
+A populated `shootout` field now vetoes FT eligibility unless its value is explicitly false/zero (`False`, `0`, `0.0`, case-insensitive). Blank/absent values still depend on the reviewed REGULATION contract; other encodings are excluded for review. This is conservative parser behavior, not a claim that all authentic marker encodings have been inventoried.
+
+[MLS's official calendar announcement](https://www.mlssoccer.com/news/mls-to-align-calendar-with-top-leagues-around-the-world) establishes a 2027 transition and a 2027–28 cross-year season. This historical adapter therefore excludes all years from 2027 onward until season semantics receive a separate review. [Official competition guidelines](https://www.mlssoccer.com/about/competition-guidelines) distinguish regular-season ties from playoff shootouts/extra time; a final score alone cannot establish regulation goals.
+
+## Retained VPS inventory assessment (22 October 2026)
+
+The [read-only VPS inventory](https://github.com/stevengalvis/modelfc/pull/201#issuecomment-6352229928), observed at 21:57:25 UTC, reports `/root/dev/modelfc/matches.csv`: 6,613,607 bytes, 7,289 rows and 209 columns; unchanged before/after SHA256 `80568113ef5c2021330bc408e11a2c50e3a384e0707098beab43f5502bedaabf`. This is reported original-file identity, not a cloud replay or normalization acceptance. Coverage ends 16 July 2022; no current coverage or complete season is established.
+
+No parser change is warranted from this inventory. Existing behavior fails closed:
+
+- The 973 missing IDs reject the entire batch, including otherwise excluded rows. Numeric M/D/YYYY dates (973 observed) are unsupported and also reject; named dates require year and weekday consistency. No IDs or dates are repaired or rows silently dropped. Thus the full original file cannot currently normalize, even with a valid supplied contract. Supporting a reviewed cohort requires a separate pinned derivation/identity policy, not deleting inconvenient rows ad hoc.
+- Full status must equal FT. AET, FT-Pens, Shootout, Abandoned and multiline aggregate annotations are excluded; first-line FT alone is insufficient. Non-regular-season stages and populated shootout markers are excluded. Blank/False markers cannot establish regulation semantics.
+- Paired missing corners (2,238 observed) remain missing; numeric zero remains zero. Goals and corners are independent, subject to the same scope and provenance gates.
+- Actual score column names do not establish 90-minute scores or corner periods. No approved regulation contract can yet be asserted from this inventory. UNKNOWN retrieval blocks both model projections; inspection time and file timestamps are not acquisition receipts.
+
+The 46 literal team labels include aliases and All-Stars. The parser preserves literal identities, does not certify club membership or resolve aliases, and its duplicate checks are not alias-aware. Genuine use still needs reviewed team/cohort mappings and stage policy. Neither normalizing a synthetic row nor accepting caller-supplied bindings certifies those mappings.
+
+`test_mls_inventory_schema.py` reproduces all 209 observed column names with synthetic rows, header ordering, receipts and regulation attestations. It tests rejection and inspection behavior only. No original rows or original source hash are used as fabricated fixture evidence. Remaining prerequisites are source/version/acquisition provenance, documented score and corner periods, reviewed missing-ID/date/cohort policy, alias-aware identity bindings with genuine kickoff/completion evidence, and separate current calendar/history readiness integration. No shared contracts or runtime callers changed.

@@ -1,0 +1,25 @@
+# Offline MLS observed-final-score research
+
+This opt-in path consumes the ASA saved-response adapter's reviewed regular-season cohort. It does not require an exact final-whistle timestamp and never fills one in. It does not enable MLS readiness, acquisition, publication, settlement, odds consumption or production forecasting.
+
+## Evidence creation and availability
+
+`observe_asa(..., enabled=True)` accepts the same explicitly supplied private response bytes and pinned receipts as the ASA normalizer, plus pinned binding JSON with exactly `inputs_sha256`, `timezone` and `policy: EXPLICIT_ANALYSIS_DAY_TIMEZONE`. The input identity is the ASA normalizer's composite hash. The timezone is an explicit, reviewed analysis-day policy for this batch and target; it is not inferred venue geography or silently rewritten at freeze time. No cross-provider alias mapping is inferred.
+
+The verifier reads/hashes actual supplied bytes in this process, validates the final-score cohort and binding, then records the current UTC wall clock. That time proves possession of the verified bytes by that observation under the trusted local clock/process assumption. It does not prove when the response first arrived, when a provider update occurred or the exact final whistle. Request start, caller `as_of`, provider update and expanded minutes never supply the observation time. Neither an observation timestamp parameter nor historical receipt import is supported. A later verification produces a later bound and a different evidence hash.
+
+The evidence binds policy/origin, observation time, original response hashes and source names, receipt hash, normalized input hash, analysis-day binding hash, fixture identities and scores. Raw bytes and evidence must remain private. Preserve the originals alongside evidence for audit. This code has no filesystem acquisition or persistence API; it inspects only bytes explicitly supplied to it.
+
+Only the exact immutable batch returned by this process's verifier can enter `freeze_observed`. Copied, reconstructed or caller-authored batches fail the in-process identity guard. This is a misuse guard, not cryptographic attestation against hostile Python code or a compromised clock. Cross-process historical import would require a separately reviewed trusted evidence mechanism; changing a JSON timestamp and repinning it is not supported.
+
+## Explicit research freeze
+
+Both entry points default to disabled (`None` without inputs). `freeze_observed(..., enabled=True)` accepts only MLS targets and verifier-produced batches. The caller supplies `frozen_at` as a research cutoff, not evidence of when a forecast actually ran; prospective capture is outside scope. Every observation must be no later than the freeze; equality is allowed. A batch with later observations rejects rather than silently selecting convenient records. Kickoffs must be on a prior local analysis day; target kickoff must follow the freeze. Competition/timezone agreement, duplicate checks, at least 100 prior matches and five home/away venue observations remain enforced.
+
+Freshness uses a conservative sufficient condition: the latest qualifying kickoff must be within 14 days of the freeze, inclusive. Because that match is evidenced complete, its actual completion followed kickoff. This establishes recent completion without knowing its exact timestamp. A fresh download of old matches cannot satisfy the condition. Matches outside the kickoff bound do not prove freshness, including potentially long-delayed completions; no duration is inferred. Old matches may still contribute training scores when verified before the current freeze, but the cache cannot be used before its observation bound in historical replay.
+
+The result is a distinct `FrozenObservedGoals`, with explicit `VERIFIED_SAVED_ASA_FINAL_SCORES` origin and chronology policy, history/evidence/implementation hashes, aggregates and rates. BTTS and totals probability methods reuse existing mathematical functions. Existing `GoalObservation`, `FrozenGoals`, `freeze`, quote consumption and settlement do not accept these new input/output types. Existing freeze behavior is preserved; its score arithmetic was extracted unchanged into the shared `aggregate_goals` helper. That source edit changes the existing implementation hash naturally; old exact-head evidence must not be relabeled as new-head acceptance.
+
+## Acceptance limits
+
+Tests use synthetic byte arrays and a controlled verifier clock. Genuine private Library bytes remain inaccessible; no transfer retry, provider fetch or genuine-byte acceptance occurred. This research path does not prove current calendar completeness, model suitability, cross-provider identity, or calibrated MLS forecasts. The 100-match/five-venue gates are preserved sample checks, not a completeness census. Exact completion remains unknown; settlement remains separate. Publishing the local code and any later trusted import, calibration or activation require their own review/authorization.
