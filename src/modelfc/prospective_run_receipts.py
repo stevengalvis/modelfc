@@ -19,7 +19,8 @@ COUNTERS = ("fixtures_discovered", "captures_created", "captures_existing",
             "captures_awaiting_kickoff", "outcomes_created", "outcomes_pending",
             "outcomes_settled", "market_observations_created", "opportunities_created",
             "review_required", "provider_requests")
-REASONS = frozenset(("PERIOD_EXPIRED", "REQUEST_BUDGET", "SATURDAY_BUDGET_RESERVED", "AFTERNOON_LIMIT", "SATURDAY_LIMIT", "WEEKEND_BUDGET", "MIDWEEK_BUDGET_RESERVED", "FIXTURE_NOT_DISCOVERED", "SETTLEMENT_REVIEW",
+REASONS = frozenset(("CALENDAR_EVIDENCE_UNAVAILABLE", "CALENDAR_NO_RELEVANT_FIXTURES",
+                     "CALENDAR_FIXTURE_UNMAPPED", "CALENDAR_FIXTURE_MISMATCH", "PERIOD_EXPIRED", "REQUEST_BUDGET", "SATURDAY_BUDGET_RESERVED", "AFTERNOON_LIMIT", "SATURDAY_LIMIT", "WEEKEND_BUDGET", "MIDWEEK_BUDGET_RESERVED", "FIXTURE_NOT_DISCOVERED", "SETTLEMENT_REVIEW",
                      "DISCOVERY_INVALID", "DISCOVERY_INCOMPLETE", "ATTEMPT_INCOMPLETE",
                      "CAPTURE_WINDOW_CLOSED", "FIXTURE_REVIEW", "INSUFFICIENT_HISTORY",
                      "PROVIDER_FAILURE", "PROVIDER_CONFIGURATION", "MARKET_METADATA_INVALID",
@@ -35,7 +36,7 @@ NAME = re.compile(r"(\d{8}T\d{6}\d{6}Z)-([0-9a-f]{32})\.json\Z")
 DAY = re.compile(r"\d{4}-\d{2}-\d{2}\Z")
 MAX_DAYS = 36600
 MAX_FILES_PER_DAY = 1000
-MAX_BYTES = 8192
+MAX_BYTES = 262144
 
 
 class ReceiptError(ValueError):
@@ -66,8 +67,10 @@ def _timestamp(value):
 
 
 def validate(record, *, path=None, now=None):
-    if (not isinstance(record, dict) or set(record) != RECEIPT_FIELDS
-            or type(record["schema_version"]) is not int or record["schema_version"] != 1):
+    if (not isinstance(record, dict)
+            or type(record.get("schema_version")) is not int
+            or record["schema_version"] not in (1, 2)
+            or set(record) != (RECEIPT_FIELDS | ({"fixture_diagnostics"} if record["schema_version"] == 2 else set()))):
         raise ReceiptError("invalid receipt schema")
     if not isinstance(record["run_id"], str) or not re.fullmatch(r"[0-9a-f]{32}", record["run_id"]):
         raise ReceiptError("invalid receipt identity")
@@ -79,8 +82,11 @@ def validate(record, *, path=None, now=None):
     if (record["completion"] != "COMPLETED" or type(record["duration_ms"]) is not int
             or record["duration_ms"] != _duration_ms(start, end)):
         raise ReceiptError("invalid receipt completion")
+    if record["schema_version"] == 2:
+        from modelfc.fixture_diagnostics import validate_diagnostics
+        validate_diagnostics(record["fixture_diagnostics"], start=start, end=end)
     summary = record["summary"]
-    if (not isinstance(summary, dict) or set(summary) - {"btts_research"} != {"status", "reasons",
+    if (not isinstance(summary, dict) or set(summary) - {"btts_research", "calendar_cohorts"} != {"status", "reasons",
             "prospective_budget_remaining", *COUNTERS}
             or summary["status"] not in ("OK", "PARTIAL", "FAIL")
             or not isinstance(summary["reasons"], list)
@@ -90,6 +96,9 @@ def validate(record, *, path=None, now=None):
             or any(reason not in REASONS for reason in summary["reasons"])
             or (summary["status"] == "OK") != (not summary["reasons"])):
         raise ReceiptError("invalid receipt summary")
+    if "calendar_cohorts" in summary:
+        from modelfc.odds_calendar import validate_decisions
+        validate_decisions(summary["calendar_cohorts"], start=start, end=end)
     if "btts_research" in summary:
         try:
             validate_btts_summary(summary["btts_research"])
@@ -116,7 +125,7 @@ def validate(record, *, path=None, now=None):
     return record
 
 
-def publish(state, *, started, completed, summary, release_sha):
+def publish(state, *, started, completed, summary, release_sha, fixture_diagnostics=None):
     """Publish only after run_once completes, while its runner lock is held."""
     run_id = uuid.uuid4().hex
     record = {"schema_version": 1, "run_id": run_id,
@@ -125,8 +134,18 @@ def publish(state, *, started, completed, summary, release_sha):
               "duration_ms": _duration_ms(started, completed),
               "completion": "COMPLETED", "release_sha": release_sha,
               "summary": summary}
+    if fixture_diagnostics is not None:
+        from modelfc.fixture_diagnostics import validate_diagnostics
+        try:
+            validate_diagnostics(fixture_diagnostics, start=started, end=completed)
+        except ValueError:
+            # Diagnostic faults cannot invalidate already completed business work.
+            fixture_diagnostics = dict(fixture_diagnostics, status='INCOMPLETE', events=[])
+        record.update(schema_version=2, fixture_diagnostics=fixture_diagnostics)
     record["record_hash"] = _hash(record)
     validate(record)
+    if len(json.dumps(record).encode()) > MAX_BYTES:
+        raise ReceiptError("receipt size limit")
     root = Path(state) / "prospective" / "run-receipts"
     day = root / completed.date().isoformat()
     new_root, new_day = not root.exists(), not day.exists()
@@ -201,6 +220,10 @@ def latest(state, *, now):
     if len(ordered) > 1 and ordered[-1][:22] == ordered[-2][:22]:
         raise ReceiptError("ambiguous completion order")
     path = directory / ordered[-1]
+    return read_record(path, now=now)
+
+
+def read_record(path, *, now):
     fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     with os.fdopen(fd, "rb") as stream:
         info = os.fstat(stream.fileno())

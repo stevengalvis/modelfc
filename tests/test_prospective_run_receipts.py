@@ -117,5 +117,160 @@ class ReceiptTests(unittest.TestCase):
             receipts.latest(self.state, now=NOW)
 
 
+    def test_fixture_report_old_receipts_and_absence_are_unknown(self):
+        from modelfc.fixture_diagnostics import report
+        missing = report(self.state, day=NOW.date(), now=NOW)
+        self.assertEqual(missing['evidence_state'], 'UNKNOWN')
+        self.assertIsNone(missing['counts']['distinct_fixtures'])
+        original = self.publish()
+        result = report(self.state, day=NOW.date(), fixture_id='123', now=NOW)
+        self.assertEqual(result['count_scope'], 'UNKNOWN')
+        self.assertEqual(result['runs'][0]['diagnostics'], 'UNKNOWN')
+        self.assertEqual(receipts.latest(self.state, now=NOW), original)
+
+    def test_fixture_diagnostic_bounds_and_validation(self):
+        from types import SimpleNamespace
+        from modelfc.fixture_diagnostics import Recorder, MAX_EVENTS, report
+        recorder = Recorder()
+        fixture = SimpleNamespace(provider_fixture_id='123', provider='oddspapi', competition='E1')
+        for _ in range(MAX_EVENTS+1):
+            recorder.add(fixture, 'DISCOVERED', NOW)
+        self.assertEqual(len(recorder.events), MAX_EVENTS)
+        self.assertEqual(recorder.snapshot()['status'], 'INCOMPLETE')
+        record = receipts.publish(self.state, started=NOW, completed=NOW, summary=self.summary,
+                                  release_sha=SHA, fixture_diagnostics=recorder.snapshot())
+        self.assertEqual(receipts.latest(self.state, now=NOW), record)
+        self.assertEqual(report(self.state, day=NOW.date(), now=NOW)['counts']['distinct_fixtures'], 1)
+        from copy import deepcopy
+        for change in [{'reason':'secret/path'}, {'fixture_id':'../private'},
+                       {'observed_at_utc':(NOW+timedelta(seconds=1)).isoformat()},
+                       {'category':'NO_QUALIFYING_VALUE'}, {'evidence_hash':'secret'}]:
+            invalid = deepcopy(record)
+            invalid['fixture_diagnostics']['events'][0].update(change)
+            invalid['record_hash'] = receipts._hash(invalid)
+            with self.assertRaises(receipts.ReceiptError):
+                receipts.validate(invalid)
+
+    def test_shared_namespaces_filters_and_distinct_reference_counts(self):
+        from types import SimpleNamespace
+        from modelfc.fixture_diagnostics import Recorder, report
+        recorder = Recorder()
+        for provider, competition in (('oddspapi', 'E1'), ('football-data.org', 'E1'), ('oddspapi', 'E0')):
+            fixture = SimpleNamespace(provider_fixture_id='123', provider=provider, competition=competition)
+            for market in ('BTTS', 'CORNER_TEAM_TOTAL'):
+                recorder.add(fixture, 'DISCOVERED', NOW, market=market)
+                for reason in ('FORECAST_RECORDED', 'FORECAST_REUSED'):
+                    recorder.add(fixture, reason, NOW, market=market, reference_id='a'*64)
+                for strategy in ('best_value', 'higher_probability'):
+                    for reason in ('PUBLICATION_RECORDED', 'PUBLICATION_EXISTING'):
+                        recorder.add(fixture, reason, NOW, market=market, strategy=strategy, reference_id='b'*64)
+        receipts.publish(self.state, started=NOW, completed=NOW, summary=self.summary,
+                         release_sha=SHA, fixture_diagnostics=recorder.snapshot())
+        result = report(self.state, day=NOW.date(), now=NOW)
+        self.assertEqual(result['counts']['distinct_fixtures'], 3)
+        self.assertEqual(result['counts']['fixture_market_groups'], 6)
+        self.assertEqual(result['counts']['forecast_cohorts'], 6)
+        self.assertEqual(result['counts']['publication_records'], 12)
+        filtered = report(self.state, day=NOW.date(), now=NOW,
+                          competition='E1', provider='oddspapi', market='BTTS')
+        self.assertEqual(filtered['counts']['distinct_fixtures'], 1)
+        self.assertEqual(filtered['counts']['publication_records'], 2)
+        self.assertEqual(filtered, report(self.state, day=NOW.date(), now=NOW,
+                          competition='E1', provider='oddspapi', market='BTTS'))
+        self.assertTrue(all(r['instrumentation'] == 'UNSUPPORTED_BY_IMPLEMENTATION'
+                            for r in result['support'] if r['competition'] == 'E0'))
+
+    def test_legacy_forecast_unknown_and_new_forecast_hash_checked(self):
+        from modelfc.forecast_only_runner import _publish_receipt
+        from modelfc.fixture_diagnostics import Recorder, report
+        legacy = dict(run_at_utc=NOW.isoformat(), deployed_sha=SHA, status='RECORDED')
+        _publish_receipt(self.state, legacy)
+        result = report(self.state, day=NOW.date(), now=NOW)
+        self.assertEqual(result['runs'][0]['diagnostics'], 'UNKNOWN')
+        self.assertEqual(result['runs'][0]['time_basis'], 'LEGACY_RUN_START')
+        self.assertIsNone(result['counts']['forecast_cohorts'])
+        later = NOW + timedelta(seconds=1)
+        _publish_receipt(self.state, dict(legacy, run_at_utc=later.isoformat()),
+                         diagnostics=Recorder(), completed=later)
+        self.assertEqual(len(report(self.state, day=NOW.date(), now=later)['runs']), 2)
+        path = next(p for p in (self.state/'forecast-only-receipts').glob('*.json')
+                    if 'record_hash' in json.loads(p.read_bytes()))
+        record = json.loads(path.read_bytes())
+        record['status'] = 'REJECTED'
+        path.write_text(json.dumps(record))
+        with self.assertRaises(receipts.ReceiptError):
+            report(self.state, day=NOW.date(), now=later)
+
+    def test_forecast_blocked_run_reasons_remain_run_wide_and_sanitized(self):
+        from modelfc.forecast_only_runner import _publish_receipt
+        from modelfc.fixture_diagnostics import Recorder, report
+        for index, reason in enumerate(('SPORTMONKS_RETRY_WAIT', 'HISTORY_RESULTS_MISSING',
+                                        'private/path/token', ['SPORTMONKS_RETRY_WAIT'])):
+            when = NOW + timedelta(seconds=index)
+            _publish_receipt(self.state, dict(run_at_utc=when.isoformat(), deployed_sha=SHA,
+                             status='BLOCKED', reason=reason), diagnostics=Recorder(), completed=when)
+        result = report(self.state, day=NOW.date(), now=when, fixture_id='123')
+        self.assertEqual([run['run_reasons'] for run in result['runs']],
+                         [['SPORTMONKS_RETRY_WAIT'], ['HISTORY_RESULTS_MISSING'], ['UNKNOWN'], ['UNKNOWN']])
+        self.assertTrue(all(not run['events'] for run in result['runs']))
+        self.assertEqual(result['stage_evidence'], [])
+        self.assertNotIn('private/path/token', json.dumps(result))
+        self.assertIsNone(result['counts']['distinct_fixtures'])
+
+    def test_backward_forecast_completion_clock_cannot_poison_reader(self):
+        from types import SimpleNamespace
+        from modelfc.forecast_only_runner import _publish_receipt
+        from modelfc.fixture_diagnostics import Recorder, report, validate_diagnostics
+        for index, with_events in enumerate((False, True)):
+            started = NOW + timedelta(seconds=index)
+            recorder = Recorder()
+            if with_events:
+                recorder.add(SimpleNamespace(provider_fixture_id='123', provider='oddspapi', competition='E1'),
+                             'DISCOVERED', started)
+            with self.assertRaises(receipts.ReceiptError):
+                validate_diagnostics(recorder.snapshot(), start=started, end=started-timedelta(seconds=1))
+            receipt = dict(run_at_utc=started.isoformat(), deployed_sha=SHA, status='RECORDED')
+            _publish_receipt(self.state, receipt, diagnostics=recorder, completed=started-timedelta(seconds=1))
+            self.assertEqual(receipt['completed_at_utc'], started.isoformat())
+            self.assertEqual(receipt['completion_time_basis'], 'RUN_START_CLOCK_REGRESSION')
+            self.assertEqual(receipt['status'], 'RECORDED')
+        result = report(self.state, day=NOW.date(), now=NOW+timedelta(seconds=1))
+        self.assertEqual(len(result['runs']), 2)
+        self.assertTrue(all(run['time_basis'] == 'RUN_START_CLOCK_REGRESSION' and
+                            run['diagnostics'] == 'INCOMPLETE' and run['discovery'] == 'UNKNOWN' and
+                            not run['events'] for run in result['runs']))
+        self.assertIsNone(result['counts']['distinct_fixtures'])
+
+    def test_invalid_diagnostic_clock_degrades_without_losing_receipt(self):
+        from types import SimpleNamespace
+        from modelfc.fixture_diagnostics import Recorder
+        recorder = Recorder()
+        recorder.add(SimpleNamespace(provider_fixture_id='123', provider='oddspapi', competition='E1'),
+                     'DISCOVERED', NOW + timedelta(seconds=1))
+        record = receipts.publish(self.state, started=NOW, completed=NOW, summary=self.summary,
+                                  release_sha=SHA, fixture_diagnostics=recorder.snapshot())
+        self.assertEqual(record['fixture_diagnostics']['status'], 'INCOMPLETE')
+        self.assertEqual(record['fixture_diagnostics']['events'], [])
+        self.assertEqual(record['summary'], self.summary)
+
+    def test_fixture_report_rejects_symlinks_and_tampered_records(self):
+        from modelfc.fixture_diagnostics import report
+        self.publish()
+        path = next(self.state.rglob('*.json'))
+        before = path.read_bytes()
+        path.unlink()
+        target = self.state/'private'
+        target.write_bytes(before)
+        path.symlink_to(target)
+        with self.assertRaises(receipts.ReceiptError):
+            report(self.state, day=NOW.date(), now=NOW)
+        path.unlink()
+        data = json.loads(before)
+        data['summary']['provider_requests'] += 1
+        path.write_text(json.dumps(data))
+        with self.assertRaises(receipts.ReceiptError):
+            report(self.state, day=NOW.date(), now=NOW)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -109,6 +109,24 @@ class BttsProspectiveTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(len(response.json()), 2)
 
+    def test_shared_receipt_records_real_btts_decisions(self):
+        from modelfc import published_recommendations
+        from modelfc.fixture_diagnostics import report
+        with patch.object(published_recommendations, '_now', side_effect=lambda: self.pilot.now):
+            result = self.run_once()
+        self.assert_corner_success(result)
+        receipt = latest(self.pilot.state, now=self.pilot.now)
+        self.assertEqual(receipt['fixture_diagnostics']['status'], 'RECORDED')
+        events = [e for e in receipt['fixture_diagnostics']['events'] if e['market'] == 'BTTS']
+        reasons = {e['reason'] for e in events}
+        self.assertTrue({'FORECAST_RECORDED', 'BTTS_SNAPSHOT_RECORDED', 'VALUE_QUALIFIED',
+                         'NO_QUALIFYING_VALUE', 'PUBLICATION_RECORDED'} <= reasons, reasons)
+        filtered = report(self.pilot.state, day=self.pilot.now.date(), market='BTTS', now=self.pilot.now)
+        self.assertEqual(filtered['counts']['distinct_fixtures'], 1)
+        self.assertEqual(filtered['counts']['forecast_cohorts'], 1)
+        self.assertGreater(filtered['counts']['publication_records'], 0)
+        self.assertTrue(all(e['reference_id'] for e in events))
+
     def test_forecast_directory_and_namespace_parent_fsynced_before_odds(self):
         directory = self.pilot.state / "btts-research"
         synced = []

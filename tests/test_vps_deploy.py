@@ -228,6 +228,51 @@ class FreshReleaseTest(unittest.TestCase):
                              remote=str(self.remote), check_boundary=lambda: None,
                              test_runner=deploy.tests, tip_reader=lambda _: sha)
 
+    def test_wait_revalidation_retains_lock_and_rejects_changed_boundaries(self):
+        for fault,reason in (("source","SOURCE_INVALID"),("target","ADMISSION_TARGET_SUPERSEDED"),
+                             ("boundary","STATE_BOUNDARY_FAILED"),("interrupt",None)):
+            with self.subTest(fault=fault):
+                request=self.control/"test-request.json"
+                output=self.control/"reports/test-result.json"
+                failure=self.control/"last-test-failure.json"
+                for path in (request,output,failure):path.write_bytes(b"retained evidence")
+                changed=[False]
+                def boundary():
+                    if changed[0] and fault == "boundary":
+                        raise deploy.Failure("STATE_BOUNDARY_FAILED")
+                def tip(_):return self.a if changed[0] and fault == "target" else self.b
+                def admission(*,revalidate):
+                    # Another descriptor cannot take the still-held deployment lock.
+                    with (self.control/"deploy.lock").open("a+") as lock:
+                        with self.assertRaises(BlockingIOError):
+                            deploy.fcntl.flock(lock,deploy.fcntl.LOCK_EX|deploy.fcntl.LOCK_NB)
+                    changed[0]=True
+                    if fault == "source":
+                        (self.created[-1]/"example.txt").write_text("changed during wait")
+                    if fault == "interrupt":raise KeyboardInterrupt
+                    revalidate()
+                    self.fail("changed admission boundary accepted")
+                def runner(release,sha,*,revalidate):
+                    return self.real_tests(release,sha,request=request,output=output,revalidate=revalidate)
+                with patch.object(deploy,"tests",side_effect=runner), patch.object(
+                        deploy,"test_admission_window",side_effect=admission), patch.object(deploy,"run_service") as service:
+                    def invoke():
+                        return deploy.deploy(self.b,root=self.deploy_root,releases=self.releases,
+                            current=self.current,control=self.control,remote=str(self.remote),
+                            check_boundary=boundary,tip_reader=tip)
+                    if fault == "interrupt":
+                        with self.assertRaises(KeyboardInterrupt):invoke()
+                    else:
+                        result=invoke()
+                        self.assertEqual(result["reason"],reason)
+                        self.assertEqual(result["tests_run"],0)
+                        self.assertEqual(result["status"],"FAIL")
+                    service.assert_not_called()
+                for path in (request,output,failure):self.assertEqual(path.read_bytes(),b"retained evidence")
+                with (self.control/"deploy.lock").open("a+") as lock:
+                    deploy.fcntl.flock(lock,deploy.fcntl.LOCK_EX|deploy.fcntl.LOCK_NB)
+                self.assertEqual(list(self.releases.iterdir()),[])
+
     def test_acquisition_precedes_persistent_candidate_and_preserves_git(self):
         original = deploy.staged_acquisition
         def staged(*args, **kwargs):
@@ -624,7 +669,7 @@ class FreshReleaseTest(unittest.TestCase):
                 tests_status="FAIL", tests_run=1, state_boundary_enforced=True, diagnostics=diagnostics)))
         def runner(release, sha):
             return self.real_tests(release, sha, request=request, output=output)
-        with patch.object(deploy, "tests", side_effect=runner), patch.object(deploy, "run_service", side_effect=report):
+        with patch.object(deploy, "test_admission_window"), patch.object(deploy, "tests", side_effect=runner), patch.object(deploy, "run_service", side_effect=report):
             result = self.run_deploy(self.b)
         self.assertEqual((result["status"], result["reason"], result["promotion_status"]),
                          ("FAIL", "TESTS_FAILED", "NOT_ATTEMPTED"))
@@ -988,6 +1033,8 @@ class FreshReleaseTest(unittest.TestCase):
 
 class IsolatedBoundaryTest(unittest.TestCase):
     def setUp(self):
+        admission = patch.object(deploy, "test_admission_window")
+        admission.start(); self.addCleanup(admission.stop)
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
@@ -1659,7 +1706,7 @@ class IsolatedBoundaryTest(unittest.TestCase):
     def test_effective_service_properties_enforced(self):
         properties = ("Environment=PYTHONDONTWRITEBYTECODE=1\nEnvironmentFiles=\nPassEnvironment=\n"
                       "UnsetEnvironment=ODDSPAPI_API_KEY GITHUB_TOKEN SSH_AUTH_SOCK LD_PRELOAD LD_LIBRARY_PATH LD_AUDIT PYTHONPATH PYTHONHOME\n"
-                      "TimeoutStartUSec=5min 30s\nTimeoutStopUSec=30s\nSendSIGKILL=yes\n"
+                      "TimeoutStartUSec=10min 30s\nTimeoutStopUSec=30s\nSendSIGKILL=yes\n"
                       "PrivateNetwork=yes\nPrivateTmp=yes\nNoNewPrivileges=yes\nKillMode=control-group\nInaccessiblePaths=/var/lib/modelfc /root/modelfc-state "
                       "/root/dev/modelfc /etc/modelfc-validator\nProtectSystem=strict\n"
                       f"ReadOnlyPaths={self.releases} {self.control}\nReadWritePaths="
@@ -1857,7 +1904,7 @@ class IsolatedBoundaryTest(unittest.TestCase):
                          ("Environment=PYTHONDONTWRITEBYTECODE=1\n", ""),
                          ("EnvironmentFiles=\n", ""),
                          ("PassEnvironment=\n", ""),
-                         ("TimeoutStartUSec=5min 30s", "TimeoutStartUSec=infinity"),
+                         ("TimeoutStartUSec=10min 30s", "TimeoutStartUSec=infinity"),
                          ("SendSIGKILL=yes", "SendSIGKILL=no"),
                          ("MemoryMax=2147483648", "MemoryMax=4294967296"),
                          ("MemoryMax=2147483648\n", ""),
@@ -2067,6 +2114,8 @@ class IsolatedBoundaryTest(unittest.TestCase):
 
 class TestFailureDiagnosticsTest(unittest.TestCase):
     def setUp(self):
+        admission = patch.object(deploy, "test_admission_window")
+        admission.start(); self.addCleanup(admission.stop)
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
@@ -2257,6 +2306,64 @@ class TestFailureDiagnosticsTest(unittest.TestCase):
         self.assertFalse(retained.exists())
         self.assertFalse(self.request.exists())
 
+    def test_progress_cannot_supply_final_count_or_change_deployment_gate(self):
+        info = deploy.extended_diagnostics("", None, self.allowed, False, "TIMEOUT", False)
+        info["progress"] = dict(observed_completed=12, complete=False,
+                                last_test_id=self.names[0], last_progress_us=123,
+                                slowest=[[self.names[0], 100]])
+        with self.assertRaisesRegex(deploy.Failure, "TESTS_FAILED"):
+            self.run_report("FAIL", 0, info)
+        record = json.loads((self.root / "last-test-failure.json").read_text())
+        self.assertIsNone(record["tests_run"])
+        self.assertEqual(record["diagnostics"]["progress"], info["progress"])
+        with self.assertRaisesRegex(deploy.Failure, "STATE_BOUNDARY_FAILED"):
+            self.run_report("PASS", 12, info)
+        info["progress"]["complete"] = "secret"
+        with self.assertRaisesRegex(deploy.Failure, "STATE_BOUNDARY_FAILED"):
+            self.run_report("FAIL", 0, info)
+
+    def test_runner_retains_partial_events_but_never_uses_them_as_summary(self):
+        self.request.write_text(json.dumps(dict(release_id=self.release.name, sha=self.sha,
+                                               controller_netns=[4, 2])))
+        def capture(*args, **kwargs):
+            self.assertEqual(kwargs["timeout"], 600)
+            name = self.names[0]
+            for event in ([1, "start", name, 0], [2, "finish", name, 5], [3, "start", name, 6]):
+                kwargs["progress"].feed((json.dumps(event) + "\n").encode())
+            raise deploy.TestCaptureFailure("TIMEOUT", b"secret", False)
+        with patch.object(deploy, "REQUEST", self.request), patch.object(deploy, "TEST_OUTPUT", self.output), patch.object(
+                deploy, "RELEASES", self.root), patch.object(deploy, "head", return_value=self.sha), patch.object(
+                deploy, "verify_test_network"), patch.object(deploy.os, "access", return_value=False), patch.object(
+                deploy, "capture_test_process", side_effect=capture):
+            self.assertFalse(deploy.run_tests())
+        report = json.loads(self.output.read_text())
+        self.assertEqual(report["tests_run"], 0)
+        self.assertFalse(report["diagnostics"]["count_known"])
+        timing = report["diagnostics"]["progress"]
+        self.assertEqual(timing["observed_completed"], 1)
+        self.assertFalse(timing["complete"])
+        self.assertNotIn("secret", json.dumps(report))
+
+    def test_rejected_timing_does_not_change_accepted_terminal_outcomes(self):
+        self.request.write_text(json.dumps(dict(release_id=self.release.name, sha=self.sha,
+                                               controller_netns=[4, 2])))
+        for code, summary, expected in ((0, "OK", True), (1, "FAILED (failures=1)", False)):
+            def capture(*args, **kwargs):
+                kwargs["progress"].feed(b"secret malformed event\n")
+                return code, f"Ran 1 test in 0.01s\n\n{summary}\n".encode(), False
+            with patch.object(deploy, "REQUEST", self.request), patch.object(deploy, "TEST_OUTPUT", self.output), patch.object(
+                    deploy, "RELEASES", self.root), patch.object(deploy, "head", return_value=self.sha), patch.object(
+                    deploy, "verify_test_network"), patch.object(deploy.os, "access", return_value=False), patch.object(
+                    deploy, "capture_test_process", side_effect=capture):
+                self.assertEqual(deploy.run_tests(), expected)
+            report = json.loads(self.output.read_text())
+            self.assertEqual(report["tests_run"], 1)
+            self.assertNotIn("secret", json.dumps(report))
+            if expected:
+                self.assertNotIn("diagnostics", report)
+            else:
+                self.assertFalse(report["diagnostics"]["progress"]["complete"])
+
     def run_report(self, status, count, diagnostics=None, **changes):
         def service(*args):
             report = dict(sha=self.sha, release_id=self.release.name, tests_status=status,
@@ -2445,7 +2552,7 @@ class ServiceLifecycleTest(unittest.TestCase):
         self.addCleanup(stub.stop)
 
     def test_normal_completion_and_complete_wait_budgets(self):
-        for unit, wait in ((deploy.SERVICE, 390),
+        for unit, wait in ((deploy.SERVICE, 690),
                            (deploy.DEPENDENCY_SERVICE.format(self.ident), 570),
                            (deploy.ACQUISITION_SERVICE.format(self.ident), 660)):
             with self.subTest(unit=unit), patch.object(deploy, "service_inactive", return_value=True), patch.object(
@@ -2473,10 +2580,10 @@ class ServiceLifecycleTest(unittest.TestCase):
     def test_real_command_timeout_translation_still_stops_unit(self):
         completed = subprocess.CompletedProcess([], 0, stdout=b"")
         with patch.object(deploy, "service_inactive", side_effect=[True, False, True, True]), patch.object(
-                deploy.subprocess, "run", side_effect=[subprocess.TimeoutExpired("systemctl", 390), completed]) as run:
+                deploy.subprocess, "run", side_effect=[subprocess.TimeoutExpired("systemctl", 690), completed]) as run:
             with self.assertRaisesRegex(deploy.Failure, "INTERNAL_ERROR"):
                 deploy.run_service(deploy.SERVICE)
-        self.assertEqual(run.call_args_list[0].kwargs["timeout"], 390)
+        self.assertEqual(run.call_args_list[0].kwargs["timeout"], 690)
         self.assertEqual(run.call_args_list[1].args[0],
                          ["sudo", "-n", "/usr/bin/systemctl", "stop", deploy.SERVICE])
         self.assertEqual(run.call_args_list[1].kwargs["timeout"], 60)
@@ -2526,7 +2633,7 @@ class ServiceLifecycleTest(unittest.TestCase):
         self.assertTrue(self.marker.exists())
 
     def test_reviewed_units_bound_complete_termination(self):
-        for name, start in (("modelfc-postmerge-tests.service", 330),
+        for name, start in (("modelfc-postmerge-tests.service", 630),
                             ("modelfc-postmerge-dependencies@.service", 510),
                             ("modelfc-postmerge-acquisition@.service", 600)):
             text = (SOURCE.parents[2] / "deploy" / name).read_text()
@@ -2626,7 +2733,7 @@ class AcquisitionResourceTest(unittest.TestCase):
 
 # Verbatim property output retained from the real Ubuntu/systemd 255 VPS.
 # Empty struct arrays are absent; credential struct arrays are unprintable.
-SYSTEMD255_TEST_PROPERTIES = """TimeoutStartUSec=5min 30s
+SYSTEMD255_TEST_PROPERTIES = """TimeoutStartUSec=10min 30s
 TimeoutStopUSec=30s
 ExecStart={ path=/usr/bin/python3 ; argv[]=/usr/bin/python3 -I /opt/modelfc-deploy/deploy_main.py --run-tests ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }
 ExecStartEx={ path=/usr/bin/python3 ; argv[]=/usr/bin/python3 -I /opt/modelfc-deploy/deploy_main.py --run-tests ; flags= ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }
@@ -2939,6 +3046,204 @@ class ServiceEnvironmentTest(unittest.TestCase):
             self.assertEqual(assignments, [] if name == "dependencies@" else ["Environment=PYTHONDONTWRITEBYTECODE=1"])
             self.assertNotIn("EnvironmentFile=", text)
             self.assertNotIn("PassEnvironment=", text)
+
+
+class TestTimingProgress(unittest.TestCase):
+    name = "test_sample.Sample.test_ok"
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        (self.root / "tests").mkdir()
+
+    def source(self, content):
+        (self.root / "tests/test_sample.py").write_text(textwrap.dedent(content))
+
+    def capture(self, *, instrument=True, timeout=5):
+        progress = deploy.TestProgress(deploy.test_identifiers(self.root)) if instrument else None
+        result = deploy.capture_test_process(
+            [sys.executable, "-B", "-m", "unittest", "discover", "-v", "-s", "tests"],
+            cwd=self.root, env={"PATH": "/usr/bin:/bin", "PYTHONDONTWRITEBYTECODE": "1"},
+            timeout=timeout, progress=progress)
+        return result, progress
+
+    def event(self, seq, kind, stamp, name=None):
+        return (json.dumps([seq, kind, self.name if name is None else name, stamp]) + "\n").encode()
+
+    def test_equivalent_discovery_outcomes_skips_subtests_and_load_tests(self):
+        template = '''
+            import unittest
+            class Sample(unittest.TestCase):
+                def test_ok(self):
+                    with self.subTest(secret="never export"):
+                        self.assertTrue(True)
+                @unittest.skip("secret skip reason")
+                def test_skip(self):
+                    self.fail()
+                @unittest.expectedFailure
+                def test_expected(self):
+                    self.fail("secret expected failure")
+                def test_outcome(self):
+                    OUTCOME
+            def load_tests(loader, suite, pattern):
+                assert pattern == 'test*.py'
+                return suite
+        '''
+        for outcome in ("pass", "self.fail('secret failure')", "raise RuntimeError('secret error')",
+                        "\n                    with self.subTest(secret='parameter'):\n                        self.fail('secret subtest')"):
+            with self.subTest(outcome=outcome):
+                self.source(template.replace("OUTCOME", outcome))
+                plain, _ = self.capture(instrument=False)
+                timed, progress = self.capture()
+                self.assertEqual(timed[0], plain[0])
+                # Only unittest's measured elapsed time differs.
+                import re
+                normalize = lambda raw: re.sub(rb'in [0-9.]+s', b'in TIME', raw)
+                self.assertEqual(normalize(timed[1]), normalize(plain[1]))
+                self.assertEqual(progress.completed, 4)
+                self.assertTrue(progress.snapshot()["complete"])
+                self.assertNotIn("secret", json.dumps(progress.snapshot()))
+
+    def test_timeout_keeps_completed_count_and_current_test_without_summary(self):
+        self.source('''
+            import time, unittest
+            class Sample(unittest.TestCase):
+                def test_a(self): pass
+                def test_b(self): time.sleep(20)
+        ''')
+        progress = deploy.TestProgress(deploy.test_identifiers(self.root))
+        with self.assertRaises(deploy.TestCaptureFailure) as error:
+            deploy.capture_test_process([sys.executable], cwd=self.root, env={},
+                                        timeout=0.3, progress=progress)
+        self.assertEqual(error.exception.classification, "TIMEOUT")
+        snapshot = progress.snapshot()
+        self.assertEqual(snapshot["observed_completed"], 1)
+        self.assertFalse(snapshot["complete"])
+        self.assertEqual(snapshot["last_test_id"], "test_sample.Sample.test_b")
+        self.assertEqual(snapshot["slowest"][0][0], "test_sample.Sample.test_a")
+        self.assertNotIn(b"Ran ", error.exception.captured)
+
+    def test_slowest_is_bounded_and_monotonic(self):
+        progress = deploy.TestProgress({self.name})
+        stamp = 0
+        for i in range(20):
+            progress.feed(self.event(2*i+1, "start", stamp))
+            stamp += i
+            progress.feed(self.event(2*i+2, "finish", stamp))
+        progress.feed(self.event(41, "end", stamp, ""))
+        value = progress.snapshot()
+        self.assertTrue(value["complete"])
+        self.assertEqual(value["observed_completed"], 20)
+        self.assertEqual([item[1] for item in value["slowest"]], list(range(19, 11, -1)))
+        self.assertTrue(deploy.valid_progress(value, {self.name}))
+
+    def test_invalid_dropped_truncated_and_flooded_events_are_incomplete(self):
+        bad = [b"secret\n", b"x" * 1025, b"[]\n", b'{}\n',
+               self.event(4, "start", 3), self.event(True, "start", 3),
+               self.event(3, "start", -1), self.event(3, "start", 630000001),
+               self.event(3, "start", 3, "secret"), self.event(3, "finish", 3),
+               self.event(3, "unknown", 3), self.event(3, "start", 0),
+               b"x" * (4 * 1024 * 1024 + 1)]
+        for raw in bad:
+            with self.subTest(raw=raw[:70]):
+                progress = deploy.TestProgress({self.name})
+                progress.feed(self.event(1, "start", 1) + self.event(2, "finish", 2))
+                progress.feed(raw)
+                progress.feed(self.event(3, "end", 3, ""))
+                self.assertTrue(progress.invalid)
+                self.assertFalse(progress.snapshot()["complete"])
+                self.assertEqual(progress.completed, 1)
+                self.assertEqual(progress.pending, b"")
+                self.assertNotIn("secret", json.dumps(progress.snapshot()))
+        progress = deploy.TestProgress({self.name})
+        progress.feed(b'[1,"start"')
+        self.assertFalse(progress.snapshot()["complete"])
+
+    def test_pipe_chunks_and_validation_reject_sensitive_or_unbounded_fields(self):
+        progress = deploy.TestProgress({self.name})
+        raw = self.event(1, "start", 0) + self.event(2, "finish", 5) + self.event(3, "end", 6, "")
+        for char in raw:
+            progress.feed(bytes([char]))
+        good = progress.snapshot()
+        self.assertTrue(good["complete"])
+        for field, value in (("observed_completed", True), ("observed_completed", 10001),
+                             ("complete", 1), ("last_test_id", "secret"),
+                             ("last_progress_us", float('nan')), ("slowest", [[self.name, -1]]),
+                             ("slowest", [[self.name, 1]]*9), ("extra", "secret")):
+            self.assertFalse(deploy.valid_progress({**good, field: value}, {self.name}))
+        info = deploy.extended_diagnostics("", None, {self.name}, False, "TIMEOUT", False)
+        info["progress"] = good
+        self.assertTrue(deploy.valid_test_diagnostics(info, {self.name}))
+        info["progress"] = {**good, "complete": "secret"}
+        self.assertFalse(deploy.valid_test_diagnostics(info, {self.name}))
+
+    def test_full_pipe_does_not_block_or_change_unittest_exit(self):
+        self.source('''
+            import unittest
+            class Sample(unittest.TestCase):
+                def test_ok(self): pass
+        ''')
+        read_fd, write_fd = os.pipe()
+        try:
+            os.set_blocking(write_fd, False)
+            while True:
+                try:
+                    os.write(write_fd, b"x" * 4096)
+                except BlockingIOError:
+                    break
+            result = subprocess.run([sys.executable, "-B", "-c", deploy.TEST_BOOTSTRAP, str(write_fd)],
+                                    cwd=self.root, env={}, pass_fds=(write_fd,),
+                                    stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=5)
+            self.assertEqual(result.returncode, 0)
+            self.assertIn(b"Ran 1 test", result.stderr)
+        finally:
+            os.close(read_fd)
+            os.close(write_fd)
+
+    def test_descriptors_closed_on_success_timeout_and_spawn_error(self):
+        self.source('''
+            import time, unittest
+            class Sample(unittest.TestCase):
+                def test_ok(self): pass
+        ''')
+        real_pipe, real_popen = os.pipe, subprocess.Popen
+        descriptors, children = [], []
+        def pipe():
+            pair = real_pipe()
+            descriptors.extend(pair)
+            return pair
+        def popen(*args, **kwargs):
+            child = real_popen(*args, **kwargs)
+            children.append(child)
+            return child
+        for mode in ("success", "timeout", "spawn_error"):
+            descriptors.clear()
+            with patch.object(deploy.os, "pipe", side_effect=pipe), patch.object(
+                    deploy.subprocess, "Popen", side_effect=OSError("secret") if mode == "spawn_error" else popen):
+                if mode == "success":
+                    self.capture()
+                else:
+                    with self.assertRaises((OSError, deploy.TestCaptureFailure)):
+                        self.capture(timeout=0 if mode == "timeout" else 5)
+            for fd in descriptors:
+                with self.assertRaises(OSError):
+                    os.fstat(fd)
+        for child in children:
+            self.assertIsNotNone(child.poll())
+            self.assertTrue(child.stderr.closed)
+
+    def test_maximum_report_stays_within_existing_ceiling(self):
+        names = ["test_" + "x"*100 + ".Sample.test_" + str(i) for i in range(8)]
+        names = [name + "y"*(160-len(name)) for name in names]
+        info = dict(failures=999999, errors=999999, test_ids=names, truncated=True,
+                    classification="CAPTURE_ERROR", count_known=False, last_test_id=names[0],
+                    progress=dict(observed_completed=10000, complete=False, last_test_id=names[0],
+                                  last_progress_us=630000000, slowest=[[n,630000000] for n in names]))
+        report = dict(sha="a"*40, release_id="a"*40+"-"+"b"*12,
+                      tests_status="FAIL", tests_run=0, state_boundary_enforced=True, diagnostics=info)
+        self.assertTrue(deploy.valid_test_diagnostics(info, set(names)))
+        self.assertLessEqual(len(json.dumps(report).encode("ascii"))+1, deploy.DIAGNOSTIC_LIMIT)
 
 
 if __name__ == "__main__":

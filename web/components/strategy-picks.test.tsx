@@ -15,11 +15,11 @@ it("loads only current picks on Recommendations and labels simulated flat risk",
  await screen.findByText("Both teams to score: Yes");
  expect(call.mock.calls[0][0].scope).toBe("current");
  expect(analysis).not.toHaveBeenCalled();expect(history).not.toHaveBeenCalled();
- expect(screen.getByText(/Simulated flat \$2 risked/)).toBeInTheDocument();
+ expect(screen.getAllByText(/Simulated flat \$2 risked/)[0]).toBeInTheDocument();
 });
 it("filters reset the query and results remain separate from model accuracy",async()=>{
  const call=vi.spyOn(api,"strategyPicks").mockResolvedValue(empty());
- const accuracy=vi.spyOn(api,"performance").mockImplementation(()=>new Promise(()=>{}));
+ const accuracy=vi.spyOn(api,"researchPerformance").mockImplementation(()=>new Promise(()=>{}));
  render(<PerformanceDashboard/>);
  await screen.findByText(/No published picks/); expect(accuracy).not.toHaveBeenCalled();
  fireEvent.click(screen.getByRole("tab",{name:"Higher Probability"}));
@@ -44,14 +44,34 @@ it("paginates only on user action",async()=>{
  expect(call).toHaveBeenCalledTimes(1);fireEvent.click(screen.getByText("Next picks"));
  await screen.findByText(/No published picks/);expect(call.mock.lastCall?.[0].offset).toBe(5);
 });
+it("renders reviewed simulation void accounting without calling it bookmaker grading",async()=>{
+ const page=decodeStrategyPage(structuredClone(fixture));
+ const row=page.publications[0];
+ row.result="SIMULATION_VOID";row.profit_units=0;row.profit_dollars=0;
+ row.simulation_void={policy:"reviewed-simulation-void-v1",record_hash:"c".repeat(64),reason:"Reviewed cancellation",recorded_at_utc:row.published_at_utc};
+ const summary={...page.summary,settled:0,wins:0,losses:0,pushes:0,pending:0,voids:1,profit_units:0,win_rate:null,roi:null};
+ const value={...page,simulation_void_supported:true,publications:[row],total:1,next_offset:null,
+  summary,totals:summary,profit_dollars:0,total_profit_dollars:0,
+  market_totals:page.market_totals.map(g=>({...g,summary})),by_league_market:page.by_league_market.map(g=>({...g,summary}))};
+ vi.spyOn(api,"strategyPicks").mockResolvedValue(decodeStrategyPage(value));
+ render(<StrategyPicks scope="history"/>);
+ expect(await screen.findByText(/1 voided picks/)).toBeInTheDocument();
+ expect(screen.getByText(/ROI: —/)).toHaveTextContent("$0.00");
+ expect(screen.getByText(/Voided pick · simulated/)).toBeInTheDocument();
+ expect(screen.getByText(/do not confirm a sportsbook refund/)).toBeInTheDocument();
+ expect(screen.getByText(/Simulated stake returned; review/)).toHaveTextContent("Reviewed cancellation");
+ expect(()=>decodeStrategyPage({...value,simulation_void_supported:false})).toThrow();
+ expect(()=>decodeStrategyPage({...value,totals:{...summary,settled:1}})).toThrow();
+});
 
-it("opens separately timestamped saved-price analysis from the Upcoming link",async()=>{
+it("ignores former shortlist links and shows published picks",async()=>{
  window.history.replaceState({}, "", "/recommendations?view=shortlist");
  vi.spyOn(api,"strategyPicks").mockResolvedValue(empty());
  const shortlist=vi.spyOn(api,"shortlist").mockImplementation(()=>new Promise(()=>{}));
  render(<RecommendationsDashboard/>);
- expect(await screen.findByText("Saved-price analysis")).toBeInTheDocument();
- expect(shortlist).toHaveBeenCalled();
+ await screen.findByText(/No published picks/);
+ expect(screen.queryByText("Saved-price analysis")).not.toBeInTheDocument();
+ expect(shortlist).not.toHaveBeenCalled();
  window.history.replaceState({}, "", "/");
 });
 
@@ -63,11 +83,28 @@ it("updates a published current pick at kickoff without refetching or changing f
  const read=vi.spyOn(api,"strategyPicks").mockResolvedValue(data);
  const view=render(<RecommendationsDashboard/>);
  await act(async()=>{await vi.advanceTimersByTimeAsync(0);});
- const price=screen.getByText(/draftkings · \+120 · 67.0% model probability/).textContent;
+ const price=screen.getByText("+120").textContent;
  expect(screen.queryByText(/Started fixture/)).not.toBeInTheDocument();
  await act(async()=>{await vi.advanceTimersByTimeAsync(30000);});
  expect(screen.getByText(/Started fixture · publication is historical/)).toBeInTheDocument();
  expect(screen.getByText(price!)).toBeInTheDocument();
  expect(read).toHaveBeenCalledTimes(1);
  view.unmount(); expect(vi.getTimerCount()).toBe(0);
+});
+
+it("resets strategy pagination on cutoff and carries the same historical filters", async()=>{
+ const data={...empty(),total:10,next_offset:5};
+ const call=vi.spyOn(api,"strategyPicks").mockResolvedValue(data);
+ render(<StrategyPicks scope="history"/>);
+ await screen.findByText(/No published picks/);
+ fireEvent.click(screen.getByText("Next picks"));
+ await screen.findByText(/No published picks/);
+ expect(call.mock.lastCall?.[0].offset).toBe(5);
+ fireEvent.change(screen.getByLabelText(/Publication cutoff/),{target:{value:"2026-01-01T00:00:00Z"}});
+ fireEvent.click(screen.getByText("Apply publication cutoff"));
+ await screen.findByText(/No published picks/);
+ expect(call.mock.lastCall?.[0]).toMatchObject({asOf:"2026-01-01T00:00:00.000Z",offset:0,scope:"history"});
+ fireEvent.change(screen.getByLabelText("Market"),{target:{value:"BTTS"}});
+ await screen.findByText(/No published picks/);
+ expect(call.mock.lastCall?.[0]).toMatchObject({asOf:"2026-01-01T00:00:00.000Z",offset:0,market:"BTTS"});
 });

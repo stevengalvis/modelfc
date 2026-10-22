@@ -50,16 +50,25 @@ def eligible(value):
         and value["expected_profit"] > 0)
 
 
-def select(source, now, *, strategy="best_value"):
+def select(source, now, *, strategy="best_value", diagnostics=None):
     # Like corner saved-price picks, age alone does not remove an otherwise latest,
     # available pair. Never resurrect an older pair after unavailable/unknown coverage.
     candidates = []
+    def diagnostic(comparison, reason, side=None):
+        if diagnostics is not None:
+            diagnostics.add(comparison.fixture, reason, now, market='BTTS', strategy=strategy,
+                            reference_id=comparison.comparison_id, selection=side)
     for comparison in research_views(source, "E1", as_of=now):
         if comparison.current_status not in ("AVAILABLE", "STALE"):
+            diagnostic(comparison, 'QUALIFICATION_ODDS_UNAVAILABLE' if comparison.current_status == 'UNAVAILABLE' else 'QUALIFICATION_UNKNOWN')
             continue
         for side in ("YES", "NO"):
             value = offer(comparison, side, now)
-            if eligible(value) and (strategy != "higher_probability" or value["model_probability"] >= .65):
+            qualifies = eligible(value)
+            strategy_passes = qualifies and (strategy != "higher_probability" or value["model_probability"] >= .65)
+            diagnostic(comparison, 'NO_QUALIFYING_VALUE' if not qualifies else
+                       'VALUE_QUALIFIED' if strategy_passes else 'STRATEGY_PROBABILITY_THRESHOLD', side)
+            if qualifies and strategy_passes:
                 candidates.append((value, comparison.frozen_at_utc))
     best = {}
     for value, frozen in sorted(candidates, key=lambda item: (-item[0]["decimal_odds"],
@@ -91,23 +100,37 @@ def validate(record, source):
         raise LedgerError("INVALID_PUBLISHED_RECOMMENDATION")
 
 
-def result(record, state, source, now):
-    """Reuse validated goal evidence, binding it to this exact provider forecast."""
-    from modelfc.btts_outcomes import (_directory_outcomes, _load, _provider_binding,
-                                      fixture_identity, inventory)
+def result_inventory(state, now):
+    """Validate saved outcomes/revisions once for an entire published-record read."""
+    from modelfc.btts_outcomes import _originals, inventory
+    from modelfc.btts_corrections import chain, inventory as correction_inventory
+    try:
+        forecasts = inventory(state)
+        originals = _originals(state, forecasts)
+        revisions = correction_inventory(state, originals, forecasts)
+        return {identity: chain(state, original, forecasts, as_of=now,
+                                revisions=revisions)[0]
+                for identity, original in originals.items()}
+    except ImportError:
+        # Optional evidence decoder absent: never infer results.
+        return None
+    except (ValueError, KeyError, TypeError, AttributeError):
+        raise LedgerError("INVALID_BTTS_OUTCOME") from None
+
+
+def result(record, source, now, outcomes):
+    """Bind a shared validated outcome to this exact provider forecast."""
+    from modelfc.btts_outcomes import _provider_binding, fixture_identity
     value = record["offer"]
     forecasts = {digest(r.forecast): r.forecast for r in source}
     forecast = forecasts[value["forecast_id"]]
-    path = _directory_outcomes(state) / (digest(fixture_identity(forecast)) + ".json")
-    if not path.exists():
+    outcome = outcomes.get(digest(fixture_identity(forecast))) if outcomes is not None else None
+    if outcome is None:
         return "PENDING", None
-    # An outcome may select an odds-free forecast of the same exact fixture.
     try:
-        outcome = _load(path, inventory(state))
         _provider_binding(forecast, outcome["source"])
-    except ImportError:
-        # Optional provider evidence decoder absent: never infer a result.
-        return "PENDING", None
+    except (ValueError, KeyError, TypeError, AttributeError):
+        raise LedgerError("INVALID_BTTS_OUTCOME") from None
     if timestamp(outcome["recorded_at_utc"]) > now:
         return "PENDING", None
     won = value["side"] == outcome["actual_btts"]

@@ -31,3 +31,28 @@ describe("BTTS performance contract", () => {
     expect(fetcher).toHaveBeenCalledWith("https://example.test/api/v1/research/btts/performance", expect.objectContaining({cache:"no-store"}));
   });
 });
+
+it("sends scope and cutoff to the API and rejects mismatched responses", async () => {
+  const asOf = "2026-10-19T00:00:00Z";
+  const report = {...structuredClone(fixture), competition:"ALL", coverage:"PARTIAL"};
+  const fetcher = vi.fn().mockResolvedValue({ok:true,json:async () => report});
+  vi.stubGlobal("fetch",fetcher);
+  const client = createApiClient("live", "https://example.test/api/v1");
+  const result = await client.bttsPerformance(undefined, {competition:"ALL", asOf});
+  expect(result.metrics).toEqual(fixture.metrics);
+  const url = new URL(fetcher.mock.calls[0][0]);
+  expect(url.searchParams.get("competition")).toBe("ALL");
+  expect(url.searchParams.get("as_of")).toBe(asOf);
+  await expect(client.bttsPerformance(undefined,{competition:"E0",asOf})).rejects.toThrow(/filters/);
+  await expect(client.bttsPerformance(undefined,{competition:"ALL",asOf:"2026-10-18T00:00:00Z"})).rejects.toThrow(/filters/);
+});
+
+it("requires explicit unavailable EPL and partial overall coverage without manufactured samples", () => {
+  const empty = {...structuredClone(emptyBttsPerformance), competition:"E0", coverage:"UNSUPPORTED"};
+  expect(decodeBttsPerformance(empty).metrics.log_loss).toBeNull();
+  expect(() => decodeBttsPerformance({...empty, coverage:"SUPPORTED"})).toThrow();
+  expect(() => decodeBttsPerformance({...fixture, competition:"E0", coverage:"UNSUPPORTED"})).toThrow();
+  expect(() => decodeBttsPerformance({...fixture, competition:"ALL", coverage:"SUPPORTED"})).toThrow();
+  expect(() => decodeBttsPerformance({...fixture, as_of_utc:"2026-09-19T11:59:59Z"})).toThrow();
+  expect(() => decodeBttsPerformance({...fixture, as_of_utc:"2026-10-12T00:00:00Z"})).toThrow();
+});

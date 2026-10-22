@@ -86,17 +86,17 @@ it("uses the same immutable BTTS pick as Recommendations despite an empty legacy
   vi.mocked(api.strategyPicks).mockResolvedValue({...page, publications: [pick]});
   const view = render(<UpcomingDashboard/>);
   await screen.findByText("Both teams to score: Yes");
-  const price = screen.getByText(/draftkings · \+120 · 67.0% model probability/).textContent;
   expect(screen.getAllByRole("article")).toHaveLength(1);
   expect(screen.getByText(/No legacy corner opportunity/)).toBeInTheDocument();
   expect(screen.queryByText(/BTTS is research only/)).not.toBeInTheDocument();
   expect(screen.getByText(/Stale quote/)).toBeInTheDocument();
-  expect(screen.getByRole("link", {name: "Corner saved-price analysis · all fixtures"})).toHaveAttribute("href", "/recommendations?view=shortlist");
+  expect(screen.queryByRole("link", {name: /Corner saved-price analysis/})).not.toBeInTheDocument();
   expect(screen.getByRole("link", {name: "BTTS research prices · all fixtures"})).toHaveAttribute("href", "/research/btts");
   expect(screen.getByText(/may not contain this fixture or a newer quote/)).toBeInTheDocument();
   expect(screen.queryByRole("link", {name: /newer observed quotes/})).not.toBeInTheDocument();
   view.unmount(); render(<RecommendationsDashboard/>);
-  expect(await screen.findByText(price!)).toBeInTheDocument();
+  expect(await screen.findByText("+120")).toBeInTheDocument();
+  expect(screen.getByText(/67.0%/)).toBeInTheDocument();
 });
 it("includes publication-only fixtures and scopes unsupported research coverage", async () => {
   sources(); vi.mocked(api.predictions).mockResolvedValue([]);
@@ -177,4 +177,23 @@ it.each([true,false])("separates a publication outage from successful forecast r
  if(populated) expect(screen.getByText("Home corners")).toBeInTheDocument();
  else expect(screen.getByRole("heading",{name:"Published pick coverage unavailable"})).toBeInTheDocument();
  expect(screen.queryByText(/No qualifying published pick returned/)).not.toBeInTheDocument();
+});
+
+
+it("labels a reviewed pre-kickoff void in Upcoming and Recommendations while retaining frozen evidence", async () => {
+  sources();
+  const pick = {...page.publications[0], result: "SIMULATION_VOID" as const, profit_units: 0, profit_dollars: 0,
+    simulation_void: {policy: "reviewed-simulation-void-v1", record_hash: "c".repeat(64), reason: "Reviewed cancellation", recorded_at_utc: page.publications[0].published_at_utc},
+    offer: {...page.publications[0].offer, home_team: "Home", away_team: "Away", kickoff_utc: corner.kickoff_utc}};
+  vi.mocked(api.strategyPicks).mockResolvedValue({...page, publications: [pick]});
+  const view = render(<UpcomingDashboard/>);
+  expect(await screen.findByText(/Voided pick · excluded from Zeno/)).toHaveTextContent("does not confirm a sportsbook refund");
+  const evidence = screen.getByText(/Frozen publication price/).textContent!;
+  expect(screen.queryByText(/price needs rechecking|recheck price and availability/)).not.toBeInTheDocument();
+  view.unmount(); render(<RecommendationsDashboard/>);
+  expect(await screen.findByText(/Voided pick · excluded from Zeno/)).toBeInTheDocument();
+  expect(screen.getByText("+120")).toBeInTheDocument();
+  expect(screen.getByText(/67.0%/)).toBeInTheDocument();
+  expect(screen.getByText(/Frozen publication price/).textContent).toBe(evidence);
+  expect(screen.queryByText(/price needs rechecking|recheck price and availability/)).not.toBeInTheDocument();
 });

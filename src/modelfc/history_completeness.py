@@ -61,6 +61,24 @@ class HistoryCalendar:
     matches: tuple[CalendarMatch, ...]
 
 
+def validate_calendar_bindings(bindings):
+    """Validate explicit football-data.org E1 bindings without HTTP or mutation.
+
+    Provider IDs remain in their own namespace; canonical names must cover the
+    existing E1 roster. This validates consistency, not independent review.
+    """
+    _require(isinstance(bindings, list) and len(bindings) == len(_NAMES))
+    teams, names, source_names = {}, set(), set()
+    for row in bindings:
+        _require(isinstance(row, dict) and set(row) == {"source_team_id", "source_name", "history_name"})
+        identity, name, canonical = row["source_team_id"], row["source_name"], row["history_name"]
+        _require(type(identity) is int and identity > 0 and identity not in teams
+                 and isinstance(name, str) and name and name == name.strip() and name not in source_names
+                 and isinstance(canonical, str) and canonical in _NAMES and canonical not in names)
+        teams[identity] = (name, canonical); names.add(canonical); source_names.add(name)
+    return teams
+
+
 def parse_calendar(raw: bytes, *, as_of: datetime) -> HistoryCalendar:
     """Full unfiltered football-data.org ELC season, not the OddsPapi schedule.
 
@@ -90,16 +108,7 @@ def parse_calendar(raw: bytes, *, as_of: datetime) -> HistoryCalendar:
         _require(value["competition"]["code"] == "ELC"
                  and value["competition"]["type"] == "LEAGUE"
                  and type(value["competition"]["id"]) is int and value["competition"]["id"] > 0)
-        bindings = bundle["team_bindings"]
-        _require(isinstance(bindings, list) and len(bindings) == len(_NAMES))
-        teams, names, source_names = {}, set(), set()
-        for row in bindings:
-            _require(isinstance(row, dict) and set(row) == {"source_team_id", "source_name", "history_name"})
-            identity, name, canonical = row["source_team_id"], row["source_name"], row["history_name"]
-            _require(type(identity) is int and identity > 0 and identity not in teams
-                     and isinstance(name, str) and name and name == name.strip() and name not in source_names
-                     and canonical in _NAMES and canonical not in names)
-            teams[identity] = (name, canonical); names.add(canonical); source_names.add(name)
+        teams = validate_calendar_bindings(bundle["team_bindings"])
         rows = value["matches"]
         _require(isinstance(rows, list) and len(rows) == len(_NAMES)*(len(_NAMES)-1),
                  "HISTORY_CALENDAR_INCOMPLETE")
@@ -129,6 +138,8 @@ def parse_calendar(raw: bytes, *, as_of: datetime) -> HistoryCalendar:
             _require(type(matchday) is int and 1 <= matchday <= 46)
             status = row["status"]
             _require(status in _STATUSES)
+            if status in {"IN_PLAY", "PAUSED", "SUSPENDED"}:
+                _require(kickoff <= retrieved)
             score = row["score"]["fullTime"]
             goals = (score["home"], score["away"])
             if status == "FINISHED":

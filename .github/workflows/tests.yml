@@ -36,7 +36,7 @@ jobs:
       - name: Verify real Linux cross-user history ACL publication
         run: |
           sudo -n env PYTHONPATH=src "$RUNNER_TEMP/modelfc-locked/bin/python" -c 'import ctypes.util, os; from tests.test_team_history_acl import cross_uid_available; assert os.geteuid() == 0 and ctypes.util.find_library("acl") and cross_uid_available(), "cross-user ACL test must not skip in CI"'
-          sudo -n env PYTHONPATH=src "$RUNNER_TEMP/modelfc-locked/bin/python" -m unittest tests.test_team_history_acl.PublicHistoryAclTests.test_real_atomic_replacement_cross_uid_isolation tests.test_corner_api_capabilities.RestrictedCapabilityTests.test_real_readonly_identity_gets_functional_content_without_private_access -v
+          sudo -n env PYTHONPATH=src "$RUNNER_TEMP/modelfc-locked/bin/python" -m unittest tests.test_team_history_acl.PublicHistoryAclTests.test_real_atomic_replacement_cross_uid_isolation tests.test_corner_api_capabilities.RestrictedCapabilityTests.test_real_readonly_identity_gets_functional_content_without_private_access tests.test_settlement_review_access.ReviewCrossUserTests -v
 
       - name: Compile Python sources and tests
         run: '"$RUNNER_TEMP/modelfc-locked/bin/python" -m compileall -q src tests'
@@ -168,7 +168,8 @@ jobs:
                         "release_created", "dependency_sync", "tests_status", "tests_run",
                         "promotion_status", "state_boundary_enforced", "reason"}
               reasons = {"OK", "ALREADY_CURRENT", "SUPERSEDED", "INVALID_REQUEST",
-                         "DEPLOYMENT_BUSY", "STATE_BOUNDARY_FAILED", "SOURCE_INVALID",
+                         "DEPLOYMENT_BUSY", "STATE_BOUNDARY_FAILED", "ADMISSION_QUERY_FAILED", "ADMISSION_PROPERTIES_INVALID",
+                         "ADMISSION_AGE_WAIT_EXPIRED", "ADMISSION_IDENTITY_CHANGED", "ADMISSION_TARGET_SUPERSEDED", "SOURCE_INVALID",
                          "FETCH_FAILED", "SHA_NOT_ON_MAIN", "ACTIVE_SHA_NOT_ON_MAIN",
                          "DEPENDENCY_SYNC_FAILED", "TESTS_FAILED", "FINAL_SHA_MISMATCH",
                          "PROMOTION_FAILED", "INTERNAL_ERROR", "STORAGE_LIMIT_FAILED"}
@@ -185,6 +186,15 @@ jobs:
                          (type(value[k]) is not str or len(value[k]) != 40 or
                           any(c not in "0123456789abcdef" for c in value[k]))
                          for k in ("previous_sha", "final_sha"))):
+                  raise ValueError
+              if value["reason"].startswith("ADMISSION_") and (
+                  value["status"] != "FAIL" or value["tests_status"] != "NOT_RUN"
+                  or value["tests_run"] != 0 or value["promotion_status"] != "NOT_ATTEMPTED"):
+                  raise ValueError
+              if value["reason"] == "ADMISSION_TARGET_SUPERSEDED" and (
+                  value["previous_sha"] is not None or value["final_sha"] is not None
+                  or value["fetch_verified"] is not True or value["release_created"] is not True
+                  or value["dependency_sync"] != "INSTALLED" or value["state_boundary_enforced"] is not True):
                   raise ValueError
               if value["status"] == "PASS" and value["final_sha"] != sys.argv[2]:
                   raise ValueError

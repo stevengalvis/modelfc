@@ -37,7 +37,9 @@ def evidence(config, *, as_of=None):
             'REFRESH_NOT_SUCCESSFUL')
         row = next(r for r in rows if r['league'] == 'E1')
         reported = timestamp(report['checked_at'])
-        checked = timestamp(row.get('checked_at', report['checked_at']))
+        attempted = row.get('checked_at', report['checked_at'])
+        _require(isinstance(attempted, str), 'REFRESH_EVIDENCE_STALE')
+        checked = timestamp(attempted)
         _require(checked <= reported <= as_of, 'REFRESH_EVIDENCE_STALE')
         _require(checked <= as_of and (as_of - checked).total_seconds() <= 86400,
                  'REFRESH_EVIDENCE_STALE')

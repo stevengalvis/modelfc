@@ -39,7 +39,7 @@ class AutomaticSettlementTests(unittest.TestCase):
             def __enter__(self): return self
             def __exit__(self, *args): pass
             def read(self, limit): return payload
-            def geturl(self): return 'https://www.football-data.co.uk/mmz4281/2627/E1.csv'
+            def geturl(self): return 'https://football-data.co.uk/mmz4281/2627/E1.csv'
         with patch.object(refresh, 'urlopen', return_value=Response()) as request:
             report = refresh.refresh_data(self.config, date(2026, 10, 13), retain_result_evidence=enabled)
         self.assertEqual(request.call_count, 1)
@@ -222,7 +222,7 @@ class Response:
  def __enter__(self): return self
  def __exit__(self,*a): pass
  def read(self,limit): return open(os.environ['SYNTHETIC_CSV'],'rb').read(limit)
- def geturl(self): return 'https://www.football-data.co.uk/mmz4281/2627/E1.csv'
+ def geturl(self): return 'https://football-data.co.uk/mmz4281/2627/E1.csv'
 def saved(url,**kwargs):
  with open(os.environ['SYNTHETIC_CSV']+'.requests','a') as log: log.write(url+'\\n')
  if not url.endswith('/E1.csv'): raise OSError('synthetic unrelated league failure')
@@ -235,7 +235,7 @@ urllib.request.build_opener=lambda *handlers: type('SavedOpener',(),{'open':stat
         self.assertIn('SP1: FAILED',refreshed.stdout)
         requests=Path(str(payload_path)+'.requests')
         self.assertEqual(requests.read_text().splitlines(),[
-            'https://www.football-data.co.uk/mmz4281/2627/E1.csv',
+            'https://football-data.co.uk/mmz4281/2627/E1.csv',
             'https://www.football-data.co.uk/mmz4281/2627/SP1.csv'])
         self.assertIn('OnFailure=modelfc-research-settlement.service', Path('deploy/modelfc-corner-refresh.service.d/research-settlement.conf').read_text())
         report_path=self.refresh_state/'status.json'; saved_report=report_path.read_bytes()
@@ -270,7 +270,7 @@ urllib.request.build_opener=lambda *handlers: type('SavedOpener',(),{'open':stat
             def read(self,*args): raise AssertionError('304 must not supply bytes')
         with patch.object(refresh,'urlopen',return_value=NotModified()):
             with self.assertRaisesRegex(ValueError,'HTTP 200'):
-                refresh.download_csv('https://www.football-data.co.uk/mmz4281/2627/E1.csv',metadata=metadata)
+                refresh.download_csv('https://football-data.co.uk/mmz4281/2627/E1.csv',metadata=metadata)
         self.assertEqual(metadata,{})
         self.assertEqual(before,{p:p.read_bytes() for p in before})
 
@@ -306,7 +306,7 @@ urllib.request.build_opener=lambda *handlers: type('SavedOpener',(),{'open':stat
             def __enter__(self): return self
             def __exit__(self,*args): pass
             def read(self,limit): return payload
-            def geturl(self): return 'https://www.football-data.co.uk/mmz4281/2627/E1.csv'
+            def geturl(self): return 'https://football-data.co.uk/mmz4281/2627/E1.csv'
         with patch.object(automatic,'existing_read_lock',side_effect=entering),ThreadPoolExecutor(max_workers=1) as pool:
             with refresh.refresh_lock(self.refresh_state):
                 running=pool.submit(self.run_settlement)

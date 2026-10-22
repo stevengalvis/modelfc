@@ -71,8 +71,19 @@ def _child_directories(directory: Path) -> set[str]:
     return children
 
 
-def _outcome_tip(state: Path, prediction: dict[str, Any]) -> dict[str, Any] | None:
-    _, tip = load_outcome_chain_readonly(state, prediction["analysis_id"])
+def _outcome_tip(state: Path, prediction: dict[str, Any], *, as_of: datetime | None = None) -> dict[str, Any] | None:
+    records, tip = load_outcome_chain_readonly(state, prediction["analysis_id"])
+    if as_of is not None:
+        # Follow the validated chain, never lexical IDs or file modification times.
+        by_id = {record["outcome_id"]: record for record in records}
+        cursor = tip
+        while cursor is not None:
+            parent = by_id.get(cursor["supersedes_outcome_id"])
+            if parent is not None and _time(parent["recorded_at_utc"]) > _time(cursor["recorded_at_utc"]):
+                raise LedgerError("INVALID_OUTCOME_CHRONOLOGY")
+            cursor = parent
+        while tip is not None and _time(tip["recorded_at_utc"]) > as_of:
+            tip = by_id.get(tip["supersedes_outcome_id"])
     if tip is None:
         return None
     return _validated_outcome(prediction, tip)
@@ -335,7 +346,8 @@ def _locked_inventory(
     state: Path, *, now: datetime, detail_id: str | None = None,
     include_recommendations: bool = False, include_recorded: bool = False,
     upcoming_only: bool = False, fixture_id: str | None = None,
-    include_research: bool = True,
+    include_research: bool = True, outcome_as_of: datetime | None = None,
+    include_outcome_history: bool = False,
 ) -> dict[str, Any]:
     _state_directory(state, "predictions")
     targets_dir = _state_directory(state, "prediction-targets")
@@ -375,6 +387,7 @@ def _locked_inventory(
             prediction_ids={p["prediction_id"] for p in identities if fixture_key(p) in selected_keys
                             and _time(p["created_at_utc"]) <= now})
 
+    outcome_history = {}
     prediction_views = []
     opportunity_views = []
     target_views: dict[str, tuple[dict[str, Any], str | None]] = {}
@@ -400,7 +413,11 @@ def _locked_inventory(
             targets_by_id = {item["target_id"]: item for item in targets}
             if len(targets_by_id) != len(targets):
                 raise ValueError
-            outcome = _outcome_tip(state, prediction)
+            outcome = _outcome_tip(state, prediction, as_of=outcome_as_of)
+            if include_outcome_history:
+                # Retain evidence under the same runner/state locks as target grading.
+                records, _ = load_outcome_chain_readonly(state, prediction["analysis_id"])
+                outcome_history[prediction_id] = dict(prediction=prediction, effective=outcome, records=records)
             settlement_status = _status(kickoff, outcome, now)
             opportunities = opportunity_records(state, prediction_id)
             if include_recorded:
@@ -542,6 +559,7 @@ def _locked_inventory(
         item["qualified_at_utc"], item["opportunity_id"],
     ))
     return {
+        **({"outcome_history": outcome_history} if include_outcome_history else {}),
         "recorded": recorded,
         "predictions": prediction_views,
         "opportunities": opportunity_views,
@@ -564,7 +582,9 @@ def _locked_inventory(
 def _inventory(state_dir: str | Path, *, now: datetime | None = None,
                detail_id: str | None = None, include_recommendations: bool = False,
                include_recorded: bool = False, upcoming_only: bool = False,
-               fixture_id: str | None = None) -> dict[str, Any]:
+               fixture_id: str | None = None, include_research: bool = True,
+               outcome_as_of: datetime | None = None,
+               include_outcome_history: bool = False) -> dict[str, Any]:
     state = Path(state_dir)
     if not state.exists():
         return _empty_inventory()
@@ -582,7 +602,9 @@ def _inventory(state_dir: str | Path, *, now: datetime | None = None,
         with ledger_read_lock(state):
             return _locked_inventory(state, now=now, detail_id=detail_id,
                                      include_recommendations=include_recommendations, include_recorded=include_recorded,
-                                     upcoming_only=upcoming_only, fixture_id=fixture_id)
+                                     upcoming_only=upcoming_only, fixture_id=fixture_id,
+                                     include_research=include_research, outcome_as_of=outcome_as_of,
+                                     include_outcome_history=include_outcome_history)
 
 
 def read_recommendations(state_dir: str | Path) -> list[dict[str, Any]]:

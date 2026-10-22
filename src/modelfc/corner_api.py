@@ -1,9 +1,12 @@
 """FastAPI boundary for the Model FC V1 corner-analysis API."""
 
-from datetime import date
+from datetime import date, datetime, timezone
 import os
+import re
 from pathlib import Path
 from typing import Any, Literal
+
+from modelfc.research_performance_schema import ResearchPerformanceResponse
 
 from fastapi import FastAPI, Query, Request, Response
 from fastapi.exceptions import RequestValidationError
@@ -535,7 +538,8 @@ class PublishedPickResponse(StrictModel):
     ranking_views: list[Literal["best_value", "higher_probability"]]
     qualification_policy: dict[str, Any]
     record_hash: str
-    result: Literal["WIN", "LOSS", "PUSH", "PENDING"]
+    result: Literal["WIN", "LOSS", "PUSH", "PENDING", "SIMULATION_VOID"]
+    simulation_void: dict[str, Any] | None = None
     profit_units: float | None
 
 
@@ -546,7 +550,7 @@ class PublishedSummaryResponse(StrictModel):
     wins: int
     losses: int
     pushes: int
-    voids: Literal[0]
+    voids: int
     pending: int
     profit_units: float
     win_rate: float | None
@@ -559,9 +563,19 @@ class PublishedGroupResponse(StrictModel):
     summary: PublishedSummaryResponse
 
 
+class PublicationSelection(StrictModel):
+    as_of_utc: str | None
+    competition: str | None
+    market: Literal["TEAM_TOTAL", "BTTS"] | None
+    membership_basis: Literal["recorded-publication-time"]
+    historical_store_membership: Literal["UNVERIFIED"]
+
+
 class ModelPicksResponse(StrictModel):
+    selection: PublicationSelection | None = None
     policy_version: Literal["first-published-value-v2"]
     void_settlement_supported: Literal[False]
+    simulation_void_supported: bool = False
     summary: PublishedSummaryResponse
     by_view: dict[Literal["best_value", "higher_probability"], PublishedSummaryResponse]
     by_league_market: list[PublishedGroupResponse]
@@ -579,12 +593,14 @@ class StrategyPickResponse(PublishedPickResponse):
 
 
 class StrategyPageResponse(StrictModel):
+    selection: PublicationSelection | None = None
     policy_version: Literal["independent-value-strategies-v1"]
     strategy: Literal["best_value", "higher_probability"]
     scope: Literal["current", "history"]
     stake_dollars: Literal[2]
     simulated: Literal[True]
     void_settlement_supported: Literal[False]
+    simulation_void_supported: bool = False
     summary_scope: Literal["page"]
     totals: PublishedSummaryResponse
     market_totals: list[PublishedGroupResponse]
@@ -758,18 +774,44 @@ def create_app(
         return error
 
     @app.get("/api/v1/research/btts/performance", response_model=BttsPerformanceResponse)
-    def get_btts_performance(response: Response, competition: str = "E1"):
+    def get_btts_performance(response: Response, competition: str = "E1", as_of: str | None = None):
         from modelfc.btts_outcomes import performance
         response.headers["Cache-Control"] = "no-store"
-        if competition != "E1":
-            error = _error("UNSUPPORTED_COMPETITION", "BTTS research competition is not enabled.", 422)
+        if competition not in {"ALL", "E1", "E0"}:
+            error = _error("UNSUPPORTED_COMPETITION", "Unknown BTTS reporting scope.", 422)
         else:
             try:
-                return performance(state)
+                from modelfc.btts_market_data import timestamp
+                try:
+                    read_time = timestamp(as_of) if as_of is not None else datetime.now(timezone.utc)
+                    if read_time > datetime.now(timezone.utc):
+                        raise ValueError
+                except (ValueError, TypeError, OverflowError):
+                    return JSONResponse(status_code=422, content={"error": {
+                        "code": "INVALID_AS_OF", "message": "as_of must be a timezone-aware timestamp no later than now."}},
+                        headers={"Cache-Control": "no-store"})
+                return performance(state, competition=competition, as_of=read_time)
             except (LedgerError, ValueError, OSError, KeyError, TypeError):
                 error = _public_read_error(LedgerError("INVALID_BTTS_OUTCOME"))
         error.headers["Cache-Control"] = "no-store"
         return error
+
+    @app.get("/api/v1/publications/{publication_id}/evidence")
+    def get_publication_evidence(publication_id: str, request: Request):
+        from modelfc.public_match_evidence import read
+        headers = {"Cache-Control": "no-store"}
+        if request.query_params or re.fullmatch(r"[0-9a-f]{64}", publication_id) is None:
+            return JSONResponse({"state": "INVALID_REQUEST"}, status_code=422, headers=headers)
+        try:
+            result = read(state, publication_id, config)
+            if result is None:
+                response = _error("PUBLICATION_EVIDENCE_NOT_FOUND", "No saved publication evidence was found.", 404)
+                response.headers.update(headers)
+                return response
+            return JSONResponse(result, headers=headers)
+        except (ValueError, LedgerError, OSError):
+            # No raw storage exceptions, paths, or private evidence in public errors.
+            return JSONResponse({"state": "ERROR"}, status_code=503, headers=headers)
 
     @app.get("/api/v1/recommendations", response_model=list[RecommendationResponse] | RecordedOffersResponse | ShortlistResponse)
     def get_recommendations(response: Response,
@@ -814,34 +856,75 @@ def create_app(
 
     @app.get(
         "/api/v1/prospective/performance",
-        response_model=ProspectivePerformanceResponse | ModelPicksResponse | StrategyPageResponse,
+        response_model=ProspectivePerformanceResponse | ModelPicksResponse | StrategyPageResponse | ResearchPerformanceResponse,
+        response_model_exclude_unset=True,
     )
-    def get_prospective_performance(response: Response,
-                                   view: Literal["legacy", "model_picks", "strategies"] = "legacy",
+    def get_prospective_performance(response: Response, request: Request,
+                                   as_of: str | None = None,
+                                   view: Literal["legacy", "model_picks", "strategies", "research"] = "legacy",
                                    strategy: Literal["best_value", "higher_probability"] = "best_value",
                                    scope: Literal["current", "history"] = "current",
-                                   market: Literal["TEAM_TOTAL", "BTTS"] | None = None,
-                                   competition: Literal["E1", "E0", "SP1"] | None = None,
+                                   market: Literal["TEAM_TOTAL", "BTTS", "CORNER", "ALL"] | None = None,
+                                   competition: Literal["E1", "E0", "SP1", "ALL"] | None = None,
+                                   cohort: Literal["ALL", "ODDS_FREE", "BOOKMAKER_RESEARCH"] = "ALL",
                                    offset: int = Query(0, ge=0, le=2000),
                                    limit: int = Query(5, ge=1, le=20)) -> dict[str, Any]:
         response.headers["Cache-Control"] = "no-store"
+        read_time = None
+        if as_of is not None:
+            try:
+                from modelfc.btts_market_data import timestamp
+                read_time = timestamp(as_of)
+                if view == "legacy" or read_time > datetime.now(timezone.utc):
+                    raise ValueError
+            except (ValueError, TypeError, OverflowError):
+                error = _error("INVALID_AS_OF",
+                    "History requires a timezone-aware cutoff no later than now.", 422)
+                error.headers["Cache-Control"] = "no-store"
+                return error
+        keys = list(request.query_params.keys())
+        allowed = ({"view", "market", "competition", "cohort", "as_of"}
+                   if view == "research" else {"view", "strategy", "scope", "market", "competition", "offset", "limit", "as_of"}
+                   if view == "strategies" else {"view", "market", "competition", "as_of"}
+                   if view == "model_picks" else {"view"})
+        if (any(len(request.query_params.getlist(k)) != 1 for k in keys) or set(keys) - allowed
+                or (view == "research" and (market == "TEAM_TOTAL" or competition == "SP1"))
+                or (view != "research" and (market in {"ALL", "CORNER"} or competition == "ALL"))):
+            error = _error("INVALID_PUBLICATION_QUERY",
+                           "Unknown, duplicate or unsupported parameter for this reporting view.", 422)
+            error.headers["Cache-Control"] = "no-store"
+            return error
         try:
+            if view == "research":
+                from modelfc.research_performance import read
+                return read(state, competition=competition or "ALL", market=market or "ALL",
+                            cohort=cohort, as_of=read_time)
             if view == "strategies":
                 from modelfc.pick_strategies import read
-                return read(state, strategy=strategy, scope=scope, market=market,
-                            competition=competition, offset=offset, limit=limit)
-            if view == "model_picks":
+                result = read(state, strategy=strategy, scope=scope, market=market,
+                              competition=competition, offset=offset, limit=limit, as_of=read_time)
+            elif view == "model_picks":
                 from modelfc.published_recommendations import read
-                return read(state)
-            return read_performance(state)
+                result = read(state, as_of=read_time, record_filter=lambda records: [r for r in records
+                    if (market is None or r["offer"]["market_type"] == market)
+                    and (competition is None or r["offer"]["competition"] == competition)])
+            else:
+                return read_performance(state)
+            if as_of is not None or market is not None or competition is not None:
+                result["selection"] = dict(as_of_utc=read_time.isoformat() if read_time else None,
+                    competition=competition, market=market, membership_basis="recorded-publication-time",
+                    historical_store_membership="UNVERIFIED")
+            return result
         except LedgerError as error:
-            return _public_read_error(error)
+            result = _public_read_error(error)
+            result.headers["Cache-Control"] = "no-store"
+            return result
 
     @app.middleware("http")
     async def team_error_cache(request: Request, call_next):
         response = await call_next(request)
         path = request.url.path
-        if response.status_code >= 400 and (path in ("/api/v1/teams", "/api/v1/team-insights")
+        if response.status_code >= 400 and (path in ("/api/v1/teams", "/api/v1/team-insights", "/api/v1/prospective/performance")
                                            or path.startswith("/api/v1/teams/")):
             response.headers["Cache-Control"] = "no-store"
         return response

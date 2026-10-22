@@ -1,0 +1,30 @@
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { afterEach, expect, it, vi } from 'vitest';
+import { api } from '@/lib/api/client';
+import { ResearchQualityDashboard } from './research-performance';
+import { decodeResearchPerformance,defaultResearchFilters } from '@/lib/api/research-performance';
+import fixture from '../../tests/fixtures/research_performance.json';
+afterEach(()=>{cleanup();vi.restoreAllMocks();});
+it('shows saved history, denominators, original probabilities and filters',async()=>{
+ const call=vi.spyOn(api,'researchPerformance').mockResolvedValue(decodeResearchPerformance(fixture,defaultResearchFilters));
+ render(<ResearchQualityDashboard/>);
+ await screen.findByText(/1 unique fixtures · 2 forecast cohorts/);
+ expect(screen.getAllByText(/West Ham vs QPR/)).toHaveLength(2);
+ expect(screen.getByText(/Missing original training-file retrieval times/)).toBeInTheDocument();
+ expect(screen.getByText(/1 scored fixture YES probabilities/)).toBeInTheDocument();
+ fireEvent.change(screen.getByLabelText('Research market'),{target:{value:'BTTS'}});
+ await waitFor(()=>expect(call.mock.lastCall?.[1]).toMatchObject({market:'BTTS'}));
+ fireEvent.change(screen.getByLabelText('Forecast cohort'),{target:{value:'ODDS_FREE'}});
+ await waitFor(()=>expect(call.mock.lastCall?.[1]).toMatchObject({market:'BTTS',cohort:'ODDS_FREE'}));
+ fireEvent.change(screen.getByLabelText(/Research cutoff/),{target:{value:'2026-10-01T00:00:00Z'}});
+ fireEvent.click(screen.getByText('Apply research cutoff'));
+ await waitFor(()=>expect(call.mock.lastCall?.[1]).toMatchObject({asOf:'2026-10-01T00:00:00.000Z'}));
+});
+it('shows failures instead of empty evidence and supports retry',async()=>{
+ vi.spyOn(api,'researchPerformance').mockRejectedValue(new Error('Evidence unavailable'));
+ render(<ResearchQualityDashboard/>);
+ expect(await screen.findByRole('alert')).toHaveTextContent('Evidence unavailable');
+ expect(screen.queryByText(/No supported saved forecasts/)).not.toBeInTheDocument();
+ fireEvent.click(screen.getByText('Retry research report'));
+ await waitFor(()=>expect(api.researchPerformance).toHaveBeenCalledTimes(2));
+});

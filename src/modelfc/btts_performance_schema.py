@@ -1,5 +1,5 @@
 """Read-only BTTS performance response, distinct from corner evaluation."""
-from typing import Annotated, Literal
+from typing import Annotated, Literal, Any
 from pydantic import Field
 from modelfc.btts_market_data import Digest, ResearchContract, Text
 from modelfc.btts_model import HistorySource
@@ -43,6 +43,8 @@ class ForecastView(ResearchContract):
     actual_btts: Literal['YES', 'NO'] | None
     home_goals: Count | None
     away_goals: Count | None
+    effective_record_hash: Digest | None = None
+    corrections: list[dict[str, Any]] = Field(default_factory=list)
     outcome_id: Digest | None
     recorded_at_utc: Text | None
     result_provider: Literal['football-data.co.uk', 'sportmonks'] | None
@@ -50,7 +52,12 @@ class ForecastView(ResearchContract):
 
 
 class BttsPerformanceResponse(ResearchContract):
-    competition: Literal['E1']
+    competition: Literal["ALL", "E1", "E0"]
+    market: Literal["BTTS"]
+    as_of_utc: Text
+    coverage: Literal["SUPPORTED", "PARTIAL", "UNSUPPORTED"]
+    supported_competitions: list[Literal["E1"]]
+    unavailable_competitions: list[Literal["E0"]]
     research_only: Literal[True]
     selection_policy: Literal['e1-earliest-frozen-per-exact-fixture-v1']
     log_loss_epsilon: Literal[1e-15]

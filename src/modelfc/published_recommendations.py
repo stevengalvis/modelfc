@@ -59,12 +59,33 @@ def _identity(offer):
     return _canonical_hash([*_fixture(offer), offer["market_type"], offer.get("team_side")])
 
 
-def select(inventory, now, *, strategy="best_value"):
+def select(inventory, now, *, strategy="best_value", diagnostics=None):
     """Best book per exact selection, then existing value ranking per team market."""
     selected = {}
-    for offer in project_shortlist(inventory, now=now, limit=100000)["offers"]:
+    predictions = {p['prediction_id']: p for p in inventory['predictions']} if diagnostics is not None else {}
+    references = {}
+    def offer_key(offer):
+        return (offer['prediction_id'], offer['target_id'], offer['bookmaker'])
+    def observe(offer):
+        if diagnostics is not None:
+            try:
+                references[offer_key(offer)] = offer['observation_id']
+                diagnostics.corner_qualification(offer, predictions[offer['prediction_id']], now)
+            except Exception:
+                diagnostics.incomplete = True
+    def strategy_diagnostic(offer, reason):
+        if diagnostics is not None:
+            try:
+                diagnostics.identity(offer, reason, now, market='CORNER_TEAM_TOTAL',
+                                     strategy=strategy, reference_id=references[offer_key(offer)])
+            except Exception:
+                diagnostics.incomplete = True
+    for offer in project_shortlist(inventory, now=now, limit=100000, on_offer=observe)["offers"]:
         if strategy != "higher_probability" or offer["model_probability"] >= .65:
+            strategy_diagnostic(offer, 'VALUE_QUALIFIED')
             selected.setdefault(_identity(offer), offer)
+        else:
+            strategy_diagnostic(offer, 'STRATEGY_PROBABILITY_THRESHOLD')
     return selected
 
 
@@ -126,7 +147,7 @@ def _views(offer):
     return ["best_value"] + (["higher_probability"] if offer["model_probability"] >= .65 else [])
 
 
-def publish_locked(state_dir, *, include_btts=True, independent=False):
+def publish_locked(state_dir, *, include_btts=True, independent=False, diagnostics=None):
     """Called only by the live writer under runner.lock, never by reads/replay.
 
     No caller-supplied time. Clock sampled after source validation and checked
@@ -149,9 +170,9 @@ def publish_locked(state_dir, *, include_btts=True, independent=False):
         source = btts.records(state) if include_btts else ()
         for strategy in VIEWS if independent else ("best_value",):
             candidates = {key: (value, predictions[value["prediction_id"]]["created_at_utc"])
-                          for key, value in select(inventory, selection_time, strategy=strategy).items()}
+                          for key, value in select(inventory, selection_time, strategy=strategy, diagnostics=diagnostics).items()}
             if include_btts:
-                candidates.update(btts.select(source, selection_time, strategy=strategy))
+                candidates.update(btts.select(source, selection_time, strategy=strategy, diagnostics=diagnostics))
             for key, (value, forecast_at) in candidates.items():
                 identity = strategies.publication_identity(value, strategy) if independent else key
                 chosen[identity] = (value, forecast_at, strategy)
@@ -159,12 +180,20 @@ def publish_locked(state_dir, *, include_btts=True, independent=False):
             raise LedgerError("PUBLICATION_CAPACITY_EXCEEDED")
         events = {e["opportunity_id"] for e in inventory["opportunities"]}
         created = 0
+        def diagnostic(offer, code, strategy, identity, evidence_hash=None, observed_at=None):
+            if diagnostics is not None:
+                diagnostics.identity(offer, code, observed_at or selection_time,
+                    market='BTTS' if offer['market_type'] == 'BTTS' else 'CORNER_TEAM_TOTAL',
+                    strategy=strategy, reference_id=identity, evidence_hash=evidence_hash)
         for identity, (offer, forecast_at, strategy) in chosen.items():
+            diagnostic(offer, 'PUBLICATION_SELECTED', strategy, identity)
             if identity in existing:
+                diagnostic(offer, "PUBLICATION_EXISTING", strategy, identity)
                 continue
             now = _now()
             kickoff = _time(offer["kickoff_utc"])
             if now >= kickoff:
+                diagnostic(offer, "PUBLICATION_WINDOW_CLOSED", strategy, identity, observed_at=now)
                 continue
             if (independent and _time(effective) > now
                     or offer["market_type"] != "BTTS" and offer["opportunity_id"] not in events
@@ -194,6 +223,7 @@ def publish_locked(state_dir, *, include_btts=True, independent=False):
                              evidence_state=state, evidence_lock_fd=lock_fd)
             _sync_directories(directory, state)
             created += 1
+            diagnostic(offer, "PUBLICATION_RECORDED", strategy, identity, record["record_hash"], now)
         return created
 
 
@@ -204,13 +234,19 @@ def _summary(rows):
     profit = math.fsum(r["profit_units"] for r in settled)
     return {"picks": len(rows), "unique_fixtures": len({_canonical_hash(_fixture(r["offer"])) for r in rows}),
             "settled": len(settled), "wins": wins, "losses": losses,
-            "pushes": sum(r["result"] == "PUSH" for r in rows), "voids": 0,
-            "pending": len(rows) - len(settled), "profit_units": profit,
+            "pushes": sum(r["result"] == "PUSH" for r in rows),
+            "voids": sum(r["result"] == "SIMULATION_VOID" for r in rows),
+            "pending": sum(r["result"] == "PENDING" for r in rows), "profit_units": profit,
             "win_rate": wins / (wins + losses) if wins + losses else None,
             "roi": profit / len(settled) if settled else None}
 
 
-def read(state_dir, *, directory_name=DIRECTORY, record_filter=None):
+def read(state_dir, *, directory_name=DIRECTORY, record_filter=None, as_of=None):
+    """Replay recorded publication membership and results, not historical disk presence."""
+    current = _now()
+    if as_of is not None and (not isinstance(as_of, datetime) or as_of.tzinfo is None or as_of > current):
+        raise ValueError("INVALID_PUBLICATION_READ_TIME")
+    now = as_of if as_of is not None else current
     state = Path(state_dir)
     rows = []
     if state.is_symlink() or (state.exists() and not state.is_dir()):
@@ -221,24 +257,29 @@ def read(state_dir, *, directory_name=DIRECTORY, record_filter=None):
     if directory.exists():
         with existing_read_lock(state / "prospective" / "runner.lock"), ledger_read_lock(state):
             records = _records(state, directory_name=directory_name)
+            if any(_time(r["published_at_utc"]) > current for r in records):
+                raise LedgerError("INVALID_PUBLISHED_RECOMMENDATION")
+            if as_of is not None:
+                records = [r for r in records if _time(r["published_at_utc"]) <= now]
             if record_filter is not None:
                 records = record_filter(records)
             if not records:
                 return _report([])
             # Published corners never reference research-only forecasts. BTTS outcomes
             # are validated separately so absent optional provider code stays pending.
-            inventory = _locked_inventory(state, now=_now(), include_research=False)
+            inventory = _locked_inventory(state, now=now, include_research=False, outcome_as_of=as_of)
             events = {e["opportunity_id"]: e for e in inventory["opportunities"]}
             predictions = {p["prediction_id"]: p for p in inventory["predictions"]}
             targets = inventory["targets"]
             btts_source = btts.records(state) if any(r["offer"]["market_type"] == "BTTS" for r in records) else ()
+            btts_outcomes = btts.result_inventory(state, now) if btts_source else None
             for record in records:
                 offer = record["offer"]
                 if offer["market_type"] == "BTTS":
-                    if _time(record["published_at_utc"]) > _now():
+                    if _time(record["published_at_utc"]) > current:
                         raise LedgerError("INVALID_PUBLISHED_RECOMMENDATION")
                     btts.validate(record, btts_source)
-                    result, profit = btts.result(record, state, btts_source, _now())
+                    result, profit = btts.result(record, btts_source, now, btts_outcomes)
                     rows.append({**record, "result": result, "profit_units": profit})
                     continue
                 try:
@@ -253,7 +294,7 @@ def read(state_dir, *, directory_name=DIRECTORY, record_filter=None):
                             or record["forecast_created_at_utc"] != prediction["created_at_utc"]
                             or offer["model_probability"] != target["model_probability"]
                             or offer["push_probability"] != target["push_probability"]
-                            or _time(record["published_at_utc"]) > _now()):
+                            or _time(record["published_at_utc"]) > current):
                         raise ValueError
                     historical = get_market_intelligence(state, offer["prediction_id"],
                                                          as_of=_time(record["published_at_utc"]),
@@ -270,16 +311,18 @@ def read(state_dir, *, directory_name=DIRECTORY, record_filter=None):
                     raise LedgerError("INVALID_PUBLISHED_RECOMMENDATION") from None
                 rows.append({**record, "result": event["result"] or "PENDING",
                              "profit_units": event["realized_profit_units"]})
+            from modelfc.settlement_reviews import apply_voids
+            rows = apply_voids(state, rows, directory_name, as_of=as_of)
     return _report(rows)
 
 
 def _report(rows):
-    rows.sort(key=lambda r: (r["published_at_utc"], r["publication_id"]), reverse=True)
+    rows.sort(key=lambda r: (_time(r["published_at_utc"]), r["publication_id"]), reverse=True)
     groups = []
     for competition, market in sorted({(r["offer"]["competition"], r["offer"]["market_type"]) for r in rows}):
         groups.append({"competition": competition, "market_type": market,
                        "summary": _summary([r for r in rows if r["offer"]["competition"] == competition
                                             and r["offer"]["market_type"] == market])})
-    return {"policy_version": "first-published-value-v2", "void_settlement_supported": False,
+    return {"policy_version": "first-published-value-v2", "void_settlement_supported": False, "simulation_void_supported": True,
             "summary": _summary(rows), "by_view": {view: _summary([r for r in rows if view in r["ranking_views"]]) for view in VIEWS},
             "by_league_market": groups, "publications": rows}

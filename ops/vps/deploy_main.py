@@ -56,7 +56,9 @@ FIELDS = ("status", "requested_sha", "previous_sha", "final_sha", "fetch_verifie
           "release_created", "dependency_sync", "tests_status", "tests_run",
           "promotion_status", "state_boundary_enforced", "reason")
 REASONS = {"OK", "ALREADY_CURRENT", "SUPERSEDED", "INVALID_REQUEST", "DEPLOYMENT_BUSY",
-           "STATE_BOUNDARY_FAILED", "SOURCE_INVALID", "FETCH_FAILED", "SHA_NOT_ON_MAIN",
+           "STATE_BOUNDARY_FAILED", "ADMISSION_QUERY_FAILED", "ADMISSION_PROPERTIES_INVALID",
+           "ADMISSION_AGE_WAIT_EXPIRED", "ADMISSION_IDENTITY_CHANGED", "ADMISSION_TARGET_SUPERSEDED", "SOURCE_INVALID",
+           "FETCH_FAILED", "SHA_NOT_ON_MAIN",
            "ACTIVE_SHA_NOT_ON_MAIN", "DEPENDENCY_SYNC_FAILED", "TESTS_FAILED",
            "FINAL_SHA_MISMATCH", "PROMOTION_FAILED", "INTERNAL_ERROR", "STORAGE_LIMIT_FAILED"}
 
@@ -183,7 +185,7 @@ def deployment_account_groups():
 # Includes stop escalation and time for systemctl to report completed cgroup cleanup.
 STOP_SECONDS = 30
 SERVICE_OVERHEAD = 30
-START_SECONDS = {SERVICE: 330, DEPENDENCY_SERVICE: 510, ACQUISITION_SERVICE: 600}
+START_SECONDS = {SERVICE: 630, DEPENDENCY_SERVICE: 510, ACQUISITION_SERVICE: 600}
 
 
 def service_kind(unit):
@@ -198,7 +200,7 @@ def service_kind(unit):
 
 
 def lifecycle_valid(fields, seconds):
-    expected = {330: "5min 30s", 510: "8min 30s", 600: "10min"}[seconds]
+    expected = {630: "10min 30s", 510: "8min 30s", 600: "10min"}[seconds]
     return (fields.get("TimeoutStartUSec") == expected
             and fields.get("TimeoutStopUSec") == "30s"
             and fields.get("SendSIGKILL") == "yes"
@@ -483,7 +485,7 @@ def boundary(*, root=ROOT, releases=RELEASES, control=CONTROL, state=STATE,
     hidden = fields.get("InaccessiblePaths", "").split()
     if (not service_environment_valid(fields, bytecode=True)
             or fields.get("StandardInput") != "null"
-            or not lifecycle_valid(fields, 330)
+            or not lifecycle_valid(fields, 630)
             or fields.get("PrivateNetwork") != "yes"
             or fields.get("PrivateTmp") != "yes"
             or fields.get("NoNewPrivileges") != "yes"
@@ -1122,10 +1124,102 @@ def read_test_report(path):
     return json.loads(contents)
 
 
-def tests(release, sha, *, request=REQUEST, output=TEST_OUTPUT, service=SERVICE):
+ADMISSION_REASONS = {"ADMISSION_QUERY_FAILED", "ADMISSION_PROPERTIES_INVALID",
+                     "ADMISSION_AGE_WAIT_EXPIRED", "ADMISSION_IDENTITY_CHANGED",
+                     "ADMISSION_TARGET_SUPERSEDED"}
+ADMISSION_WAIT_NS = 900_000_000_000
+ADMISSION_MAX_AGE_NS = 1_020_000_000_000
+
+
+def admission_snapshot(*, timeout=15, waiting=False):
+    """Read only fixed API properties; never forward bus output or exceptions."""
+    unit = "modelfc-corner-api.service"
+    keys = ("Id", "LoadState", "ActiveState", "SubState", "MainPID", "InvocationID",
+            "ExecMainStartTimestampMonotonic", "RuntimeMaxUSec")
+    try:
+        raw = command(["/usr/bin/systemctl", "show", unit, "--all",
+                       *[item for key in keys for item in ("-p", key)]], timeout=timeout)
+    except Failure:
+        raise Failure("ADMISSION_QUERY_FAILED") from None
+    try:
+        if len(raw) > 2048:
+            raise ValueError
+        fields = unique_properties(line.split("=", 1) for line in raw.splitlines())
+        now = time.monotonic_ns()
+        if (type(now) is not int or now < 0 or set(fields) != set(keys)
+                or fields["Id"] != unit or fields["LoadState"] != "loaded"
+                or fields["RuntimeMaxUSec"] != "30min"
+                or re.fullmatch(r"[0-9]{1,20}", fields["MainPID"]) is None
+                or re.fullmatch(r"[0-9]{1,20}", fields["ExecMainStartTimestampMonotonic"]) is None):
+            raise ValueError
+        started = int(fields["ExecMainStartTimestampMonotonic"]) * 1000
+        pid = int(fields["MainPID"])
+        invocation = fields["InvocationID"]
+        if started > now:
+            raise ValueError
+        state = (fields["ActiveState"], fields["SubState"])
+        # Only after an otherwise valid, over-age observation may normal restart
+        # transitions be observed. They can never admit tests themselves.
+        if waiting and state == ("activating", "auto-restart"):
+            if pid != 0 or (invocation and re.fullmatch("[0-9a-f]{32}", invocation) is None):
+                raise ValueError
+            return None
+        if (started <= 0 or pid <= 0
+                or re.fullmatch("[0-9a-f]{32}", invocation) is None):
+            raise ValueError
+        if waiting and state in {("deactivating", "stop-sigterm"), ("deactivating", "stop"),
+                                 ("activating", "start")}:
+            return None
+        if state != ("active", "running"):
+            raise ValueError
+        return (invocation, pid, started), now - started
+    except (ValueError, KeyError, TypeError, OverflowError):
+        raise Failure("ADMISSION_PROPERTIES_INVALID") from None
+
+
+def test_admission_window(*, revalidate=None):
+    """Wait under the caller's deployment lock only for an otherwise valid old API."""
+    snapshot = admission_snapshot()
+    if snapshot[1] <= ADMISSION_MAX_AGE_NS:
+        return
+    # No caller may wait and subsequently stage without rechecking its boundary.
+    if revalidate is None:
+        raise Failure("STATE_BOUNDARY_FAILED")
+    original_identity = snapshot[0]
+    deadline = time.monotonic_ns() + ADMISSION_WAIT_NS
+    while True:
+        remaining = deadline - time.monotonic_ns()
+        if remaining <= 0:
+            raise Failure("ADMISSION_AGE_WAIT_EXPIRED")
+        time.sleep(min(5, remaining / 1_000_000_000))
+        remaining = deadline - time.monotonic_ns()
+        if remaining <= 0:
+            raise Failure("ADMISSION_AGE_WAIT_EXPIRED")
+        snapshot = admission_snapshot(timeout=min(15, remaining / 1_000_000_000), waiting=True)
+        if time.monotonic_ns() >= deadline:
+            raise Failure("ADMISSION_AGE_WAIT_EXPIRED")
+        if snapshot is None or snapshot[1] > ADMISSION_MAX_AGE_NS:
+            continue
+        if snapshot[0][0] == original_identity[0] or snapshot[0][2] <= original_identity[2]:
+            raise Failure("ADMISSION_IDENTITY_CHANGED")
+        revalidate()
+        remaining = deadline - time.monotonic_ns()
+        if remaining <= 0:
+            raise Failure("ADMISSION_AGE_WAIT_EXPIRED")
+        final = admission_snapshot(timeout=min(15, remaining / 1_000_000_000))
+        if time.monotonic_ns() >= deadline:
+            raise Failure("ADMISSION_AGE_WAIT_EXPIRED")
+        if final[0] != snapshot[0]:
+            raise Failure("ADMISSION_IDENTITY_CHANGED")
+        if final[1] <= ADMISSION_MAX_AGE_NS:
+            return
+
+
+def tests(release, sha, *, request=REQUEST, output=TEST_OUTPUT, service=SERVICE, revalidate=None):
     release_id = release.name
     if RELEASE_ID.fullmatch(release_id) is None or release_id[:40] != sha:
         raise Failure("STATE_BOUNDARY_FAILED")
+    test_admission_window(revalidate=revalidate)
     request.unlink(missing_ok=True)
     output.unlink(missing_ok=True)
     # A prior attempt must never masquerade as evidence for this attempt.
@@ -1263,7 +1357,7 @@ def report(sha):
 
 
 def deploy(sha, *, root=ROOT, releases=RELEASES, current=CURRENT, control=CONTROL,
-           remote=REMOTE, check_boundary=boundary, test_runner=tests, tip_reader=None):
+           remote=REMOTE, check_boundary=boundary, test_runner=None, tip_reader=None):
     value = report(sha)
     if not isinstance(sha, str) or SHA.fullmatch(sha) is None:
         return value
@@ -1316,7 +1410,22 @@ def deploy(sha, *, root=ROOT, releases=RELEASES, current=CURRENT, control=CONTRO
             value["dependency_sync"] = dependencies(candidate)
             verify_venv_size(candidate / ".venv")
             verify_source(candidate, sha)
-            value["tests_run"] = test_runner(candidate, sha)
+            def revalidate_admission():
+                check_boundary()
+                verify_source(candidate, sha)
+                verify_venv_size(candidate / ".venv")
+                if current_release(current=current, releases=releases) != (active, previous):
+                    raise Failure("STATE_BOUNDARY_FAILED")
+                if read_tip(remote) != sha:
+                    # No selected release cannot satisfy the readers' SUPERSEDED
+                    # contract. Preserve both null identities and fail explicitly.
+                    raise Failure("ADMISSION_TARGET_SUPERSEDED" if previous is None else "SUPERSEDED")
+
+            revalidate_admission()
+            if test_runner is None:
+                value["tests_run"] = tests(candidate, sha, revalidate=revalidate_admission)
+            else:
+                value["tests_run"] = test_runner(candidate, sha)
             if type(value["tests_run"]) is not int or value["tests_run"] <= 0:
                 raise Failure("TESTS_FAILED")
             value["tests_status"] = "PASS"
@@ -1335,6 +1444,8 @@ def deploy(sha, *, root=ROOT, releases=RELEASES, current=CURRENT, control=CONTRO
                          promotion_status="PROMOTED")
     except Failure as error:
         value.update(status="FAIL", reason=error.code)
+        if error.code == "SUPERSEDED":
+            value.update(status="SUPERSEDED", promotion_status="SUPERSEDED")
         if error.code == "TESTS_FAILED":
             value["tests_status"] = "FAIL"
             value["tests_run"] = error.tests_run
@@ -1384,6 +1495,130 @@ def verify_test_network(controller_netns):
         raise Failure("STATE_BOUNDARY_FAILED") from None
 
 
+# Fixed bootstrap, not a selectable command or a candidate-supplied helper.
+# The original unittest CLI still owns discovery, reporting and exit status.
+TEST_BOOTSTRAP = r"""
+import json, os, runpy, sys, time, unittest
+fd = int(sys.argv[1])
+os.set_inheritable(fd, False)
+os.set_blocking(fd, False)
+sequence = 0
+origin = time.monotonic_ns()
+def emit(kind, name=""):
+    global sequence
+    sequence += 1
+    try:
+        if not isinstance(name, str) or len(name) > 160:
+            name = ""
+        raw = (json.dumps([sequence, kind, name,
+                          (time.monotonic_ns() - origin) // 1000],
+                         ensure_ascii=True) + "\n").encode("ascii")
+        if len(raw) <= 1024:
+            os.write(fd, raw)  # One atomic, nonblocking write; loss is observable.
+    except Exception:
+        pass
+class TimedResult(unittest.TextTestResult):
+    def startTest(self, test):
+        super().startTest(test)
+        try:
+            emit("start", test.id())
+        except Exception:
+            emit("start")
+    def stopTest(self, test):
+        try:
+            emit("finish", test.id())
+        except Exception:
+            emit("finish")
+        super().stopTest(test)
+unittest.TextTestRunner.resultclass = TimedResult
+sys.argv = ["python -m unittest", "discover", "-v", "-s", "tests"]
+try:
+    runpy.run_module("unittest", run_name="__main__")
+finally:
+    emit("end")
+    os.close(fd)
+"""
+
+
+class TestProgress:
+    """Bounded, untrusted observations; never an input to the pass/fail gate."""
+    def __init__(self, allowed):
+        self.allowed = allowed
+        self.pending = b""
+        self.bytes = self.sequence = self.last_us = self.completed = 0
+        self.invalid = self.ended = False
+        self.active = self.last = None
+        self.slowest = []
+
+    def feed(self, chunk):
+        self.bytes += len(chunk)
+        if self.invalid or self.bytes > 4 * 1024 * 1024:
+            self.invalid = True
+            self.pending = b""
+            return
+        self.pending += chunk
+        while b"\n" in self.pending:
+            raw, self.pending = self.pending.split(b"\n", 1)
+            try:
+                if len(raw) > 1024 or self.ended:
+                    raise ValueError
+                seq, kind, name, stamp = json.loads(raw)
+                if (type(seq) is not int or seq != self.sequence + 1 or seq > 20000
+                        or type(stamp) is not int or not self.last_us <= stamp <= 630_000_000
+                        or not isinstance(name, str) or kind not in ("start", "finish", "end")):
+                    raise ValueError
+                if kind == "end":
+                    if name or self.active is not None:
+                        raise ValueError
+                    self.ended = True
+                else:
+                    if name not in self.allowed:
+                        raise ValueError
+                    if kind == "start":
+                        if self.active is not None:
+                            raise ValueError
+                        self.active = (name, stamp)
+                    else:
+                        if self.active is None or self.active[0] != name:
+                            raise ValueError
+                        self.completed += 1
+                        self.slowest.append([name, stamp - self.active[1]])
+                        self.slowest = sorted(self.slowest, key=lambda item: (-item[1], item[0]))[:8]
+                        self.active = None
+                    self.last = name
+                self.sequence, self.last_us = seq, stamp
+            except (ValueError, TypeError, UnicodeError):
+                self.invalid = True
+                self.pending = b""
+                return
+        if len(self.pending) > 1024:
+            self.invalid = True
+            self.pending = b""
+
+    def snapshot(self):
+        return dict(observed_completed=self.completed,
+                    complete=self.ended and not self.invalid and not self.pending,
+                    last_test_id=self.last, last_progress_us=self.last_us,
+                    slowest=self.slowest)
+
+
+def valid_progress(value, allowed):
+    if not isinstance(value, dict) or set(value) != {
+            "observed_completed", "complete", "last_test_id", "last_progress_us", "slowest"}:
+        return False
+    def number(n, limit):
+        return type(n) is int and 0 <= n <= limit
+    def name(n):
+        return isinstance(n, str) and len(n) <= 160 and n in allowed
+    return (number(value["observed_completed"], 10000)
+            and type(value["complete"]) is bool
+            and (value["last_test_id"] is None or name(value["last_test_id"]))
+            and number(value["last_progress_us"], 630_000_000)
+            and isinstance(value["slowest"], list) and len(value["slowest"]) <= 8
+            and all(isinstance(item, list) and len(item) == 2 and name(item[0])
+                    and number(item[1], 630_000_000) for item in value["slowest"]))
+
+
 class TestCaptureFailure(Exception):
     """Internal bounded capture; only allowlisted derived fields may be retained."""
     def __init__(self, classification, captured=b"", truncated=False):
@@ -1393,16 +1628,31 @@ class TestCaptureFailure(Exception):
         super().__init__(classification)
 
 
-def capture_test_process(args, *, cwd, env, timeout=300):
+def capture_test_process(args, *, cwd, env, timeout=600, progress=None):
     """Discard stdout; drain stderr with a fixed tail and an overall deadline."""
-    process = subprocess.Popen(args, cwd=cwd, env=env, stdout=subprocess.DEVNULL,
-                               stderr=subprocess.PIPE)
+    read_fd = write_fd = None
+    try:
+        if progress is not None:
+            read_fd, write_fd = os.pipe()
+            args = [args[0], "-B", "-c", TEST_BOOTSTRAP, str(write_fd)]
+        process = subprocess.Popen(args, cwd=cwd, env=env, stdout=subprocess.DEVNULL,
+                                   stderr=subprocess.PIPE,
+                                   pass_fds=() if write_fd is None else (write_fd,))
+    except BaseException:
+        if read_fd is not None:
+            os.close(read_fd)
+        raise
+    finally:
+        if write_fd is not None:
+            os.close(write_fd)
     tail = b""
     truncated = False
     deadline = time.monotonic() + timeout
     try:
         with selectors.DefaultSelector() as selector:
             selector.register(process.stderr, selectors.EVENT_READ)
+            if read_fd is not None:
+                selector.register(read_fd, selectors.EVENT_READ)
             while selector.get_map():
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
@@ -1411,6 +1661,9 @@ def capture_test_process(args, *, cwd, env, timeout=300):
                     chunk = os.read(key.fd, 4096)
                     if not chunk:
                         selector.unregister(key.fd)
+                        continue
+                    if key.fd == read_fd:
+                        progress.feed(chunk)
                         continue
                     truncated |= len(tail) + len(chunk) > TEST_STDERR_LIMIT
                     tail = (tail + chunk)[-TEST_STDERR_LIMIT:]
@@ -1427,6 +1680,8 @@ def capture_test_process(args, *, cwd, env, timeout=300):
             process.kill()
         process.wait()
         process.stderr.close()
+        if read_fd is not None:
+            os.close(read_fd)
 
 
 def test_identifiers(release):
@@ -1492,6 +1747,10 @@ def extended_diagnostics(stderr, summary, allowed, truncated, classification, co
 
 
 def valid_test_diagnostics(value, allowed):
+    if isinstance(value, dict) and "progress" in value:
+        if not valid_progress(value["progress"], allowed):
+            return False
+        value = {key: item for key, item in value.items() if key != "progress"}
     basic = {"failures", "errors", "test_ids", "truncated"}
     extra = {"classification", "count_known", "last_test_id"}
     if isinstance(value, dict) and set(value) == basic | extra:
@@ -1536,10 +1795,11 @@ def run_tests():
                "PYTHONDONTWRITEBYTECODE": "1", "PYTHONNOUSERSITE": "1"}
         allowed = test_identifiers(release)
         classification = None
+        progress = TestProgress(allowed)
         try:
             code, captured, truncated = capture_test_process([str(release / ".venv/bin/python"), "-B", "-m", "unittest",
                                   "discover", "-v", "-s", "tests"], cwd=release, env=env,
-                                      timeout=300)
+                                      timeout=600, progress=progress)
         except TestCaptureFailure as error:
             code, captured, truncated = None, error.captured, error.truncated
             classification = error.classification
@@ -1560,6 +1820,10 @@ def run_tests():
                 stderr, match[2] if match and classification is None else None, allowed, truncated,
                 classification or ("TEST_FAILURE" if match else "MISSING_SUMMARY"),
                 match is not None and classification is None)
+            timing = progress.snapshot()
+            if classification is not None:
+                timing["complete"] = False
+            value["diagnostics"]["progress"] = timing
     except (Failure, OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
         pass
     try:

@@ -195,7 +195,7 @@ class MorningTests(unittest.TestCase):
             first=refresh.refresh_data(self.config)
         self.cap.write_text('{"version":1,"enabled":true}')
         self.f.config_file.write_text(json.dumps({'data_directory':str(self.f.history),'leagues':['E1','SP1'],'max_age_days':14}))
-        # Retained legacy rows also keep their original report time on migration.
+        # Missing per-league times cannot inherit the new invocation time.
         first['results'][1].pop('checked_at')
         first.pop('invocation')
         (self.f.refresh_state/'status.json').write_text(json.dumps(first))
@@ -207,9 +207,12 @@ class MorningTests(unittest.TestCase):
         self.assertEqual(projection['last_attempt_at_utc'],current['results'][0]['checked_at'])
         capabilities=api_capabilities(self.f.config_file,today=now.date(),min_history=1,min_venue_history=1)
         shown=next(row for row in capabilities['competitions'] if row['code']=='SP1')
-        self.assertEqual(shown['last_refresh_at'],first['checked_at'])
+        self.assertIsNone(shown['last_refresh_at'])
         self.assertNotEqual(shown['last_refresh_at'],current['checked_at'])
         self.assertEqual(shown['last_refresh_status'],'SUCCEEDED')
+        current['results'][0]['checked_at'] = None
+        (self.f.refresh_state/'status.json').write_text(json.dumps(current))
+        self.assertEqual(_refresh(self.f.refresh_state/'status.json',now,14)['state'], 'UNVERIFIED')
         current['results'][0]={'league':'E1','status':'unknown'}
         (self.f.refresh_state/'status.json').write_text(json.dumps(current))
         self.assertEqual(_refresh(self.f.refresh_state/'status.json',now,14),
@@ -227,7 +230,7 @@ class MorningTests(unittest.TestCase):
             def __enter__(self): return self
             def __exit__(self,*args): pass
             def read(self,limit): return conflicting
-            def geturl(self): return 'https://www.football-data.co.uk/mmz4281/2627/E1.csv'
+            def geturl(self): return 'https://football-data.co.uk/mmz4281/2627/E1.csv'
         with patch.object(refresh,'urlopen',return_value=Response()):
             result=morning.run(self.f.config,self.f.state,{**morning.POLICY,'enabled':True},retain_result_evidence=True)
         row=result['report']['results'][0]
@@ -344,8 +347,8 @@ class TransportTests(unittest.TestCase):
             return value
         with patch('urllib.request.HTTPSHandler.https_open',new=response), patch('socket.socket.connect',side_effect=AssertionError('network forbidden')):
             with self.assertRaises(HTTPError):
-                refresh.download_csv('https://www.football-data.co.uk/mmz4281/2627/E1.csv')
-        self.assertEqual(calls,[('GET','https://www.football-data.co.uk/mmz4281/2627/E1.csv')])
+                refresh.download_csv('https://football-data.co.uk/mmz4281/2627/E1.csv')
+        self.assertEqual(calls,[('GET','https://football-data.co.uk/mmz4281/2627/E1.csv')])
 
 
 class ActualEntryTests(unittest.TestCase):

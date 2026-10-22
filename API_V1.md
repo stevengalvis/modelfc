@@ -1252,3 +1252,47 @@ workspace (seven reads per case), the previous two feeds required 24 observation
 reads/intelligence passes, 127,426 serialized bytes and 177.378 ms median; the
 shortlist required one pass, 5,688 bytes and 13.646 ms median. This synthetic
 comparison is reproducible, not a production latency guarantee.
+
+### BTTS forecast quality: league scope and historical cutoff
+
+`GET /api/v1/research/btts/performance?competition=ALL&as_of=2026-10-19T12:00:00Z`
+returns the existing immutable BTTS quality/history cohort. `competition` accepts
+`E1` (default), `ALL` (partial E1-only coverage), or `E0` (explicitly unsupported,
+empty rows, null scores). `as_of` must include a timezone and cannot be in the
+future; omission uses the request time. Responses echo `market`, `as_of_utc`,
+`coverage`, `supported_competitions` and `unavailable_competitions`. All reads and
+validation errors use `no-store`. The UI sends identical filters; client validation
+rejects scope/cutoff mismatches. This does not enable EPL production collection or
+combine forecast-quality samples with priced returns. See
+[BTTS reporting semantics and dependencies](docs/BTTS_OUTCOMES.md#zen-49-reporting-scope-and-historical-reads).
+
+
+### Publication history filters (ZEN-49)
+
+The read-only `/api/v1/prospective/performance` Model Picks and independent
+strategy views accept `as_of`, `competition` and `market`. Filtered responses echo
+`selection`, including the recorded-publication-time basis and explicit unverified
+historical store membership. Historical cutoff is not supported by the legacy
+quote-simulation view. See [reporting acceptance](docs/ZEN49_REPORTING_ACCEPTANCE.md)
+for boundaries, supported query values and remaining production acceptance.
+
+
+### Saved research quality and history
+
+`GET /api/v1/prospective/performance?view=research` is a read-only projection of
+existing validated corner/BTTS forecasts and effective outcomes. Optional selections:
+`competition=ALL|E1|E0`, `market=ALL|CORNER|BTTS`,
+`cohort=ALL|ODDS_FREE|BOOKMAKER_RESEARCH`, and timezone-aware nonfuture `as_of`.
+Categorical defaults are ALL. All responses use no-store and echo the complete
+selection and effective cutoff. Unknown/duplicate or incompatible view parameters
+return 422. No collection, settlement, model fitting or historical reconstruction.
+
+The response separates unique fixtures, saved forecast cohorts and per-market
+primary-fixture/score denominators. `forecasts` retain chronological immutable IDs,
+source forecast IDs, original probabilities/timestamps/model versions, source
+references, effective results and visible root/correction records. `markets` expose
+Brier/log loss/calibration, corner team-count MAE/RMSE, settled/unresolved/upcoming
+counts and explicit probability units. Empty denominators yield null scores. No
+quality-view ROI or combined cross-market score is defined. E0 is unsupported; ALL
+is partial E1 coverage. See [ZEN-49 acceptance](docs/ZEN49_REPORTING_ACCEPTANCE.md)
+for cohort selection, missing historical evidence and deployment acceptance limits.

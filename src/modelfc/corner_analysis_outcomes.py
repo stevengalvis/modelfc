@@ -266,12 +266,14 @@ def record_outcome(*, state_dir, analysis_id, data_config_path, idempotency_key,
         correction_reason=correction_reason)
 
 
-def record_sportmonks_outcome(*, state_dir, analysis_id, evidence, idempotency_key):
+def record_sportmonks_outcome(*, state_dir, analysis_id, evidence, idempotency_key,
+                            supersedes_outcome_id=None, correction_reason=None):
     """Explicit offline saved-evidence settlement; never retrieves provider data."""
     from modelfc.sportmonks_outcome_evidence import SavedResultEvidence
     _require(isinstance(evidence, SavedResultEvidence), "SAVED_RESULT_REJECTED")
     return _record_outcome(state_dir=state_dir, analysis_id=analysis_id,
-        evidence=evidence.for_settlement, idempotency_key=idempotency_key)
+        evidence=evidence.for_settlement, idempotency_key=idempotency_key,
+        supersedes_outcome_id=supersedes_outcome_id, correction_reason=correction_reason)
 
 
 def _record_outcome(*, state_dir, analysis_id, evidence, idempotency_key,

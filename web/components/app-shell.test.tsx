@@ -30,3 +30,24 @@ describe("AppShell", () => {
       expect(screen.getByRole("link", { name: label })).toBeInTheDocument();
   });
 });
+
+it("organizes destinations into named groups while preserving every route", () => {
+  render(<AppShell active="Next matches"><p>Workspace</p></AppShell>);
+  const expected = {
+    Upcoming: [["Next matches", "/upcoming"], ["Recommendations", "/recommendations"], ["Predictions", "/predictions"]],
+    Performance: [["Performance", "/performance"]],
+    Insights: [["Teams", "/teams"], ["BTTS Value", "/research/btts"], ["Analyze", "/analyze"]],
+  };
+  for (const [name, links] of Object.entries(expected)) {
+    const group = screen.getByRole("group", { name });
+    expect(Array.from(group.querySelectorAll("a")).map(a => [a.textContent, a.getAttribute("href")])).toEqual(links);
+  }
+});
+
+it.each(["Next matches", "Recommendations", "Predictions", "Performance", "Teams", "BTTS Value", "Analyze"])(
+  "marks only %s as the current destination", (active) => {
+    render(<AppShell active={active}><p>Workspace</p></AppShell>);
+    expect(document.querySelectorAll('[aria-current="page"]')).toHaveLength(1);
+    expect(screen.getByRole("link", { name: active })).toHaveAttribute("aria-current", "page");
+  },
+);

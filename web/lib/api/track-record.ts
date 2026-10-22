@@ -22,10 +22,34 @@ export interface Publication {
   publication_id: string; published_at_utc: string; forecast_created_at_utc: string;
   ranking_views: ShortlistRanking[]; offer: PublishedOffer;
   qualification_policy: { version: string; minimum_american_odds: number; minimum_no_vig_edge: number };
-  result: "WIN" | "LOSS" | "PUSH" | "PENDING"; profit_units: number | null;
+  result: "WIN" | "LOSS" | "PUSH" | "PENDING" | "SIMULATION_VOID"; simulation_void?: { policy: string; record_hash: string; reason: string; recorded_at_utc: string }; profit_units: number | null;
+}
+export interface PublicationSelection {
+  as_of_utc: string | null; competition: string | null; market: string | null;
+  membership_basis: "recorded-publication-time"; historical_store_membership: "UNVERIFIED";
+}
+export interface PublicationFilters { asOf?: string; competition?: string; market?: string }
+export function publicationSelection(filters: PublicationFilters): PublicationSelection {
+  return { as_of_utc: filters.asOf || null, competition: filters.competition || null, market: filters.market || null,
+    membership_basis: "recorded-publication-time", historical_store_membership: "UNVERIFIED" };
+}
+export function assertPublicationSelection(report: { selection?: PublicationSelection; publications: Publication[] }, filters: PublicationFilters) {
+  const s = report.selection;
+  const filtered = !!(filters.asOf || filters.competition || filters.market);
+  const cutoff = filters.asOf ? Date.parse(filters.asOf) : null;
+  if ((filtered && !s) || (s && (s.membership_basis !== "recorded-publication-time" || s.historical_store_membership !== "UNVERIFIED"
+      || s.competition !== (filters.competition || null) || s.market !== (filters.market || null)
+      || (cutoff === null ? s.as_of_utc !== null : !timestamp(s.as_of_utc) || Date.parse(s.as_of_utc!) !== cutoff)))
+    || report.publications.some(r => (filters.competition && r.offer.competition !== filters.competition)
+      || (filters.market && r.offer.market_type !== filters.market)
+      || (cutoff !== null && (Date.parse(r.published_at_utc) > cutoff
+        || (r.simulation_void && Date.parse(r.simulation_void.recorded_at_utc) > cutoff))))) {
+    throw new ModelFCApiError("Publication history does not match the requested filters.", "TRACK_RECORD_CONTRACT_MISMATCH", false);
+  }
 }
 export interface TrackRecord {
-  policy_version: string; void_settlement_supported: false; summary: TrackSummary;
+  selection?: PublicationSelection;
+  policy_version: string; void_settlement_supported: false; simulation_void_supported?: boolean; summary: TrackSummary;
   by_view: Record<ShortlistRanking, TrackSummary>;
   by_league_market: { competition: string; market_type: string; summary: TrackSummary }[];
   publications: Publication[];
@@ -50,7 +74,7 @@ function validSummary(value: unknown, rows: Publication[]) {
   return s.picks === rows.length && s.unique_fixtures === new Set(rows.map(r =>
     JSON.stringify([r.offer.competition, r.offer.provider, r.offer.provider_fixture_id, Date.parse(r.offer.kickoff_utc)]))).size
     && s.wins === wins && s.losses === losses && s.pushes === pushes && s.settled === settled
-    && s.voids === 0 && s.pending === rows.length-settled && close(s.profit_units, profit)
+    && s.voids === rows.filter(r => r.result === "SIMULATION_VOID").length && s.pending === rows.filter(r => r.result === "PENDING").length && close(s.profit_units, profit)
     && close(s.win_rate, wins+losses ? wins/(wins+losses) : null) && close(s.roi, settled ? profit/settled : null);
 }
 export function decodeTrackRecord(value: unknown, independent = false): TrackRecord {
@@ -81,9 +105,13 @@ export function decodeTrackRecord(value: unknown, independent = false): TrackRec
       || Date.parse(r.forecast_created_at_utc as string) > Date.parse(r.published_at_utc as string)
       || Date.parse(o.availability_checked_at_utc) > Date.parse(r.published_at_utc as string)
       || Date.parse(r.published_at_utc as string) >= Date.parse(o.kickoff_utc)) return fail();
+    if (r.result === "SIMULATION_VOID" && (value.simulation_void_supported !== true
+      || !record(r.simulation_void) || r.simulation_void.policy !== "reviewed-simulation-void-v1"
+      || !hash(r.simulation_void.record_hash) || !timestamp(r.simulation_void.recorded_at_utc)
+      || typeof r.simulation_void.reason !== "string" || !r.simulation_void.reason.trim())) return fail();
     const win = oddsProfit(o.american_odds);
     if (r.result === "PENDING" ? r.profit_units !== null :
-      !["WIN", "LOSS", "PUSH"].includes(r.result as string) || !finite(r.profit_units)
+      !["WIN", "LOSS", "PUSH", "SIMULATION_VOID"].includes(r.result as string) || !finite(r.profit_units)
       || !close(r.profit_units as number, r.result === "WIN" ? win : r.result === "LOSS" ? -1 : 0)) return fail();
   }
   const report = value as unknown as TrackRecord;
@@ -128,6 +156,7 @@ export interface StrategyPick extends Publication {
   selection_id: string; simulated_stake_dollars: 2; profit_dollars: number | null;
 }
 export interface StrategyPage {
+  selection?: PublicationSelection;
   policy_version: string; strategy: ShortlistRanking; scope: "current" | "history";
   stake_dollars: 2; simulated: true; summary_scope: "page"; summary: TrackSummary;
   totals: TrackSummary; market_totals: TrackRecord["by_league_market"]; total_profit_dollars: number;
@@ -165,8 +194,8 @@ function validAggregate(v: unknown, count?: number): boolean {
   if (!record(v) || !["picks","unique_fixtures","settled","wins","losses","pushes","pending","voids"].every(k=>Number.isSafeInteger(v[k]) && Number(v[k])>=0)
     || !finite(v.profit_units) || !(v.roi===null || finite(v.roi)) || !(v.win_rate===null || finite(v.win_rate))) return false;
   const s=v as unknown as TrackSummary;
-  return (count===undefined || s.picks===count) && s.voids===0 && s.unique_fixtures<=s.picks
-    && s.settled===s.wins+s.losses+s.pushes && s.picks===s.settled+s.pending
+  return (count===undefined || s.picks===count) && s.unique_fixtures<=s.picks
+    && s.settled===s.wins+s.losses+s.pushes && s.picks===s.settled+s.pending+s.voids
     && close(s.roi,s.settled?s.profit_units/s.settled:null)
     && close(s.win_rate,s.wins+s.losses?s.wins/(s.wins+s.losses):null);
 }

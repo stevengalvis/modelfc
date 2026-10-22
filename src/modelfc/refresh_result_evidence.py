@@ -29,9 +29,13 @@ def validate(metadata, raw, *, as_of):
         'requested_at_utc', 'retrieved_at_utc', 'filename', 'file_sha256'}, 'INVALID_REFRESH_EVIDENCE')
     name = metadata['filename']
     _require(isinstance(name, str) and re.fullmatch(r'E1_[0-9]{4}\.csv', name), 'INVALID_REFRESH_EVIDENCE')
-    url = f'https://www.football-data.co.uk/mmz4281/{name[3:7]}/E1.csv'
+    # Accept the published direct link and previously accepted, pinned acquisitions.
+    # Both request and response must use the SAME exact URL; no redirect aliases.
+    urls = {f'https://{host}/mmz4281/{name[3:7]}/E1.csv'
+            for host in ('football-data.co.uk', 'www.football-data.co.uk')}
     _require(type(metadata['schema_version']) is int and metadata['schema_version'] == 1
-        and metadata['url'] == metadata['response_url'] == url
+        and isinstance(metadata['url'], str) and metadata['url'] in urls
+        and metadata['url'] == metadata['response_url']
         and type(metadata['http_status']) is int and metadata['http_status'] == 200
         and timestamp(metadata['requested_at_utc']) <= timestamp(metadata['retrieved_at_utc']) <= as_of
         and isinstance(raw, bytes) and 0 < len(raw) <= LIMIT

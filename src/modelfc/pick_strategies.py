@@ -79,12 +79,12 @@ def _source_budget(state):
                     raise LedgerError("STRATEGY_EVIDENCE_CAPACITY_EXCEEDED")
 
 
-def publish_locked(state_dir, *, include_btts=True):
+def publish_locked(state_dir, *, include_btts=True, diagnostics=None):
     from modelfc.published_recommendations import publish_locked as publish
-    return publish(state_dir, include_btts=include_btts, independent=True)
+    return publish(state_dir, include_btts=include_btts, independent=True, diagnostics=diagnostics)
 
 
-def read(state_dir, *, strategy="best_value", scope="current", market=None, competition=None, offset=0, limit=5):
+def read(state_dir, *, strategy="best_value", scope="current", market=None, competition=None, offset=0, limit=5, as_of=None):
     from modelfc import published_recommendations as published
     if (strategy not in published.VIEWS or scope not in {"current", "history"}
             or market not in {None, "TEAM_TOTAL", "BTTS"}
@@ -92,19 +92,19 @@ def read(state_dir, *, strategy="best_value", scope="current", market=None, comp
             or type(offset) is not int or not 0 <= offset <= 2000
             or type(limit) is not int or not 1 <= limit <= 20):
         raise ValueError("INVALID_STRATEGY_QUERY")
-    now = published._now()
+    now = as_of if as_of is not None else published._now()
     metadata = {"total": 0}
     def page(records):
         selected = [r for r in records if r.get("strategy") == strategy
             and (scope != "current" or published._time(r["offer"]["kickoff_utc"]) > now)
             and (market is None or r["offer"]["market_type"] == market)
             and (competition is None or r["offer"]["competition"] == competition)]
-        selected.sort(key=lambda r:(r["published_at_utc"], r["publication_id"]), reverse=True)
+        selected.sort(key=lambda r:(published._time(r["published_at_utc"]), r["publication_id"]), reverse=True)
         metadata["total"] = len(selected)
         if selected:
             _source_budget(state_dir)
         return selected
-    report = published.read(state_dir, directory_name=DIRECTORY, record_filter=page)
+    report = published.read(state_dir, directory_name=DIRECTORY, record_filter=page, as_of=as_of)
     totals = report["summary"]
     market_totals = report["by_league_market"]
     rows = report["publications"][offset:offset+limit]
@@ -113,7 +113,7 @@ def read(state_dir, *, strategy="best_value", scope="current", market=None, comp
         row["simulated_stake_dollars"] = STAKE_DOLLARS
         row["profit_dollars"] = None if row["profit_units"] is None else row["profit_units"] * STAKE_DOLLARS
     return {"policy_version": POLICY, "strategy": strategy, "scope": scope,
-        "stake_dollars": STAKE_DOLLARS, "simulated": True, "void_settlement_supported": False,
+        "stake_dollars": STAKE_DOLLARS, "simulated": True, "void_settlement_supported": False, "simulation_void_supported": True,
         "summary_scope": "page", "summary": report["summary"],
         "totals": totals, "market_totals": market_totals, "total_profit_dollars": totals["profit_units"] * STAKE_DOLLARS,
         "profit_dollars": report["summary"]["profit_units"] * STAKE_DOLLARS,
