@@ -14,7 +14,7 @@ from zoneinfo import ZoneInfo
 from modelfc.acquisition_planner import utc
 from modelfc.matches import Venue
 from modelfc.oddspapi_market_inventory import _read_regular
-from modelfc.providers.football_data import load_team_match_stats_history
+from modelfc.providers.football_data import load_team_match_stats_history, unvalidated_statistics
 
 MAX_SOURCES = 32
 MAX_SOURCE_BYTES = 2_000_000
@@ -36,14 +36,16 @@ def timestamp(value):
 
 
 def validated_sources(competition, sources, *, before, observed_at, allow_unknown=False,
-                      enforce_seasons=False):
+                      enforce_seasons=False, validation_scope='FULL'):
     """sources contains (canonical filename, immutable bytes, SHA256, retrieval UTC).
 
     The existing strict adapter validates complete goals/FTR and all populated
-    statistics before any aggregation. Optional missing values stay missing.
+    statistics by default. Explicit scoped calls label unassessed statistics in
+    each record and source receipt; None outside scope does not mean missing.
     A temporary private copy allows reuse of its unchanged path-based interface;
     originals are never reread or modified. No exclusion or repair is implicit.
     """
+    unvalidated = unvalidated_statistics(validation_scope)
     observed = utc(observed_at)
     if competition not in {'E1', 'E0'} or type(before) is not date or before > observed.astimezone(ZoneInfo('Europe/London')).date():
         raise CoverageRejected('COVERAGE_SCOPE_REJECTED')
@@ -69,12 +71,15 @@ def validated_sources(competition, sources, *, before, observed_at, allow_unknow
                     'age_seconds_at_observation': (observed-retrieved).total_seconds() if retrieved else None,
                     'columns': {field: {'home': home in columns, 'away': away in columns}
                                 for field, (home, away) in FIELDS.items()}})
+                if validation_scope != 'FULL':
+                    provenance[-1].update(validation_scope=validation_scope,
+                                          unvalidated_statistics=list(unvalidated))
                 path = Path(directory)/name
                 path.write_bytes(raw)
                 if enforce_seasons:
                     year = 2000 + int(name[3:5])
                     expected = f"{year}/{year+1}"
-                    file_records = load_team_match_stats_history([path], competition=competition)
+                    file_records = load_team_match_stats_history([path], competition=competition, validation_scope=validation_scope)
                     if retrieved is not None and any(
                         r.match_date > retrieved.astimezone(ZoneInfo('Europe/London')).date()
                         for r in file_records
@@ -85,7 +90,7 @@ def validated_sources(competition, sources, *, before, observed_at, allow_unknow
                     ):
                         raise CoverageRejected('SOURCE_SEASON_REJECTED')
                 paths.append(path)
-            records = load_team_match_stats_history(paths, competition=competition)
+            records = load_team_match_stats_history(paths, competition=competition, validation_scope=validation_scope)
     except CoverageRejected:
         raise
     except (OSError, ValueError, TypeError, UnicodeError, OverflowError, csv.Error):
