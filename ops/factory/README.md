@@ -188,7 +188,7 @@ anything or accept state locations from jobs. Keep the same state directory.
 After separate live-test approval, the manual invocation shape is:
 
 ```sh
-.venv/bin/python -B -m ops.factory.once --grant /approved/private/control/probe.json --state-dir /approved/private/state --token-fd 3 --acknowledge-once
+.venv/bin/python -B -m ops.factory.once --grant /approved/private/control/probe.json --grant-sha256 APPROVED_64_HEX_GRANT_FILE_HASH --state-dir /approved/private/state --token-fd 3 --acknowledge-once
 ```
 
 FD 3 must already be an inherited pipe supplied by the operator's
@@ -231,3 +231,23 @@ Authorize one manual invocation, at most two issue GETs and one comment POST,
 plus read-only verification of that exact comment/ledger. Stop afterward. Any
 credential provisioning or host/service/account/schedule change needs separate
 approval. No live job, live caller invocation or credential was created here.
+
+
+The manual caller requires `--grant-sha256`: the SHA-256 of the exact complete
+operator approval file bytes (including whitespace), distinct from the job payload
+`content_digest`. The operator supplies this non-secret hash independently of the
+mutable file. The caller safely opens the grant once, bounds its read, hashes that
+snapshot and parses those same bytes. Replacing or mutating the pathname cannot
+substitute a different grant after hash verification. An already read approved
+snapshot may still be used if the file is subsequently removed; revocation after
+consumption requires stopping the invocation, not editing the old pathname.
+Missing/malformed/mismatched hashes reject before reading credentials or creating
+state. No default hash is derived from the current pathname.
+
+For a privileged operator launcher, use system Python with `-I -S -B` and a fixed
+bootstrap that inserts only the reviewed root-owned release into `sys.path` before
+importing `ops.factory.once`. The explicit `ops` and `ops.factory` packages prevent
+namespace-package substitution. This disables environment/user-site/CWD and
+sitecustomize/.pth import injection. The OS Python interpreter and standard library
+remain trusted system dependencies. No arbitrary interpreter/source path is accepted
+by the operator helper.

@@ -2,6 +2,7 @@
 from contextlib import ExitStack, redirect_stdout, redirect_stderr
 from dataclasses import asdict
 import io
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -70,7 +71,9 @@ class OnceTests(unittest.TestCase):
         read_fd, write_fd = os.pipe()
         os.write(write_fd, (self.token if token is None else token).encode())
         os.close(write_fd)
-        args = ['--grant', str(self.grant_file), '--state-dir', str(self.state),
+        args = ['--grant', str(self.grant_file), '--grant-sha256',
+                hashlib.sha256(self.grant_file.read_bytes()).hexdigest() if self.grant_file.exists() else '0' * 64,
+                '--state-dir', str(self.state),
                 '--token-fd', str(read_fd), '--acknowledge-once', *extra]
         output = io.StringIO()
         with ExitStack() as stack:
@@ -126,6 +129,57 @@ class OnceTests(unittest.TestCase):
         self.assertEqual(code, 0, output)
         self.assertIn('acknowledged', output)
         self.assertEqual(len(self.calls), 3)
+
+    def test_grant_digest_missing_or_mismatched_stops_before_credential(self):
+        for expected in ('0' * 64, 'not-a-digest', None):
+            args = ['--grant', str(self.grant_file), '--state-dir', str(self.state),
+                    '--token-fd', '3', '--acknowledge-once']
+            if expected is not None:
+                args += ['--grant-sha256', expected]
+            with patch.object(once, 'read_token') as read_token, redirect_stdout(io.StringIO()):
+                self.assertEqual(once.main(args), 2)
+                read_token.assert_not_called()
+        self.assertEqual(list(self.state.iterdir()), [])
+
+    def test_atomic_path_replacement_after_open_parses_approved_snapshot(self):
+        expected = hashlib.sha256(self.grant_file.read_bytes()).hexdigest()
+        original_open = once.os.open
+        replacement = self.root / 'replacement'
+        changed = dict(self.approval, grant=dict(self.approval['grant'], sender_id=999))
+        replacement.write_text(json.dumps(changed))
+        replacement.chmod(0o600)
+        moved = self.root / 'old-grant'
+        def replace_after_open(path, flags, *args, **kwargs):
+            fd = original_open(path, flags, *args, **kwargs)
+            if Path(path) == self.grant_file:
+                self.grant_file.rename(moved)
+                replacement.rename(self.grant_file)
+            return fd
+        with patch.object(once.os, 'open', side_effect=replace_after_open):
+            approved = once.read_grant(self.grant_file, self.now, expected)
+        self.assertEqual(approved.sender_id, 42)
+        self.assertEqual(json.loads(self.grant_file.read_bytes())['grant']['sender_id'], 999)
+
+    def test_in_place_mutation_before_read_fails_expected_digest(self):
+        expected = hashlib.sha256(self.grant_file.read_bytes()).hexdigest()
+        original_fdopen = once.os.fdopen
+        def mutate(fd, *args, **kwargs):
+            changed = dict(self.approval, grant=dict(self.approval['grant'], sender_id=999))
+            self.grant_file.write_text(json.dumps(changed))
+            return original_fdopen(fd, *args, **kwargs)
+        with patch.object(once.os, 'fdopen', side_effect=mutate), self.assertRaises(once.Rejected):
+            once.read_grant(self.grant_file, self.now, expected)
+
+    def test_mutation_after_snapshot_cannot_change_parsed_grant(self):
+        expected = hashlib.sha256(self.grant_file.read_bytes()).hexdigest()
+        original_parse = once.strict_json
+        def mutate_after_hash(raw):
+            changed = dict(self.approval, grant=dict(self.approval['grant'], sender_id=999))
+            self.grant_file.write_text(json.dumps(changed))
+            return original_parse(raw)
+        with patch.object(once, 'strict_json', side_effect=mutate_after_hash):
+            approved = once.read_grant(self.grant_file, self.now, expected)
+        self.assertEqual(approved.sender_id, 42)
 
     def test_missing_grant_and_unknown_args_are_redacted(self):
         self.grant_file.unlink()

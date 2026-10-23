@@ -2,6 +2,8 @@
 import argparse
 from dataclasses import asdict
 import json
+import hashlib
+import hmac
 import os
 from pathlib import Path
 import re
@@ -44,14 +46,18 @@ def private_file(info):
         raise Rejected()
 
 
-def read_grant(path, now):
+def read_grant(path, now, expected_sha256):
+    if type(expected_sha256) is not str or not re.fullmatch(r'[0-9a-f]{64}', expected_sha256):
+        raise Rejected()
     path = Path(path)
     trusted_directory(path.parent)
     fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     with os.fdopen(fd, 'rb') as source:
         private_file(os.fstat(source.fileno()))
         raw = source.read(MAX_GRANT + 1)
-    if len(raw) > MAX_GRANT:
+    # Hash precisely the bounded bytes from this descriptor; parse that same
+    # snapshot below. Never reopen the pathname for verification or parsing.
+    if len(raw) > MAX_GRANT or not hmac.compare_digest(hashlib.sha256(raw).hexdigest(), expected_sha256):
         raise Rejected()
     approval = strict_json(raw)
     fields = {'version', 'repository', 'mode', 'max_jobs', 'max_polls',
@@ -126,6 +132,7 @@ def reserve_poll(directory, grant):
 def main(argv=None):
     parser = QuietParser(description='Manually acknowledge one approved dry-run job once.', allow_abbrev=False)
     parser.add_argument('--grant', required=True)
+    parser.add_argument('--grant-sha256', required=True)
     parser.add_argument('--state-dir', required=True)
     parser.add_argument('--token-fd', type=int, required=True)
     parser.add_argument('--acknowledge-once', required=True, action='store_true')
@@ -134,7 +141,7 @@ def main(argv=None):
     token = ''
     try:
         args = parser.parse_args(argv)
-        grant = read_grant(args.grant, time.time())
+        grant = read_grant(args.grant, time.time(), args.grant_sha256)
         directory = state_directory(args.state_dir)
         token = read_token(args.token_fd)
         if not reserve_poll(directory, grant):
