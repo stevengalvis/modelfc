@@ -66,7 +66,10 @@ The synthetic live integration verifies the real HTTP endpoints with empty state
 
 ## Verify
 
+See [shared lint gates](../docs/LINTING.md) for scope and reproducible setup.
+
 ```bash
+npm run lint
 npm run typecheck
 npm test
 npm run build

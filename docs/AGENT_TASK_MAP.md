@@ -17,6 +17,11 @@ rejects its default `/tmp`, set `TMPDIR` to an existing trusted, user-owned
 directory with acceptable ancestors for that invocation. Do not weaken guards
 or alter shared-directory permissions to make a test pass.
 
+## Shared lint checks
+
+Use [the lint contract](LINTING.md) for pinned setup, Python/ frontend commands,
+scope and staged rules. Run both gates before handoff; keep formatting separate.
+
 ## Calendar and forecasting
 
 - Start at [`history_completeness.py`](../src/modelfc/history_completeness.py):
