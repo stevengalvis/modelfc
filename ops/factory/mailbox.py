@@ -1,6 +1,6 @@
 """One configured issue, one explicitly granted dry-run job per invocation.
 
-No entrypoint, scheduler, execution adapter or installation hook. An uncertain
+No scheduler, execution adapter or installation hook; once.py is a manual caller. An uncertain
 POST is never automatically retried, including after a crash/restart.
 """
 from dataclasses import asdict
