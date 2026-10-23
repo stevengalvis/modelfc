@@ -22,7 +22,8 @@ from modelfc.providers.football_data_calendar import FootballDataCalendarClient
 from modelfc.providers.sportmonks_results import SportmonksRecentResultsClient, SportmonksRejected, validate_bindings
 from modelfc.research_predictions import publish as publish_prediction
 from modelfc.research_predictions import load_prepared
-from modelfc.supplemental_history import augment_sources, load_results, publish_result
+from modelfc.supplemental_history import (SupplementalCsvConflict, augment_sources,
+                                        load_results, publish_result)
 
 
 CONFIG_VERSION = 1
@@ -437,6 +438,9 @@ def run_once(*, state_dir, data_config_path, configuration, sportmonks_token,
         receipt["status"] = "BLOCKED"
         receipt["reason"] = error.reason
         receipt["retry_after_utc"] = error.retry_at.isoformat() if error.retry_at else None
+    except SupplementalCsvConflict:
+        # All augmentation boundaries fail closed; never serialize exception text.
+        receipt["reason"] = "SUPPLEMENTAL_CSV_CONFLICT"
     except (ForecastRunRejected, AcquisitionRejected) as error:
         receipt["reason"] = str(error)
     except (OSError, ValueError, TypeError, KeyError, LedgerError):
