@@ -1,0 +1,25 @@
+Target: focused follow-up commit on existing draft PR203, not a new broad platform PR.
+Publication is NOT authorized or performed in this task.
+
+Title: Bind one-shot mailbox grants to consumed bytes and pin operator imports
+
+Problem: the operator helper checked an approval-file digest before entry, but the
+old caller later reopened the UID993-owned pathname without that digest. A replaced
+valid grant could therefore differ from the one the operator approved.
+
+Change: require --grant-sha256, verify it against the bounded descriptor snapshot,
+and parse precisely those bytes before credential/state access. Add explicit ops
+packages and use isolated no-site interpreter startup in the separately reviewed
+helper, passing the approved digest to the caller. The helper pins new source SHA
+and a 503-file inventory; installed c1d98ea is not modified by this proposal.
+
+Validation: 39 focused source tests plus 15 synthetic helper tests pass. Includes
+path replacement, in-place mutation, post-read mutation, no-token mismatch rejection,
+hostile CWD/PYTHONPATH and existing terminal/pipe/interrupt cleanup coverage.
+Independent exact-final review accompanies the candidate. No credential/live job,
+publication, installation, merge or deployment. Fresh exact-head CI remains due
+when publication is approved; old CI evidence is not reused across SHAs.
+
+The helper remains a separately reviewed operator artifact; include its exact hash
+and manifest in the eventual PR description/handoff instead of silently installing
+or enabling it. No service or additional execution capability is introduced.

@@ -1,0 +1,116 @@
+UNPUBLISHED FOLLOW-UP CANDIDATE — OFFLINE ONLY
+
+This supersedes the v1 helper's exclusive-grant-custody assumption. Existing
+installed source c1d98ea9560fa5df9bbb8fed5e9f96ea3dabd3a3 stays untouched.
+
+Exact source candidate:
+  base: c1d98ea9560fa5df9bbb8fed5e9f96ea3dabd3a3
+  head: aab60b0c72f4e7081ee801c40372e6df786927e4
+  local branch: codex/mailbox-grant-integrity
+  local worktree: /workspace/modelfc-grant-integrity
+  changes: mandatory --grant-sha256; compare SHA256 of bounded bytes read from
+  the safely opened grant descriptor, then parse exactly that bytes object;
+  mutation/regression tests; explicit ops and ops.factory package markers; docs.
+No pathname reopening for digest verification or parsing, no auto-derived expected
+hash. Mismatch rejects before credential consumption/state creation. Once the
+approved snapshot is consumed, editing/removing the pathname cannot substitute
+or revoke that in-memory snapshot. Cancellation then means stopping the process.
+
+Updated helper:
+  SHA256: 2af9c53a6dfb562bab62074da41d62d22b0cd84714ef4309990f08fb896bb9f3
+  source path: /opt/modelfc-mailbox/releases/aab60b0c72f4e7081ee801c40372e6df786927e4
+  manifest: 503 tracked files from that exact Git commit
+  manifest SHA256: 514521909119437496a453a668ccc2727f8c585b2b6ee3ac72b22eade96628e0
+  grant path: /var/lib/modelfc-mailbox/control/probe.json
+  state path: /var/lib/modelfc-mailbox/state
+  account: modelfc-mailbox UID993/GID984, no supplementary groups
+  interpreter: /usr/bin/python3.12
+
+Helper verifies root-owned immutable source and all manifest bytes, refuses
+extra source files/symlinks, checks interpreter is a root-owned non-writable
+regular executable, and passes the independently supplied approval-file hash to
+the child. The exact installed caller—not just helper preflight—enforces it.
+No process-quiescence/exclusive-grant-control assumption is needed for integrity.
+The existing source-root/helper/OS administrator trust boundary remains: this
+code does not defend against a malicious root administrator modifying the OS.
+
+Executable/import provenance:
+- Parent must actually be invoked with existing admin authority, clean environment
+  and Python -I -S -B from process startup. Its later flags check only refuses token
+  entry on misuse; it cannot undo imports that occurred before main().
+- Child uses the fixed interpreter with -I -S -B and a fixed bootstrap inserting
+  only the verified release before importing ops.factory.once. SOURCE and bootstrap
+  are constants, not grant/token/issue input; shell=False always.
+- -I excludes CWD/PYTHONPATH/user-site; -S excludes sitecustomize/.pth processing.
+  Explicit package markers prevent namespace fallback to another ops package.
+- The 503-file inventory rejects untracked pyc/import files. -B prevents writes.
+- The installed OS interpreter, loader and standard library remain trusted OS
+  dependencies; this is not a new runtime-attestation or sandbox framework.
+
+Secret handling retained from reviewed v1:
+User-owned unrecorded terminal/SSH route separate from Codex; /dev/tty only with
+no stdin fallback; ECHO/ECHONL disabled; bounded input and deadline; restoration
+on catchable signals; repeated-signal cleanup protection; pipe filled and mutable
+buffer wiped before spawn; only pipe read FD inherited; fixed UID/GID/argv/cwd,
+clean environment, no shell, stdin/dev/null; no token args/env/files/logs; sanitized
+bounded status; timeout/spawn interruption uncertain, no automatic retry.
+
+SIGKILL/device/machine loss cannot guarantee restoration; recover terminal with
+stty sane before typing anything else. Wiping/core-dump suppression are best
+effort, not guaranteed erasure from Python/kernel/SSH/clipboard/swap memory.
+Echo-off is NOT protection against input recorders: operator must verify no
+terminal/SSH/bastion/sudo/PAM input capture, screen sharing or clipboard history
+on the route. Unknown recording => no token entry, not an unauthorized logging
+policy change. Existing verified SSH host key/admin access must be used.
+
+Offline checks performed locally only:
+1. In /workspace/modelfc-grant-integrity:
+   /workspace/modelfc/.venv/bin/python -B -m unittest -q tests.test_factory_once tests.test_factory_mailbox
+   39 tests PASS: prior 35 plus expected-hash failure/no token, path replacement,
+   in-place mutation before read, mutation after snapshot with approved parse.
+2. In /workspace/mailbox-operator-candidate-v2:
+   python3 -B -W error::ResourceWarning -m unittest -q test_operator_once
+   15 tests PASS: prior terminal/pipe/signal/cleanup/identity coverage plus isolated
+   bootstrap under hostile CWD/PYTHONPATH/sitecustomize. Real pipe-to-exec test uses
+   synthetic data without UID changes; other host identity/preflight data mocked.
+   FACTORY_TEST_SOURCE may point to an offline acceptance copy for this test only;
+   production helper has no source-path override.
+No full-suite rerun, credentials, live issue/job, network test, installation,
+publication, source replacement or merge/deploy performed. Old c1d98ea evidence
+is not attributed to this new SHA. New exact-head CI is outstanding until permitted
+publication. Trusted OFFLINE remains a separate existing outstanding gate.
+
+One bundled practical setup plan for parent/user approval:
+1. Review/approve this exact source commit, helper hash and manifest; authorize
+   publication of the focused follow-up on existing draft PR203 if desired.
+   No publication is performed now. Resolve ordinary exact-head CI normally.
+2. Authorize staging only the NEW release at its pinned path, retaining c1d98ea,
+   and the root-owned helper+manifest at /opt/modelfc-mailbox/operator/ (files0644,
+   directories0755). Existing UID993/GID984 and private control/state stay in use.
+   Verify all hashes and run the two synthetic test groups once as appropriate;
+   use a disposable worker-owned source copy for tests, not writable live source.
+   No new account, service, timer, network rule, sudoers or runtime install.
+3. In the same approved setup, establish the user's unrecorded local SSH terminal
+   route and existing admin facility with synthetic-only input/FD checks. Record
+   non-secret readiness; never enter a real PAT in Codex tools or recording.
+4. Prepare one real public issue with fixed non-sensitive probe JSON, verify sender
+   identity/revision/job digest; issue the exact expiring bounded approval file and
+   independently record its SHA256. PAT creation scope already approved by user
+   remains selected modelfc, short expiry, Issues read/write + metadata read only.
+   The user generates it personally OUTSIDE Codex only once the path is ready,
+   checks scope/expiry, and shares no token value with chat or tools.
+5. Approval must cover the one manual invocation and token transmission via the
+   verified encrypted SSH terminal to VPS, anonymous pipe to UID993, then HTTPS
+   Authorization to api.github.com for at most two GETs and one acknowledgement
+   POST. Inspect comment/ledger read-only, stop, revoke PAT. No automatic retry,
+   coding execution, standing delegation, service activation, merge or deployment.
+
+Actual remaining blockers: parent approval to publish/stage these new pins;
+new exact-head checks; verified unrecorded human terminal route; a concrete live
+issue/sender/digest/expiring grant; approval for one authenticated API round trip.
+The grant-file integrity race and Python import injection are addressed in code;
+exclusive operator control is no longer presented as their substitute.
+
+Future operator invocation shape AFTER the above approvals/readiness:
+sudo -n /usr/bin/env -i PATH=/usr/bin:/bin LANG=C.UTF-8 LC_ALL=C.UTF-8 /usr/bin/python3.12 -I -S -B /opt/modelfc-mailbox/operator/operator_once.py --grant-sha256 APPROVED_64_HEX_GRANT_FILE_HASH --unrecorded-terminal-confirmed
+The placeholder is a non-secret file digest, never the token. Do not run now.
