@@ -102,6 +102,16 @@ October 20 read-only VPS audit; verify installed units/receipts for current stat
 Neither schedule is changed here. Forecast eligibility remains the rolling,
 inclusive 21–27-hour pre-kickoff window, not all fixtures on a London calendar day.
 
+Supplemental results that disagree with an installed CSV result now reject with
+the fixed receipt reason `SUPPLEMENTAL_CSV_CONFLICT` at each history augmentation
+boundary. This diagnostic does not choose a provider, repair data, retry acquisition
+or permit forecast publication; unknown exceptions retain `FORECAST_RUN_REJECTED`.
+Receipt schemas and historical receipt bytes remain unchanged. The October 23
+saved-input comparison found Millwall–Swansea October 13 corners of 13–2 versus
+13–1, with goals agreeing at 0–1. That discrepancy does not establish the cause of
+the historical 12:35 rejection: its selected season and exception were not retained,
+so the underlying cause remains unknown. The valid Bolton capture is unaffected.
+
 The collector's existing `--require-calendar-budget` flag requires UTC-month
 quota enrollment. It does not activate retained-fixture-calendar gating. That
 consumer integration remains separate ZEN-36 work; retained calendars alone do
