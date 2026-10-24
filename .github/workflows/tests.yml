@@ -41,7 +41,7 @@ jobs:
 
       - name: Verify real Linux cross-user history and EPL projection ACL publication
         run: |
-          sudo -n env PYTHONPATH=src "$RUNNER_TEMP/modelfc-locked/bin/python" - <<'PY'
+          sudo -n env PYTHONPATH=src "$RUNNER_TEMP/modelfc-locked/bin/python" - <<'ACL_PY'
           import ctypes.util
           import os
           import unittest
@@ -63,7 +63,7 @@ jobs:
           result = unittest.TextTestRunner(verbosity=2).run(suite)
           if not result.wasSuccessful() or result.skipped or result.testsRun != 6:
               raise SystemExit("cross-user ACL acceptance requires all six tests to pass without skips")
-          PY
+          ACL_PY
 
       - name: Compile Python sources and tests
         run: '"$RUNNER_TEMP/modelfc-locked/bin/python" -m compileall -q src tests'
