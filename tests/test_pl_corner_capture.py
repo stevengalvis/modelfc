@@ -1,6 +1,6 @@
 """Synthetic offline replay only; never prospective or genuine EPL acceptance."""
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import redirect_stdout
+from contextlib import redirect_stdout, redirect_stderr
 from datetime import timedelta
 import io
 import json
@@ -34,6 +34,30 @@ class CaptureTests(unittest.TestCase):
     def test_disabled_does_not_read_or_write(self):
         self.assertEqual(capture('/missing', None)['state'], 'DISABLED')
         self.assertEqual(list(self.store.iterdir()), [])
+
+    def test_cli_no_arguments_reports_disabled_without_io(self):
+        output = io.StringIO()
+        with redirect_stdout(output), patch('modelfc.pl_corner_capture.read_bounded', side_effect=AssertionError('read')), \
+                patch('modelfc.pl_corner_capture.capture', side_effect=AssertionError('capture')):
+            self.assertEqual(main([]), 1)
+        self.assertEqual(json.loads(output.getvalue())['state'], 'DISABLED')
+
+    def test_cli_enabled_requires_each_input_before_io(self):
+        names = ('store', 'bundle', 'bundle-sha256', 'contract', 'reviewed-contract-sha256', 'season-year', 'day', 'as-of')
+        for missing in (None, *names):
+            with self.subTest(missing=missing):
+                args = ['--enable-offline-capture']
+                if missing is not None:
+                    for name in names:
+                        if name != missing:
+                            args.extend(['--'+name, 'unused'])
+                error = io.StringIO()
+                with redirect_stderr(error), patch('modelfc.pl_corner_capture.read_bounded', side_effect=AssertionError('read')), \
+                        patch('modelfc.pl_corner_capture.capture', side_effect=AssertionError('capture')):
+                    with self.assertRaises(SystemExit) as caught:
+                        main(args)
+                self.assertEqual(caught.exception.code, 2)
+                self.assertEqual(error.getvalue(), 'PL_ARGUMENTS_REJECTED\n')
 
     def test_positive_model_identity_hashes_and_repeat(self):
         with patch('socket.socket', side_effect=AssertionError('network')), patch('socket.getaddrinfo', side_effect=AssertionError('DNS')):

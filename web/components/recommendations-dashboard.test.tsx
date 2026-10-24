@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { api } from "@/lib/api/client";
 import { decodeStrategyPage, decodeTrackRecord, type StrategyPage } from "@/lib/api/track-record";
@@ -58,7 +58,8 @@ it("reaches every pick in bounded batches, retains order, announces counts and f
   render(<RecommendationsDashboard />); await screen.findAllByRole("article");
   expect(screen.getAllByRole("article")).toHaveLength(5); expect(read).toHaveBeenCalledTimes(1);
   fireEvent.click(screen.getByRole("button", {name: "Show more picks"}));
-  await screen.findByText(/Showing 10/); expect(screen.getAllByRole("article")[5]).toHaveFocus();
+  await screen.findByText(/Showing 10/);
+  await waitFor(() => expect(screen.getAllByRole("article")[5]).toHaveFocus());
   fireEvent.click(screen.getByRole("button", {name: "Show more picks"}));
   await screen.findByText(/All matching picks shown/);
   expect(screen.getAllByRole("article").map(a => within(a).getByRole("heading").textContent)).toEqual(Array.from({length: 12}, (_, i) => `Home ${i} vs ${base.publications[0].offer.away_team}`));
