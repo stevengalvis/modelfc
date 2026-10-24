@@ -155,7 +155,7 @@ class FrozenGoals:
         require(isinstance(self.sources, tuple) and self.sources and tuple(sorted(set(self.sources))) == self.sources,
                 'SOURCES_REJECTED')
         for value in (*self.sources, self.inputs_sha256, self.implementation_sha256, self.history_sha256): digest(value)
-        require(self.version == VERSION and self.origin in {'PRIOR_GOAL_OBSERVATIONS', 'E1_FROZEN_BTTS'}, 'MODEL_VERSION_REJECTED')
+        require(self.version == VERSION and self.origin in {'PRIOR_GOAL_OBSERVATIONS', 'E1_FROZEN_BTTS', 'E0_FROZEN_BTTS'}, 'MODEL_VERSION_REJECTED')
         require(isinstance(self.aggregates, GoalAggregates), 'GOAL_AGGREGATES_REJECTED')
         expected = arithmetic_rates(self.aggregates)
         require(all(math.isclose(a, b, rel_tol=0, abs_tol=1e-12) for a, b in
@@ -164,6 +164,9 @@ class FrozenGoals:
         if self.origin == 'PRIOR_GOAL_OBSERVATIONS':
             require(self.origin_record is None and self.cutoff <= self.frozen_at.astimezone(
                 ZoneInfo(self.fixture.timezone)).date(), 'FREEZE_CUTOFF_REJECTED')
+        elif self.origin == 'E0_FROZEN_BTTS':
+            from modelfc.pl_goal_totals import validate_origin
+            validate_origin(self)
         else:
             require(isinstance(self.origin_record, str), 'FROZEN_BTTS_REQUIRED')
             old = BttsForecast.model_validate_json(self.origin_record)

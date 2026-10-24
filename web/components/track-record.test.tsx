@@ -57,3 +57,13 @@ it("passes league, market and normalized cutoff together and explains evidence l
   expect(screen.getByRole("alert")).toHaveTextContent("timezone");
   expect(call.mock.calls.length).toBe(count);
 });
+
+it("renders EPL BTTS and corner results from the shared backend contract", async () => {
+  const epl = (await import("../../tests/fixtures/epl_product_track_record.json")).default;
+  vi.spyOn(api, "trackRecord").mockResolvedValue(decodeTrackRecord(epl));
+  render(<PublishedTrackRecord />);
+  expect(await screen.findByText("Both teams to score: No")).toBeInTheDocument();
+  expect(screen.getAllByText("WIN").length).toBe(1);
+  expect(screen.getByText("PENDING")).toBeInTheDocument();
+  expect(screen.getByText(/E0 · Both teams to score · 1 published picks/)).toBeInTheDocument();
+});

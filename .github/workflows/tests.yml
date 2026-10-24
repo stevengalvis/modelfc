@@ -18,6 +18,12 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Check Python lint
+        run: |
+          python3 -m venv "$RUNNER_TEMP/modelfc-lint"
+          "$RUNNER_TEMP/modelfc-lint/bin/python" -m pip install --require-hashes --only-binary=:all: -r requirements-lint.lock
+          "$RUNNER_TEMP/modelfc-lint/bin/python" -m ruff check .
+
       - name: Create fresh locked environment
         run: |
           python3 -m venv "$RUNNER_TEMP/modelfc-locked"
@@ -59,6 +65,9 @@ jobs:
 
       - name: Install frontend dependencies
         run: npm ci
+
+      - name: Check frontend lint
+        run: npm run lint
 
       - name: Type check frontend
         run: npm run typecheck
