@@ -1,0 +1,44 @@
+{
+  "operator_distribution": {
+    "bytes": 67338,
+    "file_count": 17,
+    "filename": "zen53-api-rotation-operator-v4-source-reduced-offline.tar.gz",
+    "groups": {
+      "zen53-api-rotation-launch-tests-offline": {
+        "inventory_sha256": "842069099abebbedd4bcc80f0a31ccc7c2ff01f7f5418e14d0df5b5e4fe6ebfe",
+        "members": [
+          "zen53-api-rotation-launch-tests-offline/README.md",
+          "zen53-api-rotation-launch-tests-offline/launch_once.py",
+          "zen53-api-rotation-launch-tests-offline/test_launch_once.py"
+        ],
+        "payload_count": 3
+      },
+      "zen53-api-rotation-operator-v4-offline": {
+        "inventory_sha256": "b8edd449ae8ef62b8596ba4c52c38c0f84dc7a82fd80636be9d529cc922ebd80",
+        "members": [
+          "zen53-api-rotation-operator-v4-offline/INSTALL_CONFIG.json",
+          "zen53-api-rotation-operator-v4-offline/MAILBOX_STEP2_DESIGN.md",
+          "zen53-api-rotation-operator-v4-offline/README.md",
+          "zen53-api-rotation-operator-v4-offline/approved_binding.py",
+          "zen53-api-rotation-operator-v4-offline/binding_store.py",
+          "zen53-api-rotation-operator-v4-offline/launch_once.py",
+          "zen53-api-rotation-operator-v4-offline/operator_once.py",
+          "zen53-api-rotation-operator-v4-offline/root_operator.py",
+          "zen53-api-rotation-operator-v4-offline/test_binding_store.py",
+          "zen53-api-rotation-operator-v4-offline/test_operator_once.py",
+          "zen53-api-rotation-operator-v4-offline/test_root_operator.py",
+          "zen53-api-rotation-operator-v4-offline/zen53-preparation-preflight.py"
+        ],
+        "payload_count": 12
+      }
+    },
+    "member_count": 19,
+    "sha256": "692386f512bdea0dab54426c5a0336f4f9d0ae9fbcfce712eb89143275b705a1"
+  },
+  "stage_archive": {
+    "bytes": 126618,
+    "filename": "zen53-api-rotation-decoupling-stage-offline.tar.gz",
+    "member_count": 38,
+    "sha256": "a527085d5fb968fed1577a9afdea4d8173fef1b931ec06012cc49c3d909a4d33"
+  }
+}

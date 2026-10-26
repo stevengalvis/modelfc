@@ -1,0 +1,1999 @@
+{
+  "dependencies": {
+    "/diagnostic/launch.py": {
+      "bytes": 39963,
+      "historical_source_metadata": {
+        "mode": "0o444",
+        "resolved_source": "/workspace/zen53-bookkeeping-candidate/candidate/launch.py",
+        "sha256": "69d3055cd68251444f9b3adcacf9fc68122827820f344a8cefb8efbc927c35f7",
+        "source": "/workspace/zen53-bookkeeping-candidate/candidate/launch.py",
+        "source_gid": 1000,
+        "source_mode": "0o600",
+        "source_uid": 1000
+      },
+      "kind": "bundled",
+      "provenance": "recovery-provenance/PROVENANCE.json#69d3055cd68251444f9b3adcacf9fc68122827820f344a8cefb8efbc927c35f7",
+      "sha256": "69d3055cd68251444f9b3adcacf9fc68122827820f344a8cefb8efbc927c35f7",
+      "source": "objects/69d3055cd68251444f9b3adcacf9fc68122827820f344a8cefb8efbc927c35f7",
+      "target_mode": "0o444"
+    },
+    "/diagnostic/report.py": {
+      "bytes": 29538,
+      "historical_source_metadata": {
+        "mode": "0o444",
+        "resolved_source": "/workspace/zen53-bookkeeping-candidate/candidate/report.py",
+        "sha256": "ec4c7e553178e61677a961ff1e0c0a88103ffe3d95cfef7dd43cef2acf38aa22",
+        "source": "/workspace/zen53-bookkeeping-candidate/candidate/report.py",
+        "source_gid": 1000,
+        "source_mode": "0o600",
+        "source_uid": 1000
+      },
+      "kind": "bundled",
+      "provenance": "recovery-provenance/PROVENANCE.json#ec4c7e553178e61677a961ff1e0c0a88103ffe3d95cfef7dd43cef2acf38aa22",
+      "sha256": "ec4c7e553178e61677a961ff1e0c0a88103ffe3d95cfef7dd43cef2acf38aa22",
+      "source": "objects/ec4c7e553178e61677a961ff1e0c0a88103ffe3d95cfef7dd43cef2acf38aa22",
+      "target_mode": "0o444"
+    },
+    "/etc/codex/requirements.toml": {
+      "bytes": 250,
+      "historical_source_metadata": {
+        "mode": "0o444",
+        "resolved_source": "/tmp/zen53-revised-ca59ysva/requirements.toml",
+        "sha256": "2567e3290e66d17e3128f6741f64392dc6f90917bb95d0becec34db945fb12bb",
+        "source": "/tmp/zen53-revised-ca59ysva/requirements.toml",
+        "source_gid": 0,
+        "source_mode": "0o644",
+        "source_uid": 0
+      },
+      "kind": "bundled",
+      "provenance": "recovery-provenance/PROVENANCE.json#2567e3290e66d17e3128f6741f64392dc6f90917bb95d0becec34db945fb12bb",
+      "sha256": "2567e3290e66d17e3128f6741f64392dc6f90917bb95d0becec34db945fb12bb",
+      "source": "objects/2567e3290e66d17e3128f6741f64392dc6f90917bb95d0becec34db945fb12bb",
+      "target_mode": "0o444"
+    },
+    "/opt/codex/bin/codex": {
+      "current_host_validation": "REQUIRED_NOT_OBSERVED",
+      "historical_source_metadata": {
+        "mode": "0o555",
+        "resolved_source": "/root/.codex/packages/standalone/releases/0.162.1-x86_64-unknown-linux-musl/bin/codex",
+        "sha256": "628e35487d888a28f0427fc37501da529dd3d81fcbad7a2c3421c1e8670d92e1",
+        "source": "/root/.codex/packages/standalone/releases/0.162.1-x86_64-unknown-linux-musl/bin/codex",
+        "source_gid": 65534,
+        "source_mode": "0o755",
+        "source_uid": 65534
+      },
+      "kind": "installed",
+      "sha256": "628e35487d888a28f0427fc37501da529dd3d81fcbad7a2c3421c1e8670d92e1",
+      "source": "/root/.codex/packages/standalone/releases/0.162.1-x86_64-unknown-linux-musl/bin/codex",
+      "target_mode": "0o555"
+    },
+    "/opt/codex/codex-package.json": {
+      "current_host_validation": "REQUIRED_NOT_OBSERVED",
+      "historical_source_metadata": {
+        "mode": "0o444",
+        "resolved_source": "/root/.codex/packages/standalone/releases/0.162.1-x86_64-unknown-linux-musl/codex-package.json",
+        "sha256": "f05ebff6db98bd613dd5654461985090c6416b41ad67902243d83a53b305ac05",
+        "source": "/root/.codex/packages/standalone/releases/0.162.1-x86_64-unknown-linux-musl/codex-package.json",
+        "source_gid": 65534,
+        "source_mode": "0o644",
+        "source_uid": 65534
+      },
+      "kind": "installed",
+      "sha256": "f05ebff6db98bd613dd5654461985090c6416b41ad67902243d83a53b305ac05",
+      "source": "/root/.codex/packages/standalone/releases/0.162.1-x86_64-unknown-linux-musl/codex-package.json",
+      "target_mode": "0o444"
+    },
+    "/usr/bin/bwrap": {
+      "current_host_validation": "REQUIRED_NOT_OBSERVED",
+      "historical_source_metadata": {
+        "mode": "0o755",
+        "resolved_source": "/usr/bin/bwrap",
+        "sha256": "e318903862396f96de3df57264e0158682b952fd3fb53ac23d876413e7b30f71",
+        "source": "/usr/bin/bwrap",
+        "source_gid": 0,
+        "source_mode": "0o755",
+        "source_uid": 0
+      },
+      "kind": "installed",
+      "sha256": "e318903862396f96de3df57264e0158682b952fd3fb53ac23d876413e7b30f71",
+      "source": "/usr/bin/bwrap",
+      "target_mode": "0o755"
+    },
+    "/usr/bin/python3.12": {
+      "current_host_validation": "REQUIRED_NOT_OBSERVED",
+      "historical_source_metadata": {
+        "mode": "0o555",
+        "resolved_source": "/usr/bin/python3.12",
+        "sha256": "e50d468e8b0adfb05733f5b87b3cff34829c4a8c1aea50c865aa8bdfe4bb150f",
+        "source": "/usr/bin/python3.12",
+        "source_gid": 0,
+        "source_mode": "0o755",
+        "source_uid": 0
+      },
+      "kind": "installed",
+      "sha256": "e50d468e8b0adfb05733f5b87b3cff34829c4a8c1aea50c865aa8bdfe4bb150f",
+      "source": "/usr/bin/python3.12",
+      "target_mode": "0o555"
+    },
+    "/usr/bin/true": {
+      "current_host_validation": "REQUIRED_NOT_OBSERVED",
+      "historical_source_metadata": {
+        "mode": "0o555",
+        "resolved_source": "/usr/bin/true",
+        "sha256": "8a63c98320173f79e263115e10cefc170155e47d1fd4b5a70e4429d2699cae28",
+        "source": "/usr/bin/true",
+        "source_gid": 0,
+        "source_mode": "0o755",
+        "source_uid": 0
+      },
+      "kind": "installed",
+      "sha256": "8a63c98320173f79e263115e10cefc170155e47d1fd4b5a70e4429d2699cae28",
+      "source": "/usr/bin/true",
+      "target_mode": "0o555"
+    },
+    "/usr/lib/python3.12/collections/__init__.py": {
+      "current_host_validation": "REQUIRED_NOT_OBSERVED",
+      "historical_source_metadata": {
+        "mode": "0o444",
+        "resolved_source": "/usr/lib/python3.12/collections/__init__.py",
+        "sha256": "0af967cd58036507b3d0fbc33b7a996c61dbb52a94b0b738c8bef12cd4cc7dd4",
+        "source": "/usr/lib/python3.12/collections/__init__.py",
+        "source_gid": 0,
+        "source_mode": "0o644",
+        "source_uid": 0
+      },
+      "kind": "installed",
+      "sha256": "0af967cd58036507b3d0fbc33b7a996c61dbb52a94b0b738c8bef12cd4cc7dd4",
+      "source": "/usr/lib/python3.12/collections/__init__.py",
+      "target_mode": "0o444"
+    },
+    "/usr/lib/python3.12/copyreg.py": {
+      "current_host_validation": "REQUIRED_NOT_OBSERVED",
+      "historical_source_metadata": {
+        "mode": "0o444",
+        "resolved_source": "/usr/lib/python3.12/copyreg.py",
+        "sha256": "c8eda41f05c6bf95a4da4726a530409d2485ae060b8d019b3a8034389a15d3e9",
+        "source": "/usr/lib/python3.12/copyreg.py",
+        "source_gid": 0,
+        "source_mode": "0o644",
+        "source_uid": 0
+      },
+      "kind": "installed",
+      "sha256": "c8eda41f05c6bf95a4da4726a530409d2485ae060b8d019b3a8034389a15d3e9",
+      "source": "/usr/lib/python3.12/copyreg.py",
+      "target_mode": "0o444"
+    },
+    "/usr/lib/python3.12/encodings/__init__.py": {
+      "current_host_validation": "REQUIRED_NOT_OBSERVED",
+      "historical_source_metadata": {
+        "mode": "0o444",
+        "resolved_source": "/usr/lib/python3.12/encodings/__init__.py",
+        "sha256": "78c4744d407690f321565488710b5aaf6486b5afa8d185637aa1e7633ab59cd8",
+        "source": "/usr/lib/python3.12/encodings/__init__.py",
+        "source_gid": 0,
+        "source_mode": "0o644",
+        "source_uid": 0
+      },
+      "kind": "installed",
+      "sha256": "78c4744d407690f321565488710b5aaf6486b5afa8d185637aa1e7633ab59cd8",
+      "source": "/usr/lib/python3.12/encodings/__init__.py",
+      "target_mode": "0o444"
+    },
+    "/usr/lib/python3.12/encodings/aliases.py": {
+      "current_host_validation": "REQUIRED_NOT_OBSERVED",
+      "historical_source_metadata": {
+        "mode": "0o444",
+        "resolved_source": "/usr/lib/python3.12/encodings/aliases.py",
+        "sha256": "6fdcc49ba23a0203ae6cf28e608f8e6297d7c4d77d52e651db3cb49b9564c6d2",
+        "source": "/usr/lib/python3.12/encodings/aliases.py",
+        "source_gid": 0,
+        "source_mode": "0o644",
+        "source_uid": 0
+      },
+      "kind": "installed",
+      "sha256": "6fdcc49ba23a0203ae6cf28e608f8e6297d7c4d77d52e651db3cb49b9564c6d2",
+      "source": "/usr/lib/python3.12/encodings/aliases.py",
+      "target_mode": "0o444"
+    },
+    "/usr/lib/python3.12/encodings/ascii.py": {
+      "current_host_validation": "REQUIRED_NOT_OBSERVED",
+      "historical_source_metadata": {
+        "mode": "0o444",
+        "resolved_source": "/usr/lib/python3.12/encodings/ascii.py",
+        "sha256": "578aa1173f7cc60dad2895071287fe6182bd14787b3fbf47a6c7983dfe3675e3",
+        "source": "/usr/lib/python3.12/encodings/ascii.py",
+        "source_gid": 0,
+        "source_mode": "0o644",
+        "source_uid": 0
+      },
+      "kind": "installed",
+      "sha256": "578aa1173f7cc60dad2895071287fe6182bd14787b3fbf47a6c7983dfe3675e3",
+      "source": "/usr/lib/python3.12/encodings/ascii.py",
+      "target_mode": "0o444"
+    },
+    "/usr/lib/python3.12/encodings/latin_1.py": {
+      "current_host_validation": "REQUIRED_NOT_OBSERVED",
+      "historical_source_metadata": {
+        "mode": "0o444",
+        "resolved_source": "/usr/lib/python3.12/encodings/latin_1.py",
+        "sha256": "b75503e532a27c636477396c855209ff5f3036536d2a4bede0a576c89382b60c",
+        "source": "/usr/lib/python3.12/encodings/latin_1.py",
+        "source_gid": 0,
+        "source_mode": "0o644",
+        "source_uid": 0
+      },
+      "kind": "installed",
+      "sha256": "b75503e532a27c636477396c855209ff5f3036536d2a4bede0a576c89382b60c",
+      "source": "/usr/lib/python3.12/encodings/latin_1.py",
+      "target_mode": "0o444"
+    },
+    "/usr/lib/python3.12/encodings/utf_8.py": {
+      "current_host_validation": "REQUIRED_NOT_OBSERVED",
+      "historical_source_metadata": {
+        "mode": "0o444",
+        "resolved_source": "/usr/lib/python3.12/encodings/utf_8.py",
+        "sha256": "ba0cac060269583523ca9506473a755203037c57d466a11aa89a30a5f6756f3d",
+        "source": "/usr/lib/python3.12/encodings/utf_8.py",
+        "source_gid": 0,
+        "source_mode": "0o644",
+        "source_uid": 0
+      },
+      "kind": "installed",
+      "sha256": "ba0cac060269583523ca9506473a755203037c57d466a11aa89a30a5f6756f3d",
+      "source": "/usr/lib/python3.12/encodings/utf_8.py",
+      "target_mode": "0o444"
+    },
+    "/usr/lib/python3.12/enum.py": {
+      "current_host_validation": "REQUIRED_NOT_OBSERVED",
+      "historical_source_metadata": {
+        "mode": "0o444",
+        "resolved_source": "/usr/lib/python3.12/enum.py",
+        "sha256": "c8ead615c159598370295649eb296819ad4b40d50b200c4fec2d4269bf7af9ae",
+        "source": "/usr/lib/python3.12/enum.py",
+        "source_gid": 0,
+        "source_mode": "0o644",
+        "source_uid": 0
+      },
+      "kind": "installed",
+      "sha256": "c8ead615c159598370295649eb296819ad4b40d50b200c4fec2d4269bf7af9ae",
+      "source": "/usr/lib/python3.12/enum.py",
+      "target_mode": "0o444"
+    },
+    "/usr/lib/python3.12/functools.py": {
+      "current_host_validation": "REQUIRED_NOT_OBSERVED",
+      "historical_source_metadata": {
+        "mode": "0o444",
+        "resolved_source": "/usr/lib/python3.12/functools.py",
+        "sha256": "cca971c456e1bec8b751aecdf41466f34dbf72321ee0840627280ba2ccf9d033",
+        "source": "/usr/lib/python3.12/functools.py",
+        "source_gid": 0,
+        "source_mode": "0o644",
+        "source_uid": 0
+      },
+      "kind": "installed",
+      "sha256": "cca971c456e1bec8b751aecdf41466f34dbf72321ee0840627280ba2ccf9d033",
+      "source": "/usr/lib/python3.12/functools.py",
+      "target_mode": "0o444"
+    },
+    "/usr/lib/python3.12/hashlib.py": {
+      "current_host_validation": "REQUIRED_NOT_OBSERVED",
+      "historical_source_metadata": {
+        "mode": "0o444",
+        "resolved_source": "/usr/lib/python3.12/hashlib.py",
+        "sha256": "6dbdebf270868b391080e21dc9687eddfaf321c965ad979f68d3f5c423c613ab",
+        "source": "/usr/lib/python3.12/hashlib.py",
+        "source_gid": 0,
+        "source_mode": "0o644",
+        "source_uid": 0
+      },
+      "kind": "installed",
+      "sha256": "6dbdebf270868b391080e21dc9687eddfaf321c965ad979f68d3f5c423c613ab",
+      "source": "/usr/lib/python3.12/hashlib.py",
+      "target_mode": "0o444"
+    },
+    "/usr/lib/python3.12/json/__init__.py": {
+      "current_host_validation": "REQUIRED_NOT_OBSERVED",
+      "historical_source_metadata": {
+        "mode": "0o444",
+        "resolved_source": "/usr/lib/python3.12/json/__init__.py",
+        "sha256": "d5d41e2c29049515d295d81a6d40b4890fbec8d8482cfb401630f8ef2f77e4d5",
+        "source": "/usr/lib/python3.12/json/__init__.py",
+        "source_gid": 0,
+        "source_mode": "0o644",
+        "source_uid": 0
+      },
+      "kind": "installed",
+      "sha256": "d5d41e2c29049515d295d81a6d40b4890fbec8d8482cfb401630f8ef2f77e4d5",
+      "source": "/usr/lib/python3.12/json/__init__.py",
+      "target_mode": "0o444"
+    },
+    "/usr/lib/python3.12/json/decoder.py": {
+      "current_host_validation": "REQUIRED_NOT_OBSERVED",
+      "historical_source_metadata": {
+        "mode": "0o444",
+        "resolved_source": "/usr/lib/python3.12/json/decoder.py",
+        "sha256": "9f02654649816145bc76f8c210a5fe3ba1de142d4d97a1c93105732e747c285b",
+        "source": "/usr/lib/python3.12/json/decoder.py",
+        "source_gid": 0,
+        "source_mode": "0o644",
+        "source_uid": 0
+      },
+      "kind": "installed",
+      "sha256": "9f02654649816145bc76f8c210a5fe3ba1de142d4d97a1c93105732e747c285b",
+      "source": "/usr/lib/python3.12/json/decoder.py",
+      "target_mode": "0o444"
+    },
+    "/usr/lib/python3.12/json/encoder.py": {
+      "current_host_validation": "REQUIRED_NOT_OBSERVED",
+      "historical_source_metadata": {
+        "mode": "0o444",
+        "resolved_source": "/usr/lib/python3.12/json/encoder.py",
+        "sha256": "af7bd40a0d0d0a3e726a9b4b3a2a543019f6ab97a340d0162a9c29ca9da97869",
+        "source": "/usr/lib/python3.12/json/encoder.py",
+        "source_gid": 0,
+        "source_mode": "0o644",
+        "source_uid": 0
+      },
+      "kind": "installed",
+      "sha256": "af7bd40a0d0d0a3e726a9b4b3a2a543019f6ab97a340d0162a9c29ca9da97869",
+      "source": "/usr/lib/python3.12/json/encoder.py",
+      "target_mode": "0o444"
+    },
+    "/usr/lib/python3.12/json/scanner.py": {
+      "current_host_validation": "REQUIRED_NOT_OBSERVED",
+      "historical_source_metadata": {
+        "mode": "0o444",
+        "resolved_source": "/usr/lib/python3.12/json/scanner.py",
+        "sha256": "8604d9d03786d0d509abb49e9f069337278ea988c244069ae8ca2c89acc2cb08",
+        "source": "/usr/lib/python3.12/json/scanner.py",
+        "source_gid": 0,
+        "source_mode": "0o644",
+        "source_uid": 0
+      },
+      "kind": "installed",
+      "sha256": "8604d9d03786d0d509abb49e9f069337278ea988c244069ae8ca2c89acc2cb08",
+      "source": "/usr/lib/python3.12/json/scanner.py",
+      "target_mode": "0o444"
+    },
+    "/usr/lib/python3.12/keyword.py": {
+      "current_host_validation": "REQUIRED_NOT_OBSERVED",
+      "historical_source_metadata": {
+        "mode": "0o444",
+        "resolved_source": "/usr/lib/python3.12/keyword.py",
+        "sha256": "18c2be738c04ad20ad375f6a71db34b3823c7f40b0340f5294d0e89f3c9b093b",
+        "source": "/usr/lib/python3.12/keyword.py",
+        "source_gid": 0,
+        "source_mode": "0o644",
+        "source_uid": 0
+      },
+      "kind": "installed",
+      "sha256": "18c2be738c04ad20ad375f6a71db34b3823c7f40b0340f5294d0e89f3c9b093b",
+      "source": "/usr/lib/python3.12/keyword.py",
+      "target_mode": "0o444"
+    },
+    "/usr/lib/python3.12/lib-dynload/_hashlib.cpython-312-x86_64-linux-gnu.so": {
+      "current_host_validation": "REQUIRED_NOT_OBSERVED",
+      "historical_source_metadata": {
+        "mode": "0o444",
+        "resolved_source": "/usr/lib/python3.12/lib-dynload/_hashlib.cpython-312-x86_64-linux-gnu.so",
+        "sha256": "8dc6cda6dd9495b95a2bfb5b26e8cf06b72f36dc0213d958b9277a958287f0fe",
+        "source": "/usr/lib/python3.12/lib-dynload/_hashlib.cpython-312-x86_64-linux-gnu.so",
+        "source_gid": 0,
+        "source_mode": "0o644",
+        "source_uid": 0
+      },
+      "kind": "installed",
+      "sha256": "8dc6cda6dd9495b95a2bfb5b26e8cf06b72f36dc0213d958b9277a958287f0fe",
+      "source": "/usr/lib/python3.12/lib-dynload/_hashlib.cpython-312-x86_64-linux-gnu.so",
+      "target_mode": "0o444"
+    },
+    "/usr/lib/python3.12/lib-dynload/_json.cpython-312-x86_64-linux-gnu.so": {
+      "current_host_validation": "REQUIRED_NOT_OBSERVED",
+      "historical_source_metadata": {
+        "mode": "0o444",
+        "resolved_source": "/usr/lib/python3.12/lib-dynload/_json.cpython-312-x86_64-linux-gnu.so",
+        "sha256": "ca8e35c58f7bc8e27258c4af43651c941413bc6318903621253485b0395758a3",
+        "source": "/usr/lib/python3.12/lib-dynload/_json.cpython-312-x86_64-linux-gnu.so",
+        "source_gid": 0,
+        "source_mode": "0o644",
+        "source_uid": 0
+      },
+      "kind": "installed",
+      "sha256": "ca8e35c58f7bc8e27258c4af43651c941413bc6318903621253485b0395758a3",
+      "source": "/usr/lib/python3.12/lib-dynload/_json.cpython-312-x86_64-linux-gnu.so",
+      "target_mode": "0o444"
+    },
+    "/usr/lib/python3.12/operator.py": {
+      "current_host_validation": "REQUIRED_NOT_OBSERVED",
+      "historical_source_metadata": {
+        "mode": "0o444",
+        "resolved_source": "/usr/lib/python3.12/operator.py",
+        "sha256": "b2af20f67667203c1730e686cc5d0427becc94db4c97f1d3efe3ed2158473f6a",
+        "source": "/usr/lib/python3.12/operator.py",
+        "source_gid": 0,
+        "source_mode": "0o644",
+        "source_uid": 0
+      },
+      "kind": "installed",
+      "sha256": "b2af20f67667203c1730e686cc5d0427becc94db4c97f1d3efe3ed2158473f6a",
+      "source": "/usr/lib/python3.12/operator.py",
+      "target_mode": "0o444"
+    },
+    "/usr/lib/python3.12/os.py": {
+      "bytes": 39786,
+      "historical_source_metadata": {
+        "mode": "0o444",
+        "resolved_source": "/usr/lib/python3.12/os.py",
+        "sha256": "316d1b7307fd851bded3423c9d437e0a383c725d993f0fcff2e8b749fe560b62",
+        "source": "/usr/lib/python3.12/os.py",
+        "source_gid": 0,
+        "source_mode": "0o644",
+        "source_uid": 0
+      },
+      "kind": "bundled",
+      "provenance": "recovery-provenance/PROVENANCE.json#316d1b7307fd851bded3423c9d437e0a383c725d993f0fcff2e8b749fe560b62",
+      "sha256": "316d1b7307fd851bded3423c9d437e0a383c725d993f0fcff2e8b749fe560b62",
+      "source": "objects/316d1b7307fd851bded3423c9d437e0a383c725d993f0fcff2e8b749fe560b62",
+      "target_mode": "0o444"
+    },
+    "/usr/lib/python3.12/re/__init__.py": {
+      "current_host_validation": "REQUIRED_NOT_OBSERVED",
+      "historical_source_metadata": {
+        "mode": "0o444",
+        "resolved_source": "/usr/lib/python3.12/re/__init__.py",
+        "sha256": "8ff3c37c63b917fcf8dc8d50993a502292a3dc159e41de4f4018c72a53d1c07b",
+        "source": "/usr/lib/python3.12/re/__init__.py",
+        "source_gid": 0,
+        "source_mode": "0o644",
+        "source_uid": 0
+      },
+      "kind": "installed",
+      "sha256": "8ff3c37c63b917fcf8dc8d50993a502292a3dc159e41de4f4018c72a53d1c07b",
+      "source": "/usr/lib/python3.12/re/__init__.py",
+      "target_mode": "0o444"
+    },
+    "/usr/lib/python3.12/re/_casefix.py": {
+      "current_host_validation": "REQUIRED_NOT_OBSERVED",
+      "historical_source_metadata": {
+        "mode": "0o444",
+        "resolved_source": "/usr/lib/python3.12/re/_casefix.py",
+        "sha256": "41572ac50cf96b04496e676d8a6708898bb8e752e06dad34ed4c50c5d8f1fe40",
+        "source": "/usr/lib/python3.12/re/_casefix.py",
+        "source_gid": 0,
+        "source_mode": "0o644",
+        "source_uid": 0
+      },
+      "kind": "installed",
+      "sha256": "41572ac50cf96b04496e676d8a6708898bb8e752e06dad34ed4c50c5d8f1fe40",
+      "source": "/usr/lib/python3.12/re/_casefix.py",
+      "target_mode": "0o444"
+    },
+    "/usr/lib/python3.12/re/_compiler.py": {
+      "current_host_validation": "REQUIRED_NOT_OBSERVED",
+      "historical_source_metadata": {
+        "mode": "0o444",
+        "resolved_source": "/usr/lib/python3.12/re/_compiler.py",
+        "sha256": "c05067f8bfa4c13cbbf1eedc4d5cafc9b621bcb6ebc5771ba0518a18095af15a",
+        "source": "/usr/lib/python3.12/re/_compiler.py",
+        "source_gid": 0,
+        "source_mode": "0o644",
+        "source_uid": 0
+      },
+      "kind": "installed",
+      "sha256": "c05067f8bfa4c13cbbf1eedc4d5cafc9b621bcb6ebc5771ba0518a18095af15a",
+      "source": "/usr/lib/python3.12/re/_compiler.py",
+      "target_mode": "0o444"
+    },
+    "/usr/lib/python3.12/re/_constants.py": {
+      "current_host_validation": "REQUIRED_NOT_OBSERVED",
+      "historical_source_metadata": {
+        "mode": "0o444",
+        "resolved_source": "/usr/lib/python3.12/re/_constants.py",
+        "sha256": "fa4fdb200f238f9e7817b63892b0d69833d8165134801e775e10cc113348a375",
+        "source": "/usr/lib/python3.12/re/_constants.py",
+        "source_gid": 0,
+        "source_mode": "0o644",
+        "source_uid": 0
+      },
+      "kind": "installed",
+      "sha256": "fa4fdb200f238f9e7817b63892b0d69833d8165134801e775e10cc113348a375",
+      "source": "/usr/lib/python3.12/re/_constants.py",
+      "target_mode": "0o444"
+    },
+    "/usr/lib/python3.12/re/_parser.py": {
+      "current_host_validation": "REQUIRED_NOT_OBSERVED",
+      "historical_source_metadata": {
+        "mode": "0o444",
+        "resolved_source": "/usr/lib/python3.12/re/_parser.py",
+        "sha256": "a51a85b37cf3f44ba7ff25754da5f31306e4ccfa6eb3c017f9d37bdf4e770840",
+        "source": "/usr/lib/python3.12/re/_parser.py",
+        "source_gid": 0,
+        "source_mode": "0o644",
+        "source_uid": 0
+      },
+      "kind": "installed",
+      "sha256": "a51a85b37cf3f44ba7ff25754da5f31306e4ccfa6eb3c017f9d37bdf4e770840",
+      "source": "/usr/lib/python3.12/re/_parser.py",
+      "target_mode": "0o444"
+    },
+    "/usr/lib/python3.12/reprlib.py": {
+      "current_host_validation": "REQUIRED_NOT_OBSERVED",
+      "historical_source_metadata": {
+        "mode": "0o444",
+        "resolved_source": "/usr/lib/python3.12/reprlib.py",
+        "sha256": "8da31054076803065758311f54b18b8a616824941977d907dc3ee729228e9015",
+        "source": "/usr/lib/python3.12/reprlib.py",
+        "source_gid": 0,
+        "source_mode": "0o644",
+        "source_uid": 0
+      },
+      "kind": "installed",
+      "sha256": "8da31054076803065758311f54b18b8a616824941977d907dc3ee729228e9015",
+      "source": "/usr/lib/python3.12/reprlib.py",
+      "target_mode": "0o444"
+    },
+    "/usr/lib/python3.12/types.py": {
+      "current_host_validation": "REQUIRED_NOT_OBSERVED",
+      "historical_source_metadata": {
+        "mode": "0o444",
+        "resolved_source": "/usr/lib/python3.12/types.py",
+        "sha256": "345474ef027a1273f353da9bdc1f7c18f65335e72e681bcc0376774cc51f2405",
+        "source": "/usr/lib/python3.12/types.py",
+        "source_gid": 0,
+        "source_mode": "0o644",
+        "source_uid": 0
+      },
+      "kind": "installed",
+      "sha256": "345474ef027a1273f353da9bdc1f7c18f65335e72e681bcc0376774cc51f2405",
+      "source": "/usr/lib/python3.12/types.py",
+      "target_mode": "0o444"
+    },
+    "/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2": {
+      "current_host_validation": "REQUIRED_NOT_OBSERVED",
+      "historical_source_metadata": {
+        "mode": "0o555",
+        "resolved_source": "/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2",
+        "sha256": "c20a2dc8917c755f02b94049356320fe1f62ac7d9f8994731f807d9df39302da",
+        "source": "/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2",
+        "source_gid": 0,
+        "source_mode": "0o755",
+        "source_uid": 0
+      },
+      "kind": "installed",
+      "sha256": "c20a2dc8917c755f02b94049356320fe1f62ac7d9f8994731f807d9df39302da",
+      "source": "/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2",
+      "target_mode": "0o555"
+    },
+    "/usr/lib/x86_64-linux-gnu/libc.so.6": {
+      "current_host_validation": "REQUIRED_NOT_OBSERVED",
+      "historical_source_metadata": {
+        "mode": "0o555",
+        "resolved_source": "/usr/lib/x86_64-linux-gnu/libc.so.6",
+        "sha256": "3a15d66867d83762c7f2f1e37359cb8f6c5743edb369c65285cb0b1c4f7498bf",
+        "source": "/usr/lib/x86_64-linux-gnu/libc.so.6",
+        "source_gid": 0,
+        "source_mode": "0o755",
+        "source_uid": 0
+      },
+      "kind": "installed",
+      "sha256": "3a15d66867d83762c7f2f1e37359cb8f6c5743edb369c65285cb0b1c4f7498bf",
+      "source": "/usr/lib/x86_64-linux-gnu/libc.so.6",
+      "target_mode": "0o555"
+    },
+    "/usr/lib/x86_64-linux-gnu/libcap.so.2.66": {
+      "current_host_validation": "REQUIRED_NOT_OBSERVED",
+      "historical_source_metadata": {
+        "mode": "0o444",
+        "resolved_source": "/usr/lib/x86_64-linux-gnu/libcap.so.2.66",
+        "sha256": "6ac6abc86ac891c6e13486470e26f1d939f47fda9e6b5d5508a7f5ec881adc84",
+        "source": "/usr/lib/x86_64-linux-gnu/libcap.so.2.66",
+        "source_gid": 0,
+        "source_mode": "0o644",
+        "source_uid": 0
+      },
+      "kind": "installed",
+      "sha256": "6ac6abc86ac891c6e13486470e26f1d939f47fda9e6b5d5508a7f5ec881adc84",
+      "source": "/usr/lib/x86_64-linux-gnu/libcap.so.2.66",
+      "target_mode": "0o444"
+    },
+    "/usr/lib/x86_64-linux-gnu/libcrypto.so.3": {
+      "current_host_validation": "REQUIRED_NOT_OBSERVED",
+      "historical_source_metadata": {
+        "mode": "0o444",
+        "resolved_source": "/usr/lib/x86_64-linux-gnu/libcrypto.so.3",
+        "sha256": "6866ed711dab8927e1bf82bf1cd30e828bdfc34f3cc1e83b1c9eb01ce6c37d9a",
+        "source": "/usr/lib/x86_64-linux-gnu/libcrypto.so.3",
+        "source_gid": 0,
+        "source_mode": "0o644",
+        "source_uid": 0
+      },
+      "kind": "installed",
+      "sha256": "6866ed711dab8927e1bf82bf1cd30e828bdfc34f3cc1e83b1c9eb01ce6c37d9a",
+      "source": "/usr/lib/x86_64-linux-gnu/libcrypto.so.3",
+      "target_mode": "0o444"
+    },
+    "/usr/lib/x86_64-linux-gnu/libexpat.so.1.9.1": {
+      "current_host_validation": "REQUIRED_NOT_OBSERVED",
+      "historical_source_metadata": {
+        "mode": "0o444",
+        "resolved_source": "/usr/lib/x86_64-linux-gnu/libexpat.so.1.9.1",
+        "sha256": "286682ecbc5e59a638963b1a4e6351e65eb32fcf4bdcb9cb7569b6a61fe06a8d",
+        "source": "/usr/lib/x86_64-linux-gnu/libexpat.so.1.9.1",
+        "source_gid": 0,
+        "source_mode": "0o644",
+        "source_uid": 0
+      },
+      "kind": "installed",
+      "sha256": "286682ecbc5e59a638963b1a4e6351e65eb32fcf4bdcb9cb7569b6a61fe06a8d",
+      "source": "/usr/lib/x86_64-linux-gnu/libexpat.so.1.9.1",
+      "target_mode": "0o444"
+    },
+    "/usr/lib/x86_64-linux-gnu/libm.so.6": {
+      "current_host_validation": "REQUIRED_NOT_OBSERVED",
+      "historical_source_metadata": {
+        "mode": "0o444",
+        "resolved_source": "/usr/lib/x86_64-linux-gnu/libm.so.6",
+        "sha256": "fce00b6f25f459cf4ae0b7fae4257909a1a8a86f9149e7c029a5d617baf1ccd0",
+        "source": "/usr/lib/x86_64-linux-gnu/libm.so.6",
+        "source_gid": 0,
+        "source_mode": "0o644",
+        "source_uid": 0
+      },
+      "kind": "installed",
+      "sha256": "fce00b6f25f459cf4ae0b7fae4257909a1a8a86f9149e7c029a5d617baf1ccd0",
+      "source": "/usr/lib/x86_64-linux-gnu/libm.so.6",
+      "target_mode": "0o444"
+    },
+    "/usr/lib/x86_64-linux-gnu/libpcre2-8.so.0.11.2": {
+      "current_host_validation": "REQUIRED_NOT_OBSERVED",
+      "historical_source_metadata": {
+        "mode": "0o444",
+        "resolved_source": "/usr/lib/x86_64-linux-gnu/libpcre2-8.so.0.11.2",
+        "sha256": "e00576d71d81d3ba0cfa4903c835a44a8723aac96f72f79ff75200b4cff9071b",
+        "source": "/usr/lib/x86_64-linux-gnu/libpcre2-8.so.0.11.2",
+        "source_gid": 0,
+        "source_mode": "0o644",
+        "source_uid": 0
+      },
+      "kind": "installed",
+      "sha256": "e00576d71d81d3ba0cfa4903c835a44a8723aac96f72f79ff75200b4cff9071b",
+      "source": "/usr/lib/x86_64-linux-gnu/libpcre2-8.so.0.11.2",
+      "target_mode": "0o444"
+    },
+    "/usr/lib/x86_64-linux-gnu/libselinux.so.1": {
+      "current_host_validation": "REQUIRED_NOT_OBSERVED",
+      "historical_source_metadata": {
+        "mode": "0o444",
+        "resolved_source": "/usr/lib/x86_64-linux-gnu/libselinux.so.1",
+        "sha256": "0ec0843463f90e227b0e138e1f379774f50b5514bd7f5dbd4c8a87aca0aa6670",
+        "source": "/usr/lib/x86_64-linux-gnu/libselinux.so.1",
+        "source_gid": 0,
+        "source_mode": "0o644",
+        "source_uid": 0
+      },
+      "kind": "installed",
+      "sha256": "0ec0843463f90e227b0e138e1f379774f50b5514bd7f5dbd4c8a87aca0aa6670",
+      "source": "/usr/lib/x86_64-linux-gnu/libselinux.so.1",
+      "target_mode": "0o444"
+    },
+    "/usr/lib/x86_64-linux-gnu/libz.so.1.3": {
+      "current_host_validation": "REQUIRED_NOT_OBSERVED",
+      "historical_source_metadata": {
+        "mode": "0o444",
+        "resolved_source": "/usr/lib/x86_64-linux-gnu/libz.so.1.3",
+        "sha256": "86200da370f20476a2507e9097a789b5ef97269b4ca8d5e164ad82dab9d99892",
+        "source": "/usr/lib/x86_64-linux-gnu/libz.so.1.3",
+        "source_gid": 0,
+        "source_mode": "0o644",
+        "source_uid": 0
+      },
+      "kind": "installed",
+      "sha256": "f61677c7bdb7c2aa2a243ea781bfd16afcb361cede7b4ef76127a9d8eb9a5242",
+      "source": "/usr/lib/x86_64-linux-gnu/libz.so.1.3",
+      "target_mode": "0o444"
+    }
+  },
+  "historical_bindings": {
+    "/empty-home": {
+      "device_inode": [
+        2049,
+        37098
+      ],
+      "gid": 0,
+      "mode": "0555",
+      "source": "/tmp/zen53-revised-ca59ysva/empty-home",
+      "uid": 0
+    },
+    "/var/tmp": {
+      "device_inode": [
+        2049,
+        37100
+      ],
+      "gid": 0,
+      "mode": "0555",
+      "source": "/tmp/zen53-revised-ca59ysva/empty-vartmp",
+      "uid": 0
+    }
+  },
+  "historical_locks": [
+    {
+      "device": 2049,
+      "gid": 1001,
+      "inode": 543436,
+      "mode": "0644",
+      "path": "/var/lib/modelfc-deploy/deploy.lock",
+      "uid": 1001
+    },
+    {
+      "device": 2049,
+      "gid": 1000,
+      "inode": 535594,
+      "mode": "0600",
+      "path": "/var/lib/modelfc-validator/runs/validation.lock",
+      "uid": 1000
+    }
+  ],
+  "manifest": {
+    "COMPLETE_RUNTIME_TEXT.diff": {
+      "bytes": 30750,
+      "kind": "bundled",
+      "provenance": "recovery-provenance/PROVENANCE.json#f9004959116d33a743f55a3495c47aeb247051309523aed47792db1c1c7ef2ea",
+      "sha256": "f9004959116d33a743f55a3495c47aeb247051309523aed47792db1c1c7ef2ea",
+      "source": "objects/f9004959116d33a743f55a3495c47aeb247051309523aed47792db1c1c7ef2ea"
+    },
+    "CONSTRUCTION.stderr": {
+      "bytes": 0,
+      "kind": "bundled",
+      "provenance": "recovery-provenance/PROVENANCE.json#e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source": "objects/e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "CONSTRUCTION.stdout": {
+      "bytes": 117,
+      "kind": "bundled",
+      "provenance": "recovery-provenance/PROVENANCE.json#69db185269fd23e3002fbb143ca412e7fddc0226dfe5e925805ab8ceafe2b45d",
+      "sha256": "69db185269fd23e3002fbb143ca412e7fddc0226dfe5e925805ab8ceafe2b45d",
+      "source": "objects/69db185269fd23e3002fbb143ca412e7fddc0226dfe5e925805ab8ceafe2b45d"
+    },
+    "DEPENDENCIES.json": {
+      "bytes": 18852,
+      "kind": "bundled",
+      "provenance": "recovery-provenance/PROVENANCE.json#20d6488945bafa58c0765bc4a7bf78952bbc36ef7d4a870e8f1f33665f68d06a",
+      "sha256": "20d6488945bafa58c0765bc4a7bf78952bbc36ef7d4a870e8f1f33665f68d06a",
+      "source": "objects/20d6488945bafa58c0765bc4a7bf78952bbc36ef7d4a870e8f1f33665f68d06a"
+    },
+    "EMPTY_BINDINGS.json": {
+      "bytes": 362,
+      "kind": "bundled",
+      "provenance": "recovery-provenance/PROVENANCE.json#38296633728722a411ded25ca86d26c1ef2c835f364f78281085f0d95dbff95b",
+      "sha256": "38296633728722a411ded25ca86d26c1ef2c835f364f78281085f0d95dbff95b",
+      "source": "objects/38296633728722a411ded25ca86d26c1ef2c835f364f78281085f0d95dbff95b"
+    },
+    "OFFLINE_RESULTS.json": {
+      "bytes": 465,
+      "kind": "bundled",
+      "provenance": "recovery-provenance/PROVENANCE.json#d160ad155d64fb412f72b0e5da316d475790d31017a0243606e15c385afee668",
+      "sha256": "d160ad155d64fb412f72b0e5da316d475790d31017a0243606e15c385afee668",
+      "source": "objects/d160ad155d64fb412f72b0e5da316d475790d31017a0243606e15c385afee668"
+    },
+    "OFFLINE_TESTS.stderr": {
+      "bytes": 2183,
+      "kind": "bundled",
+      "provenance": "recovery-provenance/PROVENANCE.json#9d5d07a665a223d7cea487a4fc083d7aa287c2597617127161f7f55e77925b8b",
+      "sha256": "9d5d07a665a223d7cea487a4fc083d7aa287c2597617127161f7f55e77925b8b",
+      "source": "objects/9d5d07a665a223d7cea487a4fc083d7aa287c2597617127161f7f55e77925b8b"
+    },
+    "OFFLINE_TESTS.stdout": {
+      "bytes": 0,
+      "kind": "bundled",
+      "provenance": "recovery-provenance/PROVENANCE.json#e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source": "objects/e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "PREREQUISITE_STATIC.json": {
+      "bytes": 362,
+      "kind": "bundled",
+      "provenance": "recovery-provenance/PROVENANCE.json#f9cd013bcfaa52dc72ba2a09c4f2f99a3698be0872dadb478384f35526c23c9c",
+      "sha256": "f9cd013bcfaa52dc72ba2a09c4f2f99a3698be0872dadb478384f35526c23c9c",
+      "source": "objects/f9cd013bcfaa52dc72ba2a09c4f2f99a3698be0872dadb478384f35526c23c9c"
+    },
+    "RUNBOOK.md": {
+      "bytes": 18355,
+      "kind": "bundled",
+      "provenance": "recovery-provenance/PROVENANCE.json#309883d8ac42e5c3b366384082858bd14fceef4428d11546a1aea7168e02df0e",
+      "sha256": "309883d8ac42e5c3b366384082858bd14fceef4428d11546a1aea7168e02df0e",
+      "source": "objects/309883d8ac42e5c3b366384082858bd14fceef4428d11546a1aea7168e02df0e"
+    },
+    "RUNTIME_DIFF.json": {
+      "bytes": 15394,
+      "kind": "bundled",
+      "provenance": "recovery-provenance/PROVENANCE.json#4dc3d8bf04ac6ee0d252cd968f1e7ff30215a85ad7fbf9461a53f8f3e80797b5",
+      "sha256": "4dc3d8bf04ac6ee0d252cd968f1e7ff30215a85ad7fbf9461a53f8f3e80797b5",
+      "source": "objects/4dc3d8bf04ac6ee0d252cd968f1e7ff30215a85ad7fbf9461a53f8f3e80797b5"
+    },
+    "STATIC_CHECKS.json": {
+      "bytes": 1758,
+      "kind": "bundled",
+      "provenance": "recovery-provenance/PROVENANCE.json#8ea6cd60b60691e1a955510317a9511873347d31c307db73f606d882892586fe",
+      "sha256": "8ea6cd60b60691e1a955510317a9511873347d31c307db73f606d882892586fe",
+      "source": "objects/8ea6cd60b60691e1a955510317a9511873347d31c307db73f606d882892586fe"
+    },
+    "TRUE_PROVENANCE.json": {
+      "bytes": 404,
+      "kind": "bundled",
+      "provenance": "recovery-provenance/PROVENANCE.json#8e3c7e27ea2dcac99ff95bb4a7433564f5749bfd49428809433dec684ad60406",
+      "sha256": "8e3c7e27ea2dcac99ff95bb4a7433564f5749bfd49428809433dec684ad60406",
+      "source": "objects/8e3c7e27ea2dcac99ff95bb4a7433564f5749bfd49428809433dec684ad60406"
+    },
+    "build_review.py": {
+      "bytes": 6529,
+      "kind": "bundled",
+      "provenance": "recovery-provenance/PROVENANCE.json#02b886550f8fc16dd74b43f37464c4d5e97fa49dc413c1ed1a093b28bf1fbf3d",
+      "sha256": "02b886550f8fc16dd74b43f37464c4d5e97fa49dc413c1ed1a093b28bf1fbf3d",
+      "source": "objects/02b886550f8fc16dd74b43f37464c4d5e97fa49dc413c1ed1a093b28bf1fbf3d"
+    },
+    "constructor.diff": {
+      "bytes": 1020,
+      "kind": "bundled",
+      "provenance": "recovery-provenance/PROVENANCE.json#964cdba321f9a269b40f78359e6c7ba3a8f144ec8a685a9b2d7be6c240f96940",
+      "sha256": "964cdba321f9a269b40f78359e6c7ba3a8f144ec8a685a9b2d7be6c240f96940",
+      "source": "objects/964cdba321f9a269b40f78359e6c7ba3a8f144ec8a685a9b2d7be6c240f96940"
+    },
+    "diagnostic.service": {
+      "bytes": 1838,
+      "kind": "bundled",
+      "provenance": "recovery-provenance/PROVENANCE.json#1802fc6daf1598c0e62f9ec8a932735154b72e9b977c2ea65247b49778b313ae",
+      "sha256": "1802fc6daf1598c0e62f9ec8a932735154b72e9b977c2ea65247b49778b313ae",
+      "source": "objects/1802fc6daf1598c0e62f9ec8a932735154b72e9b977c2ea65247b49778b313ae"
+    },
+    "finalize_review.py": {
+      "bytes": 13626,
+      "kind": "bundled",
+      "provenance": "recovery-provenance/PROVENANCE.json#f840a2921cab98214f23bf7ab0b657963d364af0c08d13ee14234e66f42773a5",
+      "sha256": "f840a2921cab98214f23bf7ab0b657963d364af0c08d13ee14234e66f42773a5",
+      "source": "objects/f840a2921cab98214f23bf7ab0b657963d364af0c08d13ee14234e66f42773a5"
+    },
+    "fixture/baseline/DEPENDENCIES.json": {
+      "bytes": 18041,
+      "kind": "bundled",
+      "provenance": "recovery-provenance/PROVENANCE.json#45bff0c2fb268f13ed5465f607ebf9ffd5ee6baca809445badd477c5b0974cb4",
+      "sha256": "45bff0c2fb268f13ed5465f607ebf9ffd5ee6baca809445badd477c5b0974cb4",
+      "source": "objects/45bff0c2fb268f13ed5465f607ebf9ffd5ee6baca809445badd477c5b0974cb4"
+    },
+    "fixture/baseline/diagnostic.service": {
+      "bytes": 1696,
+      "kind": "bundled",
+      "provenance": "recovery-provenance/PROVENANCE.json#840a5bfff6be0cb28e8d8d083d092a6f8c800aa746773d65d0618293cacd14ec",
+      "sha256": "840a5bfff6be0cb28e8d8d083d092a6f8c800aa746773d65d0618293cacd14ec",
+      "source": "objects/840a5bfff6be0cb28e8d8d083d092a6f8c800aa746773d65d0618293cacd14ec"
+    },
+    "fixture/baseline/launch.py": {
+      "bytes": 8375,
+      "kind": "bundled",
+      "provenance": "recovery-provenance/PROVENANCE.json#d4915696b011bdfd5f4891367444716acf987bc79358e341fae73a82e7d4da61",
+      "sha256": "d4915696b011bdfd5f4891367444716acf987bc79358e341fae73a82e7d4da61",
+      "source": "objects/d4915696b011bdfd5f4891367444716acf987bc79358e341fae73a82e7d4da61"
+    },
+    "fixture/baseline/prepare.py": {
+      "bytes": 9384,
+      "kind": "bundled",
+      "provenance": "recovery-provenance/PROVENANCE.json#bb2a5e7f99bddd55ccba0eaae983763376ab1d0eaf30f654abbe8d718201494c",
+      "sha256": "bb2a5e7f99bddd55ccba0eaae983763376ab1d0eaf30f654abbe8d718201494c",
+      "source": "objects/bb2a5e7f99bddd55ccba0eaae983763376ab1d0eaf30f654abbe8d718201494c"
+    },
+    "fixture/baseline/report.py": {
+      "bytes": 2043,
+      "kind": "bundled",
+      "provenance": "recovery-provenance/PROVENANCE.json#e0e8953a537ab25509db0f74d7d813e8e8a6cc8f9f8bd7e41214e66f69ddd0c1",
+      "sha256": "e0e8953a537ab25509db0f74d7d813e8e8a6cc8f9f8bd7e41214e66f69ddd0c1",
+      "source": "objects/e0e8953a537ab25509db0f74d7d813e8e8a6cc8f9f8bd7e41214e66f69ddd0c1"
+    },
+    "fixture/baseline/requirements.toml": {
+      "bytes": 250,
+      "kind": "bundled",
+      "provenance": "recovery-provenance/PROVENANCE.json#2567e3290e66d17e3128f6741f64392dc6f90917bb95d0becec34db945fb12bb",
+      "sha256": "2567e3290e66d17e3128f6741f64392dc6f90917bb95d0becec34db945fb12bb",
+      "source": "objects/2567e3290e66d17e3128f6741f64392dc6f90917bb95d0becec34db945fb12bb"
+    },
+    "fixture/baseline/supervisor.py": {
+      "bytes": 21800,
+      "kind": "bundled",
+      "provenance": "recovery-provenance/PROVENANCE.json#4fc42d3dc06edf467496472d376bcaa438cf8d4b895d773284a754ba5f103d11",
+      "sha256": "4fc42d3dc06edf467496472d376bcaa438cf8d4b895d773284a754ba5f103d11",
+      "source": "objects/4fc42d3dc06edf467496472d376bcaa438cf8d4b895d773284a754ba5f103d11"
+    },
+    "fixture/candidate/DEPENDENCIES.json": {
+      "bytes": 18041,
+      "kind": "bundled",
+      "provenance": "recovery-provenance/PROVENANCE.json#45bff0c2fb268f13ed5465f607ebf9ffd5ee6baca809445badd477c5b0974cb4",
+      "sha256": "45bff0c2fb268f13ed5465f607ebf9ffd5ee6baca809445badd477c5b0974cb4",
+      "source": "objects/45bff0c2fb268f13ed5465f607ebf9ffd5ee6baca809445badd477c5b0974cb4"
+    },
+    "fixture/candidate/diagnostic.service": {
+      "bytes": 1696,
+      "kind": "bundled",
+      "provenance": "recovery-provenance/PROVENANCE.json#840a5bfff6be0cb28e8d8d083d092a6f8c800aa746773d65d0618293cacd14ec",
+      "sha256": "840a5bfff6be0cb28e8d8d083d092a6f8c800aa746773d65d0618293cacd14ec",
+      "source": "objects/840a5bfff6be0cb28e8d8d083d092a6f8c800aa746773d65d0618293cacd14ec"
+    },
+    "fixture/candidate/launch.py": {
+      "bytes": 10586,
+      "kind": "bundled",
+      "provenance": "recovery-provenance/PROVENANCE.json#704998046378e737ff7db16f19393dbdc47e2169e05e98db16c8fce1b952c753",
+      "sha256": "704998046378e737ff7db16f19393dbdc47e2169e05e98db16c8fce1b952c753",
+      "source": "objects/704998046378e737ff7db16f19393dbdc47e2169e05e98db16c8fce1b952c753"
+    },
+    "fixture/candidate/prepare.py": {
+      "bytes": 9384,
+      "kind": "bundled",
+      "provenance": "recovery-provenance/PROVENANCE.json#bb2a5e7f99bddd55ccba0eaae983763376ab1d0eaf30f654abbe8d718201494c",
+      "sha256": "bb2a5e7f99bddd55ccba0eaae983763376ab1d0eaf30f654abbe8d718201494c",
+      "source": "objects/bb2a5e7f99bddd55ccba0eaae983763376ab1d0eaf30f654abbe8d718201494c"
+    },
+    "fixture/candidate/report.py": {
+      "bytes": 2043,
+      "kind": "bundled",
+      "provenance": "recovery-provenance/PROVENANCE.json#e0e8953a537ab25509db0f74d7d813e8e8a6cc8f9f8bd7e41214e66f69ddd0c1",
+      "sha256": "e0e8953a537ab25509db0f74d7d813e8e8a6cc8f9f8bd7e41214e66f69ddd0c1",
+      "source": "objects/e0e8953a537ab25509db0f74d7d813e8e8a6cc8f9f8bd7e41214e66f69ddd0c1"
+    },
+    "fixture/candidate/requirements.toml": {
+      "bytes": 250,
+      "kind": "bundled",
+      "provenance": "recovery-provenance/PROVENANCE.json#2567e3290e66d17e3128f6741f64392dc6f90917bb95d0becec34db945fb12bb",
+      "sha256": "2567e3290e66d17e3128f6741f64392dc6f90917bb95d0becec34db945fb12bb",
+      "source": "objects/2567e3290e66d17e3128f6741f64392dc6f90917bb95d0becec34db945fb12bb"
+    },
+    "fixture/candidate/supervisor.py": {
+      "bytes": 21810,
+      "kind": "bundled",
+      "provenance": "recovery-provenance/PROVENANCE.json#ad8920c4320e88bca7c2e12403f282e7cd448fb3238ec4e16731a5ae5046d22b",
+      "sha256": "ad8920c4320e88bca7c2e12403f282e7cd448fb3238ec4e16731a5ae5046d22b",
+      "source": "objects/ad8920c4320e88bca7c2e12403f282e7cd448fb3238ec4e16731a5ae5046d22b"
+    },
+    "fixture/source/linux_run_main.rs": {
+      "bytes": 56880,
+      "kind": "bundled",
+      "provenance": "recovery-provenance/PROVENANCE.json#919ba373931c7464dc50fa02aa2e34b9c3f028c78929a55f61f7b06d3d0e7d85",
+      "sha256": "919ba373931c7464dc50fa02aa2e34b9c3f028c78929a55f61f7b06d3d0e7d85",
+      "source": "objects/919ba373931c7464dc50fa02aa2e34b9c3f028c78929a55f61f7b06d3d0e7d85"
+    },
+    "fixture/tests/test_reviewed_patch.py": {
+      "bytes": 10844,
+      "kind": "bundled",
+      "provenance": "recovery-provenance/PROVENANCE.json#6c0a089c88cf79f9c7b64f2b5dbdb3b97611a3ad45d25e06a260f4934ce404f9",
+      "sha256": "6c0a089c88cf79f9c7b64f2b5dbdb3b97611a3ad45d25e06a260f4934ce404f9",
+      "source": "objects/6c0a089c88cf79f9c7b64f2b5dbdb3b97611a3ad45d25e06a260f4934ce404f9"
+    },
+    "launch.py": {
+      "bytes": 39963,
+      "kind": "bundled",
+      "provenance": "recovery-provenance/PROVENANCE.json#69d3055cd68251444f9b3adcacf9fc68122827820f344a8cefb8efbc927c35f7",
+      "sha256": "69d3055cd68251444f9b3adcacf9fc68122827820f344a8cefb8efbc927c35f7",
+      "source": "objects/69d3055cd68251444f9b3adcacf9fc68122827820f344a8cefb8efbc927c35f7"
+    },
+    "patch.stderr": {
+      "bytes": 0,
+      "kind": "bundled",
+      "provenance": "recovery-provenance/PROVENANCE.json#e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source": "objects/e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "patch.stdout": {
+      "bytes": 52,
+      "kind": "bundled",
+      "provenance": "recovery-provenance/PROVENANCE.json#39c25c4c0ae9cbd939626c7e902979ab4d45fc1f3c0869404f19699865c50fa7",
+      "sha256": "39c25c4c0ae9cbd939626c7e902979ab4d45fc1f3c0869404f19699865c50fa7",
+      "source": "objects/39c25c4c0ae9cbd939626c7e902979ab4d45fc1f3c0869404f19699865c50fa7"
+    },
+    "prepare.py": {
+      "bytes": 9516,
+      "kind": "bundled",
+      "provenance": "recovery-provenance/PROVENANCE.json#f822db8bdbcec62b332d02844fa97aca4a8a4a5116425f480de3220c76d47f4c",
+      "sha256": "f822db8bdbcec62b332d02844fa97aca4a8a4a5116425f480de3220c76d47f4c",
+      "source": "objects/f822db8bdbcec62b332d02844fa97aca4a8a4a5116425f480de3220c76d47f4c"
+    },
+    "published-baseline/ARTIFACT_SHA256.json": {
+      "bytes": 6679,
+      "kind": "bundled",
+      "provenance": "recovery-provenance/PROVENANCE.json#7e58d98710b5ee0c78feba30e154a7bc7aa43f996162d0f5f32b1426a4bc719f",
+      "sha256": "7e58d98710b5ee0c78feba30e154a7bc7aa43f996162d0f5f32b1426a4bc719f",
+      "source": "objects/7e58d98710b5ee0c78feba30e154a7bc7aa43f996162d0f5f32b1426a4bc719f"
+    },
+    "published-baseline/DEPENDENCIES.json": {
+      "bytes": 18041,
+      "kind": "bundled",
+      "provenance": "recovery-provenance/PROVENANCE.json#45bff0c2fb268f13ed5465f607ebf9ffd5ee6baca809445badd477c5b0974cb4",
+      "sha256": "45bff0c2fb268f13ed5465f607ebf9ffd5ee6baca809445badd477c5b0974cb4",
+      "source": "objects/45bff0c2fb268f13ed5465f607ebf9ffd5ee6baca809445badd477c5b0974cb4"
+    },
+    "published-baseline/RUNBOOK.md": {
+      "bytes": 16633,
+      "kind": "bundled",
+      "provenance": "recovery-provenance/PROVENANCE.json#e4d5f5ba71178bdbc265d9defdb9c9cbb4e64b05ba6db63267e1b97dba52c533",
+      "sha256": "e4d5f5ba71178bdbc265d9defdb9c9cbb4e64b05ba6db63267e1b97dba52c533",
+      "source": "objects/e4d5f5ba71178bdbc265d9defdb9c9cbb4e64b05ba6db63267e1b97dba52c533"
+    },
+    "published-baseline/STATIC_CHECKS.json": {
+      "bytes": 1012,
+      "kind": "bundled",
+      "provenance": "recovery-provenance/PROVENANCE.json#65676b9f573ee29ae80d8fa27a380352a443926e0937297eb0245f0f00a13af5",
+      "sha256": "65676b9f573ee29ae80d8fa27a380352a443926e0937297eb0245f0f00a13af5",
+      "source": "objects/65676b9f573ee29ae80d8fa27a380352a443926e0937297eb0245f0f00a13af5"
+    },
+    "published-baseline/diagnostic.service": {
+      "bytes": 1696,
+      "kind": "bundled",
+      "provenance": "recovery-provenance/PROVENANCE.json#840a5bfff6be0cb28e8d8d083d092a6f8c800aa746773d65d0618293cacd14ec",
+      "sha256": "840a5bfff6be0cb28e8d8d083d092a6f8c800aa746773d65d0618293cacd14ec",
+      "source": "objects/840a5bfff6be0cb28e8d8d083d092a6f8c800aa746773d65d0618293cacd14ec"
+    },
+    "published-baseline/launch.py": {
+      "bytes": 8375,
+      "kind": "bundled",
+      "provenance": "recovery-provenance/PROVENANCE.json#d4915696b011bdfd5f4891367444716acf987bc79358e341fae73a82e7d4da61",
+      "sha256": "d4915696b011bdfd5f4891367444716acf987bc79358e341fae73a82e7d4da61",
+      "source": "objects/d4915696b011bdfd5f4891367444716acf987bc79358e341fae73a82e7d4da61"
+    },
+    "published-baseline/prepare.py": {
+      "bytes": 9384,
+      "kind": "bundled",
+      "provenance": "recovery-provenance/PROVENANCE.json#bb2a5e7f99bddd55ccba0eaae983763376ab1d0eaf30f654abbe8d718201494c",
+      "sha256": "bb2a5e7f99bddd55ccba0eaae983763376ab1d0eaf30f654abbe8d718201494c",
+      "source": "objects/bb2a5e7f99bddd55ccba0eaae983763376ab1d0eaf30f654abbe8d718201494c"
+    },
+    "published-baseline/report.py": {
+      "bytes": 2043,
+      "kind": "bundled",
+      "provenance": "recovery-provenance/PROVENANCE.json#e0e8953a537ab25509db0f74d7d813e8e8a6cc8f9f8bd7e41214e66f69ddd0c1",
+      "sha256": "e0e8953a537ab25509db0f74d7d813e8e8a6cc8f9f8bd7e41214e66f69ddd0c1",
+      "source": "objects/e0e8953a537ab25509db0f74d7d813e8e8a6cc8f9f8bd7e41214e66f69ddd0c1"
+    },
+    "published-baseline/requirements.toml": {
+      "bytes": 250,
+      "kind": "bundled",
+      "provenance": "recovery-provenance/PROVENANCE.json#2567e3290e66d17e3128f6741f64392dc6f90917bb95d0becec34db945fb12bb",
+      "sha256": "2567e3290e66d17e3128f6741f64392dc6f90917bb95d0becec34db945fb12bb",
+      "source": "objects/2567e3290e66d17e3128f6741f64392dc6f90917bb95d0becec34db945fb12bb"
+    },
+    "published-baseline/supervisor.py": {
+      "bytes": 21800,
+      "kind": "bundled",
+      "provenance": "recovery-provenance/PROVENANCE.json#4fc42d3dc06edf467496472d376bcaa438cf8d4b895d773284a754ba5f103d11",
+      "sha256": "4fc42d3dc06edf467496472d376bcaa438cf8d4b895d773284a754ba5f103d11",
+      "source": "objects/4fc42d3dc06edf467496472d376bcaa438cf8d4b895d773284a754ba5f103d11"
+    },
+    "report.py": {
+      "bytes": 29538,
+      "kind": "bundled",
+      "provenance": "recovery-provenance/PROVENANCE.json#ec4c7e553178e61677a961ff1e0c0a88103ffe3d95cfef7dd43cef2acf38aa22",
+      "sha256": "ec4c7e553178e61677a961ff1e0c0a88103ffe3d95cfef7dd43cef2acf38aa22",
+      "source": "objects/ec4c7e553178e61677a961ff1e0c0a88103ffe3d95cfef7dd43cef2acf38aa22"
+    },
+    "requirements.toml": {
+      "bytes": 250,
+      "kind": "bundled",
+      "provenance": "recovery-provenance/PROVENANCE.json#2567e3290e66d17e3128f6741f64392dc6f90917bb95d0becec34db945fb12bb",
+      "sha256": "2567e3290e66d17e3128f6741f64392dc6f90917bb95d0becec34db945fb12bb",
+      "source": "objects/2567e3290e66d17e3128f6741f64392dc6f90917bb95d0becec34db945fb12bb"
+    },
+    "review-source/comment-6321085427.md": {
+      "bytes": 12884,
+      "kind": "bundled",
+      "provenance": "recovery-provenance/PROVENANCE.json#25b7d6c7f2dfa539eda448806139f3f88b409f420ff5a22d6ff8c6b7613f7a5d",
+      "sha256": "25b7d6c7f2dfa539eda448806139f3f88b409f420ff5a22d6ff8c6b7613f7a5d",
+      "source": "objects/25b7d6c7f2dfa539eda448806139f3f88b409f420ff5a22d6ff8c6b7613f7a5d"
+    },
+    "review-source/comment-6321087053.md": {
+      "bytes": 38858,
+      "kind": "bundled",
+      "provenance": "recovery-provenance/PROVENANCE.json#63c6b363494d3711ae8035bb44ca53c520e49710df2b7ceda7c1ac595de79ef6",
+      "sha256": "63c6b363494d3711ae8035bb44ca53c520e49710df2b7ceda7c1ac595de79ef6",
+      "source": "objects/63c6b363494d3711ae8035bb44ca53c520e49710df2b7ceda7c1ac595de79ef6"
+    },
+    "review-source/comment-6321088725.md": {
+      "bytes": 28013,
+      "kind": "bundled",
+      "provenance": "recovery-provenance/PROVENANCE.json#0acca47631b76286e425f810bf6bf224b9de5464fa06868bf5c62aa3757ea01a",
+      "sha256": "0acca47631b76286e425f810bf6bf224b9de5464fa06868bf5c62aa3757ea01a",
+      "source": "objects/0acca47631b76286e425f810bf6bf224b9de5464fa06868bf5c62aa3757ea01a"
+    },
+    "review-source/comment-6321090490.md": {
+      "bytes": 9252,
+      "kind": "bundled",
+      "provenance": "recovery-provenance/PROVENANCE.json#5aa5d7950bb8bddce19fe802dfde47b03071b4a779d65bc49f49241ac6efcc01",
+      "sha256": "5aa5d7950bb8bddce19fe802dfde47b03071b4a779d65bc49f49241ac6efcc01",
+      "source": "objects/5aa5d7950bb8bddce19fe802dfde47b03071b4a779d65bc49f49241ac6efcc01"
+    },
+    "review-source/comment-6321124970.md": {
+      "bytes": 4310,
+      "kind": "bundled",
+      "provenance": "recovery-provenance/PROVENANCE.json#b493a3d171aa00bfca4333987e114514979253a77909f88272353f5d672a98b4",
+      "sha256": "b493a3d171aa00bfca4333987e114514979253a77909f88272353f5d672a98b4",
+      "source": "objects/b493a3d171aa00bfca4333987e114514979253a77909f88272353f5d672a98b4"
+    },
+    "review-source/comment-6321538424.md": {
+      "bytes": 22931,
+      "kind": "bundled",
+      "provenance": "recovery-provenance/PROVENANCE.json#b1c866c03113fee1f7a85a808d20c5468b668bf435a1ac53183381ca0fa3b054",
+      "sha256": "b1c866c03113fee1f7a85a808d20c5468b668bf435a1ac53183381ca0fa3b054",
+      "source": "objects/b1c866c03113fee1f7a85a808d20c5468b668bf435a1ac53183381ca0fa3b054"
+    },
+    "reviewed.patch": {
+      "bytes": 5520,
+      "kind": "bundled",
+      "provenance": "recovery-provenance/PROVENANCE.json#542b2698e8dc346385ed3421d2e755b1c47df76ca702c325a372ca5872cc27c2",
+      "sha256": "542b2698e8dc346385ed3421d2e755b1c47df76ca702c325a372ca5872cc27c2",
+      "source": "objects/542b2698e8dc346385ed3421d2e755b1c47df76ca702c325a372ca5872cc27c2"
+    },
+    "rootfs/diagnostic/launch.py": {
+      "bytes": 39963,
+      "historical_source_metadata": {
+        "mode": "0o444",
+        "resolved_source": "/workspace/zen53-bookkeeping-candidate/candidate/launch.py",
+        "sha256": "69d3055cd68251444f9b3adcacf9fc68122827820f344a8cefb8efbc927c35f7",
+        "source": "/workspace/zen53-bookkeeping-candidate/candidate/launch.py",
+        "source_gid": 1000,
+        "source_mode": "0o600",
+        "source_uid": 1000
+      },
+      "kind": "bundled",
+      "provenance": "recovery-provenance/PROVENANCE.json#69d3055cd68251444f9b3adcacf9fc68122827820f344a8cefb8efbc927c35f7",
+      "sha256": "69d3055cd68251444f9b3adcacf9fc68122827820f344a8cefb8efbc927c35f7",
+      "source": "objects/69d3055cd68251444f9b3adcacf9fc68122827820f344a8cefb8efbc927c35f7",
+      "target_mode": "0o444"
+    },
+    "rootfs/diagnostic/pins.json": {
+      "bytes": 5343,
+      "kind": "bundled",
+      "provenance": "recovery-provenance/PROVENANCE.json#fab5a34a64c37a83262ce061164ff83b0561ccf1a966a95606bc11450e8f7ef0",
+      "sha256": "fab5a34a64c37a83262ce061164ff83b0561ccf1a966a95606bc11450e8f7ef0",
+      "source": "objects/fab5a34a64c37a83262ce061164ff83b0561ccf1a966a95606bc11450e8f7ef0"
+    },
+    "rootfs/diagnostic/report.py": {
+      "bytes": 29538,
+      "historical_source_metadata": {
+        "mode": "0o444",
+        "resolved_source": "/workspace/zen53-bookkeeping-candidate/candidate/report.py",
+        "sha256": "ec4c7e553178e61677a961ff1e0c0a88103ffe3d95cfef7dd43cef2acf38aa22",
+        "source": "/workspace/zen53-bookkeeping-candidate/candidate/report.py",
+        "source_gid": 1000,
+        "source_mode": "0o600",
+        "source_uid": 1000
+      },
+      "kind": "bundled",
+      "provenance": "recovery-provenance/PROVENANCE.json#ec4c7e553178e61677a961ff1e0c0a88103ffe3d95cfef7dd43cef2acf38aa22",
+      "sha256": "ec4c7e553178e61677a961ff1e0c0a88103ffe3d95cfef7dd43cef2acf38aa22",
+      "source": "objects/ec4c7e553178e61677a961ff1e0c0a88103ffe3d95cfef7dd43cef2acf38aa22",
+      "target_mode": "0o444"
+    },
+    "rootfs/etc/codex/requirements.toml": {
+      "bytes": 250,
+      "historical_source_metadata": {
+        "mode": "0o444",
+        "resolved_source": "/tmp/zen53-revised-ca59ysva/requirements.toml",
+        "sha256": "2567e3290e66d17e3128f6741f64392dc6f90917bb95d0becec34db945fb12bb",
+        "source": "/tmp/zen53-revised-ca59ysva/requirements.toml",
+        "source_gid": 0,
+        "source_mode": "0o644",
+        "source_uid": 0
+      },
+      "kind": "bundled",
+      "provenance": "recovery-provenance/PROVENANCE.json#2567e3290e66d17e3128f6741f64392dc6f90917bb95d0becec34db945fb12bb",
+      "sha256": "2567e3290e66d17e3128f6741f64392dc6f90917bb95d0becec34db945fb12bb",
+      "source": "objects/2567e3290e66d17e3128f6741f64392dc6f90917bb95d0becec34db945fb12bb",
+      "target_mode": "0o444"
+    },
+    "rootfs/opt/codex/bin/codex": {
+      "current_host_validation": "REQUIRED_NOT_OBSERVED",
+      "historical_source_metadata": {
+        "mode": "0o555",
+        "resolved_source": "/root/.codex/packages/standalone/releases/0.162.1-x86_64-unknown-linux-musl/bin/codex",
+        "sha256": "628e35487d888a28f0427fc37501da529dd3d81fcbad7a2c3421c1e8670d92e1",
+        "source": "/root/.codex/packages/standalone/releases/0.162.1-x86_64-unknown-linux-musl/bin/codex",
+        "source_gid": 65534,
+        "source_mode": "0o755",
+        "source_uid": 65534
+      },
+      "kind": "installed",
+      "sha256": "628e35487d888a28f0427fc37501da529dd3d81fcbad7a2c3421c1e8670d92e1",
+      "source": "/root/.codex/packages/standalone/releases/0.162.1-x86_64-unknown-linux-musl/bin/codex",
+      "target_mode": "0o555"
+    },
+    "rootfs/opt/codex/codex-package.json": {
+      "current_host_validation": "REQUIRED_NOT_OBSERVED",
+      "historical_source_metadata": {
+        "mode": "0o444",
+        "resolved_source": "/root/.codex/packages/standalone/releases/0.162.1-x86_64-unknown-linux-musl/codex-package.json",
+        "sha256": "f05ebff6db98bd613dd5654461985090c6416b41ad67902243d83a53b305ac05",
+        "source": "/root/.codex/packages/standalone/releases/0.162.1-x86_64-unknown-linux-musl/codex-package.json",
+        "source_gid": 65534,
+        "source_mode": "0o644",
+        "source_uid": 65534
+      },
+      "kind": "installed",
+      "sha256": "f05ebff6db98bd613dd5654461985090c6416b41ad67902243d83a53b305ac05",
+      "source": "/root/.codex/packages/standalone/releases/0.162.1-x86_64-unknown-linux-musl/codex-package.json",
+      "target_mode": "0o444"
+    },
+    "rootfs/usr/bin/bwrap": {
+      "current_host_validation": "REQUIRED_NOT_OBSERVED",
+      "historical_source_metadata": {
+        "mode": "0o755",
+        "resolved_source": "/usr/bin/bwrap",
+        "sha256": "e318903862396f96de3df57264e0158682b952fd3fb53ac23d876413e7b30f71",
+        "source": "/usr/bin/bwrap",
+        "source_gid": 0,
+        "source_mode": "0o755",
+        "source_uid": 0
+      },
+      "kind": "installed",
+      "sha256": "e318903862396f96de3df57264e0158682b952fd3fb53ac23d876413e7b30f71",
+      "source": "/usr/bin/bwrap",
+      "target_mode": "0o755"
+    },
+    "rootfs/usr/bin/python3.12": {
+      "current_host_validation": "REQUIRED_NOT_OBSERVED",
+      "historical_source_metadata": {
+        "mode": "0o555",
+        "resolved_source": "/usr/bin/python3.12",
+        "sha256": "e50d468e8b0adfb05733f5b87b3cff34829c4a8c1aea50c865aa8bdfe4bb150f",
+        "source": "/usr/bin/python3.12",
+        "source_gid": 0,
+        "source_mode": "0o755",
+        "source_uid": 0
+      },
+      "kind": "installed",
+      "sha256": "e50d468e8b0adfb05733f5b87b3cff34829c4a8c1aea50c865aa8bdfe4bb150f",
+      "source": "/usr/bin/python3.12",
+      "target_mode": "0o555"
+    },
+    "rootfs/usr/bin/true": {
+      "current_host_validation": "REQUIRED_NOT_OBSERVED",
+      "historical_source_metadata": {
+        "mode": "0o555",
+        "resolved_source": "/usr/bin/true",
+        "sha256": "8a63c98320173f79e263115e10cefc170155e47d1fd4b5a70e4429d2699cae28",
+        "source": "/usr/bin/true",
+        "source_gid": 0,
+        "source_mode": "0o755",
+        "source_uid": 0
+      },
+      "kind": "installed",
+      "sha256": "8a63c98320173f79e263115e10cefc170155e47d1fd4b5a70e4429d2699cae28",
+      "source": "/usr/bin/true",
+      "target_mode": "0o555"
+    },
+    "rootfs/usr/lib/python3.12/collections/__init__.py": {
+      "current_host_validation": "REQUIRED_NOT_OBSERVED",
+      "historical_source_metadata": {
+        "mode": "0o444",
+        "resolved_source": "/usr/lib/python3.12/collections/__init__.py",
+        "sha256": "0af967cd58036507b3d0fbc33b7a996c61dbb52a94b0b738c8bef12cd4cc7dd4",
+        "source": "/usr/lib/python3.12/collections/__init__.py",
+        "source_gid": 0,
+        "source_mode": "0o644",
+        "source_uid": 0
+      },
+      "kind": "installed",
+      "sha256": "0af967cd58036507b3d0fbc33b7a996c61dbb52a94b0b738c8bef12cd4cc7dd4",
+      "source": "/usr/lib/python3.12/collections/__init__.py",
+      "target_mode": "0o444"
+    },
+    "rootfs/usr/lib/python3.12/copyreg.py": {
+      "current_host_validation": "REQUIRED_NOT_OBSERVED",
+      "historical_source_metadata": {
+        "mode": "0o444",
+        "resolved_source": "/usr/lib/python3.12/copyreg.py",
+        "sha256": "c8eda41f05c6bf95a4da4726a530409d2485ae060b8d019b3a8034389a15d3e9",
+        "source": "/usr/lib/python3.12/copyreg.py",
+        "source_gid": 0,
+        "source_mode": "0o644",
+        "source_uid": 0
+      },
+      "kind": "installed",
+      "sha256": "c8eda41f05c6bf95a4da4726a530409d2485ae060b8d019b3a8034389a15d3e9",
+      "source": "/usr/lib/python3.12/copyreg.py",
+      "target_mode": "0o444"
+    },
+    "rootfs/usr/lib/python3.12/encodings/__init__.py": {
+      "current_host_validation": "REQUIRED_NOT_OBSERVED",
+      "historical_source_metadata": {
+        "mode": "0o444",
+        "resolved_source": "/usr/lib/python3.12/encodings/__init__.py",
+        "sha256": "78c4744d407690f321565488710b5aaf6486b5afa8d185637aa1e7633ab59cd8",
+        "source": "/usr/lib/python3.12/encodings/__init__.py",
+        "source_gid": 0,
+        "source_mode": "0o644",
+        "source_uid": 0
+      },
+      "kind": "installed",
+      "sha256": "78c4744d407690f321565488710b5aaf6486b5afa8d185637aa1e7633ab59cd8",
+      "source": "/usr/lib/python3.12/encodings/__init__.py",
+      "target_mode": "0o444"
+    },
+    "rootfs/usr/lib/python3.12/encodings/aliases.py": {
+      "current_host_validation": "REQUIRED_NOT_OBSERVED",
+      "historical_source_metadata": {
+        "mode": "0o444",
+        "resolved_source": "/usr/lib/python3.12/encodings/aliases.py",
+        "sha256": "6fdcc49ba23a0203ae6cf28e608f8e6297d7c4d77d52e651db3cb49b9564c6d2",
+        "source": "/usr/lib/python3.12/encodings/aliases.py",
+        "source_gid": 0,
+        "source_mode": "0o644",
+        "source_uid": 0
+      },
+      "kind": "installed",
+      "sha256": "6fdcc49ba23a0203ae6cf28e608f8e6297d7c4d77d52e651db3cb49b9564c6d2",
+      "source": "/usr/lib/python3.12/encodings/aliases.py",
+      "target_mode": "0o444"
+    },
+    "rootfs/usr/lib/python3.12/encodings/ascii.py": {
+      "current_host_validation": "REQUIRED_NOT_OBSERVED",
+      "historical_source_metadata": {
+        "mode": "0o444",
+        "resolved_source": "/usr/lib/python3.12/encodings/ascii.py",
+        "sha256": "578aa1173f7cc60dad2895071287fe6182bd14787b3fbf47a6c7983dfe3675e3",
+        "source": "/usr/lib/python3.12/encodings/ascii.py",
+        "source_gid": 0,
+        "source_mode": "0o644",
+        "source_uid": 0
+      },
+      "kind": "installed",
+      "sha256": "578aa1173f7cc60dad2895071287fe6182bd14787b3fbf47a6c7983dfe3675e3",
+      "source": "/usr/lib/python3.12/encodings/ascii.py",
+      "target_mode": "0o444"
+    },
+    "rootfs/usr/lib/python3.12/encodings/latin_1.py": {
+      "current_host_validation": "REQUIRED_NOT_OBSERVED",
+      "historical_source_metadata": {
+        "mode": "0o444",
+        "resolved_source": "/usr/lib/python3.12/encodings/latin_1.py",
+        "sha256": "b75503e532a27c636477396c855209ff5f3036536d2a4bede0a576c89382b60c",
+        "source": "/usr/lib/python3.12/encodings/latin_1.py",
+        "source_gid": 0,
+        "source_mode": "0o644",
+        "source_uid": 0
+      },
+      "kind": "installed",
+      "sha256": "b75503e532a27c636477396c855209ff5f3036536d2a4bede0a576c89382b60c",
+      "source": "/usr/lib/python3.12/encodings/latin_1.py",
+      "target_mode": "0o444"
+    },
+    "rootfs/usr/lib/python3.12/encodings/utf_8.py": {
+      "current_host_validation": "REQUIRED_NOT_OBSERVED",
+      "historical_source_metadata": {
+        "mode": "0o444",
+        "resolved_source": "/usr/lib/python3.12/encodings/utf_8.py",
+        "sha256": "ba0cac060269583523ca9506473a755203037c57d466a11aa89a30a5f6756f3d",
+        "source": "/usr/lib/python3.12/encodings/utf_8.py",
+        "source_gid": 0,
+        "source_mode": "0o644",
+        "source_uid": 0
+      },
+      "kind": "installed",
+      "sha256": "ba0cac060269583523ca9506473a755203037c57d466a11aa89a30a5f6756f3d",
+      "source": "/usr/lib/python3.12/encodings/utf_8.py",
+      "target_mode": "0o444"
+    },
+    "rootfs/usr/lib/python3.12/enum.py": {
+      "current_host_validation": "REQUIRED_NOT_OBSERVED",
+      "historical_source_metadata": {
+        "mode": "0o444",
+        "resolved_source": "/usr/lib/python3.12/enum.py",
+        "sha256": "c8ead615c159598370295649eb296819ad4b40d50b200c4fec2d4269bf7af9ae",
+        "source": "/usr/lib/python3.12/enum.py",
+        "source_gid": 0,
+        "source_mode": "0o644",
+        "source_uid": 0
+      },
+      "kind": "installed",
+      "sha256": "c8ead615c159598370295649eb296819ad4b40d50b200c4fec2d4269bf7af9ae",
+      "source": "/usr/lib/python3.12/enum.py",
+      "target_mode": "0o444"
+    },
+    "rootfs/usr/lib/python3.12/functools.py": {
+      "current_host_validation": "REQUIRED_NOT_OBSERVED",
+      "historical_source_metadata": {
+        "mode": "0o444",
+        "resolved_source": "/usr/lib/python3.12/functools.py",
+        "sha256": "cca971c456e1bec8b751aecdf41466f34dbf72321ee0840627280ba2ccf9d033",
+        "source": "/usr/lib/python3.12/functools.py",
+        "source_gid": 0,
+        "source_mode": "0o644",
+        "source_uid": 0
+      },
+      "kind": "installed",
+      "sha256": "cca971c456e1bec8b751aecdf41466f34dbf72321ee0840627280ba2ccf9d033",
+      "source": "/usr/lib/python3.12/functools.py",
+      "target_mode": "0o444"
+    },
+    "rootfs/usr/lib/python3.12/hashlib.py": {
+      "current_host_validation": "REQUIRED_NOT_OBSERVED",
+      "historical_source_metadata": {
+        "mode": "0o444",
+        "resolved_source": "/usr/lib/python3.12/hashlib.py",
+        "sha256": "6dbdebf270868b391080e21dc9687eddfaf321c965ad979f68d3f5c423c613ab",
+        "source": "/usr/lib/python3.12/hashlib.py",
+        "source_gid": 0,
+        "source_mode": "0o644",
+        "source_uid": 0
+      },
+      "kind": "installed",
+      "sha256": "6dbdebf270868b391080e21dc9687eddfaf321c965ad979f68d3f5c423c613ab",
+      "source": "/usr/lib/python3.12/hashlib.py",
+      "target_mode": "0o444"
+    },
+    "rootfs/usr/lib/python3.12/json/__init__.py": {
+      "current_host_validation": "REQUIRED_NOT_OBSERVED",
+      "historical_source_metadata": {
+        "mode": "0o444",
+        "resolved_source": "/usr/lib/python3.12/json/__init__.py",
+        "sha256": "d5d41e2c29049515d295d81a6d40b4890fbec8d8482cfb401630f8ef2f77e4d5",
+        "source": "/usr/lib/python3.12/json/__init__.py",
+        "source_gid": 0,
+        "source_mode": "0o644",
+        "source_uid": 0
+      },
+      "kind": "installed",
+      "sha256": "d5d41e2c29049515d295d81a6d40b4890fbec8d8482cfb401630f8ef2f77e4d5",
+      "source": "/usr/lib/python3.12/json/__init__.py",
+      "target_mode": "0o444"
+    },
+    "rootfs/usr/lib/python3.12/json/decoder.py": {
+      "current_host_validation": "REQUIRED_NOT_OBSERVED",
+      "historical_source_metadata": {
+        "mode": "0o444",
+        "resolved_source": "/usr/lib/python3.12/json/decoder.py",
+        "sha256": "9f02654649816145bc76f8c210a5fe3ba1de142d4d97a1c93105732e747c285b",
+        "source": "/usr/lib/python3.12/json/decoder.py",
+        "source_gid": 0,
+        "source_mode": "0o644",
+        "source_uid": 0
+      },
+      "kind": "installed",
+      "sha256": "9f02654649816145bc76f8c210a5fe3ba1de142d4d97a1c93105732e747c285b",
+      "source": "/usr/lib/python3.12/json/decoder.py",
+      "target_mode": "0o444"
+    },
+    "rootfs/usr/lib/python3.12/json/encoder.py": {
+      "current_host_validation": "REQUIRED_NOT_OBSERVED",
+      "historical_source_metadata": {
+        "mode": "0o444",
+        "resolved_source": "/usr/lib/python3.12/json/encoder.py",
+        "sha256": "af7bd40a0d0d0a3e726a9b4b3a2a543019f6ab97a340d0162a9c29ca9da97869",
+        "source": "/usr/lib/python3.12/json/encoder.py",
+        "source_gid": 0,
+        "source_mode": "0o644",
+        "source_uid": 0
+      },
+      "kind": "installed",
+      "sha256": "af7bd40a0d0d0a3e726a9b4b3a2a543019f6ab97a340d0162a9c29ca9da97869",
+      "source": "/usr/lib/python3.12/json/encoder.py",
+      "target_mode": "0o444"
+    },
+    "rootfs/usr/lib/python3.12/json/scanner.py": {
+      "current_host_validation": "REQUIRED_NOT_OBSERVED",
+      "historical_source_metadata": {
+        "mode": "0o444",
+        "resolved_source": "/usr/lib/python3.12/json/scanner.py",
+        "sha256": "8604d9d03786d0d509abb49e9f069337278ea988c244069ae8ca2c89acc2cb08",
+        "source": "/usr/lib/python3.12/json/scanner.py",
+        "source_gid": 0,
+        "source_mode": "0o644",
+        "source_uid": 0
+      },
+      "kind": "installed",
+      "sha256": "8604d9d03786d0d509abb49e9f069337278ea988c244069ae8ca2c89acc2cb08",
+      "source": "/usr/lib/python3.12/json/scanner.py",
+      "target_mode": "0o444"
+    },
+    "rootfs/usr/lib/python3.12/keyword.py": {
+      "current_host_validation": "REQUIRED_NOT_OBSERVED",
+      "historical_source_metadata": {
+        "mode": "0o444",
+        "resolved_source": "/usr/lib/python3.12/keyword.py",
+        "sha256": "18c2be738c04ad20ad375f6a71db34b3823c7f40b0340f5294d0e89f3c9b093b",
+        "source": "/usr/lib/python3.12/keyword.py",
+        "source_gid": 0,
+        "source_mode": "0o644",
+        "source_uid": 0
+      },
+      "kind": "installed",
+      "sha256": "18c2be738c04ad20ad375f6a71db34b3823c7f40b0340f5294d0e89f3c9b093b",
+      "source": "/usr/lib/python3.12/keyword.py",
+      "target_mode": "0o444"
+    },
+    "rootfs/usr/lib/python3.12/lib-dynload/_hashlib.cpython-312-x86_64-linux-gnu.so": {
+      "current_host_validation": "REQUIRED_NOT_OBSERVED",
+      "historical_source_metadata": {
+        "mode": "0o444",
+        "resolved_source": "/usr/lib/python3.12/lib-dynload/_hashlib.cpython-312-x86_64-linux-gnu.so",
+        "sha256": "8dc6cda6dd9495b95a2bfb5b26e8cf06b72f36dc0213d958b9277a958287f0fe",
+        "source": "/usr/lib/python3.12/lib-dynload/_hashlib.cpython-312-x86_64-linux-gnu.so",
+        "source_gid": 0,
+        "source_mode": "0o644",
+        "source_uid": 0
+      },
+      "kind": "installed",
+      "sha256": "8dc6cda6dd9495b95a2bfb5b26e8cf06b72f36dc0213d958b9277a958287f0fe",
+      "source": "/usr/lib/python3.12/lib-dynload/_hashlib.cpython-312-x86_64-linux-gnu.so",
+      "target_mode": "0o444"
+    },
+    "rootfs/usr/lib/python3.12/lib-dynload/_json.cpython-312-x86_64-linux-gnu.so": {
+      "current_host_validation": "REQUIRED_NOT_OBSERVED",
+      "historical_source_metadata": {
+        "mode": "0o444",
+        "resolved_source": "/usr/lib/python3.12/lib-dynload/_json.cpython-312-x86_64-linux-gnu.so",
+        "sha256": "ca8e35c58f7bc8e27258c4af43651c941413bc6318903621253485b0395758a3",
+        "source": "/usr/lib/python3.12/lib-dynload/_json.cpython-312-x86_64-linux-gnu.so",
+        "source_gid": 0,
+        "source_mode": "0o644",
+        "source_uid": 0
+      },
+      "kind": "installed",
+      "sha256": "ca8e35c58f7bc8e27258c4af43651c941413bc6318903621253485b0395758a3",
+      "source": "/usr/lib/python3.12/lib-dynload/_json.cpython-312-x86_64-linux-gnu.so",
+      "target_mode": "0o444"
+    },
+    "rootfs/usr/lib/python3.12/operator.py": {
+      "current_host_validation": "REQUIRED_NOT_OBSERVED",
+      "historical_source_metadata": {
+        "mode": "0o444",
+        "resolved_source": "/usr/lib/python3.12/operator.py",
+        "sha256": "b2af20f67667203c1730e686cc5d0427becc94db4c97f1d3efe3ed2158473f6a",
+        "source": "/usr/lib/python3.12/operator.py",
+        "source_gid": 0,
+        "source_mode": "0o644",
+        "source_uid": 0
+      },
+      "kind": "installed",
+      "sha256": "b2af20f67667203c1730e686cc5d0427becc94db4c97f1d3efe3ed2158473f6a",
+      "source": "/usr/lib/python3.12/operator.py",
+      "target_mode": "0o444"
+    },
+    "rootfs/usr/lib/python3.12/os.py": {
+      "bytes": 39786,
+      "historical_source_metadata": {
+        "mode": "0o444",
+        "resolved_source": "/usr/lib/python3.12/os.py",
+        "sha256": "316d1b7307fd851bded3423c9d437e0a383c725d993f0fcff2e8b749fe560b62",
+        "source": "/usr/lib/python3.12/os.py",
+        "source_gid": 0,
+        "source_mode": "0o644",
+        "source_uid": 0
+      },
+      "kind": "bundled",
+      "provenance": "recovery-provenance/PROVENANCE.json#316d1b7307fd851bded3423c9d437e0a383c725d993f0fcff2e8b749fe560b62",
+      "sha256": "316d1b7307fd851bded3423c9d437e0a383c725d993f0fcff2e8b749fe560b62",
+      "source": "objects/316d1b7307fd851bded3423c9d437e0a383c725d993f0fcff2e8b749fe560b62",
+      "target_mode": "0o444"
+    },
+    "rootfs/usr/lib/python3.12/re/__init__.py": {
+      "current_host_validation": "REQUIRED_NOT_OBSERVED",
+      "historical_source_metadata": {
+        "mode": "0o444",
+        "resolved_source": "/usr/lib/python3.12/re/__init__.py",
+        "sha256": "8ff3c37c63b917fcf8dc8d50993a502292a3dc159e41de4f4018c72a53d1c07b",
+        "source": "/usr/lib/python3.12/re/__init__.py",
+        "source_gid": 0,
+        "source_mode": "0o644",
+        "source_uid": 0
+      },
+      "kind": "installed",
+      "sha256": "8ff3c37c63b917fcf8dc8d50993a502292a3dc159e41de4f4018c72a53d1c07b",
+      "source": "/usr/lib/python3.12/re/__init__.py",
+      "target_mode": "0o444"
+    },
+    "rootfs/usr/lib/python3.12/re/_casefix.py": {
+      "current_host_validation": "REQUIRED_NOT_OBSERVED",
+      "historical_source_metadata": {
+        "mode": "0o444",
+        "resolved_source": "/usr/lib/python3.12/re/_casefix.py",
+        "sha256": "41572ac50cf96b04496e676d8a6708898bb8e752e06dad34ed4c50c5d8f1fe40",
+        "source": "/usr/lib/python3.12/re/_casefix.py",
+        "source_gid": 0,
+        "source_mode": "0o644",
+        "source_uid": 0
+      },
+      "kind": "installed",
+      "sha256": "41572ac50cf96b04496e676d8a6708898bb8e752e06dad34ed4c50c5d8f1fe40",
+      "source": "/usr/lib/python3.12/re/_casefix.py",
+      "target_mode": "0o444"
+    },
+    "rootfs/usr/lib/python3.12/re/_compiler.py": {
+      "current_host_validation": "REQUIRED_NOT_OBSERVED",
+      "historical_source_metadata": {
+        "mode": "0o444",
+        "resolved_source": "/usr/lib/python3.12/re/_compiler.py",
+        "sha256": "c05067f8bfa4c13cbbf1eedc4d5cafc9b621bcb6ebc5771ba0518a18095af15a",
+        "source": "/usr/lib/python3.12/re/_compiler.py",
+        "source_gid": 0,
+        "source_mode": "0o644",
+        "source_uid": 0
+      },
+      "kind": "installed",
+      "sha256": "c05067f8bfa4c13cbbf1eedc4d5cafc9b621bcb6ebc5771ba0518a18095af15a",
+      "source": "/usr/lib/python3.12/re/_compiler.py",
+      "target_mode": "0o444"
+    },
+    "rootfs/usr/lib/python3.12/re/_constants.py": {
+      "current_host_validation": "REQUIRED_NOT_OBSERVED",
+      "historical_source_metadata": {
+        "mode": "0o444",
+        "resolved_source": "/usr/lib/python3.12/re/_constants.py",
+        "sha256": "fa4fdb200f238f9e7817b63892b0d69833d8165134801e775e10cc113348a375",
+        "source": "/usr/lib/python3.12/re/_constants.py",
+        "source_gid": 0,
+        "source_mode": "0o644",
+        "source_uid": 0
+      },
+      "kind": "installed",
+      "sha256": "fa4fdb200f238f9e7817b63892b0d69833d8165134801e775e10cc113348a375",
+      "source": "/usr/lib/python3.12/re/_constants.py",
+      "target_mode": "0o444"
+    },
+    "rootfs/usr/lib/python3.12/re/_parser.py": {
+      "current_host_validation": "REQUIRED_NOT_OBSERVED",
+      "historical_source_metadata": {
+        "mode": "0o444",
+        "resolved_source": "/usr/lib/python3.12/re/_parser.py",
+        "sha256": "a51a85b37cf3f44ba7ff25754da5f31306e4ccfa6eb3c017f9d37bdf4e770840",
+        "source": "/usr/lib/python3.12/re/_parser.py",
+        "source_gid": 0,
+        "source_mode": "0o644",
+        "source_uid": 0
+      },
+      "kind": "installed",
+      "sha256": "a51a85b37cf3f44ba7ff25754da5f31306e4ccfa6eb3c017f9d37bdf4e770840",
+      "source": "/usr/lib/python3.12/re/_parser.py",
+      "target_mode": "0o444"
+    },
+    "rootfs/usr/lib/python3.12/reprlib.py": {
+      "current_host_validation": "REQUIRED_NOT_OBSERVED",
+      "historical_source_metadata": {
+        "mode": "0o444",
+        "resolved_source": "/usr/lib/python3.12/reprlib.py",
+        "sha256": "8da31054076803065758311f54b18b8a616824941977d907dc3ee729228e9015",
+        "source": "/usr/lib/python3.12/reprlib.py",
+        "source_gid": 0,
+        "source_mode": "0o644",
+        "source_uid": 0
+      },
+      "kind": "installed",
+      "sha256": "8da31054076803065758311f54b18b8a616824941977d907dc3ee729228e9015",
+      "source": "/usr/lib/python3.12/reprlib.py",
+      "target_mode": "0o444"
+    },
+    "rootfs/usr/lib/python3.12/types.py": {
+      "current_host_validation": "REQUIRED_NOT_OBSERVED",
+      "historical_source_metadata": {
+        "mode": "0o444",
+        "resolved_source": "/usr/lib/python3.12/types.py",
+        "sha256": "345474ef027a1273f353da9bdc1f7c18f65335e72e681bcc0376774cc51f2405",
+        "source": "/usr/lib/python3.12/types.py",
+        "source_gid": 0,
+        "source_mode": "0o644",
+        "source_uid": 0
+      },
+      "kind": "installed",
+      "sha256": "345474ef027a1273f353da9bdc1f7c18f65335e72e681bcc0376774cc51f2405",
+      "source": "/usr/lib/python3.12/types.py",
+      "target_mode": "0o444"
+    },
+    "rootfs/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2": {
+      "current_host_validation": "REQUIRED_NOT_OBSERVED",
+      "historical_source_metadata": {
+        "mode": "0o555",
+        "resolved_source": "/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2",
+        "sha256": "c20a2dc8917c755f02b94049356320fe1f62ac7d9f8994731f807d9df39302da",
+        "source": "/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2",
+        "source_gid": 0,
+        "source_mode": "0o755",
+        "source_uid": 0
+      },
+      "kind": "installed",
+      "sha256": "c20a2dc8917c755f02b94049356320fe1f62ac7d9f8994731f807d9df39302da",
+      "source": "/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2",
+      "target_mode": "0o555"
+    },
+    "rootfs/usr/lib/x86_64-linux-gnu/libc.so.6": {
+      "current_host_validation": "REQUIRED_NOT_OBSERVED",
+      "historical_source_metadata": {
+        "mode": "0o555",
+        "resolved_source": "/usr/lib/x86_64-linux-gnu/libc.so.6",
+        "sha256": "3a15d66867d83762c7f2f1e37359cb8f6c5743edb369c65285cb0b1c4f7498bf",
+        "source": "/usr/lib/x86_64-linux-gnu/libc.so.6",
+        "source_gid": 0,
+        "source_mode": "0o755",
+        "source_uid": 0
+      },
+      "kind": "installed",
+      "sha256": "3a15d66867d83762c7f2f1e37359cb8f6c5743edb369c65285cb0b1c4f7498bf",
+      "source": "/usr/lib/x86_64-linux-gnu/libc.so.6",
+      "target_mode": "0o555"
+    },
+    "rootfs/usr/lib/x86_64-linux-gnu/libcap.so.2.66": {
+      "current_host_validation": "REQUIRED_NOT_OBSERVED",
+      "historical_source_metadata": {
+        "mode": "0o444",
+        "resolved_source": "/usr/lib/x86_64-linux-gnu/libcap.so.2.66",
+        "sha256": "6ac6abc86ac891c6e13486470e26f1d939f47fda9e6b5d5508a7f5ec881adc84",
+        "source": "/usr/lib/x86_64-linux-gnu/libcap.so.2.66",
+        "source_gid": 0,
+        "source_mode": "0o644",
+        "source_uid": 0
+      },
+      "kind": "installed",
+      "sha256": "6ac6abc86ac891c6e13486470e26f1d939f47fda9e6b5d5508a7f5ec881adc84",
+      "source": "/usr/lib/x86_64-linux-gnu/libcap.so.2.66",
+      "target_mode": "0o444"
+    },
+    "rootfs/usr/lib/x86_64-linux-gnu/libcrypto.so.3": {
+      "current_host_validation": "REQUIRED_NOT_OBSERVED",
+      "historical_source_metadata": {
+        "mode": "0o444",
+        "resolved_source": "/usr/lib/x86_64-linux-gnu/libcrypto.so.3",
+        "sha256": "6866ed711dab8927e1bf82bf1cd30e828bdfc34f3cc1e83b1c9eb01ce6c37d9a",
+        "source": "/usr/lib/x86_64-linux-gnu/libcrypto.so.3",
+        "source_gid": 0,
+        "source_mode": "0o644",
+        "source_uid": 0
+      },
+      "kind": "installed",
+      "sha256": "6866ed711dab8927e1bf82bf1cd30e828bdfc34f3cc1e83b1c9eb01ce6c37d9a",
+      "source": "/usr/lib/x86_64-linux-gnu/libcrypto.so.3",
+      "target_mode": "0o444"
+    },
+    "rootfs/usr/lib/x86_64-linux-gnu/libexpat.so.1.9.1": {
+      "current_host_validation": "REQUIRED_NOT_OBSERVED",
+      "historical_source_metadata": {
+        "mode": "0o444",
+        "resolved_source": "/usr/lib/x86_64-linux-gnu/libexpat.so.1.9.1",
+        "sha256": "286682ecbc5e59a638963b1a4e6351e65eb32fcf4bdcb9cb7569b6a61fe06a8d",
+        "source": "/usr/lib/x86_64-linux-gnu/libexpat.so.1.9.1",
+        "source_gid": 0,
+        "source_mode": "0o644",
+        "source_uid": 0
+      },
+      "kind": "installed",
+      "sha256": "286682ecbc5e59a638963b1a4e6351e65eb32fcf4bdcb9cb7569b6a61fe06a8d",
+      "source": "/usr/lib/x86_64-linux-gnu/libexpat.so.1.9.1",
+      "target_mode": "0o444"
+    },
+    "rootfs/usr/lib/x86_64-linux-gnu/libm.so.6": {
+      "current_host_validation": "REQUIRED_NOT_OBSERVED",
+      "historical_source_metadata": {
+        "mode": "0o444",
+        "resolved_source": "/usr/lib/x86_64-linux-gnu/libm.so.6",
+        "sha256": "fce00b6f25f459cf4ae0b7fae4257909a1a8a86f9149e7c029a5d617baf1ccd0",
+        "source": "/usr/lib/x86_64-linux-gnu/libm.so.6",
+        "source_gid": 0,
+        "source_mode": "0o644",
+        "source_uid": 0
+      },
+      "kind": "installed",
+      "sha256": "fce00b6f25f459cf4ae0b7fae4257909a1a8a86f9149e7c029a5d617baf1ccd0",
+      "source": "/usr/lib/x86_64-linux-gnu/libm.so.6",
+      "target_mode": "0o444"
+    },
+    "rootfs/usr/lib/x86_64-linux-gnu/libpcre2-8.so.0.11.2": {
+      "current_host_validation": "REQUIRED_NOT_OBSERVED",
+      "historical_source_metadata": {
+        "mode": "0o444",
+        "resolved_source": "/usr/lib/x86_64-linux-gnu/libpcre2-8.so.0.11.2",
+        "sha256": "e00576d71d81d3ba0cfa4903c835a44a8723aac96f72f79ff75200b4cff9071b",
+        "source": "/usr/lib/x86_64-linux-gnu/libpcre2-8.so.0.11.2",
+        "source_gid": 0,
+        "source_mode": "0o644",
+        "source_uid": 0
+      },
+      "kind": "installed",
+      "sha256": "e00576d71d81d3ba0cfa4903c835a44a8723aac96f72f79ff75200b4cff9071b",
+      "source": "/usr/lib/x86_64-linux-gnu/libpcre2-8.so.0.11.2",
+      "target_mode": "0o444"
+    },
+    "rootfs/usr/lib/x86_64-linux-gnu/libselinux.so.1": {
+      "current_host_validation": "REQUIRED_NOT_OBSERVED",
+      "historical_source_metadata": {
+        "mode": "0o444",
+        "resolved_source": "/usr/lib/x86_64-linux-gnu/libselinux.so.1",
+        "sha256": "0ec0843463f90e227b0e138e1f379774f50b5514bd7f5dbd4c8a87aca0aa6670",
+        "source": "/usr/lib/x86_64-linux-gnu/libselinux.so.1",
+        "source_gid": 0,
+        "source_mode": "0o644",
+        "source_uid": 0
+      },
+      "kind": "installed",
+      "sha256": "0ec0843463f90e227b0e138e1f379774f50b5514bd7f5dbd4c8a87aca0aa6670",
+      "source": "/usr/lib/x86_64-linux-gnu/libselinux.so.1",
+      "target_mode": "0o444"
+    },
+    "rootfs/usr/lib/x86_64-linux-gnu/libz.so.1.3": {
+      "current_host_validation": "REQUIRED_NOT_OBSERVED",
+      "historical_source_metadata": {
+        "mode": "0o444",
+        "resolved_source": "/usr/lib/x86_64-linux-gnu/libz.so.1.3",
+        "sha256": "86200da370f20476a2507e9097a789b5ef97269b4ca8d5e164ad82dab9d99892",
+        "source": "/usr/lib/x86_64-linux-gnu/libz.so.1.3",
+        "source_gid": 0,
+        "source_mode": "0o644",
+        "source_uid": 0
+      },
+      "kind": "installed",
+      "sha256": "f61677c7bdb7c2aa2a243ea781bfd16afcb361cede7b4ef76127a9d8eb9a5242",
+      "source": "/usr/lib/x86_64-linux-gnu/libz.so.1.3",
+      "target_mode": "0o444"
+    },
+    "source-input/arg0-lib.rs": {
+      "bytes": 28376,
+      "kind": "bundled",
+      "provenance": "recovery-provenance/PROVENANCE.json#ced1983407d7b58962be45de76dadc620347d17814f3a94c98e7e53a787ff05f",
+      "sha256": "ced1983407d7b58962be45de76dadc620347d17814f3a94c98e7e53a787ff05f",
+      "source": "objects/ced1983407d7b58962be45de76dadc620347d17814f3a94c98e7e53a787ff05f"
+    },
+    "source-input/cli-debug.rs": {
+      "bytes": 45199,
+      "kind": "bundled",
+      "provenance": "recovery-provenance/PROVENANCE.json#a222998fb9a3cae147ac8f902f0593be0e7a25c92ef56f903b56d5ac67e43e90",
+      "sha256": "a222998fb9a3cae147ac8f902f0593be0e7a25c92ef56f903b56d5ac67e43e90",
+      "source": "objects/a222998fb9a3cae147ac8f902f0593be0e7a25c92ef56f903b56d5ac67e43e90"
+    },
+    "source-input/cli-lib.rs": {
+      "bytes": 6150,
+      "kind": "bundled",
+      "provenance": "recovery-provenance/PROVENANCE.json#9d34f70406dc7658e3e523a2f7d7456f0ae1f74599ddd95b66ecd397bde2cd0a",
+      "sha256": "9d34f70406dc7658e3e523a2f7d7456f0ae1f74599ddd95b66ecd397bde2cd0a",
+      "source": "objects/9d34f70406dc7658e3e523a2f7d7456f0ae1f74599ddd95b66ecd397bde2cd0a"
+    },
+    "source-input/cli-main.rs": {
+      "bytes": 178986,
+      "kind": "bundled",
+      "provenance": "recovery-provenance/PROVENANCE.json#67f2e12474edd2f3d19b1d5200bcaccb6d9d9359b371daa9242a9277a28ca7b8",
+      "sha256": "67f2e12474edd2f3d19b1d5200bcaccb6d9d9359b371daa9242a9277a28ca7b8",
+      "source": "objects/67f2e12474edd2f3d19b1d5200bcaccb6d9d9359b371daa9242a9277a28ca7b8"
+    },
+    "source-input/config.schema.json": {
+      "bytes": 236752,
+      "kind": "bundled",
+      "provenance": "recovery-provenance/PROVENANCE.json#fdcf2b956ceb0cea03b3994946f0fea088aef894f8484084eb77f8051749add8",
+      "sha256": "fdcf2b956ceb0cea03b3994946f0fea088aef894f8484084eb77f8051749add8",
+      "source": "objects/fdcf2b956ceb0cea03b3994946f0fea088aef894f8484084eb77f8051749add8"
+    },
+    "source-input/sandbox-bwrap.rs": {
+      "bytes": 11246,
+      "kind": "bundled",
+      "provenance": "recovery-provenance/PROVENANCE.json#ad5e715419e692c0aa014c5f7a1e881c50766a8060064b7d422d126fb6ec25b4",
+      "sha256": "ad5e715419e692c0aa014c5f7a1e881c50766a8060064b7d422d126fb6ec25b4",
+      "source": "objects/ad5e715419e692c0aa014c5f7a1e881c50766a8060064b7d422d126fb6ec25b4"
+    },
+    "source-input/source-bundled_bwrap.rs": {
+      "bytes": 10911,
+      "kind": "bundled",
+      "provenance": "recovery-provenance/PROVENANCE.json#11a6246c83431cc66a0ac47e50013006f47890b7d753af27f3db04cf8f79b1f6",
+      "sha256": "11a6246c83431cc66a0ac47e50013006f47890b7d753af27f3db04cf8f79b1f6",
+      "source": "objects/11a6246c83431cc66a0ac47e50013006f47890b7d753af27f3db04cf8f79b1f6"
+    },
+    "source-input/source-bwrap.rs": {
+      "bytes": 120871,
+      "kind": "bundled",
+      "provenance": "recovery-provenance/PROVENANCE.json#e1cb09d27b24ad81187a708134cdf44fac13ecc499825c86464531188b86db01",
+      "sha256": "e1cb09d27b24ad81187a708134cdf44fac13ecc499825c86464531188b86db01",
+      "source": "objects/e1cb09d27b24ad81187a708134cdf44fac13ecc499825c86464531188b86db01"
+    },
+    "source-input/source-launcher.rs": {
+      "bytes": 16279,
+      "kind": "bundled",
+      "provenance": "recovery-provenance/PROVENANCE.json#c21b2cd42279c596a1d8a21121bc82e729ca3dc7f12df509f4e86c5afaccab96",
+      "sha256": "c21b2cd42279c596a1d8a21121bc82e729ca3dc7f12df509f4e86c5afaccab96",
+      "source": "objects/c21b2cd42279c596a1d8a21121bc82e729ca3dc7f12df509f4e86c5afaccab96"
+    },
+    "source-input/source-linux_run_main.rs": {
+      "bytes": 56880,
+      "kind": "bundled",
+      "provenance": "recovery-provenance/PROVENANCE.json#919ba373931c7464dc50fa02aa2e34b9c3f028c78929a55f61f7b06d3d0e7d85",
+      "sha256": "919ba373931c7464dc50fa02aa2e34b9c3f028c78929a55f61f7b06d3d0e7d85",
+      "source": "objects/919ba373931c7464dc50fa02aa2e34b9c3f028c78929a55f61f7b06d3d0e7d85"
+    },
+    "source-input/sources.json": {
+      "bytes": 2735,
+      "kind": "bundled",
+      "provenance": "recovery-provenance/PROVENANCE.json#207a3afb820a10248d9320ce452bdc64cf02cd6b69e492ce7ff6507988ebece3",
+      "sha256": "207a3afb820a10248d9320ce452bdc64cf02cd6b69e492ce7ff6507988ebece3",
+      "source": "objects/207a3afb820a10248d9320ce452bdc64cf02cd6b69e492ce7ff6507988ebece3"
+    },
+    "source/cli-debug.rs": {
+      "bytes": 45199,
+      "kind": "bundled",
+      "provenance": "recovery-provenance/PROVENANCE.json#a222998fb9a3cae147ac8f902f0593be0e7a25c92ef56f903b56d5ac67e43e90",
+      "sha256": "a222998fb9a3cae147ac8f902f0593be0e7a25c92ef56f903b56d5ac67e43e90",
+      "source": "objects/a222998fb9a3cae147ac8f902f0593be0e7a25c92ef56f903b56d5ac67e43e90"
+    },
+    "source/sandbox-bwrap.rs": {
+      "bytes": 11246,
+      "kind": "bundled",
+      "provenance": "recovery-provenance/PROVENANCE.json#ad5e715419e692c0aa014c5f7a1e881c50766a8060064b7d422d126fb6ec25b4",
+      "sha256": "ad5e715419e692c0aa014c5f7a1e881c50766a8060064b7d422d126fb6ec25b4",
+      "source": "objects/ad5e715419e692c0aa014c5f7a1e881c50766a8060064b7d422d126fb6ec25b4"
+    },
+    "source/source-bundled_bwrap.rs": {
+      "bytes": 10911,
+      "kind": "bundled",
+      "provenance": "recovery-provenance/PROVENANCE.json#11a6246c83431cc66a0ac47e50013006f47890b7d753af27f3db04cf8f79b1f6",
+      "sha256": "11a6246c83431cc66a0ac47e50013006f47890b7d753af27f3db04cf8f79b1f6",
+      "source": "objects/11a6246c83431cc66a0ac47e50013006f47890b7d753af27f3db04cf8f79b1f6"
+    },
+    "source/source-bwrap.rs": {
+      "bytes": 120871,
+      "kind": "bundled",
+      "provenance": "recovery-provenance/PROVENANCE.json#e1cb09d27b24ad81187a708134cdf44fac13ecc499825c86464531188b86db01",
+      "sha256": "e1cb09d27b24ad81187a708134cdf44fac13ecc499825c86464531188b86db01",
+      "source": "objects/e1cb09d27b24ad81187a708134cdf44fac13ecc499825c86464531188b86db01"
+    },
+    "source/source-launcher.rs": {
+      "bytes": 16279,
+      "kind": "bundled",
+      "provenance": "recovery-provenance/PROVENANCE.json#c21b2cd42279c596a1d8a21121bc82e729ca3dc7f12df509f4e86c5afaccab96",
+      "sha256": "c21b2cd42279c596a1d8a21121bc82e729ca3dc7f12df509f4e86c5afaccab96",
+      "source": "objects/c21b2cd42279c596a1d8a21121bc82e729ca3dc7f12df509f4e86c5afaccab96"
+    },
+    "source/source-linux_run_main.rs": {
+      "bytes": 56880,
+      "kind": "bundled",
+      "provenance": "recovery-provenance/PROVENANCE.json#919ba373931c7464dc50fa02aa2e34b9c3f028c78929a55f61f7b06d3d0e7d85",
+      "sha256": "919ba373931c7464dc50fa02aa2e34b9c3f028c78929a55f61f7b06d3d0e7d85",
+      "source": "objects/919ba373931c7464dc50fa02aa2e34b9c3f028c78929a55f61f7b06d3d0e7d85"
+    },
+    "source/sources.json": {
+      "bytes": 2735,
+      "kind": "bundled",
+      "provenance": "recovery-provenance/PROVENANCE.json#207a3afb820a10248d9320ce452bdc64cf02cd6b69e492ce7ff6507988ebece3",
+      "sha256": "207a3afb820a10248d9320ce452bdc64cf02cd6b69e492ce7ff6507988ebece3",
+      "source": "objects/207a3afb820a10248d9320ce452bdc64cf02cd6b69e492ce7ff6507988ebece3"
+    },
+    "supervisor.py": {
+      "bytes": 44275,
+      "kind": "bundled",
+      "provenance": "recovery-provenance/PROVENANCE.json#e7bb99e9a0af9606725af949373e9f0d8caf6bf3cad2c7c3935a6d74e1e9e76f",
+      "sha256": "e7bb99e9a0af9606725af949373e9f0d8caf6bf3cad2c7c3935a6d74e1e9e76f",
+      "source": "objects/e7bb99e9a0af9606725af949373e9f0d8caf6bf3cad2c7c3935a6d74e1e9e76f"
+    },
+    "test_reviewed_patch.py": {
+      "bytes": 10844,
+      "kind": "bundled",
+      "provenance": "recovery-provenance/PROVENANCE.json#6c0a089c88cf79f9c7b64f2b5dbdb3b97611a3ad45d25e06a260f4934ce404f9",
+      "sha256": "6c0a089c88cf79f9c7b64f2b5dbdb3b97611a3ad45d25e06a260f4934ce404f9",
+      "source": "objects/6c0a089c88cf79f9c7b64f2b5dbdb3b97611a3ad45d25e06a260f4934ce404f9"
+    },
+    "true.dynamic.txt": {
+      "bytes": 1439,
+      "kind": "bundled",
+      "provenance": "recovery-provenance/PROVENANCE.json#6e19d3fe8768e42f7c43a6fef41c4736f15af47775214a37e2246ac0507e6157",
+      "sha256": "6e19d3fe8768e42f7c43a6fef41c4736f15af47775214a37e2246ac0507e6157",
+      "source": "objects/6e19d3fe8768e42f7c43a6fef41c4736f15af47775214a37e2246ac0507e6157"
+    },
+    "true.program_headers.txt": {
+      "bytes": 2788,
+      "kind": "bundled",
+      "provenance": "recovery-provenance/PROVENANCE.json#9d2765da2ba345a56f2e5784bc48e4f32acf649f91024162692310b1ac8cf9fa",
+      "sha256": "9d2765da2ba345a56f2e5784bc48e4f32acf649f91024162692310b1ac8cf9fa",
+      "source": "objects/9d2765da2ba345a56f2e5784bc48e4f32acf649f91024162692310b1ac8cf9fa"
+    }
+  },
+  "note": "Exact byte-recovery map, not a stage or authorization to replace missing host facts.",
+  "reviewed_dependencies_sha256": "20d6488945bafa58c0765bc4a7bf78952bbc36ef7d4a870e8f1f33665f68d06a",
+  "reviewed_manifest_sha256": "9d846b5e96a145158664c59b8a8b80e510ce43724dcdd34c04482689c08ceb2b",
+  "runtime": "UNTESTED",
+  "symlinks": {
+    "/bin": "usr/bin",
+    "/lib": "usr/lib",
+    "/lib64": "usr/lib64",
+    "/usr/bin/python3": "python3.12",
+    "/usr/lib/x86_64-linux-gnu/libcap.so.2": "/usr/lib/x86_64-linux-gnu/libcap.so.2.66",
+    "/usr/lib/x86_64-linux-gnu/libexpat.so.1": "/usr/lib/x86_64-linux-gnu/libexpat.so.1.9.1",
+    "/usr/lib/x86_64-linux-gnu/libpcre2-8.so.0": "/usr/lib/x86_64-linux-gnu/libpcre2-8.so.0.11.2",
+    "/usr/lib/x86_64-linux-gnu/libz.so.1": "/usr/lib/x86_64-linux-gnu/libz.so.1.3",
+    "/usr/lib64/ld-linux-x86-64.so.2": "/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2"
+  },
+  "version": 1
+}

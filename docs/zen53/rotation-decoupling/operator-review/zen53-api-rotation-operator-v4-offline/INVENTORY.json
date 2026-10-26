@@ -1,0 +1,52 @@
+{
+  "files": {
+    "INSTALL_CONFIG.json": {
+      "bytes": 190,
+      "sha256": "9e4b0b419c82048b4026f44e6bff409c5f88b0acbdfcfd8b81bf57bc27b82296"
+    },
+    "MAILBOX_STEP2_DESIGN.md": {
+      "bytes": 1591,
+      "sha256": "c1cdb2b884a7344f37c41bf542ce2319746c0646891a577665915607ca5e7ac4"
+    },
+    "README.md": {
+      "bytes": 3520,
+      "sha256": "e09d0c30e661e0b7fd0b7dda89f45d0a61e6ae8c1a4a21e4d9f53d02889bbff4"
+    },
+    "approved_binding.py": {
+      "bytes": 3423,
+      "sha256": "3781ef084eb18efab6dbe864cc3c4ba300fbba47daf8e63cdda725efc9f0aa0c"
+    },
+    "binding_store.py": {
+      "bytes": 11458,
+      "sha256": "60d5daf96b98fbfe422e43015a43f2877a3b2b5e771b3403c0d658b370d54bee"
+    },
+    "launch_once.py": {
+      "bytes": 17245,
+      "sha256": "7384443c2fd0029135c3d27319f82389481a68931b2da908e79ff62d742ad1f2"
+    },
+    "operator_once.py": {
+      "bytes": 36938,
+      "sha256": "9f7a2467687ff2032cd55d92563e045d8830c08e8cfb259579e9bcd82c07c7f8"
+    },
+    "root_operator.py": {
+      "bytes": 10779,
+      "sha256": "2aa4da7cce302011d88628af17e52fa60824fa4e653737f724d4b2ea9065e030"
+    },
+    "test_binding_store.py": {
+      "bytes": 14683,
+      "sha256": "38407b18d11c9f951b7c63fa181b4c65e52072496e084874000345198f92c8de"
+    },
+    "test_operator_once.py": {
+      "bytes": 68600,
+      "sha256": "b18c56430f8bfe23693d814b1fee8ff6d8efe1b1fa27dfafbd97c325b74da485"
+    },
+    "test_root_operator.py": {
+      "bytes": 10552,
+      "sha256": "df0a89979ce07486885f982dbaf2d7510eb951940ffd9680538872fe42a3838e"
+    },
+    "zen53-preparation-preflight.py": {
+      "bytes": 4766,
+      "sha256": "bc43a36b25e077ceb4af876e538abcb97c3e52fbf8b01b31152fd956ceb20e59"
+    }
+  }
+}
