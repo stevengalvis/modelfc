@@ -177,6 +177,30 @@ class FiveLeagueTests(unittest.TestCase):
                                (replace(q, retrieved_at=NOW-timedelta(hours=7)), 'STALE')):
             self.assertEqual(market(report({}, as_of=NOW, quotes=changed), 'E1')['gates']['quotes']['state'], state)
 
+    def test_full_time_corner_quote_inventory_includes_match_totals(self):
+        # Count normalized quotes, not selections or market qualification.
+        for ids, expected in ((('1',), 2), (('1', '2', '3', '4', '5'), 6),
+                              (('4', '5'), 0)):
+            with self.subTest(markets=ids):
+                fixtures = [saved_fixture(tid, str(tid)) for tid in (18, 17, 8, 23, 242)]
+                for fixture in fixtures:
+                    bookmaker = fixture['bookmakerOdds']['fanduel']
+                    bookmaker['markets'] = {k: v for k, v in bookmaker['markets'].items() if k in ids}
+                payload, meta = raw(fixtures), raw(metadata())
+                quotes = SavedQuotes(payload, fingerprint(payload), meta, fingerprint(meta), NOW)
+                result = report({}, as_of=NOW, quotes=quotes)
+                for code in ('E1', 'E0', 'SP1', 'I1', 'MLS'):
+                    corners = market(result, code)
+                    inventory = corners['gates']['quotes']
+                    self.assertEqual(inventory['available_quotes'], expected)
+                    self.assertEqual(inventory['reason'],
+                                     'QUOTE_INVENTORY_ONLY' if expected else 'MARKET_QUOTES_MISSING')
+                    self.assertNotEqual(corners['input_state'], 'ELIGIBLE')
+                    self.assertFalse(corners['validated'])
+                    self.assertFalse(corners['live'])
+                    self.assertEqual(market(result, code, 'btts')['gates']['quotes']['available_quotes'],
+                                     2 if '5' in ids else 0)
+
     def test_determinism_configuration_extension_and_no_input_mutation(self):
         e, now = e0(); before = e
         a = report({'E0':e}, as_of=now)
