@@ -1,0 +1,197 @@
+{
+  "policy_version": "first-published-value-v2",
+  "void_settlement_supported": false,
+  "simulation_void_supported": true,
+  "summary": {
+    "picks": 2,
+    "unique_fixtures": 2,
+    "settled": 1,
+    "wins": 1,
+    "losses": 0,
+    "pushes": 0,
+    "voids": 0,
+    "pending": 1,
+    "profit_units": 1.0,
+    "win_rate": 1.0,
+    "roi": 1.0
+  },
+  "by_view": {
+    "best_value": {
+      "picks": 2,
+      "unique_fixtures": 2,
+      "settled": 1,
+      "wins": 1,
+      "losses": 0,
+      "pushes": 0,
+      "voids": 0,
+      "pending": 1,
+      "profit_units": 1.0,
+      "win_rate": 1.0,
+      "roi": 1.0
+    },
+    "higher_probability": {
+      "picks": 1,
+      "unique_fixtures": 1,
+      "settled": 1,
+      "wins": 1,
+      "losses": 0,
+      "pushes": 0,
+      "voids": 0,
+      "pending": 0,
+      "profit_units": 1.0,
+      "win_rate": 1.0,
+      "roi": 1.0
+    }
+  },
+  "by_league_market": [
+    {
+      "competition": "E0",
+      "market_type": "BTTS",
+      "summary": {
+        "picks": 1,
+        "unique_fixtures": 1,
+        "settled": 1,
+        "wins": 1,
+        "losses": 0,
+        "pushes": 0,
+        "voids": 0,
+        "pending": 0,
+        "profit_units": 1.0,
+        "win_rate": 1.0,
+        "roi": 1.0
+      }
+    },
+    {
+      "competition": "E0",
+      "market_type": "TEAM_TOTAL",
+      "summary": {
+        "picks": 1,
+        "unique_fixtures": 1,
+        "settled": 0,
+        "wins": 0,
+        "losses": 0,
+        "pushes": 0,
+        "voids": 0,
+        "pending": 1,
+        "profit_units": 0.0,
+        "win_rate": null,
+        "roi": null
+      }
+    }
+  ],
+  "publications": [
+    {
+      "epl_evidence": {
+        "forecast_id": "acd5a23dd70a9c8c389f7d85a4d9460eaa6cea4f49a7816ad271717ada193264",
+        "observation_id": "c9916753808910aa6c64aa2f24027480765a0c2502588b63e94d97938f8cbb87",
+        "qualification_sha256": "9d8087d27fabe1f002687a95aad005eed63c6eb143986649c01fbab25d94ef3a"
+      },
+      "forecast_created_at_utc": "2026-10-17T10:00:00+00:00",
+      "offer": {
+        "american_odds": 100,
+        "availability_checked_at_utc": "2026-10-17T10:00:02+00:00",
+        "away_team": "Synthetic History 17",
+        "bookmaker": "fanduel",
+        "comparison_id": "c9916753808910aa6c64aa2f24027480765a0c2502588b63e94d97938f8cbb87",
+        "competition": "E0",
+        "decimal_odds": 2.0,
+        "expected_profit": 0.9999999995484854,
+        "forecast_id": "acd5a23dd70a9c8c389f7d85a4d9460eaa6cea4f49a7816ad271717ada193264",
+        "home_team": "Synthetic History 2",
+        "kickoff_utc": "2026-10-17T14:00:00+00:00",
+        "market_type": "BTTS",
+        "model_probability": 0.9999999997742427,
+        "no_vig_market_probability": 0.4871794871794872,
+        "no_vig_probability_edge": 0.5128205125947555,
+        "observation_age_seconds": 1.0,
+        "observation_id": "c9916753808910aa6c64aa2f24027480765a0c2502588b63e94d97938f8cbb87",
+        "policy_version": "btts-paired-value-v1",
+        "provider": "football-data.org",
+        "provider_fixture_id": "2002",
+        "retrieved_at_utc": "2026-10-17T10:00:01+00:00",
+        "side": "NO",
+        "sportsbook_implied_probability": 0.5
+      },
+      "policy_version": "first-btts-value-v1",
+      "publication_id": "55b96aea5320c7d736d38417199a4aca6a4b4d69a5a650ac2f995e910bcf5b7f",
+      "published_at_utc": "2026-10-17T10:00:02+00:00",
+      "qualification_policy": {
+        "decimal_american_odds_tolerance": 0.005,
+        "edge_comparison_tolerance": 1e-12,
+        "minimum_american_odds": -200,
+        "minimum_no_vig_edge": 0.05,
+        "no_vig_price_source": "decimal_odds",
+        "positive_ev_required": true,
+        "version": "btts-paired-value-v1"
+      },
+      "ranking_views": [
+        "best_value",
+        "higher_probability"
+      ],
+      "record_hash": "5aea80c243d721e4cda295b0bcf3ffd956de25bf694495e1c7626f2c1633fb34",
+      "schema_version": 1,
+      "result": "WIN",
+      "profit_units": 1.0,
+      "simulation_void": null
+    },
+    {
+      "epl_evidence": {
+        "forecast_id": "94b4b5b51427317a5ece686ef295b142865b23b6bce4b24274a223d1cc7f49c2",
+        "observation_id": "b83ac378c396b52b2ecacdce5e5677b65f25d7cbe187c9eb297088a07e723ef7",
+        "qualification_sha256": "da6a0f24958b7645a4b7d31c781cf8386754939ab78397220ee90b9eb4007919"
+      },
+      "forecast_created_at_utc": "2026-10-17T10:00:00+00:00",
+      "offer": {
+        "american_odds": -111,
+        "availability_checked_at_utc": "2026-10-17T10:00:02+00:00",
+        "away_team": "Synthetic History 19",
+        "bookmaker": "fanduel",
+        "competition": "E0",
+        "decimal_odds": 1.9,
+        "decisive_model_probability": 0.5648544174967924,
+        "direction": "OVER",
+        "expected_profit": 0.0737322710975063,
+        "home_team": "Synthetic History 0",
+        "kickoff_utc": "2026-10-17T14:00:00+00:00",
+        "line": 4.5,
+        "market_type": "TEAM_TOTAL",
+        "model_probability": 0.5648544174967924,
+        "no_vig_market_probability": 0.5128205128205129,
+        "no_vig_probability_edge": 0.05203390467627955,
+        "observation_age_seconds": 1.0,
+        "opportunity_id": "b83ac378c396b52b2ecacdce5e5677b65f25d7cbe187c9eb297088a07e723ef7",
+        "policy_version": "team-total-no-vig-v1",
+        "prediction_id": "94b4b5b51427317a5ece686ef295b142865b23b6bce4b24274a223d1cc7f49c2",
+        "provider": "football-data.org",
+        "provider_fixture_id": "2000",
+        "push_probability": 0.0,
+        "qualified": true,
+        "retrieved_at_utc": "2026-10-17T10:00:01+00:00",
+        "sportsbook_implied_probability": 0.5260663507109005,
+        "target_id": "0eb8588cee411666e7641671d0f8486e26967d14ce9f218a35c58c8a12b08a50",
+        "team": "Synthetic History 0",
+        "team_side": "HOME"
+      },
+      "policy_version": "first-team-total-value-v1",
+      "publication_id": "3608bad9b7d31e314a1f136398d158124c78a408670e1b3f374db604b922aed9",
+      "published_at_utc": "2026-10-17T10:00:02+00:00",
+      "qualification_policy": {
+        "decimal_american_odds_tolerance": 0.005,
+        "edge_comparison_tolerance": 1e-12,
+        "minimum_american_odds": -200,
+        "minimum_no_vig_edge": 0.05,
+        "no_vig_price_source": "decimal_odds",
+        "version": "team-total-no-vig-v1",
+        "watchlist_no_vig_edge": -0.05
+      },
+      "ranking_views": [
+        "best_value"
+      ],
+      "record_hash": "f3978cfef9c3ff64c2a6e3f8122b490e3d77109ca807313d3cb255b2325f537d",
+      "schema_version": 1,
+      "result": "PENDING",
+      "profit_units": null,
+      "simulation_void": null
+    }
+  ]
+}
