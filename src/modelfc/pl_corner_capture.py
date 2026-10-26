@@ -81,7 +81,8 @@ def prepare(raw, *, sources=(), enabled=False, **options):
         result['reason'] = 'EMPTY_DAY' if report['state'] == 'EMPTY' else 'WHOLE_DAY_READINESS_BLOCKED'
         return result
     day, year = options['selected_day'], options['season_year']
-    records, _ = validated_sources('E0', sources, before=day, observed_at=options['as_of'], enforce_seasons=True)
+    records, _ = validated_sources('E0', sources, before=day, observed_at=options['as_of'], enforce_seasons=True,
+                                   validation_scope='GOALS_CORNERS')
     observations = [TeamCornerObservation(r.match_date, r.team, r.opponent, r.venue, r.corners_for, r.corners_against)
         for r in records if r.match_date < day and f'{year-4}/' <= r.season <= f'{year}/{year+1}'
         and r.corners_for is not None and r.corners_against is not None]
