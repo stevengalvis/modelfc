@@ -149,7 +149,7 @@ def _views(offer):
     return ["best_value"] + (["higher_probability"] if offer["model_probability"] >= .65 else [])
 
 
-def publish_locked(state_dir, *, include_btts=True, independent=False, diagnostics=None, epl_approved_contracts=()):
+def publish_locked(state_dir, *, include_btts=True, independent=False, diagnostics=None, epl_approved_contracts=(), epl_only=False):
     """Called only by the live writer under runner.lock, never by reads/replay.
 
     No caller-supplied time. Clock sampled after source validation and checked
@@ -169,11 +169,11 @@ def publish_locked(state_dir, *, include_btts=True, independent=False, diagnosti
         selection_time = _now()
         predictions = {p["prediction_id"]: p for p in inventory["predictions"]}
         chosen = {}
-        source = btts.records(state) if include_btts else ()
+        source = btts.records(state) if include_btts and not epl_only else ()
         for strategy in VIEWS if independent else ("best_value",):
-            candidates = {key: (value, predictions[value["prediction_id"]]["created_at_utc"])
+            candidates = {} if epl_only else {key: (value, predictions[value["prediction_id"]]["created_at_utc"])
                           for key, value in select(inventory, selection_time, strategy=strategy, diagnostics=diagnostics).items()}
-            if include_btts:
+            if include_btts and not epl_only:
                 candidates.update(btts.select(source, selection_time, strategy=strategy, diagnostics=diagnostics))
             for key, (value, forecast_at) in candidates.items():
                 identity = strategies.publication_identity(value, strategy) if independent else key
