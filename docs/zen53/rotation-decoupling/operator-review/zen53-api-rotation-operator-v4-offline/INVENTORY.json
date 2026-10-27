@@ -9,8 +9,8 @@
       "sha256": "c1cdb2b884a7344f37c41bf542ce2319746c0646891a577665915607ca5e7ac4"
     },
     "README.md": {
-      "bytes": 4744,
-      "sha256": "9f4b243346987ba2e1a3f33079cb58e954a687cbcf50fc056b3f51bf2b240e11"
+      "bytes": 5359,
+      "sha256": "85c1317f8aabe6b7d75935be88effc0f22164edec0feb34f4cc81eb4f00fe182"
     },
     "approved_binding.py": {
       "bytes": 3423,
@@ -29,8 +29,8 @@
       "sha256": "2e45d568db1f31aa8a3bd31477bfaed6c27788337185bdaa5477f42d3a83b21a"
     },
     "root_operator.py": {
-      "bytes": 22912,
-      "sha256": "1aec68da91f6911ad1a89c349e7ec2036ef7ed49da8d7bcac6bf30e567195a3a"
+      "bytes": 24248,
+      "sha256": "54ae122d8ab78c6312bca70d11707026288160111192c008e770ac1bfe01678d"
     },
     "test_binding_store.py": {
       "bytes": 26407,
@@ -41,8 +41,8 @@
       "sha256": "c3108aaa1a29dc3f152c9776389b05d1ef7e69efead673f704d61c78dfef8af1"
     },
     "test_root_operator.py": {
-      "bytes": 22540,
-      "sha256": "d2e1accf63e0c4cea976446b88a7082ddec9dc1c112a87b4a6815d194b30d77d"
+      "bytes": 25292,
+      "sha256": "f4edd8e06e94f8c36701a63254e016cf0f9e2bbe0df3b40d90c349dca348e1b4"
     },
     "zen53-preparation-preflight.py": {
       "bytes": 4766,

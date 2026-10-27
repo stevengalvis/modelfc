@@ -281,19 +281,45 @@ def _read_locks(*, open_file=os.open, read=os.read, close=os.close):
 
 def _locks_clear(raw, locks):
     """Inspect a complete kernel lock table without acquiring host locks."""
-    if type(raw) is not str or len(raw) > 131072:
+    if (type(raw) is not str or len(raw) > 131072 or
+            (raw and not raw.endswith('\n'))):
         raise ValueError('ISSUER_LOCK_OBSERVATION')
     targets={(os.major(device),os.minor(device),inode)
              for _,device,inode,*_ in locks}
-    for line in raw.splitlines():
+    if len(targets)!=len(locks):
+        raise ValueError('ISSUER_LOCK_OBSERVATION')
+    # /proc/locks is LF-delimited. str.splitlines() also accepts vertical
+    # controls, which could turn a malformed row into two apparently valid
+    # records; keep those controls inside a row so the grammar rejects them.
+    for line in (raw.split('\n')[:-1] if raw else ()):
+        # The kernel pads fields with spaces; tabs are also field whitespace.
+        # Keep the grammar closed so an unknown row cannot hide a target lock.
         match=re.fullmatch(
-            r'[0-9]+: (?:-> )?(?:POSIX|FLOCK|OFDLCK) ADVISORY '
-            r'(?:READ|WRITE) -?[0-9]+ ([0-9a-fA-F]+):([0-9a-fA-F]+):'
-            r'([0-9]+) [0-9]+ (?:[0-9]+|EOF)',line)
+            r'(?P<seq>[1-9][0-9]{0,9}):[ \t]+'
+            r'(?:(?P<blocked>->)[ \t]+)?'
+            r'(?P<kind>POSIX|FLOCK|OFDLCK)[ \t]+ADVISORY[ \t]+'
+            r'(?P<mode>READ|WRITE)[ \t]+'
+            r'(?P<pid>-1|[0-9]{1,10})[ \t]+'
+            r'(?P<major>[0-9a-fA-F]{1,8}):'
+            r'(?P<minor>[0-9a-fA-F]{1,8}):'
+            r'(?P<inode>[0-9]{1,20})[ \t]+'
+            r'(?P<start>[0-9]{1,19})[ \t]+'
+            r'(?P<end>[0-9]{1,19}|EOF)',line)
         if match is None:
             raise ValueError('ISSUER_LOCK_OBSERVATION')
-        major,minor,inode=match.groups()
-        if (int(major,16),int(minor,16),int(inode)) in targets:
+        kind=match['kind'];pid=int(match['pid'])
+        start=int(match['start']);end=match['end']
+        invalid_pid=(pid!=-1) if kind=='OFDLCK' else (pid<=0)
+        if (invalid_pid or
+            start>2**63-1 or
+            (end!='EOF' and (int(end)>2**63-1 or int(end)<start)) or
+            (kind=='FLOCK' and (start!=0 or end!='EOF'))):
+            raise ValueError('ISSUER_LOCK_OBSERVATION')
+        identity=(int(match['major'],16),int(match['minor'],16),
+                  int(match['inode']))
+        if identity[2]>2**64-1:
+            raise ValueError('ISSUER_LOCK_OBSERVATION')
+        if identity in targets:
             raise ValueError('ISSUER_LOCK_HELD')
     return True
 

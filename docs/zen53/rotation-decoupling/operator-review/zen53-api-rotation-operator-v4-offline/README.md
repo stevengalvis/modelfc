@@ -57,6 +57,15 @@ unchanged. The existing cooperative-root/deploy/validator assumption remains;
 this does not defend against hostile root. A passing synthetic suite is not
 live isolation, measured throttling, native Codex containment or cleanup.
 
+The no-launch observer's `/proc/locks` parser accepts the padded horizontal
+whitespace shown in Ubuntu `proc_locks(5)` for POSIX, FLOCK and OFDLCK advisory
+rows, including waiting-arrow rows and OFD PID -1. It splits only on the
+kernel's LF row delimiter, rejecting embedded control separators. It still
+rejects unknown types, incomplete or oversized input and ambiguous pinned lock identities;
+any row on a pinned lock inode blocks inspection. This corrects a reproducible
+source incompatibility. The failed historical VPS inspection did not retain
+the lock-table row, so its exact failure cause remains unknown.
+
 Use a clean environment, trusted private TMPDIR and Python `-I -S -B`
 unittest discovery on the exact extracted package. The separate launcher
 fixture has its own tests. The package tests never run systemd or the payload.

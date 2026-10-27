@@ -368,6 +368,54 @@ class InstallTests(unittest.TestCase):
             producer._read_locks(open_file=lambda *args:7,
                 read=lambda fd,limit:b'x'*min(limit,8192),close=lambda fd:None)
 
+    def test_proc_locks_documented_padding_tabs_and_waiters(self):
+        # Ubuntu proc_locks(5) shows padded fields, including OFD PID -1.
+        # A waiting row uses the kernel's arrow and remains a conflict if it
+        # names one of our pinned coordination inodes.
+        unrelated=(
+            '1: POSIX  ADVISORY  READ  5433 08:01:7864448 128 128\n'
+            '2: FLOCK  ADVISORY  WRITE 2001 08:01:7864554 0 EOF\n'
+            '3: OFDLCK ADVISORY  WRITE -1 08:01:8713209 128 191\n'
+            '4:\t->\tPOSIX\tADVISORY\tWRITE\t78\t08:01:999\t0\tEOF\n')
+        pinned=(('/fixed/lock',2049,543436,0,0,0o600),)
+        self.assertTrue(producer._locks_clear(unrelated,pinned))
+        for kind,pid in (('POSIX','42'),('FLOCK','42'),('OFDLCK','-1')):
+            row=f'5: {kind}  ADVISORY  WRITE {pid} 08:01:543436 0 EOF\n'
+            with self.subTest(kind=kind),self.assertRaisesRegex(
+                    ValueError,'ISSUER_LOCK_HELD'):
+                producer._locks_clear(unrelated+row,pinned)
+        waiter='6: -> POSIX  ADVISORY  WRITE 43 08:01:543436 0 EOF\n'
+        with self.assertRaisesRegex(ValueError,'ISSUER_LOCK_HELD'):
+            producer._locks_clear(unrelated+waiter,pinned)
+        with self.assertRaisesRegex(ValueError,'ISSUER_LOCK_HELD'):
+            producer._locks_clear(unrelated+waiter+waiter,pinned)
+
+    def test_proc_locks_rejects_ambiguous_and_malformed_rows(self):
+        pinned=(('/fixed/lock',2049,543436,0,0,0o600),)
+        valid='1: POSIX  ADVISORY  WRITE 42 08:01:999 0 EOF\n'
+        malformed=(
+            valid[:-1], valid+'\n', valid+'garbage\n',
+            '1: LEASE  ADVISORY  WRITE 42 08:01:999 0 EOF\n',
+            '1: POSIX  MANDATORY  WRITE 42 08:01:999 0 EOF\n',
+            '1: POSIX  ADVISORY  WRITE -1 08:01:999 0 EOF\n',
+            '1: OFDLCK ADVISORY  WRITE 42 08:01:999 0 EOF\n',
+            '1: FLOCK  ADVISORY  WRITE 42 08:01:999 1 EOF\n',
+            '1: POSIX  ADVISORY  WRITE 42 08:01:999 10 9\n',
+            '1: POSIX  ADVISORY  WRITE 42 08:01:999 0 9223372036854775808\n',
+            '1: POSIX  ADVISORY  WRITE 42 08:01:18446744073709551616 0 EOF\n',
+            '1: POSIX  ADVISORY  WRITE 42 08:01:999 0 EOF extra\n',
+            '1: POSIX\n', '\t1: POSIX  ADVISORY  WRITE 42 08:01:999 0 EOF\n',
+            valid[:-1]+'\v'+valid,
+            valid[:-1]+'\f'+valid,
+            valid.replace('\n','\r\n'),
+            valid*3000)
+        for row in malformed:
+            with self.subTest(row=row[:55]),self.assertRaisesRegex(
+                    ValueError,'ISSUER_LOCK_OBSERVATION'):
+                producer._locks_clear(row,pinned)
+        with self.assertRaisesRegex(ValueError,'ISSUER_LOCK_OBSERVATION'):
+            producer._locks_clear(valid,pinned+pinned)
+
     def test_prepare_output_exclusive_and_bound_to_current_approval(self):
         self.store.provision()
         import operator_once as op
