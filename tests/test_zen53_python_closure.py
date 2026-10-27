@@ -17,9 +17,15 @@ class Zen53OfflineTests(unittest.TestCase):
                           BASE/'operator-review/zen53-api-rotation-operator-v4-offline',
                           BASE/'operator-review/zen53-api-rotation-launch-tests-offline'):
             with self.subTest(directory=directory.name):
+                env = dict(os.environ)
+                if directory == BASE/'stage':
+                    # Stage evidence requires same-owner ancestors, with one
+                    # explicit sticky /tmp exception. /home is root-owned on CI.
+                    # Operator guards instead accept root ancestors but not /tmp.
+                    env['TMPDIR'] = '/tmp'
                 result = subprocess.run([sys.executable, '-B', '-m', 'unittest',
                                          'discover', '-s', str(directory), '-q'],
-                                        capture_output=True, text=True, timeout=120)
+                                        capture_output=True, text=True, timeout=120, env=env)
                 self.assertEqual(result.returncode, 0, result.stdout+result.stderr)
                 if os.environ.get('ZEN53_PYTHON_FIXTURE'):
                     self.assertNotIn('skipped=', result.stderr)
