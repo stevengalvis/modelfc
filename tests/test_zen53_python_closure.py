@@ -28,7 +28,10 @@ class Zen53OfflineTests(unittest.TestCase):
                                         capture_output=True, text=True, timeout=120, env=env)
                 self.assertEqual(result.returncode, 0, result.stdout+result.stderr)
                 if os.environ.get('ZEN53_PYTHON_FIXTURE'):
-                    self.assertNotIn('skipped=', result.stderr)
+                    if directory == BASE/'stage' and os.environ.get('ZEN53_CHROOT_TEST') != '1':
+                        self.assertIn('OK (skipped=1)', result.stderr)
+                    else:
+                        self.assertNotIn('skipped=', result.stderr)
 
     def test_successor_archives_and_entire_pin_chain_are_current(self):
         gzip = Path('/usr/bin/gzip')

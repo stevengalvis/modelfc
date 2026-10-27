@@ -44,6 +44,7 @@ jobs:
       - name: Run test suite
         env:
           ZEN53_PYTHON_FIXTURE: ${{ runner.temp }}/zen53-python
+          ZEN53_CHROOT_TEST: "1"
           TMPDIR: ${{ runner.temp }}/zen53-test-tmp
         run: PYTHONPATH=src "$RUNNER_TEMP/modelfc-locked/bin/python" -m unittest discover -v
 

@@ -25,8 +25,8 @@
       "sha256": "8762d86182c7fb1fc7d526c88026ff031acd2028f5b29a76ee44406f10d22cdf"
     },
     "PYTHON_CLOSURE.md": {
-      "bytes": 3595,
-      "sha256": "fb5ec854fe3ff4f140bcbca3fbe8608a5c63a74d87441961145ab8db1fff2016"
+      "bytes": 4068,
+      "sha256": "63f01091ad8b01d8878e9139feb8e66acf3c95c2a708afd6080bab0622810762"
     },
     "PYTHON_CLOSURE_PROVENANCE.json": {
       "bytes": 6880,
@@ -137,8 +137,8 @@
       "sha256": "e896535a9a43f1b58ff9e56d552695cb1a4a320adde1c0bc5831838cc239b876"
     },
     "test_python_closure.py": {
-      "bytes": 11284,
-      "sha256": "4e8672ed524cd49a1bd5d156b50a9bea19f2a54ec07a6a069b6e8a52bfdf8f4c"
+      "bytes": 13246,
+      "sha256": "47e43966bdb7be4bd27dd63cbe0a35ac1c7199c9a6a8305de05de5c416f93e2c"
     },
     "test_restricted_launcher.py": {
       "bytes": 10971,

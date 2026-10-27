@@ -39,6 +39,13 @@ The original membership reproduces the datetime traceback through the real
 controller: restricted exit 1, host process-group kill (-9), no finish command,
 reaped children, and blocked outcome. An uncertain reap remains CLEANUP_UNCERTAIN.
 
+CI also requires `ZEN53_CHROOT_TEST=1`: the disposable runner's existing sudo
+runs `chroot --userspec` to drop back to the test UID/GID before starting the
+pinned interpreter. This test uses the literal declared links and no host mounts,
+/proc, or host-library fallback. It executes only startup and exercises, then
+removes every new file/link in turn and requires failure. Local executors without
+sudo/chroot report that one test skipped; CI must pass it without a skip.
+
 These tests verify the exact interpreter/library projection, not Bubblewrap
 namespaces, cross-user ownership, live probes or complete cleanup acceptance.
 The cloud executor rejects Bubblewrap UID mapping with a read-only filesystem;

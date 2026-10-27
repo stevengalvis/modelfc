@@ -169,6 +169,41 @@ print('PROJECTED_COLLECTOR_STARTUP_OK')
         self.assertEqual(result.returncode, 0, result.stderr.decode())
         self.assertEqual(result.stdout, b'PROJECTED_COLLECTOR_STARTUP_OK\n')
 
+    @unittest.skipUnless(os.environ.get('ZEN53_CHROOT_TEST') == '1',
+                         'requires disposable CI runner with sudo chroot')
+    def test_exact_chroot_startup_and_missing_members(self):
+        # Restore the literal projection link targets, including /lib64. The
+        # relocated test uses equivalent relative SONAME links outside chroot.
+        for path, target in self.deps['symlinks'].items():
+            link = self.projection / path.lstrip('/')
+            link.parent.mkdir(parents=True, exist_ok=True)
+            if link.is_symlink():
+                link.unlink()
+            link.symlink_to(target)
+        # In chroot there is no /proc, host library tree, extra bind or fallback.
+        # Execute the identical startup prefix and exercises, never observations.
+        code = self.argv()[-2].split("with open('/proc/self/maps')", 1)[0]
+        code += "print('PROJECTED_COLLECTOR_STARTUP_OK')\n"
+        argv = ['/usr/bin/sudo', '-n', '/usr/sbin/chroot',
+                '--userspec='+str(os.geteuid())+':'+str(os.getegid()),
+                str(self.projection), '/usr/bin/python3.12', '-I', '-S', '-B',
+                '-c', code, '']
+        def run():
+            return subprocess.run(argv, env={'PATH': '/usr/bin:/bin', 'LC_ALL': 'C'},
+                                  capture_output=True, timeout=10)
+        result = run()
+        self.assertEqual(result.returncode, 0, result.stderr.decode())
+        self.assertEqual(result.stdout, b'PROJECTED_COLLECTOR_STARTUP_OK\n')
+        for path in list(self.proof['added_files']) + list(self.proof['added_symlinks']):
+            with self.subTest(path=path):
+                target = self.projection / path.lstrip('/')
+                saved = target.with_name(target.name+'.held')
+                target.rename(saved)
+                try:
+                    self.assertNotEqual(run().returncode, 0, path)
+                finally:
+                    saved.rename(target)
+
     def test_each_added_file_and_link_is_required(self):
         for path in list(self.proof['added_files']) + list(self.proof['added_symlinks']):
             with self.subTest(path=path):

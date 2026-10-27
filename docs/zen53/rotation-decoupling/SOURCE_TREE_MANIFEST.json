@@ -3,18 +3,18 @@
   "predecessor_commit": "0a2b1771c1770193f95d917ace1bcdd4a944598f",
   "stage_archive": {
     "filename": "zen53-python-closure-stage-offline.tar.gz",
-    "bytes": 136156,
-    "sha256": "918b7ce69929f375b588a5f4e691e35ed63a7d845fd4ef780d09a03c084e3abc",
-    "inventory_sha256": "98550b8a7fa5842cb2b8afbbd710722d8dfa78c36373c05d1a197caaa543b744",
+    "bytes": 136717,
+    "sha256": "84b9783c68a6063bf68f9f698a0c09a7b52afdadda864cb849baa2ddb4d21203",
+    "inventory_sha256": "dbeb1e8411f646555596ec0e080b233ee11b8adfb20e0f85a43e81250e9468d8",
     "member_count": 41
   },
   "operator_distribution": {
     "filename": "zen53-python-closure-operator-source-offline.tar.gz",
-    "bytes": 79801,
-    "sha256": "e4937ca1cc86bc2d25b79d96fca0c52f9622b0924df1160082f5cbf5c45c5189",
+    "bytes": 79808,
+    "sha256": "e0fb76deffa4c6cfd01233fbca7c108e20068a4bba85f3876a4dc896ba4ed14e",
     "groups": {
       "zen53-api-rotation-operator-v4-offline": {
-        "inventory_sha256": "aa0986366f946628ad811e2b3a1612f37c80463e7a1889d5bc2aa0831df8a7d0",
+        "inventory_sha256": "6c4ea7d62dce02abad828a5f045fffbcd1093db519d03f1132561eba7f3097f1",
         "members": [
           "INSTALL_CONFIG.json",
           "INVENTORY.json",
@@ -32,7 +32,7 @@
         ]
       },
       "zen53-api-rotation-launch-tests-offline": {
-        "inventory_sha256": "c29951cffc88d0c5f4c7c4cdf666568df1d7c663700049c34ac77665dea2c344",
+        "inventory_sha256": "c8baf8d0ae8e5b40b66951573d4a5ffcae0c06becc0d1286abd23053877e3174",
         "members": [
           "INVENTORY.json",
           "README.md",
