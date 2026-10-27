@@ -115,3 +115,42 @@ Full CI and exact-head Trusted OFFLINE acceptance remain release gates, not
 claims made by these focused tests. No push, merge, deployment, provider access,
 credentials, VPS operation, forecast activation, model tuning or ZEN53 changes
 are included.
+
+## Explicit market-scoped Football-Data validation
+
+The full-stat loader and `history_coverage.audit_sources` keep their strict default:
+all populated statistics are validated, including shots-on-target <= shots.
+An explicit `validation_scope='GOALS'` or `'GOALS_CORNERS'` reuses the same
+Football-Data row normalization, structural/identity/score/FTR, duplicate and
+season checks. Only unrelated numeric statistics are left unassessed. This does
+not repair, swap, exclude or rewrite a source row, and original bytes/hash/receipt
+references remain attached. Goals always validate; malformed nonblank corners
+fail goals-plus-corners. Missing optional corners remain missing, never zero.
+
+Scoped records are explicitly labeled `ScopedTeamMatchStats`, with
+`validation_scope` and `unvalidated_statistics`. A None value outside the scope
+means NOT_ASSESSED, not a missing source statistic. Source receipts and readiness
+history gates carry the scope and unvalidated-field list. Column-presence flags
+still describe the original header only; they do not certify those values.
+Full-stat calls retain the original `TeamMatchStats` type and serialized fields.
+
+E1 readiness uses GOALS_CORNERS for both markets to preserve its existing BTTS
+completed-corner cohort. Other Football-Data goals gates use GOALS independently
+of corners. EPL corner readiness and its capture preparation both use
+GOALS_CORNERS; the offline EPL BTTS adapter uses GOALS. Models, cutoffs, complete
+calendar proofs, source freshness and qualification gates remain unchanged.
+MLS and Sportmonks adapters are unaffected. Existing frozen EPL records with
+full-stat receipts remain readable; new scoped receipts explicitly bind the scope.
+
+The reported Burnley–Swansea HS=2/HST=7 pattern is reproduced with labeled
+synthetic data in `tests/test_market_scoped_history.py`. The genuine pinned
+E1_2425.csv was neither read nor modified for this correction. Its offline
+acceptance remains a separate step. Passing scoped validation does not validate
+shots, authenticate supplied data, qualify a market, or establish live support.
+
+This follow-up intentionally changes the inherited PR177 readiness and PR197
+capture source-validation policy together, on a separate local candidate based
+on PR199. It does not rewrite those published branches. Scoped source receipts
+add fields and therefore change newly produced evidence hashes; earlier stored
+captures remain immutable. No prior exact-head CI, Trusted OFFLINE or genuine
+acceptance result transfers to this follow-up head.
