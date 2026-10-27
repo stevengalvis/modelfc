@@ -257,10 +257,10 @@ SCHEDULE_RESOURCE_CODES = frozenset((
     'ADMISSION_HEADROOM', 'ADMISSION_DISK_HEADROOM'))
 ADMISSION_SHA = '0b6b00bfa8cff5f767a445fffe016f99c2f2d1e440d747d647e043459ef93838'
 PREFLIGHT_SHA = 'bc43a36b25e077ceb4af876e538abcb97c3e52fbf8b01b31152fd956ceb20e59'
-LAUNCHER_SHA = '7384443c2fd0029135c3d27319f82389481a68931b2da908e79ff62d742ad1f2'
+LAUNCHER_SHA = 'daf6e0299b20948fa348db9386f4d0207923e254a080e454cdb10f7b4419fb47'
 APPROVED_BINDING_SHA = '3781ef084eb18efab6dbe864cc3c4ba300fbba47daf8e63cdda725efc9f0aa0c'
 INSTALL_CONFIG_SHA = '9e4b0b419c82048b4026f44e6bff409c5f88b0acbdfcfd8b81bf57bc27b82296'
-BINDING_STORE_SHA = '594a59fe597d762d67b73c9059f95c5eae07b58763eddf94d7729b733c837005'
+BINDING_STORE_SHA = '67342c993e4ec5344a10d2d629014d42bb3ff145aeb8e6d0063ca94dc6e0c3ab'
 PACKAGE_ARCHIVE_SHA = 'a527085d5fb968fed1577a9afdea4d8173fef1b931ec06012cc49c3d909a4d33'
 PACKAGE_INVENTORY_SHA = 'c74f259e3a94fc31c1792d66c13fff4f2149430688dc18db932137db157a985c'
 SYSTEMD_SHA = 'de28cc5757d3789efa5f6fed5659893410469f68b42175d4531f5b34d3a09e16'
@@ -312,17 +312,26 @@ def trace_fields(start, clock):
             'elapsed_ms': int(elapsed * 1000)}
 
 
+def safe_failure_code(exc):
+    """One fixed token from reviewed code, never raw exception text."""
+    if (type(exc) in (ValueError, BINDING_REJECTED_CLASS) and
+            len(exc.args) == 1 and type(exc.args[0]) is str and
+            exc.args[0] in FAILURE_CODES):
+        return exc.args[0]
+    if type(exc) is FileNotFoundError:
+        return 'OS_NOT_FOUND'
+    if type(exc) is PermissionError:
+        return 'OS_PERMISSION'
+    if type(exc) is FileExistsError:
+        return 'OS_EXISTS'
+    if type(exc) in (OSError, NotADirectoryError, IsADirectoryError):
+        return 'OS_ERROR'
+    return 'UNKNOWN'
+
+
 def failure_record(stage, host, exc, *, start=None, clock=time.monotonic):
     """Fixed, bounded diagnostic labels; never include exception text."""
-    code = 'UNKNOWN'
-    if (type(exc) in (ValueError, BINDING_REJECTED_CLASS) and
-            len(exc.args) == 1 and
-            type(exc.args[0]) is str and exc.args[0] in FAILURE_CODES):
-        code = exc.args[0]
-    elif type(exc) in (OSError, FileNotFoundError, PermissionError,
-                       NotADirectoryError, FileExistsError,
-                       IsADirectoryError):
-        code = 'OS_ERROR'
+    code = safe_failure_code(exc)
     check = getattr(host, 'early_check', None) if stage in (
         'EARLY_FIRST', 'EARLY_FINAL') else None
     trace = trace_fields(clock() if start is None else start, clock)
@@ -856,21 +865,46 @@ def installed_config(raw):
     return value
 
 
+def entrypoint_marker(exc, phase):
+    known = phase if phase in ('ROOT', 'CONFIG', 'PINNED_MODULES',
+        'APPROVAL_READ', 'BIND', 'HOST', 'RUN') else 'UNKNOWN'
+    state = 'UNKNOWN' if known == 'RUN' else 'NOT_ATTEMPTED'
+    ids = ''
+    if (known in ('HOST','RUN') and type(NONCE) is str and
+            NONCE32.fullmatch(NONCE) and
+            type(ATTEMPT_ID) is str and NONCE32.fullmatch(ATTEMPT_ID)):
+        ids = ' job_id=' + NONCE + ' attempt_id=' + ATTEMPT_ID
+    return ('OP_BLOCKED_OR_UNKNOWN_NO_RETRY phase=' + known +
+            ' reason=' + safe_failure_code(exc) +
+            ' claim=' + state + ' launch=' + state + ids)
+
+
+def safe_stderr(marker):
+    try:
+        print(marker, file=sys.stderr)
+    except BaseException:
+        # The fixed stdout/stderr channel can fail. Do not emit a traceback.
+        pass
+
+
 def main(argv=None):
     global BINDING_REJECTED_CLASS, APPROVAL_ROOT
     args = list(sys.argv[1:] if argv is None else argv)
     if len(args) != 14 or args[0::2] != [
             '--admission', '--preflight', '--launcher', '--package',
             '--recovery', '--archive', '--audit']:
-        print('OP_ARGUMENTS', file=sys.stderr)
+        safe_stderr('OP_ARGUMENTS claim=NOT_ATTEMPTED launch=NOT_ATTEMPTED')
         return 2
+    phase = 'ROOT'
     try:
         need((os.geteuid(), os.getegid()) == (0, 0), 'OP_ROOT')
+        phase = 'CONFIG'
         config = installed_config(read_pinned(
             OPERATOR_ROOT + '/INSTALL_CONFIG.json', INSTALL_CONFIG_SHA))
         APPROVAL_ROOT = config['approval_root']
         need(os.path.abspath(__file__) == OPERATOR_ROOT + '/operator_once.py',
              'OP_CODE_PATH')
+        phase = 'PINNED_MODULES'
         contract = load_pinned('zen53_binding_contract', read_pinned(
             OPERATOR_ROOT + '/approved_binding.py', APPROVED_BINDING_SHA))
         store_module = load_pinned('zen53_binding_store', read_pinned(
@@ -878,11 +912,14 @@ def main(argv=None):
         store_module.configure(contract)
         BINDING_REJECTED_CLASS = contract.BindingRejected
         store = store_module.RootStore(APPROVAL_ROOT)
+        phase = 'APPROVAL_READ'
         raw = store.read_current()
         approved = contract.decode(raw, time.time_ns() // 1_000_000_000)
+        phase = 'BIND'
         bind(approved)
         need(args[1] == '/var/lib/zen53-owner-tool-' + NONCE + '/admission.py',
              'OP_ADMISSION_PATH')
+        phase = 'HOST'
         host = Host(args[1], args[3], args[5], approved)
         raw_sha = hashlib.sha256(raw).hexdigest()
         def claim():
@@ -894,13 +931,19 @@ def main(argv=None):
             need(store.read_current() == raw, 'OP_APPROVAL_CHANGED')
             contract.decode(raw, time.time_ns() // 1_000_000_000)
             return True
+        phase = 'RUN'
         run(host, package=args[7], recovery=args[9], archive=args[11],
             audit_path=args[13], approval_claim=claim,
             approval_recheck=recheck)
-    except BaseException:
-        print('OP_BLOCKED_OR_UNKNOWN_NO_RETRY', file=sys.stderr)
+    except BaseException as exc:
+        # RUN may have claimed or spawned; only the durable audit can prove
+        # more. Earlier phases have not entered the claim/spawn path.
+        safe_stderr(entrypoint_marker(exc, phase))
         return 1
-    print('OP_FINISHED_NOT_ACCEPTED')
+    try:
+        print('OP_FINISHED_NOT_ACCEPTED')
+    except BaseException:
+        pass
     return 1
 
 if __name__ == '__main__':

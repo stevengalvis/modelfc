@@ -9,40 +9,40 @@
       "sha256": "c1cdb2b884a7344f37c41bf542ce2319746c0646891a577665915607ca5e7ac4"
     },
     "README.md": {
-      "bytes": 3520,
-      "sha256": "e09d0c30e661e0b7fd0b7dda89f45d0a61e6ae8c1a4a21e4d9f53d02889bbff4"
+      "bytes": 4744,
+      "sha256": "9f4b243346987ba2e1a3f33079cb58e954a687cbcf50fc056b3f51bf2b240e11"
     },
     "approved_binding.py": {
       "bytes": 3423,
       "sha256": "3781ef084eb18efab6dbe864cc3c4ba300fbba47daf8e63cdda725efc9f0aa0c"
     },
     "binding_store.py": {
-      "bytes": 15539,
-      "sha256": "594a59fe597d762d67b73c9059f95c5eae07b58763eddf94d7729b733c837005"
+      "bytes": 17608,
+      "sha256": "67342c993e4ec5344a10d2d629014d42bb3ff145aeb8e6d0063ca94dc6e0c3ab"
     },
     "launch_once.py": {
-      "bytes": 17245,
-      "sha256": "7384443c2fd0029135c3d27319f82389481a68931b2da908e79ff62d742ad1f2"
+      "bytes": 17686,
+      "sha256": "daf6e0299b20948fa348db9386f4d0207923e254a080e454cdb10f7b4419fb47"
     },
     "operator_once.py": {
-      "bytes": 37622,
-      "sha256": "b1079195e43ac8afb287327de12483b2e445025cfe18f2f7b44e81b4b19e9073"
+      "bytes": 39093,
+      "sha256": "2e45d568db1f31aa8a3bd31477bfaed6c27788337185bdaa5477f42d3a83b21a"
     },
     "root_operator.py": {
-      "bytes": 14944,
-      "sha256": "5040155062264bacc83307585245a3b23f77297a40dfa532720522aa38f1c555"
+      "bytes": 22912,
+      "sha256": "1aec68da91f6911ad1a89c349e7ec2036ef7ed49da8d7bcac6bf30e567195a3a"
     },
     "test_binding_store.py": {
-      "bytes": 23275,
-      "sha256": "c76a2758d3aabf34a09b417abae77b723c5035470abc19ff2411349a9cd44688"
+      "bytes": 26407,
+      "sha256": "e35f6c22486b2634b772fe83f493467c39c6375b24c29fc28d9332966789b89a"
     },
     "test_operator_once.py": {
-      "bytes": 70736,
-      "sha256": "043e2a1adb1dc517497a88ec990dd99e4c536d18681e964238af4cb62b583ac5"
+      "bytes": 75127,
+      "sha256": "c3108aaa1a29dc3f152c9776389b05d1ef7e69efead673f704d61c78dfef8af1"
     },
     "test_root_operator.py": {
-      "bytes": 16212,
-      "sha256": "f2114207617d1321c410826002bec1a6e134a19b8fffc04ea32fc34f07d3c827"
+      "bytes": 22540,
+      "sha256": "d2e1accf63e0c4cea976446b88a7082ddec9dc1c112a87b4a6815d194b30d77d"
     },
     "zen53-preparation-preflight.py": {
       "bytes": 4766,

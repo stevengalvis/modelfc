@@ -17,7 +17,7 @@ def configure(contract):
                                      contract.need, contract.validate)
 
 DIR = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
-READ = os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK
+READ = os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK | os.O_NOATIME
 NEW = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC
 
 class RootStore:
@@ -86,6 +86,15 @@ class RootStore:
 
     def _claims(self, rootfd):
         return self._protected_child(rootfd,'claims')
+
+    def _claims_history(self, rootfd):
+        claims=self._claims(rootfd)
+        try:
+            history=self._protected_child(rootfd,'history')
+        except BaseException:
+            os.close(claims)
+            raise
+        return claims,history
 
     def provision(self):
         """Exclusively create only new protected objects; never repair old."""
@@ -231,8 +240,7 @@ class RootStore:
              'BINDING_RETIRE_CHANGED')
         rootfd=self._root()
         try:
-            claims=self._claims(rootfd)
-            history=self._protected_child(rootfd,'history')
+            claims,history=self._claims_history(rootfd)
             try:
                 claimfd=os.open(nonce, READ, dir_fd=claims)
                 try:
@@ -276,6 +284,48 @@ class RootStore:
         finally:
             os.close(rootfd)
 
+    def inspect_unclaimed(self, nonce, attempt, expected_sha, observer):
+        """Read-only pre-retirement inspection; never reserves or retires."""
+        need((os.geteuid(),os.getegid())==(self.uid,self.gid),
+             'BINDING_ISSUER_UID')
+        need(callable(observer), 'BINDING_NO_LAUNCH_UNVERIFIED')
+        raw=self.read_current()
+        need(hashlib.sha256(raw).hexdigest()==expected_sha,
+             'BINDING_RETIRE_CHANGED')
+        try:
+            provisional=json.loads(raw)
+        except (ValueError,UnicodeError):
+            need(False,'BINDING_JSON')
+        need(type(provisional) is dict and
+             type(provisional.get('issued_at')) is int,
+             'BINDING_SCHEMA')
+        item=decode(raw,provisional['issued_at'])
+        need(item['issued_at']<=self._now() and item['nonce']==nonce and
+             item['attempt_id']==attempt, 'BINDING_RETIRE_CHANGED')
+        def no_prior_claim_or_history():
+            rootfd=self._root()
+            try:
+                claims,history=self._claims_history(rootfd)
+                try:
+                    for fd,name in ((claims,nonce),
+                                    (history,nonce+'.approval.json'),
+                                    (history,nonce+'.terminal.json')):
+                        try:
+                            os.stat(name,dir_fd=fd,follow_symlinks=False)
+                        except FileNotFoundError:
+                            continue
+                        need(False,'BINDING_REPLAY')
+                finally:
+                    os.close(claims)
+                    os.close(history)
+            finally:
+                os.close(rootfd)
+        no_prior_claim_or_history()
+        need(observer(item) is True,'BINDING_NO_LAUNCH_UNVERIFIED')
+        need(self.read_current()==raw,'BINDING_RETIRE_CHANGED')
+        no_prior_claim_or_history()
+        return True
+
     def retire_unclaimed(self, nonce, attempt, expected_sha, terminal_ref,
                          cleanup_state, observer):
         """Retire a no-claim stop only after independent trusted observations.
@@ -309,8 +359,7 @@ class RootStore:
         need(observer(item) is True, 'BINDING_NO_LAUNCH_UNVERIFIED')
         rootfd=self._root()
         try:
-            claims=self._claims(rootfd)
-            history=self._protected_child(rootfd,'history')
+            claims,history=self._claims_history(rootfd)
             try:
                 payload=canonical({'nonce':nonce,'attempt_id':attempt,
                                    'current_sha256':expected_sha,

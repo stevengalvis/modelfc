@@ -27,6 +27,22 @@ separate trusted-root action only after independently verified terminal state
 and empty cleanup. Old approvals, claims and terminal records remain retained.
 The direct launcher CLI cannot spawn.
 
+The `inspect-unclaimed --nonce --attempt-id --approval-sha256` issuer
+subcommand is a separately authorized, read-only check of a protected
+approval and the existing no-launch observer; it does not create a claim,
+tombstone or history, and does not launch the diagnostic or scope.
+The pinned observer may spawn bounded read-only `systemctl show` query
+children. Protected file opens request `O_NOATIME`; directory enumeration
+and external systemd queries may still affect host access timestamps, so this
+is not a no-host-metadata-change guarantee. It checks claim/history absence before and after the observer, but its result is only a point-in-time observation and never
+substitutes for the two observations and exclusive tombstone in
+`retire-unclaimed`. Both issuer commands emit a fixed allowlisted phase and
+reason on failure. The operator and direct-disabled launcher CLI likewise
+emit bounded phase/reason markers; when their output channel fails, no
+durable marker can be guaranteed. Operator audit records remain the durable
+source for post-intent failures when their fsynced writes succeed. No marker
+claims cleanup or no launch where those facts are unknown.
+
 Private audit records link `job_id` (prepared stage nonce) and separate
 `attempt_id` with UTC timestamps, elapsed milliseconds, fixed stage/check
 codes, intent, result and explicitly `UNVERIFIED` cleanup until independently
@@ -44,8 +60,9 @@ live isolation, measured throttling, native Codex containment or cleanup.
 Use a clean environment, trusted private TMPDIR and Python `-I -S -B`
 unittest discovery on the exact extracted package. The separate launcher
 fixture has its own tests. The package tests never run systemd or the payload.
-See the top-level INSTALL_PROCEDURE.md in the review archive for exact
-future commands, prerequisites, ownership, stop rules and approval boundary.
+This 13-member source-only candidate contains no installation procedure.
+Any future host acquisition, installation, inspection or retirement needs a
+separately reviewed handoff and owner authorization.
 No host package install, service, credential, global security policy or
 production file change occurred while preparing this candidate.
 

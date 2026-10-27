@@ -2,6 +2,8 @@
 import ast
 import json
 import hashlib
+import io
+from contextlib import redirect_stderr
 import os
 import pathlib
 import stat
@@ -12,6 +14,7 @@ from unittest.mock import patch, Mock
 from types import SimpleNamespace
 
 import operator_once as op
+import launch_once as launch
 
 import base64
 import zlib
@@ -1162,6 +1165,80 @@ class OperatorTests(unittest.TestCase):
                 for child in self.audit.iterdir():
                     child.unlink()
                 self.audit.rmdir()
+
+    def test_entrypoint_failure_codes_are_bounded_and_truthful(self):
+        secret='private/path/token=DO_NOT_LOG'
+        self.assertEqual(op.safe_failure_code(ValueError('OP_ROOT')),'OP_ROOT')
+        self.assertEqual(op.safe_failure_code(ValueError(secret)),'UNKNOWN')
+        self.assertEqual(op.safe_failure_code(OSError(secret)),'OS_ERROR')
+        values=['/fixed/admission','/fixed/preflight','/fixed/launcher',
+                '/fixed/package','/fixed/recovery','/fixed/archive',
+                '/fixed/audit']
+        names=['--admission','--preflight','--launcher','--package',
+               '--recovery','--archive','--audit']
+        argv=[value for pair in zip(names,values) for value in pair]
+        with patch.object(op.os,'geteuid',return_value=1), \
+             redirect_stderr(io.StringIO()) as out:
+            self.assertEqual(op.main(argv),1)
+        self.assertIn('phase=ROOT reason=OP_ROOT claim=NOT_ATTEMPTED'
+                      ' launch=NOT_ATTEMPTED',out.getvalue())
+        self.assertNotIn(secret,out.getvalue())
+        class BrokenStderr:
+            def write(self,text): raise OSError(secret)
+        with patch.object(op.os,'geteuid',return_value=1), \
+             patch.object(op.sys,'stderr',BrokenStderr()):
+            self.assertEqual(op.main(argv),1)
+        with patch.object(launch,'need',side_effect=ValueError(secret)), \
+             redirect_stderr(io.StringIO()) as out:
+            args=['--nonce','1'*32,'--manifest-sha256','a'*64,
+                  '--systemd-run-sha256','b'*64,
+                  '--archive-path','/fixed/archive',
+                  '--package-root','/fixed/package']
+            self.assertEqual(launch.main(args),1)
+        self.assertIn('phase=DIRECT_ENTRY reason=LAUNCH_UNKNOWN',
+                      out.getvalue())
+        self.assertNotIn(secret,out.getvalue())
+        with patch.object(launch,'need',side_effect=ValueError(secret)), \
+             patch.object(launch.sys,'stderr',BrokenStderr()):
+            self.assertEqual(launch.main(args),1)
+
+    def test_operator_bootstrap_and_run_markers_preserve_known_state(self):
+        names=['--admission','--preflight','--launcher','--package',
+               '--recovery','--archive','--audit']
+        values=['/var/lib/zen53-owner-tool-'+self.approved['nonce']+
+                '/admission.py','/fixed/preflight','/fixed/launcher',
+                '/fixed/package','/fixed/recovery','/fixed/archive',
+                '/fixed/audit']
+        argv=[v for pair in zip(names,values) for v in pair]
+        with patch.object(op.os,'geteuid',return_value=0), \
+             patch.object(op.os,'getegid',return_value=0), \
+             patch.object(op,'read_pinned',side_effect=ValueError(
+                 'OP_FILE_META')), redirect_stderr(io.StringIO()) as out:
+            self.assertEqual(op.main(argv),1)
+        self.assertIn('phase=CONFIG reason=OP_FILE_META'
+                      ' claim=NOT_ATTEMPTED launch=NOT_ATTEMPTED',
+                      out.getvalue())
+        fake_store=SimpleNamespace(read_current=lambda:b'pinned')
+        with patch.object(op.os,'geteuid',return_value=0), \
+             patch.object(op.os,'getegid',return_value=0), \
+             patch.object(op,'__file__',op.OPERATOR_ROOT+'/operator_once.py'), \
+             patch.object(op,'read_pinned',return_value=b'pinned'), \
+             patch.object(op,'installed_config',return_value={
+                 'approval_root':'/trusted/approval'}), \
+             patch.object(op,'load_pinned',side_effect=[
+                 SimpleNamespace(decode=lambda raw,now:self.approved,
+                                 BindingRejected=ValueError),
+                 SimpleNamespace(configure=lambda contract:None,
+                    RootStore=lambda root:fake_store)]), \
+             patch.object(op,'Host',return_value=object()), \
+             patch.object(op,'run',side_effect=ValueError('OP_HEADROOM')), \
+             redirect_stderr(io.StringIO()) as out:
+            self.assertEqual(op.main(argv),1)
+        self.assertIn('phase=RUN reason=OP_HEADROOM claim=UNKNOWN'
+                      ' launch=UNKNOWN',out.getvalue())
+        self.assertIn('job_id='+self.approved['nonce'],out.getvalue())
+        self.assertIn('attempt_id='+self.approved['attempt_id'],
+                      out.getvalue())
 
     def test_main_bad_args_cannot_spawn(self):
         self.assertEqual(op.main(['--bad']), 2)

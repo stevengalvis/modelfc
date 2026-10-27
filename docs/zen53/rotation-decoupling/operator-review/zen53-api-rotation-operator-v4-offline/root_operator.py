@@ -14,9 +14,71 @@ import sys
 import time
 
 ROOT = '/var/lib/zen53-operator-v4'
-OPERATOR_SHA = 'b1079195e43ac8afb287327de12483b2e445025cfe18f2f7b44e81b4b19e9073'
+# Only these literal codes from the pinned issuer, store, launcher, operator
+# and admission source may be printed. Never render an exception message.
+SAFE_REASONS = frozenset('''
+    ENTRY_ARGUMENTS ENTRY_BLOCK_ATTRIBUTION ENTRY_BLOCK_SOURCE ENTRY_BLOCK_SOURCE_ALIAS
+    ENTRY_BLOCK_SOURCE_CHANGED ENTRY_BLOCK_SOURCE_PARENT ENTRY_COMPLEX_BLOCK_DEVICE ENTRY_IO_DEVICE
+    ENTRY_MOUNTINFO ENTRY_MOUNT_COVERAGE ENTRY_NESTED_MOUNT ENTRY_ORIGIN_BLOCK_NODE
+    ENTRY_ORIGIN_MOUNT ENTRY_ORIGIN_NODE_CONFLICT ENTRY_RESULT ENTRY_RUN_BLOCK_MOUNT
+    ENTRY_SOURCE_PATH ENTRY_SYSFS_IDENTITY ENTRY_SYSFS_MOUNT ENTRY_TOOL_PATH
+    ENTRY_VIRTUAL_MOUNT SPAWN_ARGV SPAWN_CHILD_SCOPE SPAWN_GUARD
+    SPAWN_KWARGS SPAWN_SCOPE SPAWN_STDIN
+    ISSUER_INSPECT_UNCONFIRMED
+    ADMISSION_ABSENCE_ALIAS ADMISSION_ABSENCE_PARENT ADMISSION_ABSENCE_PATH ADMISSION_API_STATE
+    ADMISSION_BACKING_CHANGED ADMISSION_BUS_SCHEMA ADMISSION_CGROUP_WALK ADMISSION_CHECK_TIMEOUT
+    ADMISSION_CONTROLLER_BUSY ADMISSION_CONTROLLER_META ADMISSION_CONTROLLER_PIN ADMISSION_COOPERATIVE_POLICY
+    ADMISSION_CPU ADMISSION_DISK_HEADROOM ADMISSION_FINAL_SCOPE_TIME ADMISSION_HEADROOM
+    ADMISSION_INACTIVE_USER_CGROUP ADMISSION_INACTIVE_USER_CHANGED ADMISSION_INACTIVE_USER_JOBS ADMISSION_INACTIVE_USER_LOGIND
+    ADMISSION_INACTIVE_USER_PROCESS ADMISSION_INACTIVE_USER_PROC_BOUND ADMISSION_INACTIVE_USER_PROC_SCHEMA ADMISSION_INACTIVE_USER_TRIGGER
+    ADMISSION_INACTIVE_USER_UNIT ADMISSION_IO_DEVICES ADMISSION_IO_EXTRA ADMISSION_IO_LIMIT
+    ADMISSION_IO_MISSING ADMISSION_IO_OPS ADMISSION_IO_SCHEMA ADMISSION_JOBS
+    ADMISSION_LOCKS_NOT_HELD ADMISSION_LOCK_ANCESTOR ADMISSION_LOCK_ANCESTOR_CHANGED ADMISSION_LOCK_CHANGED
+    ADMISSION_LOCK_CLOSE_UNCERTAIN ADMISSION_LOCK_PIN ADMISSION_LOCK_REPLACED ADMISSION_MEMORY_MAX
+    ADMISSION_PENDING ADMISSION_PIDS_MAX ADMISSION_PREFLIGHT_TIME ADMISSION_PROPERTY_SCHEMA
+    ADMISSION_QUERY_CLEANUP_UNCERTAIN ADMISSION_QUERY_OUTPUT ADMISSION_QUERY_STATUS ADMISSION_QUERY_TIMEOUT
+    ADMISSION_READ_BOUND ADMISSION_RLIMIT ADMISSION_ROOT ADMISSION_SCOPE_IDENTITY
+    ADMISSION_SCOPE_NAME ADMISSION_SCOPE_PROPERTIES ADMISSION_SCOPE_START ADMISSION_SCOPE_TYPE
+    ADMISSION_SCOPE_WALL_CLOCK ADMISSION_SWAP ADMISSION_SYSTEM_QUERY_DEADLINE ADMISSION_SYSTEM_UNIT_BOUND
+    ADMISSION_SYSTEM_UNIT_SCHEMA ADMISSION_TIMER_BOUND ADMISSION_TIMER_NEAR ADMISSION_TIMER_OBJECT
+    ADMISSION_TIMER_SCHEMA ADMISSION_USER_IDENTITY ADMISSION_USER_JOBS ADMISSION_USER_MANAGER_STATE
+    ADMISSION_USER_QUERY_DEADLINE ADMISSION_USER_UNITS ADMISSION_USER_UNIT_BOUND ADMISSION_USER_UNIT_SCHEMA
+    ADMISSION_USER_WORKER ADMISSION_WORKER ADMISSION_WORKER_CGROUP ADMISSION_WORKER_DESCENDANT
+    BINDING_ANCESTOR BINDING_BOUND BINDING_CHILD_META BINDING_CHILD_NOT_EMPTY
+    BINDING_CLAIM_CHANGED BINDING_CLAIM_META BINDING_CLAIM_UNCONFIRMED BINDING_CLAIM_WRITE
+    BINDING_CLOCK BINDING_DUPLICATE_KEY BINDING_EXPIRED BINDING_FIELDS
+    BINDING_FILE_CHANGED BINDING_FILE_META BINDING_ISSUER_UID BINDING_ISSUER_UNCONFIGURED
+    BINDING_JSON BINDING_MEASUREMENT BINDING_MISMATCH BINDING_NO_LAUNCH_UNVERIFIED
+    BINDING_PATH BINDING_REFERENCE BINDING_REPLAY BINDING_RETIRE_CHANGED
+    BINDING_ROOT_META BINDING_SCHEMA BINDING_TERMINAL BINDING_TERMINAL_WRITE
+    BINDING_TOMBSTONE_META BINDING_TOMBSTONE_WRITE BINDING_WRITE ISSUER_ANCESTOR
+    ISSUER_ANCESTOR_CHANGED ISSUER_ARGUMENTS ISSUER_ATTEMPT_COLLISION ISSUER_AUDIT_PRESENT
+    ISSUER_CLOCK ISSUER_FILE_CHANGED ISSUER_FILE_META ISSUER_LOCK_HELD
+    ISSUER_LOCK_OBSERVATION ISSUER_MANIFEST_APPROVAL_MISMATCH ISSUER_MANIFEST_SCHEMA ISSUER_OPERATOR_PIN
+    ISSUER_OUTPUT_META ISSUER_PATH ISSUER_RETIRE_UNCONFIRMED ISSUER_ROOT
+    ISSUER_SCOPE_CGROUP_PRESENT ISSUER_SCOPE_PRESENT ISSUER_STAGE_CHANGED ISSUER_STAGE_MISMATCH
+    LAUNCH_ANCESTOR LAUNCH_ANCESTOR_CHANGED LAUNCH_BINDING LAUNCH_BINDING_REUSE
+    LAUNCH_COMMAND LAUNCH_DIRECT_ENTRY_DISABLED LAUNCH_DIR_ANCESTOR LAUNCH_DIR_META
+    LAUNCH_DIR_NOT_EMPTY LAUNCH_DIR_PATH LAUNCH_DUPLICATE_JSON_KEY LAUNCH_FILE_CHANGED
+    LAUNCH_FILE_META LAUNCH_LOG_BOUND LAUNCH_LOG_WRITE LAUNCH_MANIFEST_BYTES
+    LAUNCH_MANIFEST_CONTRACT LAUNCH_MANIFEST_SEAL LAUNCH_MARKER_WRITE LAUNCH_PATH
+    LAUNCH_ROOT LAUNCH_STAGE_SET LAUNCH_SYSTEMD_PIN LAUNCH_TOOL_SET
+    OP_ADMISSION_PATH OP_ANCESTOR OP_ANCESTOR_CHANGED OP_APPROVAL_CHANGED
+    OP_APPROVAL_CLAIM OP_ARGUMENTS OP_AUDIT_ANCESTOR OP_AUDIT_BOUND
+    OP_AUDIT_FILE_CHANGED OP_AUDIT_FILE_META OP_AUDIT_NAME OP_AUDIT_NEW_META
+    OP_AUDIT_PATH OP_AUDIT_WRITE OP_BACKING_CHANGED OP_BINDING
+    OP_BINDING_REUSE OP_CODE_PATH OP_EARLY_RESULT OP_FILE_CHANGED
+    OP_FILE_META OP_FINISHED_NOT_ACCEPTED OP_HEADROOM OP_INSTALL_CONFIG
+    OP_LOCK_ANCESTOR OP_LOCK_ANCESTOR_CHANGED OP_LOCK_CHANGED OP_LOCK_PIN
+    OP_PATH OP_PREFLIGHT_BLOCK OP_PREFLIGHT_CHANGED OP_PREFLIGHT_OUTPUT_BOUND
+    OP_PREFLIGHT_TIMEOUT OP_ROOT OP_SCHEDULE_DEADLINE OP_SCOPE_CGROUP_PRESENT
+    OP_SCOPE_PRESENT OP_TOOL_MODULE_PATH OP_TOOL_MODULE_PRELOADED OP_TOOL_MODULE_SUBSTITUTED
+    OP_TRACE_CLOCK
+'''.split())
+
+OPERATOR_SHA = '2e45d568db1f31aa8a3bd31477bfaed6c27788337185bdaa5477f42d3a83b21a'
 DIR = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
-FILE = os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK
+FILE = os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK | os.O_NOATIME
 
 
 def read_protected(path, mode, maximum, *, owner_uid=0, owner_gid=0,
@@ -272,21 +334,68 @@ def observe_unclaimed(op, approved, launcher, *, reader=None,
     _locks_clear(_read_locks(),admission.LOCKS)
     return True
 
+def failure_marker(exc, phase, binding_error=None, *, argv=()):
+    reason = 'ISSUER_UNKNOWN'
+    trusted_type = (type(exc) is ValueError or
+                    (binding_error is not None and
+                     type(exc) is binding_error))
+    if (trusted_type and len(exc.args) == 1 and
+            type(exc.args[0]) is str and exc.args[0] in SAFE_REASONS):
+        reason = exc.args[0]
+    elif isinstance(exc, FileNotFoundError):
+        reason = 'ISSUER_IO_NOT_FOUND'
+    elif isinstance(exc, PermissionError):
+        reason = 'ISSUER_IO_PERMISSION'
+    elif isinstance(exc, FileExistsError):
+        reason = 'ISSUER_IO_EXISTS'
+    elif isinstance(exc, OSError):
+        reason = 'ISSUER_IO_UNVERIFIED'
+    if phase not in ('ROOT', 'LOAD_OPERATOR', 'LOAD_MODULES', 'OPEN_STORE',
+                     'PROVISION', 'APPROVE', 'PREPARE_OUTPUT', 'RETIRE',
+                     'INSPECT_UNCLAIMED', 'RETIRE_UNCLAIMED', 'ARGUMENTS'):
+        phase = 'UNKNOWN'
+    mutation = ('NOT_ATTEMPTED' if phase in ('ROOT', 'LOAD_OPERATOR',
+        'LOAD_MODULES', 'OPEN_STORE', 'ARGUMENTS', 'INSPECT_UNCLAIMED')
+        else 'UNKNOWN')
+    requested=[]
+    for name,label in (('--nonce','requested_nonce'),
+                       ('--attempt-id','requested_attempt')):
+        for index in range(len(argv)-1):
+            value=argv[index+1]
+            if (type(argv[index]) is str and argv[index] == name and
+                    type(value) is str and
+                    re.fullmatch(r'[0-9a-f]{32}',value)):
+                requested.append(label+'='+value)
+                break
+    return ('ZEN53_ISSUER_BLOCKED_NO_RETRY phase=' + phase +
+            ' reason=' + reason + ' store_mutation=' + mutation +
+            ' runtime_launch=NOT_ATTEMPTED no_retry=TRUE' +
+            ((' '+' '.join(requested)) if requested else ''))
+
+
 def main(argv=None):
     args=list(sys.argv[1:] if argv is None else argv)
+    phase='ROOT'
+    binding_error=None
     try:
         if ((os.geteuid(),os.getegid())!=(0,0) or
             os.path.abspath(__file__)!=ROOT+'/root_operator.py'):
             raise ValueError('ISSUER_ROOT')
+        phase='LOAD_OPERATOR'
         op=load_operator()
+        phase='LOAD_MODULES'
         contract,store_mod,launcher,config=modules(op,ROOT)
+        binding_error=contract.BindingRejected
+        phase='OPEN_STORE'
         store=store_mod.RootStore(config['approval_root'])
         if args==['provision']:
+            phase='PROVISION'
             store.provision()
             print('ZEN53_APPROVAL_STORE_PROVISIONED')
         elif len(args)==13 and args[0]=='approve' and args[1::2]==[
                 '--nonce','--manifest-sha256','--approval-ref',
                 '--archive','--package','--valid-seconds']:
+            phase='APPROVE'
             approved,sha=approve_stage(op,contract,store,launcher,
                 args[2],args[4],args[6],args[8],args[10],int(args[12]))
             print('ZEN53_APPROVAL_ISSUED nonce='+approved['nonce']+
@@ -294,29 +403,47 @@ def main(argv=None):
                   ' sha256='+sha)
         elif (len(args)==3 and args[0]=='prepare-output' and
               args[1]=='--nonce'):
+            phase='PREPARE_OUTPUT'
             if prepare_output(store,contract,launcher,args[2]) is not True:
                 raise ValueError('ISSUER_OUTPUT_META')
             print('ZEN53_OUTPUT_PREPARED')
         elif len(args)==11 and args[0]=='retire' and args[1::2]==[
                 '--nonce','--attempt-id','--approval-sha256',
                 '--terminal-ref','--cleanup-state']:
+            phase='RETIRE'
             if store.retire_current(args[2],args[4],args[6],args[8],args[10]) is not True:
                 raise ValueError('ISSUER_RETIRE_UNCONFIRMED')
             print('ZEN53_APPROVAL_RETIRED')
+        elif len(args)==7 and args[0]=='inspect-unclaimed' and args[1::2]==[
+                '--nonce','--attempt-id','--approval-sha256']:
+            phase='INSPECT_UNCLAIMED'
+            def observe(item):
+                return observe_unclaimed(op,item,launcher)
+            if store.inspect_unclaimed(args[2],args[4],args[6],observe) is not True:
+                raise ValueError('ISSUER_INSPECT_UNCONFIRMED')
+            print('ZEN53_UNCLAIMED_INSPECTION_PASS_READ_ONLY nonce='+args[2]+
+                  ' attempt_id='+args[4])
         elif len(args)==11 and args[0]=='retire-unclaimed' and args[1::2]==[
                 '--nonce','--attempt-id','--approval-sha256',
                 '--terminal-ref','--cleanup-state']:
+            phase='RETIRE_UNCLAIMED'
             def observe(item):
                 return observe_unclaimed(op,item,launcher)
             if store.retire_unclaimed(args[2],args[4],args[6],args[8],
                                       args[10],observe) is not True:
                 raise ValueError('ISSUER_RETIRE_UNCONFIRMED')
-            print('ZEN53_UNCLAIMED_APPROVAL_RETIRED')
+            print('ZEN53_UNCLAIMED_APPROVAL_RETIRED nonce='+args[2]+
+                  ' attempt_id='+args[4])
         else:
+            phase='ARGUMENTS'
             raise ValueError('ISSUER_ARGUMENTS')
         return 0
-    except BaseException:
-        print('ZEN53_ISSUER_BLOCKED_NO_RETRY',file=sys.stderr)
+    except BaseException as exc:
+        try:
+            print(failure_marker(exc, phase, binding_error, argv=args),file=sys.stderr)
+        except BaseException:
+            # Stderr can fail too; no private exception or traceback follows.
+            pass
         return 1
 
 if __name__=='__main__':

@@ -377,7 +377,10 @@ def main(argv=None):
     if (len(args) != 10 or args[0::2] !=
             ['--nonce', '--manifest-sha256', '--systemd-run-sha256',
              '--archive-path', '--package-root']):
-        print('ZEN53_LAUNCH_SPEC_ARGUMENTS', file=sys.stderr)
+        try:
+            print('ZEN53_LAUNCH_SPEC_ARGUMENTS', file=sys.stderr)
+        except BaseException:
+            pass
         return 2
     try:
         need(False, 'LAUNCH_DIRECT_ENTRY_DISABLED')
@@ -385,8 +388,17 @@ def main(argv=None):
         print(status)
         # A launcher return is never diagnostic containment acceptance.
         return 1
-    except BaseException:
-        print('ZEN53_LAUNCH_BLOCKED_OR_UNCERTAIN', file=sys.stderr)
+    except BaseException as exc:
+        reason = ('LAUNCH_DIRECT_ENTRY_DISABLED' if
+                  type(exc) is ValueError and
+                  exc.args == ('LAUNCH_DIRECT_ENTRY_DISABLED',) else
+                  'LAUNCH_UNKNOWN')
+        try:
+            print('ZEN53_LAUNCH_BLOCKED_OR_UNCERTAIN phase=DIRECT_ENTRY'
+                  ' reason=' + reason + ' state=UNKNOWN_NO_RETRY',
+                  file=sys.stderr)
+        except BaseException:
+            pass
         return 1
 
 

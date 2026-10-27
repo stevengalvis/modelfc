@@ -1,6 +1,8 @@
 """Root-operator procedure rehearsals with disposable, unprivileged roots."""
 import hashlib
 import importlib.util
+import io
+from contextlib import redirect_stderr
 import json
 import os
 from pathlib import Path
@@ -132,11 +134,12 @@ class InstallTests(unittest.TestCase):
         from types import SimpleNamespace
         fake_store=SimpleNamespace(provision=mock.Mock(return_value=True),
                                    retire_current=mock.Mock(return_value=True),
-                                   retire_unclaimed=mock.Mock(return_value=True))
+                                   retire_unclaimed=mock.Mock(return_value=True),
+                                   inspect_unclaimed=mock.Mock(return_value=True))
         fake_store_module=SimpleNamespace(RootStore=lambda root:fake_store)
         cfg={'approval_root':'/var/lib/zen53-run-approval-v1'}
         fake_op=object();fake_launcher=object()
-        fake_contract=object()
+        fake_contract=type("FakeContract",(),{"BindingRejected":contract.BindingRejected})()
         with mock.patch.object(producer,'ROOT','/fake/installed'), \
              mock.patch.object(producer,'__file__',
                                '/fake/installed/root_operator.py'), \
@@ -163,6 +166,15 @@ class InstallTests(unittest.TestCase):
                 'a'*64,'PR191:terminal','VERIFIED_EMPTY')
             with mock.patch.object(producer,'observe_unclaimed',
                                    return_value=True) as observe:
+                self.assertEqual(producer.main(['inspect-unclaimed','--nonce',N1,
+                    '--attempt-id','2'*32,'--approval-sha256','a'*64]),0)
+                inspect_args=fake_store.inspect_unclaimed.call_args.args
+                self.assertEqual(inspect_args[:3],(N1,'2'*32,'a'*64))
+                self.assertTrue(inspect_args[3]({'nonce':N1}))
+                observe.assert_called_once_with(fake_op,{'nonce':N1},
+                                                 fake_launcher)
+            with mock.patch.object(producer,'observe_unclaimed',
+                                   return_value=True) as observe:
                 self.assertEqual(producer.main(['retire-unclaimed','--nonce',N1,
                     '--attempt-id','2'*32,'--approval-sha256','a'*64,
                     '--terminal-ref','PR191:terminal',
@@ -174,6 +186,98 @@ class InstallTests(unittest.TestCase):
                 observe.assert_called_once_with(fake_op,{'nonce':N1},
                                                  fake_launcher)
             self.assertEqual(producer.main(['approve','--nonce',N1]),1)
+
+    def test_root_reason_allowlist_covers_pinned_operator_codes(self):
+        import operator_once as installed_source
+        self.assertLessEqual(installed_source.FAILURE_CODES,
+                             producer.SAFE_REASONS)
+        self.assertIn('ISSUER_STAGE_CHANGED',producer.SAFE_REASONS)
+        self.assertIn('BINDING_NO_LAUNCH_UNVERIFIED',
+                      producer.SAFE_REASONS)
+
+    def test_issuer_failure_markers_are_allowlisted_and_bounded(self):
+        self.assertIn('phase=RETIRE_UNCLAIMED reason=ISSUER_STAGE_CHANGED',
+            producer.failure_marker(ValueError('ISSUER_STAGE_CHANGED'),
+                                    'RETIRE_UNCLAIMED'))
+        self.assertIn('reason=BINDING_NO_LAUNCH_UNVERIFIED',
+            producer.failure_marker(contract.BindingRejected(
+                'BINDING_NO_LAUNCH_UNVERIFIED'),'INSPECT_UNCLAIMED',
+                contract.BindingRejected))
+        secret='private/path/token=DO_NOT_LOG'
+        for error in (ValueError(secret),OSError(secret),RuntimeError(secret)):
+            marker=producer.failure_marker(error,'bogus'+secret)
+            self.assertNotIn(secret,marker)
+            self.assertIn('phase=UNKNOWN',marker)
+            self.assertLess(len(marker),180)
+        with mock.patch.object(producer.os,'geteuid',return_value=1), \
+             redirect_stderr(io.StringIO()) as output:
+            self.assertEqual(producer.main(['inspect-unclaimed']),1)
+        self.assertIn('phase=ROOT reason=ISSUER_ROOT',output.getvalue())
+        bounded=producer.failure_marker(ValueError('ISSUER_STAGE_CHANGED'),
+            'RETIRE_UNCLAIMED',argv=['--nonce',N1,'--attempt-id','2'*32,
+                                     '--approval-sha256','a'*64])
+        self.assertIn('requested_nonce='+N1,bounded)
+        self.assertIn('requested_attempt='+'2'*32,bounded)
+        self.assertNotIn('a'*64,bounded)
+        self.assertLess(len(bounded),320)
+        class BrokenStderr:
+            def write(self,text): raise OSError('private output error')
+        with mock.patch.object(producer.os,'geteuid',return_value=1), \
+             mock.patch.object(producer.sys,'stderr',BrokenStderr()):
+            self.assertEqual(producer.main(['inspect-unclaimed']),1)
+
+    def test_issuer_entrypoint_phase_matrix_rejects_without_mutation(self):
+        from types import SimpleNamespace
+        stub=SimpleNamespace(BindingRejected=contract.BindingRejected)
+        cfg={'approval_root':'/var/lib/zen53-run-approval-v1'}
+        commands=[
+            (['provision'],'provision','PROVISION','BINDING_ROOT_META'),
+            (['approve','--nonce',N1,'--manifest-sha256','b'*64,
+              '--approval-ref','PR191:yes','--archive','/a','--package','/p',
+              '--valid-seconds','350'],'approve_stage','APPROVE',
+              'ISSUER_MANIFEST_APPROVAL_MISMATCH'),
+            (['prepare-output','--nonce',N1],'prepare_output',
+             'PREPARE_OUTPUT','ISSUER_OUTPUT_META'),
+            (['retire','--nonce',N1,'--attempt-id','2'*32,
+              '--approval-sha256','a'*64,'--terminal-ref','PR191:terminal',
+              '--cleanup-state','VERIFIED_EMPTY'],'retire_current',
+             'RETIRE','BINDING_RETIRE_CHANGED'),
+            (['inspect-unclaimed','--nonce',N1,'--attempt-id','2'*32,
+              '--approval-sha256','a'*64],'inspect_unclaimed',
+             'INSPECT_UNCLAIMED','ISSUER_SCOPE_PRESENT'),
+            (['retire-unclaimed','--nonce',N1,'--attempt-id','2'*32,
+              '--approval-sha256','a'*64,'--terminal-ref','PR191:terminal',
+              '--cleanup-state','VERIFIED_EMPTY'],'retire_unclaimed',
+             'RETIRE_UNCLAIMED','BINDING_NO_LAUNCH_UNVERIFIED'),
+        ]
+        for argv,method,phase,code in commands:
+            with self.subTest(phase=phase):
+                fake=SimpleNamespace(**{name:mock.Mock(return_value=True)
+                    for name in ('provision','retire_current',
+                        'inspect_unclaimed','retire_unclaimed')})
+                with mock.patch.object(producer,'ROOT','/fake/installed'), \
+                     mock.patch.object(producer,'__file__',
+                                       '/fake/installed/root_operator.py'), \
+                     mock.patch.object(producer.os,'geteuid',return_value=0), \
+                     mock.patch.object(producer.os,'getegid',return_value=0), \
+                     mock.patch.object(producer,'load_operator',
+                                       return_value=object()), \
+                     mock.patch.object(producer,'modules',return_value=(
+                         stub,SimpleNamespace(RootStore=lambda root:fake),
+                         object(),cfg)), \
+                     mock.patch.object(producer,'approve_stage',
+                         side_effect=ValueError(code) if method ==
+                         'approve_stage' else None), \
+                     mock.patch.object(producer,'prepare_output',
+                         side_effect=ValueError(code) if method ==
+                         'prepare_output' else None), \
+                     redirect_stderr(io.StringIO()) as output:
+                    if method not in ('approve_stage','prepare_output'):
+                        getattr(fake,method).side_effect=ValueError(code)
+                    self.assertEqual(producer.main(argv),1)
+                self.assertIn('phase='+phase+' reason='+code,
+                              output.getvalue())
+                self.assertNotIn('/fake/installed',output.getvalue())
 
     def test_unclaimed_observer_rejects_scope_output_and_lock_evidence(self):
         from types import SimpleNamespace

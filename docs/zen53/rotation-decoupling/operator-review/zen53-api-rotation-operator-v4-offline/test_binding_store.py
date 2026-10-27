@@ -174,6 +174,66 @@ class StoreTests(unittest.TestCase):
         other=record(nonce='3'*32,attempt='4'*32)
         self.assertNotEqual(self.issue(other),sha)
 
+    def test_read_only_unclaimed_inspection_reports_predicate_without_writes(self):
+        sha=self.issue()
+        self.store.clock_ns=lambda:501_000_000_000
+        before={str(p.relative_to(self.root)):(p.stat().st_ino,
+                p.read_bytes() if p.is_file() else None)
+                for p in self.root.rglob('*')}
+        seen=[]
+        self.assertTrue(self.store.inspect_unclaimed(N,A,sha,
+            lambda item: seen.append(item['attempt_id']) or True))
+        self.assertEqual(seen,[A])
+        with self.assertRaisesRegex(contract.BindingRejected,
+                                    'BINDING_NO_LAUNCH_UNVERIFIED'):
+            self.store.inspect_unclaimed(N,A,sha,lambda item: False)
+        for wrong in ((N,A,'f'*64),(N,'3'*32,sha)):
+            with self.assertRaisesRegex(contract.BindingRejected,
+                                        'BINDING_RETIRE_CHANGED'):
+                self.store.inspect_unclaimed(*wrong,lambda item: True)
+        after={str(p.relative_to(self.root)):(p.stat().st_ino,
+               p.read_bytes() if p.is_file() else None)
+               for p in self.root.rglob('*')}
+        self.assertEqual(after,before)
+        self.store.clock_ns=lambda:150_000_000_000
+        self.assertTrue(self.store.claim_once(N,A,sha))
+        with self.assertRaisesRegex(contract.BindingRejected,'BINDING_REPLAY'):
+            self.store.inspect_unclaimed(N,A,sha,lambda item: True)
+
+    def test_read_only_inspection_rechecks_concurrent_claim(self):
+        sha=self.issue()
+        def concurrent_claim(item):
+            self.assertTrue(self.store.claim_once(N,A,sha))
+            return True
+        with self.assertRaisesRegex(contract.BindingRejected,'BINDING_REPLAY'):
+            self.store.inspect_unclaimed(N,A,sha,concurrent_claim)
+        self.assertTrue((self.root/'current.json').exists())
+        self.assertFalse((self.root/'history'/(N+'.terminal.json')).exists())
+
+    def test_inspection_preserves_atime_and_missing_history_closes_fds(self):
+        sha=self.issue()
+        current=self.root/'current.json'
+        paths=(current,)
+        for path in paths:
+            st=path.stat()
+            os.utime(path,ns=(1_000_000_000,st.st_mtime_ns))
+        atimes=[path.stat().st_atime_ns for path in paths]
+        self.assertTrue(store_module.READ & os.O_NOATIME)
+        self.assertTrue(self.store.inspect_unclaimed(N,A,sha,lambda _:True))
+        self.assertEqual([path.stat().st_atime_ns for path in paths],atimes)
+        (self.root/'history').rmdir()
+        before=len(os.listdir('/proc/self/fd'))
+        for _ in range(3):
+            with self.assertRaises(FileNotFoundError):
+                self.store.inspect_unclaimed(N,A,sha,lambda _:True)
+            self.assertEqual(len(os.listdir('/proc/self/fd')),before)
+            with self.assertRaises(FileNotFoundError):
+                self.store.retire_unclaimed(N,A,sha,'PR191:terminal',
+                    'VERIFIED_EMPTY',lambda _:True)
+            self.assertEqual(len(os.listdir('/proc/self/fd')),before)
+        self.assertFalse((self.root/'claims'/N).exists())
+        self.assertTrue(current.exists())
+
     def test_unclaimed_retirement_rejects_claim_identity_and_bad_evidence(self):
         sha=self.issue()
         for wrong in ((N,A,'f'*64),(N,'3'*32,sha)):
