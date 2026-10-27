@@ -1,0 +1,22 @@
+{
+  "/empty-home": {
+    "source": "/tmp/zen53-empty-bind-preparation-c4dc2b6bff2d4cafe744ca2134c852a0/empty-home",
+    "uid": 0,
+    "gid": 0,
+    "mode": "0555",
+    "device_inode": [
+      2049,
+      128952
+    ]
+  },
+  "/var/tmp": {
+    "source": "/tmp/zen53-empty-bind-preparation-c4dc2b6bff2d4cafe744ca2134c852a0/empty-vartmp",
+    "uid": 0,
+    "gid": 0,
+    "mode": "0555",
+    "device_inode": [
+      2049,
+      129326
+    ]
+  }
+}

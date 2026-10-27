@@ -1,0 +1,26 @@
+{
+  "status": "BLOCKED",
+  "source_report": "https://github.com/stevengalvis/modelfc/pull/191#issuecomment-6384364441",
+  "historical_observation_context": "UNKNOWN",
+  "reported_host_capture_exit_code": 2,
+  "reported_failure": "FINISH_SIGNAL_MISSING_OR_TIMEOUT",
+  "reported_restricted_capture_exit_code": 0,
+  "reported_host_namespace": {
+    "user": 4026531837,
+    "mount": 4026531841,
+    "pid": 4026531836,
+    "local_pid1_user": 4026531837,
+    "local_pid1_mount": 4026531841
+  },
+  "reported_restricted_namespace": {
+    "user": 4026532437,
+    "mount": 4026532438,
+    "pid": 4026532498,
+    "local_pid1_user": 4026532437,
+    "local_pid1_mount": 4026532438
+  },
+  "retained_private_collector_sha256": "a10c63987a7526331dde2eda7ca05a47ba182633d466d9167b1ad14f13c47902",
+  "collector_bytes_available_in_this_package": false,
+  "finish_acknowledgement_established": false,
+  "usable_as_trusted_owner_evidence": false
+}

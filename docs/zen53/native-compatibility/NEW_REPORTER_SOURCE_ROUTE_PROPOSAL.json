@@ -1,0 +1,11 @@
+{
+  "acquisition_identity_required_at_preparation": true,
+  "historical_dependency_sha256": "ec4c7e553178e61677a961ff1e0c0a88103ffe3d95cfef7dd43cef2acf38aa22",
+  "legacy_dependencies_must_not_be_used_as_current_source": true,
+  "package_member": "candidate/report.py",
+  "sha256": "f63c070d3c9f4b07a977fe9dda5fc4de0860a5e8510356e9ade123d5ffb2a09e",
+  "size": 33391,
+  "status": "PROPOSAL_ONLY_NOT_STAGE_READY",
+  "target": "/diagnostic/report.py",
+  "version": 1
+}

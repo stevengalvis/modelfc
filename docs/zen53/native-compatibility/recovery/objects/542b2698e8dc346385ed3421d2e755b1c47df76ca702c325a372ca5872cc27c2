@@ -1,0 +1,114 @@
+--- a/launch.py
++++ b/launch.py
+@@ -115,6 +115,48 @@
+          mounts=mounts)
+ 
+ 
++# Exact pinned Rust io::Error display in the fixed C.UTF-8 Linux environment.
++# This is a source-derived expectation, NOT an observed runtime success.
++EXPECTED_ALIAS_WARNING = (b"WARNING: proceeding, even though we could not create PATH aliases: "
++                          b"Read-only file system (os error 30)\n")
++
++
++class NativeOutput:
++    """Bounded complete-line classification; only one exact line is exempted."""
++    def __init__(self):
++        self.total = 0
++        self.pending = b""
++        self.alias_warnings = 0
++
++    def feed(self, chunk):
++        self.total += len(chunk)
++        need(self.total <= 16384, "native_OUTPUT_BOUND")
++        self.pending += chunk
++        observed = False
++        while b"\n" in self.pending:
++            line, self.pending = self.pending.split(b"\n", 1)
++            line += b"\n"
++            if line == EXPECTED_ALIAS_WARNING:
++                need(self.alias_warnings == 0, "DUPLICATE_ALIAS_WARNING")
++                self.alias_warnings += 1
++                observed = True
++                continue  # Exempt ONLY this validated, complete line.
++            need(all(32 <= value <= 126 or value in (9, 10) for value in line),
++                 "NATIVE_OUTPUT_MALFORMED")
++            need(not line[:-1] or not EXPECTED_ALIAS_WARNING.lower().startswith(line[:-1].lower()),
++                 "MALFORMED_ALIAS_WARNING")
++            lower = line.lower()
++            need(not any(token in lower for token in
++                         (b"warn", b"error", b"denied", b"read-only", b"read only",
++                          b"not permitted", b"failed", b"failure", b"fatal", b"panic",
++                          b"could not")), "CODEX_STARTUP_ACCESS_OR_WRITE_FAILURE")
++        return observed
++
++    def finish(self):
++        # A partial expected warning is never exempted, even at EOF.
++        need(not self.pending, "NATIVE_OUTPUT_UNTERMINATED")
++
++
+ def fixed_command(argv, seconds, label):
+     emit(label + "_start", argv=argv)
+     read_fd, write_fd = os.pipe2(os.O_CLOEXEC)
+@@ -131,6 +173,7 @@
+     os.close(write_fd)
+     os.set_blocking(read_fd, False)
+     end, output, status, eof = time.monotonic() + seconds, bytearray(), None, False
++    native_output = NativeOutput() if label == "native" else None
+     while status is None or not eof:
+         # Any failure ends this launcher; whole-cgroup stop is the supervisor's duty.
+         need(time.monotonic() < end, label + "_TIMEOUT")
+@@ -141,12 +184,15 @@
+                 output.extend(chunk)
+                 need(len(output) <= 16384, label + "_OUTPUT_BOUND")
+                 if label == "native":
+-                    warning = b"WARNING: proceeding, even though we could not create PATH aliases:" in output
+-                    access = b"Read-only file system" in output or b"Permission denied" in output
+-                    if warning or access:
++                    try:
++                        observed = native_output.feed(chunk)
++                    except RuntimeError:
+                         emit("native_stop_evidence", output=bytes(output[-4096:]).decode("utf-8", "replace"))
+-                    need(not warning, "CODEX_STARTUP_WRITABLE_STATE_WARNING")
+-                    need(not access, "CODEX_STARTUP_ACCESS_OR_WRITE_FAILURE")
++                        raise
++                    if observed:
++                        emit("native_alias_warning_observation",
++                             result="OBSERVATION_NOT_PASS", count=1,
++                             warning=EXPECTED_ALIAS_WARNING.decode("ascii").rstrip("\n"))
+             else:
+                 eof = True
+         if status is None:
+@@ -154,6 +200,12 @@
+             if child:
+                 status = value
+     os.close(read_fd)
++    if native_output is not None:
++        try:
++            native_output.finish()
++        except RuntimeError:
++            emit("native_stop_evidence", output=bytes(output[-4096:]).decode("utf-8", "replace"))
++            raise
+     emit(label + "_finish", pid=pid, wait_status=status,
+          output=bytes(output).decode("utf-8", "replace"))
+     need(os.WIFEXITED(status) and os.WEXITSTATUS(status) == 0, label + "_NONZERO")
+@@ -163,7 +215,8 @@
+ try:
+     admission()
+     help_output = fixed_command(["/usr/bin/bwrap", "--help"], 5, "bwrap_help")
+-    need(b"--as-pid-1" in help_output and b"--perms" in help_output, "BWRAP_REQUIRED_FEATURES")
++    need(all(flag in help_output.split() for flag in (b"--as-pid-1", b"--perms", b"--argv0")),
++         "BWRAP_REQUIRED_FEATURES")
+     # Recheck actual mounts/hashes immediately before the one native invocation.
+     admission()
+     output = fixed_command(NATIVE, 35, "native")
+--- a/supervisor.py
++++ b/supervisor.py
+@@ -312,7 +312,7 @@
+     values = dict(line.split("=", 1) for line in report_lines if "=" in line)
+     need(values.get("status.NoNewPrivs") == "1" and values.get("status.Seccomp") == "2"
+          and all(int(values.get("status." + key, "-1"), 16) == 0
+-                 for key in ("CapInh", "CapPrm", "CapEff", "CapAmb")), "REPORTED_PRIVILEGES")
++                 for key in ("CapInh", "CapPrm", "CapEff", "CapBnd", "CapAmb")), "REPORTED_PRIVILEGES")
+     outer = [json.loads(line) for line in raw.splitlines() if line.startswith("{")]
+     outer = [item for item in outer if item.get("phase") == "outer_admission"]
+     need(bool(outer) and all(values.get("namespace." + name) != outer[-1]["namespaces"][name]

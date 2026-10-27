@@ -1,0 +1,53 @@
+[Unit]
+Description=ZEN-53 one credential-free read-only compatibility diagnostic
+
+[Service]
+Type=exec
+RemainAfterExit=yes
+DynamicUser=yes
+User=zen53-mincompat
+RootDirectory=/tmp/zen53-minimal-compat-o5j8utk6/rootfs
+MountAPIVFS=yes
+WorkingDirectory=/diagnostic
+PrivateNetwork=yes
+RestrictAddressFamilies=AF_UNIX AF_NETLINK
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectProc=invisible
+ProcSubset=all
+PrivateUsers=no
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateDevices=yes
+DevicePolicy=closed
+RestrictSUIDSGID=yes
+PrivateTmp=yes
+CPUQuota=50%
+MemoryHigh=256M
+MemoryMax=384M
+MemorySwapMax=0
+TasksMax=32
+RuntimeMaxSec=60
+TimeoutStopSec=3
+KillMode=control-group
+SendSIGKILL=yes
+Restart=no
+OOMPolicy=kill
+Nice=19
+IOWeight=10
+LimitCORE=0
+LimitNOFILE=128
+LimitFSIZE=64K
+UMask=0077
+StandardInput=null
+StandardOutput=append:/tmp/zen53-minimal-compat-o5j8utk6/evidence/stdout.log
+StandardError=append:/tmp/zen53-minimal-compat-o5j8utk6/evidence/stderr.log
+ReadOnlyPaths=/ /run /dev /dev/shm /tmp /var/tmp /empty-home
+InaccessiblePaths=/dev/mqueue /dev/hugepages
+BindReadOnlyPaths=/tmp/zen53-minimal-compat-o5j8utk6/empty-home:/empty-home /tmp/zen53-minimal-compat-o5j8utk6/empty-tmp:/tmp /tmp/zen53-minimal-compat-o5j8utk6/empty-vartmp:/var/tmp /tmp/zen53-minimal-compat-o5j8utk6/empty-run:/run /tmp/zen53-minimal-compat-o5j8utk6/empty-shm:/dev/shm /usr/bin/bwrap:/usr/bin/bwrap
+Environment=PATH=/usr/bin:/bin HOME=/empty-home CODEX_HOME=/empty-home LANG=C.UTF-8 LC_ALL=C.UTF-8 TMPDIR=/tmp TERM=dumb NO_COLOR=1 RUST_LOG=off PYTHONDONTWRITEBYTECODE=1
+ExecStart=/usr/bin/python3 -I -S -B /diagnostic/launch.py

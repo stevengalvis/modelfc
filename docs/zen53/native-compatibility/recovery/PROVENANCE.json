@@ -1,0 +1,6 @@
+{
+  "archive_sha256": "a0468ba1cc95fea86f0485595dba352a399a39d001d07193ad861e08cda2baf9",
+  "inventory_sha256": "d92104f8f4fccac75db2ac9c3d536dd8f9d979a06eb3fd28ae9316173fe7dcfd",
+  "canonical_index": "https://github.com/stevengalvis/modelfc/pull/191#issuecomment-6356492581",
+  "scope": "Exact map and 56 objects extracted after complete archive and inventory verification; not full four-input external replay."
+}

@@ -1,0 +1,5 @@
+# Authenticated source snapshots must retain exact bytes on every checkout.
+docs/zen53/native-compatibility/** -text
+# Historical content-addressed objects/diffs retain their published whitespace.
+docs/zen53/native-compatibility/recovery/objects/* -whitespace
+docs/zen53/native-compatibility/diagnostic-amendment.diff -whitespace

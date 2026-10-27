@@ -1,0 +1,14 @@
+{
+  "fixture_sha256": "6c0a089c88cf79f9c7b64f2b5dbdb3b97611a3ad45d25e06a260f4934ce404f9",
+  "fixture_identical_to_reviewed": true,
+  "path_adaptations": 0,
+  "test_count": 18,
+  "failures": 0,
+  "errors": 0,
+  "skips": 0,
+  "elapsed_seconds": 0.095,
+  "operational_imports": 0,
+  "fake_operations_only": true,
+  "fixture_scope": "exact patched launcher/supervisor; original source-only baseline metadata",
+  "generated_runtime_verification": "STATIC_CHECKS.json"
+}
