@@ -104,11 +104,14 @@ FAILURE_CODES = frozenset((
     'BINDING_JSON',
     'BINDING_MEASUREMENT',
     'BINDING_MISMATCH',
+    'BINDING_NO_LAUNCH_UNVERIFIED',
     'BINDING_PATH',
     'BINDING_REFERENCE',
     'BINDING_REPLAY',
     'BINDING_ROOT_META',
     'BINDING_SCHEMA',
+    'BINDING_TOMBSTONE_META',
+    'BINDING_TOMBSTONE_WRITE',
     'BINDING_WRITE',
     # ADMISSION fixed rejections from the pinned reviewed source.
     'ADMISSION_ABSENCE_ALIAS',
@@ -257,7 +260,7 @@ PREFLIGHT_SHA = 'bc43a36b25e077ceb4af876e538abcb97c3e52fbf8b01b31152fd956ceb20e5
 LAUNCHER_SHA = '7384443c2fd0029135c3d27319f82389481a68931b2da908e79ff62d742ad1f2'
 APPROVED_BINDING_SHA = '3781ef084eb18efab6dbe864cc3c4ba300fbba47daf8e63cdda725efc9f0aa0c'
 INSTALL_CONFIG_SHA = '9e4b0b419c82048b4026f44e6bff409c5f88b0acbdfcfd8b81bf57bc27b82296'
-BINDING_STORE_SHA = '60d5daf96b98fbfe422e43015a43f2877a3b2b5e771b3403c0d658b370d54bee'
+BINDING_STORE_SHA = '594a59fe597d762d67b73c9059f95c5eae07b58763eddf94d7729b733c837005'
 PACKAGE_ARCHIVE_SHA = 'a527085d5fb968fed1577a9afdea4d8173fef1b931ec06012cc49c3d909a4d33'
 PACKAGE_INVENTORY_SHA = 'c74f259e3a94fc31c1792d66c13fff4f2149430688dc18db932137db157a985c'
 SYSTEMD_SHA = 'de28cc5757d3789efa5f6fed5659893410469f68b42175d4531f5b34d3a09e16'
@@ -342,8 +345,8 @@ def audit_fallback(kind):
         pass
 
 
-def schedule_fallback(reason):
-    """Fixed pre-audit terminal category; never creates a reservation."""
+def schedule_fallback(reason, exc=None):
+    """Fixed pre-audit category and trusted code; never creates a reservation."""
     marker = {
         'ADMISSION_TIMER_NEAR': b'OP_SCHEDULE_TIMER_PROXIMITY_NO_AUTO_RETRY\n',
         'ACTIVITY_OBSERVED': b'OP_SCHEDULE_ACTIVITY_OBSERVED_NO_AUTO_RETRY\n',
@@ -351,6 +354,17 @@ def schedule_fallback(reason):
         'RESOURCE_GATE': b'OP_SCHEDULE_RESOURCE_GATE_NO_AUTO_RETRY\n',
         'UNKNOWN': b'OP_SCHEDULE_UNKNOWN_NO_AUTO_RETRY\n',
     }.get(reason, b'OP_SCHEDULE_UNKNOWN_NO_AUTO_RETRY\n')
+    # Only an exact built-in ValueError carrying one exact allowlisted string
+    # may add detail. Never render an exception, its path, or command output.
+    code = None
+    if (type(exc) is ValueError and len(exc.args) == 1 and
+            type(exc.args[0]) is str and
+            exc.args[0] in (SCHEDULE_ACTIVITY_CODES |
+                            SCHEDULE_QUIESCENCE_CODES |
+                            SCHEDULE_RESOURCE_CODES)):
+        code = exc.args[0]
+    if code is not None:
+        marker += b'OP_SCHEDULE_PREDICATE=' + code.encode('ascii') + b'\n'
     try:
         os.write(2, marker)
     except OSError:
@@ -713,7 +727,7 @@ def run(host, *, package, recovery, archive, audit_path,
         except ValueError as exc:
             reason = str(exc)
             if reason != 'ADMISSION_TIMER_NEAR':
-                schedule_fallback(schedule_reason(exc))
+                schedule_fallback(schedule_reason(exc), exc)
                 raise
             # Preserve the original near-schedule polling decision, but a
             # subclass/spoofed message cannot claim trusted provenance.

@@ -131,7 +131,8 @@ class InstallTests(unittest.TestCase):
     def test_exact_cli_argument_routing_no_wrappers(self):
         from types import SimpleNamespace
         fake_store=SimpleNamespace(provision=mock.Mock(return_value=True),
-                                   retire_current=mock.Mock(return_value=True))
+                                   retire_current=mock.Mock(return_value=True),
+                                   retire_unclaimed=mock.Mock(return_value=True))
         fake_store_module=SimpleNamespace(RootStore=lambda root:fake_store)
         cfg={'approval_root':'/var/lib/zen53-run-approval-v1'}
         fake_op=object();fake_launcher=object()
@@ -160,7 +161,108 @@ class InstallTests(unittest.TestCase):
                 '--cleanup-state','VERIFIED_EMPTY']),0)
             fake_store.retire_current.assert_called_once_with(N1,'2'*32,
                 'a'*64,'PR191:terminal','VERIFIED_EMPTY')
+            with mock.patch.object(producer,'observe_unclaimed',
+                                   return_value=True) as observe:
+                self.assertEqual(producer.main(['retire-unclaimed','--nonce',N1,
+                    '--attempt-id','2'*32,'--approval-sha256','a'*64,
+                    '--terminal-ref','PR191:terminal',
+                    '--cleanup-state','VERIFIED_EMPTY']),0)
+                args=fake_store.retire_unclaimed.call_args.args
+                self.assertEqual(args[:5],(N1,'2'*32,'a'*64,
+                                           'PR191:terminal','VERIFIED_EMPTY'))
+                self.assertTrue(args[5]({'nonce':N1}))
+                observe.assert_called_once_with(fake_op,{'nonce':N1},
+                                                 fake_launcher)
             self.assertEqual(producer.main(['approve','--nonce',N1]),1)
+
+    def test_unclaimed_observer_rejects_scope_output_and_lock_evidence(self):
+        from types import SimpleNamespace
+        nonce=N1
+        approved={'nonce':nonce,'tool_identity':[9,10],
+                  'stage_identity':[9,11], 'manifest_identity':[9,12],
+                  'manifest_sha256':'a'*64}
+        class Launcher:
+            TOOL='/fixed/tool'; STAGE='/fixed/stage'
+            LAUNCH_ROOT='/fixed/output'; MANIFEST='/fixed/tool/manifest'
+            UNIT='zen53-owner-capture-'+nonce+'.scope'
+            def bind(self,item): self.item=item
+            def _directory(self,path,identity=None,*,empty=False):
+                if self.changed_stage and path==self.STAGE:
+                    raise ValueError('LAUNCH_DIR_META')
+                if empty and (self.dirty_output and path==self.LAUNCH_ROOT or
+                              self.dirty_evidence and path.endswith('/host-evidence')):
+                    raise ValueError('LAUNCH_DIR_NOT_EMPTY')
+                return tuple(identity) if identity is not None else (9,13)
+            def verified_file(self,*args):
+                if self.changed_manifest:
+                    raise ValueError('LAUNCH_FILE_CHANGED')
+                return b'pinned'
+        class Reader:
+            def missing(self,path):
+                return not ((self.scope_present and
+                             path.startswith('/sys/fs/cgroup')) or
+                            (self.audit_present and path.endswith(nonce)))
+            def read(self,path,limit): return self.locks
+        launcher=Launcher();launcher.dirty_output=False
+        launcher.dirty_evidence=launcher.changed_stage=launcher.changed_manifest=False
+        reader=Reader();reader.scope_present=reader.audit_present=False
+        reader.locks='';reader.unit_state='inactive'
+        admission=SimpleNamespace(HostReader=lambda:reader,
+            LOCKS=(('/fixed/lock',2049,543436,0,0,0o600),),
+            _property=lambda *args:{'LoadState':'not-found',
+                                    'ActiveState':reader.unit_state})
+        op=SimpleNamespace(lock_metadata=lambda a:True)
+        def observe():
+            with mock.patch.object(producer,'_read_locks',
+                                   return_value=reader.locks):
+                return producer.observe_unclaimed(op,approved,launcher,
+                    reader=reader,admission=admission)
+        self.assertTrue(observe())
+        launcher.dirty_output=True
+        with self.assertRaisesRegex(ValueError,'LAUNCH_DIR_NOT_EMPTY'):
+            observe()
+        launcher.dirty_output=False;reader.scope_present=True
+        with self.assertRaisesRegex(ValueError,'ISSUER_SCOPE_CGROUP_PRESENT'):
+            observe()
+        reader.scope_present=False;reader.locks='1: FLOCK ADVISORY WRITE 42 08:01:543436 0 EOF\n'
+        with self.assertRaisesRegex(ValueError,'ISSUER_LOCK_HELD'):
+            observe()
+        reader.locks='garbage 08:01:999\n'
+        with self.assertRaisesRegex(ValueError,'ISSUER_LOCK_OBSERVATION'):
+            observe()
+        reader.locks='';reader.unit_state='active'
+        with self.assertRaisesRegex(ValueError,'ISSUER_SCOPE_PRESENT'):
+            observe()
+        reader.unit_state='inactive';reader.audit_present=True
+        with self.assertRaisesRegex(ValueError,'ISSUER_AUDIT_PRESENT'):
+            observe()
+        reader.audit_present=False;launcher.changed_stage=True
+        with self.assertRaisesRegex(ValueError,'LAUNCH_DIR_META'):
+            observe()
+        launcher.changed_stage=False;launcher.changed_manifest=True
+        with self.assertRaisesRegex(ValueError,'LAUNCH_FILE_CHANGED'):
+            observe()
+        launcher.changed_manifest=False;launcher.dirty_evidence=True
+        with self.assertRaisesRegex(ValueError,'LAUNCH_DIR_NOT_EMPTY'):
+            observe()
+
+    def test_lock_read_requires_eof_and_bounded_well_formed_rows(self):
+        rows=[b'1: FLOCK ADVISORY WRITE 42 08:01:999 0 EOF\n',
+              b'2: FLOCK ADVISORY WRITE 43 08:01:543436 0 EOF\n',b'']
+        calls=[]
+        def read(fd,limit):
+            calls.append(limit)
+            return rows.pop(0)
+        raw=producer._read_locks(open_file=lambda *args:7,read=read,
+                                 close=lambda fd:None)
+        self.assertEqual(len(calls),3)
+        with self.assertRaisesRegex(ValueError,'ISSUER_LOCK_HELD'):
+            producer._locks_clear(raw,(('/fixed/lock',2049,543436,0,0,0o600),))
+        with self.assertRaisesRegex(ValueError,'ISSUER_LOCK_OBSERVATION'):
+            producer._locks_clear('garbage 08:01:999\n',())
+        with self.assertRaisesRegex(ValueError,'ISSUER_LOCK_OBSERVATION'):
+            producer._read_locks(open_file=lambda *args:7,
+                read=lambda fd,limit:b'x'*min(limit,8192),close=lambda fd:None)
 
     def test_prepare_output_exclusive_and_bound_to_current_approval(self):
         self.store.provision()

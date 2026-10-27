@@ -8,12 +8,13 @@ import hashlib
 import importlib.util
 import json
 import os
+import re
 import stat
 import sys
 import time
 
 ROOT = '/var/lib/zen53-operator-v4'
-OPERATOR_SHA = '9f7a2467687ff2032cd55d92563e045d8830c08e8cfb259579e9bcd82c07c7f8'
+OPERATOR_SHA = 'b1079195e43ac8afb287327de12483b2e445025cfe18f2f7b44e81b4b19e9073'
 DIR = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
 FILE = os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK
 
@@ -193,6 +194,84 @@ def prepare_output(store, contract, launcher, nonce, *, base=None):
         os.close(parent)
     return True
 
+def _read_locks(*, open_file=os.open, read=os.read, close=os.close):
+    """Read the bounded proc lock table through EOF, never a single read."""
+    fd=open_file('/proc/locks',os.O_RDONLY | os.O_NOFOLLOW |
+                 os.O_CLOEXEC | os.O_NONBLOCK)
+    try:
+        chunks=[];total=0
+        while True:
+            part=read(fd,min(8192,131073-total))
+            if not part:
+                break
+            if type(part) is not bytes:
+                raise ValueError('ISSUER_LOCK_OBSERVATION')
+            total+=len(part)
+            if total>131072:
+                raise ValueError('ISSUER_LOCK_OBSERVATION')
+            chunks.append(part)
+        try:
+            return b''.join(chunks).decode('ascii')
+        except UnicodeDecodeError:
+            raise ValueError('ISSUER_LOCK_OBSERVATION') from None
+    finally:
+        close(fd)
+
+def _locks_clear(raw, locks):
+    """Inspect a complete kernel lock table without acquiring host locks."""
+    if type(raw) is not str or len(raw) > 131072:
+        raise ValueError('ISSUER_LOCK_OBSERVATION')
+    targets={(os.major(device),os.minor(device),inode)
+             for _,device,inode,*_ in locks}
+    for line in raw.splitlines():
+        match=re.fullmatch(
+            r'[0-9]+: (?:-> )?(?:POSIX|FLOCK|OFDLCK) ADVISORY '
+            r'(?:READ|WRITE) -?[0-9]+ ([0-9a-fA-F]+):([0-9a-fA-F]+):'
+            r'([0-9]+) [0-9]+ (?:[0-9]+|EOF)',line)
+        if match is None:
+            raise ValueError('ISSUER_LOCK_OBSERVATION')
+        major,minor,inode=match.groups()
+        if (int(major,16),int(minor,16),int(inode)) in targets:
+            raise ValueError('ISSUER_LOCK_HELD')
+    return True
+
+def observe_unclaimed(op, approved, launcher, *, reader=None,
+                      admission=None):
+    """Independent bounded no-launch snapshot for the trusted root retirer.
+
+    The claim tombstone in RootStore is the linearization point. These reads
+    supplement, rather than replace, the proof that reviewed code claims
+    before spawning. Any unavailable or contradictory observation blocks.
+    """
+    launcher.bind(approved)
+    if admission is None:
+        source=op.read_pinned(launcher.TOOL+'/admission.py',op.ADMISSION_SHA)
+        admission=op.load_pinned('zen53_retire_verified_admission',source)
+    reader=admission.HostReader() if reader is None else reader
+    if (launcher._directory(launcher.TOOL,
+                            tuple(approved['tool_identity'])) !=
+            tuple(approved['tool_identity']) or
+        launcher._directory(launcher.STAGE,
+                            tuple(approved['stage_identity'])) !=
+            tuple(approved['stage_identity'])):
+        raise ValueError('ISSUER_STAGE_CHANGED')
+    launcher.verified_file(launcher.MANIFEST,approved['manifest_sha256'],
+                           262144,0o600,
+                           tuple(approved['manifest_identity']))
+    launcher._directory(launcher.LAUNCH_ROOT,empty=True)
+    for name in ('host-evidence','controller-evidence'):
+        launcher._directory(launcher.STAGE+'/'+name,empty=True)
+    if not reader.missing('/var/lib/zen53-operator-v4-audit-'+approved['nonce']):
+        raise ValueError('ISSUER_AUDIT_PRESENT')
+    if not reader.missing('/sys/fs/cgroup/system.slice/'+launcher.UNIT):
+        raise ValueError('ISSUER_SCOPE_CGROUP_PRESENT')
+    props=admission._property(reader,launcher.UNIT,('LoadState','ActiveState'))
+    if props!={'LoadState':'not-found','ActiveState':'inactive'}:
+        raise ValueError('ISSUER_SCOPE_PRESENT')
+    op.lock_metadata(admission)
+    _locks_clear(_read_locks(),admission.LOCKS)
+    return True
+
 def main(argv=None):
     args=list(sys.argv[1:] if argv is None else argv)
     try:
@@ -224,6 +303,15 @@ def main(argv=None):
             if store.retire_current(args[2],args[4],args[6],args[8],args[10]) is not True:
                 raise ValueError('ISSUER_RETIRE_UNCONFIRMED')
             print('ZEN53_APPROVAL_RETIRED')
+        elif len(args)==11 and args[0]=='retire-unclaimed' and args[1::2]==[
+                '--nonce','--attempt-id','--approval-sha256',
+                '--terminal-ref','--cleanup-state']:
+            def observe(item):
+                return observe_unclaimed(op,item,launcher)
+            if store.retire_unclaimed(args[2],args[4],args[6],args[8],
+                                      args[10],observe) is not True:
+                raise ValueError('ISSUER_RETIRE_UNCONFIRMED')
+            print('ZEN53_UNCLAIMED_APPROVAL_RETIRED')
         else:
             raise ValueError('ISSUER_ARGUMENTS')
         return 0

@@ -151,6 +151,162 @@ class StoreTests(unittest.TestCase):
         with self.assertRaises(FileExistsError):
             self.issue(record(nonce='3'*32,attempt='4'*32))
 
+    def test_unclaimed_retirement_tombstone_blocks_replay(self):
+        sha=self.issue()
+        # Terminal cleanup can be verified after the run-approval expiry.
+        self.store.clock_ns=lambda:501_000_000_000
+        observations=[]
+        def clear(item):
+            observations.append(item['attempt_id'])
+            return True
+        self.assertTrue(self.store.retire_unclaimed(N,A,sha,'PR191:terminal',
+                                                    'VERIFIED_EMPTY',clear))
+        self.assertEqual(observations,[A,A])
+        self.assertFalse((self.root/'current.json').exists())
+        tombstone=json.loads((self.root/'claims'/N).read_bytes())
+        self.assertEqual(tombstone,{'nonce':N,'attempt_id':A,
+            'current_sha256':sha,'status':'UNCLAIMED_TERMINAL'})
+        self.assertEqual(json.loads((self.root/'history'/
+            (N+'.terminal.json')).read_bytes())['retirement_kind'],'UNCLAIMED')
+        self.store.clock_ns=lambda:150_000_000_000
+        with self.assertRaisesRegex(contract.BindingRejected,'BINDING_REPLAY'):
+            self.issue(record(nonce=N,attempt='4'*32))
+        other=record(nonce='3'*32,attempt='4'*32)
+        self.assertNotEqual(self.issue(other),sha)
+
+    def test_unclaimed_retirement_rejects_claim_identity_and_bad_evidence(self):
+        sha=self.issue()
+        for wrong in ((N,A,'f'*64),(N,'3'*32,sha)):
+            with self.assertRaisesRegex(contract.BindingRejected,
+                                        'BINDING_RETIRE_CHANGED'):
+                self.store.retire_unclaimed(*wrong,'PR191:terminal',
+                                            'VERIFIED_EMPTY',lambda _: True)
+        for cleanup,observer in (('UNKNOWN',lambda _: True),
+                                 ('VERIFIED_EMPTY',lambda _: False)):
+            with self.assertRaises(contract.BindingRejected):
+                self.store.retire_unclaimed(N,A,sha,'PR191:terminal',
+                                            cleanup,observer)
+        self.assertFalse((self.root/'claims'/N).exists())
+        self.assertTrue((self.root/'current.json').exists())
+        self.store.claim_once(N,A,sha)
+        with self.assertRaises(FileExistsError):
+            self.store.retire_unclaimed(N,A,sha,'PR191:terminal',
+                                        'VERIFIED_EMPTY',lambda _: True)
+        self.assertTrue((self.root/'current.json').exists())
+
+    def test_unclaimed_retirement_rejects_malformed_protected_record(self):
+        sha=self.issue()
+        current=self.root/'current.json'
+        original=current.read_bytes()
+        variants=[]
+        base=json.loads(original)
+        for key,value in (('schema','wrong-schema'),('profile','wrong-profile'),
+                          ('tool_identity',[0,1]),('owner_approval_ref','')):
+            altered=dict(base);altered[key]=value
+            variants.append(contract.canonical(altered))
+        altered=dict(base);altered['extra']='unexpected'
+        variants.extend((contract.canonical(altered), b' '+original,
+            original.replace(b'"nonce":',b'"nonce":"0","nonce":')))
+        for raw in variants:
+            with self.subTest(raw=raw[:24]):
+                current.write_bytes(raw);current.chmod(0o600)
+                with self.assertRaises((contract.BindingRejected,ValueError)):
+                    self.store.retire_unclaimed(N,A,
+                        hashlib.sha256(raw).hexdigest(),'PR191:terminal',
+                        'VERIFIED_EMPTY',lambda _: True)
+                self.assertFalse((self.root/'claims'/N).exists())
+                self.assertEqual(current.read_bytes(),raw)
+        current.write_bytes(original);current.chmod(0o600)
+        self.assertEqual(hashlib.sha256(current.read_bytes()).hexdigest(),sha)
+
+    def test_unclaimed_retirement_second_observation_holds(self):
+        sha=self.issue()
+        checks=[]
+        def changes(item):
+            checks.append(item['attempt_id'])
+            return len(checks)==1
+        with self.assertRaisesRegex(contract.BindingRejected,
+                                    'BINDING_NO_LAUNCH_UNVERIFIED'):
+            self.store.retire_unclaimed(N,A,sha,'PR191:terminal',
+                                        'VERIFIED_EMPTY',changes)
+        self.assertTrue((self.root/'claims'/N).exists())
+        self.assertTrue((self.root/'current.json').exists())
+        with self.assertRaises(FileExistsError):
+            self.store.retire_unclaimed(N,A,sha,'PR191:terminal',
+                                        'VERIFIED_EMPTY',lambda _: True)
+
+        other=record(nonce='3'*32,attempt='4'*32)
+        with self.assertRaises(FileExistsError):
+            self.issue(other)
+
+    def test_claim_race_wins_exclusive_tombstone_name(self):
+        sha=self.issue()
+        def concurrent_claim(item):
+            self.assertTrue(self.store.claim_once(N,A,sha))
+            return True
+        with self.assertRaises(FileExistsError):
+            self.store.retire_unclaimed(N,A,sha,'PR191:terminal',
+                                        'VERIFIED_EMPTY',concurrent_claim)
+        self.assertTrue((self.root/'current.json').exists())
+        self.assertEqual(json.loads((self.root/'claims'/N).read_bytes()),
+                         {'nonce':N,'attempt_id':A,'current_sha256':sha})
+
+    def test_unclaimed_retirement_crash_points_hold_current_or_tombstone(self):
+        for point in ('claims_fsync','history_link','history_fsync',
+                      'terminal_write','terminal_fsync','terminal_dir_fsync',
+                      'unlink_current','root_fsync'):
+            with self.subTest(point=point):
+                root=pathlib.Path(self.tmp.name)/('approval-'+point)
+                root.mkdir(mode=0o700)
+                (root/'claims').mkdir(mode=0o700)
+                (root/'history').mkdir(mode=0o700)
+                store=store_module.RootStore(str(root),owner_uid=os.geteuid(),
+                    owner_gid=os.getegid(),clock_ns=lambda:150_000_000_000)
+                sha=store.issue(record(),measured(record()),
+                                record()['owner_approval_ref'])
+                real_fsync=os.fsync;real_unlink=os.unlink
+                real_link=os.link;real_write=os.write
+                calls=[]
+                def interrupted_fsync(fd):
+                    calls.append(fd)
+                    fsync_points={'claims_fsync':2,'history_fsync':3,
+                                  'terminal_fsync':4,
+                                  'terminal_dir_fsync':5,'root_fsync':6}
+                    if len(calls)==fsync_points.get(point):
+                        raise OSError('synthetic fsync failure')
+                    return real_fsync(fd)
+                def interrupted_link(*args,**kwargs):
+                    if point=='history_link':
+                        raise OSError('synthetic history link failure')
+                    return real_link(*args,**kwargs)
+                def interrupted_write(fd,raw):
+                    if point=='terminal_write' and len(calls)==3:
+                        raise OSError('synthetic terminal write failure')
+                    return real_write(fd,raw)
+                def interrupted_unlink(name,**kwargs):
+                    if point=='unlink_current' and name=='current.json':
+                        raise OSError('synthetic unlink failure')
+                    return real_unlink(name,**kwargs)
+                with mock.patch.object(store_module.os,'fsync',
+                                       side_effect=interrupted_fsync), \
+                     mock.patch.object(store_module.os,'link',
+                                       side_effect=interrupted_link), \
+                     mock.patch.object(store_module.os,'write',
+                                       side_effect=interrupted_write), \
+                     mock.patch.object(store_module.os,'unlink',
+                                       side_effect=interrupted_unlink):
+                    with self.assertRaises(OSError):
+                        store.retire_unclaimed(N,A,sha,'PR191:terminal',
+                            'VERIFIED_EMPTY',lambda _: True)
+                self.assertTrue((root/'claims'/N).exists())
+                if point!='root_fsync':
+                    self.assertTrue((root/'current.json').exists())
+                with self.assertRaisesRegex(contract.BindingRejected,
+                                            'BINDING_REPLAY'):
+                    store.issue(record(nonce=N,attempt='4'*32),
+                        measured(record(nonce=N,attempt='4'*32)),
+                        record()['owner_approval_ref'])
+
     def test_malformed_duplicate_noncanonical_and_oversize_current_rejected(self):
         current=self.root/'current.json'
         good=contract.canonical(record())

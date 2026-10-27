@@ -275,3 +275,87 @@ class RootStore:
                 os.close(history)
         finally:
             os.close(rootfd)
+
+    def retire_unclaimed(self, nonce, attempt, expected_sha, terminal_ref,
+                         cleanup_state, observer):
+        """Retire a no-claim stop only after independent trusted observations.
+
+        The exclusive, fsynced claim-name tombstone is the linearization point:
+        it races safely against claim_once and permanently blocks nonce reuse.
+        Any later failure leaves the current approval or partial history held.
+        """
+        need((os.geteuid(),os.getegid())==(self.uid,self.gid),
+             'BINDING_ISSUER_UID')
+        need(cleanup_state == 'VERIFIED_EMPTY' and
+             type(terminal_ref) is str and 1 <= len(terminal_ref) <= 256 and
+             all(0x21 <= ord(ch) <= 0x7e for ch in terminal_ref) and
+             callable(observer), 'BINDING_TERMINAL')
+        raw=self.read_current()
+        need(hashlib.sha256(raw).hexdigest()==expected_sha,
+             'BINDING_RETIRE_CHANGED')
+        try:
+            provisional=json.loads(raw)
+        except (ValueError,UnicodeError):
+            need(False,'BINDING_JSON')
+        need(type(provisional) is dict and
+             type(provisional.get('issued_at')) is int,
+             'BINDING_SCHEMA')
+        # Retirement may occur after expiry, but the original approval must
+        # still be canonical and intrinsically valid at its issuance instant.
+        item=decode(raw,provisional['issued_at'])
+        need(item['issued_at']<=self._now(), 'BINDING_CLOCK')
+        need(item['nonce']==nonce and item['attempt_id']==attempt,
+             'BINDING_RETIRE_CHANGED')
+        need(observer(item) is True, 'BINDING_NO_LAUNCH_UNVERIFIED')
+        rootfd=self._root()
+        try:
+            claims=self._claims(rootfd)
+            history=self._protected_child(rootfd,'history')
+            try:
+                payload=canonical({'nonce':nonce,'attempt_id':attempt,
+                                   'current_sha256':expected_sha,
+                                   'status':'UNCLAIMED_TERMINAL'})
+                fd=os.open(nonce,NEW,0o600,dir_fd=claims)
+                try:
+                    need(os.write(fd,payload)==len(payload),
+                         'BINDING_TOMBSTONE_WRITE')
+                    os.fsync(fd)
+                    st=os.fstat(fd)
+                    named=os.stat(nonce,dir_fd=claims,follow_symlinks=False)
+                    need(stat.S_ISREG(st.st_mode) and st.st_nlink==1 and
+                         (st.st_uid,st.st_gid,stat.S_IMODE(st.st_mode))==
+                         (self.uid,self.gid,0o600) and
+                         (st.st_dev,st.st_ino)==(named.st_dev,named.st_ino),
+                         'BINDING_TOMBSTONE_META')
+                finally:
+                    os.close(fd)
+                # The name must survive power loss before current may go away.
+                os.fsync(claims)
+                need(observer(item) is True,
+                     'BINDING_NO_LAUNCH_UNVERIFIED')
+                need(self.read_current()==raw,
+                     'BINDING_RETIRE_CHANGED')
+                os.link('current.json',nonce+'.approval.json',
+                        src_dir_fd=rootfd,dst_dir_fd=history,
+                        follow_symlinks=False)
+                os.fsync(history)
+                terminal=canonical({'nonce':nonce,'attempt_id':attempt,
+                    'approval_sha256':expected_sha,'terminal_ref':terminal_ref,
+                    'cleanup_state':cleanup_state,
+                    'retirement_kind':'UNCLAIMED'})
+                fd=os.open(nonce+'.terminal.json',NEW,0o600,dir_fd=history)
+                try:
+                    need(os.write(fd,terminal)==len(terminal),
+                         'BINDING_TERMINAL_WRITE')
+                    os.fsync(fd)
+                finally:
+                    os.close(fd)
+                os.fsync(history)
+                os.unlink('current.json',dir_fd=rootfd)
+                os.fsync(rootfd)
+                return True
+            finally:
+                os.close(claims)
+                os.close(history)
+        finally:
+            os.close(rootfd)

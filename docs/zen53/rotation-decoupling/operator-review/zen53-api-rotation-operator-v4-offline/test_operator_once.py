@@ -571,6 +571,19 @@ class OperatorTests(unittest.TestCase):
                 pass
             def schedule(self, required):
                 raise self.Spoof('ADMISSION_TIMER_NEAR')
+        class SpoofQuiescence(FakeHost):
+            class Spoof(ValueError):
+                pass
+            def schedule(self, required):
+                raise self.Spoof('ADMISSION_JOBS')
+        class ExtraArgument(FakeHost):
+            def schedule(self, required):
+                raise ValueError('ADMISSION_JOBS', 'SECRET=/private/path')
+        class SpoofedArgument(FakeHost):
+            class Spoof(str):
+                pass
+            def schedule(self, required):
+                raise ValueError(self.Spoof('ADMISSION_JOBS'))
         class SpoofArgNear(FakeHost):
             class SpoofArg:
                 def __str__(self):
@@ -587,11 +600,14 @@ class OperatorTests(unittest.TestCase):
              b'OP_SCHEDULE_TIMER_PROXIMITY_NO_AUTO_RETRY\n'),
             (ApiNear(), b'OP_SCHEDULE_UNKNOWN_NO_AUTO_RETRY\n'),
             (FakeHost(fail='schedule'),
-             b'OP_SCHEDULE_QUIESCENCE_UNVERIFIED_NO_AUTO_RETRY\n'),
-            (ResourceGate(), b'OP_SCHEDULE_RESOURCE_GATE_NO_AUTO_RETRY\n'),
-            (Activity(), b'OP_SCHEDULE_ACTIVITY_OBSERVED_NO_AUTO_RETRY\n'),
+             b'OP_SCHEDULE_QUIESCENCE_UNVERIFIED_NO_AUTO_RETRY\nOP_SCHEDULE_PREDICATE=ADMISSION_JOBS\n'),
+            (ResourceGate(), b'OP_SCHEDULE_RESOURCE_GATE_NO_AUTO_RETRY\nOP_SCHEDULE_PREDICATE=ADMISSION_HEADROOM\n'),
+            (Activity(), b'OP_SCHEDULE_ACTIVITY_OBSERVED_NO_AUTO_RETRY\nOP_SCHEDULE_PREDICATE=ADMISSION_WORKER_DESCENDANT\n'),
             (AmbiguousTopology(), b'OP_SCHEDULE_UNKNOWN_NO_AUTO_RETRY\n'),
             (SpoofNear(), b'OP_SCHEDULE_UNKNOWN_NO_AUTO_RETRY\n'),
+            (SpoofQuiescence(), b'OP_SCHEDULE_UNKNOWN_NO_AUTO_RETRY\n'),
+            (ExtraArgument(), b'OP_SCHEDULE_UNKNOWN_NO_AUTO_RETRY\n'),
+            (SpoofedArgument(), b'OP_SCHEDULE_UNKNOWN_NO_AUTO_RETRY\n'),
             (SpoofArgNear(), b'OP_SCHEDULE_UNKNOWN_NO_AUTO_RETRY\n'),
             (Unknown(), b'OP_SCHEDULE_UNKNOWN_NO_AUTO_RETRY\n'),
         )
@@ -605,6 +621,30 @@ class OperatorTests(unittest.TestCase):
                 self.assertEqual(written, [(2, marker)])
                 self.assertEqual(self.names(), set())
                 self.assertEqual(host.spawns, 0)
+
+    def test_every_quiescence_code_is_bounded_before_audit(self):
+        for code in sorted(op.SCHEDULE_QUIESCENCE_CODES):
+            class Rejected(FakeHost):
+                def schedule(self, required):
+                    raise ValueError(code)
+            written = []
+            with self.subTest(code=code):
+                with patch.object(op.os, 'write', side_effect=lambda fd, raw:
+                                  written.append((fd, raw)) or len(raw)):
+                    with self.assertRaisesRegex(ValueError, code):
+                        self.run_case(Rejected())
+                self.assertEqual(written, [(2,
+                    b'OP_SCHEDULE_QUIESCENCE_UNVERIFIED_NO_AUTO_RETRY\n'
+                    b'OP_SCHEDULE_PREDICATE=' + code.encode('ascii') + b'\n')])
+                self.assertEqual(self.names(), set())
+
+    def test_failed_schedule_marker_write_still_blocks_without_spawn(self):
+        host = FakeHost(fail='schedule')
+        with patch.object(op.os, 'write', side_effect=OSError('synthetic full stderr')):
+            with self.assertRaisesRegex(ValueError, 'ADMISSION_JOBS'):
+                self.run_case(host)
+        self.assertEqual(self.names(), set())
+        self.assertEqual(host.spawns, 0)
 
     def test_schedule_classifier_rejects_spoof_and_ambiguous_codes(self):
         class Spoof(ValueError):
