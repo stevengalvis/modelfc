@@ -40,6 +40,10 @@
       "sha256": "1bf0d057b108ba9ecfe5863aca56c23baaeb6901de0d5acc4dea61c9ccd5d8ef",
       "size": 5101
     },
+    "PROC_BRACKET.md": {
+      "sha256": "80fb31dccd83c47e810cb891edcb1e4186a9a11c11eac252c2618f87053c9337",
+      "size": 2566
+    },
     "README.md": {
       "sha256": "7f3e74acac179c3321b47704f3fde9cb6bd6ac08343ccacae3c3c3c4b3745544",
       "size": 2635
@@ -57,8 +61,8 @@
       "size": 4128
     },
     "bridge.py": {
-      "sha256": "e80d978741d90f1e98c714472761f5cf52177af701907ccba0c3ca83791981d0",
-      "size": 18461
+      "sha256": "c3558e8eb3b1315a48e4cecc9b004def1b86b243fbff93af357fa16dc878492c",
+      "size": 18506
     },
     "bridge_objects/2567e3290e66d17e3128f6741f64392dc6f90917bb95d0becec34db945fb12bb": {
       "sha256": "2567e3290e66d17e3128f6741f64392dc6f90917bb95d0becec34db945fb12bb",
@@ -171,6 +175,14 @@
     "owner_context_v4.py": {
       "sha256": "01bc98232685f7672ad229d7b185e0da7631e0a8af6f581492f1f5e868f63430",
       "size": 10889
+    },
+    "proc_bracket.py": {
+      "sha256": "b5a883ceba455aceea3564e0ba9991f12b47fcaf8388a80e64e079900712a645",
+      "size": 1199
+    },
+    "proc_bracket_runtime.inc": {
+      "sha256": "2c25208de1d88255b44fc4f9fc504834a8ba3235c2bbc8273e7fd12a00d64ecc",
+      "size": 5003
     },
     "recovery/PROVENANCE.json": {
       "sha256": "33e0e3b87b9d327f0371a36c82e2bd3cafd64477da67a98f476e045a853b1e40",
@@ -451,6 +463,10 @@
     "tests/test_owner_context.py": {
       "sha256": "cb606254bf268ccb3f0731e407266b597d086b3bdec33fa52d1654ced40400e3",
       "size": 10236
+    },
+    "tests/test_proc_bracket.py": {
+      "sha256": "7bba26ea07d7482bdd316c7b52e9a537e243608c5eb9e20c5e0cdea41a6f0693",
+      "size": 7686
     },
     "tests/test_v4_integration.py": {
       "sha256": "39523762a0371835e42c81322ae243e3e25cc836d555b088eb868c730fc2531e",

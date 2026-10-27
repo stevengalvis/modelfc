@@ -12,6 +12,7 @@ import re
 import stat
 import owner_binding_v4 as owner_context
 import zlib_amendment
+import proc_bracket
 
 HISTORICAL_SHA256 = {
     'DEPENDENCIES.json': 'd68773386095a4b7b909e1ec44fa5cf8297dce52fb7e2f916af10c931a520809',
@@ -94,7 +95,7 @@ def patch_launcher(raw, home, vartmp):
              for n, value in zip(nodes, home + vartmp)]
     for begin, end, value in sorted(edits, reverse=True):
         text = text[:begin] + value + text[end:]
-    return text.encode('ascii')
+    return proc_bracket.instrument(text.encode('ascii'))
 
 
 def build(historical, object_bytes, stage_path, home_identity, vartmp_identity,
