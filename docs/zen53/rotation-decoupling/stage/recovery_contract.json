@@ -691,6 +691,69 @@
       "sha256": "f61677c7bdb7c2aa2a243ea781bfd16afcb361cede7b4ef76127a9d8eb9a5242",
       "source": "/usr/lib/x86_64-linux-gnu/libz.so.1.3",
       "target_mode": "0o444"
+    },
+    "/usr/lib/python3.12/datetime.py": {
+      "kind": "installed",
+      "source": "/usr/lib/python3.12/datetime.py",
+      "sha256": "ef20dc6b3554cd585dddffdc573f1f9a7a54c522f2a3fb4576c44edbb1e14238",
+      "target_mode": "0o444",
+      "bytes": 268,
+      "provenance": "PYTHON_CLOSURE_PROVENANCE.json",
+      "current_host_validation": "REQUIRED_NOT_OBSERVED"
+    },
+    "/usr/lib/python3.12/struct.py": {
+      "kind": "installed",
+      "source": "/usr/lib/python3.12/struct.py",
+      "sha256": "9c231f9497caf513a22dee8f790b07f969b0e45854a0bdd6dd84b492e08c2856",
+      "target_mode": "0o444",
+      "bytes": 257,
+      "provenance": "PYTHON_CLOSURE_PROVENANCE.json",
+      "current_host_validation": "REQUIRED_NOT_OBSERVED"
+    },
+    "/usr/lib/python3.12/signal.py": {
+      "kind": "installed",
+      "source": "/usr/lib/python3.12/signal.py",
+      "sha256": "0363c964c90ac0b3e515de5749205e6e6454051a1211058375d84d91eab6071a",
+      "target_mode": "0o444",
+      "bytes": 2495,
+      "provenance": "PYTHON_CLOSURE_PROVENANCE.json",
+      "current_host_validation": "REQUIRED_NOT_OBSERVED"
+    },
+    "/usr/lib/python3.12/ctypes/__init__.py": {
+      "kind": "installed",
+      "source": "/usr/lib/python3.12/ctypes/__init__.py",
+      "sha256": "0782592567ad71097198a3afe985ac3e2ea0b9b5e75452402c9460c89a86318a",
+      "target_mode": "0o444",
+      "bytes": 18182,
+      "provenance": "PYTHON_CLOSURE_PROVENANCE.json",
+      "current_host_validation": "REQUIRED_NOT_OBSERVED"
+    },
+    "/usr/lib/python3.12/ctypes/_endian.py": {
+      "kind": "installed",
+      "source": "/usr/lib/python3.12/ctypes/_endian.py",
+      "sha256": "c5d692bdce10dfee242752620061bab684633bc72445a3def484961ef1bdbf3a",
+      "target_mode": "0o444",
+      "bytes": 2535,
+      "provenance": "PYTHON_CLOSURE_PROVENANCE.json",
+      "current_host_validation": "REQUIRED_NOT_OBSERVED"
+    },
+    "/usr/lib/python3.12/lib-dynload/_ctypes.cpython-312-x86_64-linux-gnu.so": {
+      "kind": "installed",
+      "source": "/usr/lib/python3.12/lib-dynload/_ctypes.cpython-312-x86_64-linux-gnu.so",
+      "sha256": "aad3e24f186e6c0a1c7efa8f16004f951f527db86f6451d30118657384a456c1",
+      "target_mode": "0o444",
+      "bytes": 137968,
+      "provenance": "PYTHON_CLOSURE_PROVENANCE.json",
+      "current_host_validation": "REQUIRED_NOT_OBSERVED"
+    },
+    "/usr/lib/x86_64-linux-gnu/libffi.so.8.1.4": {
+      "kind": "installed",
+      "source": "/usr/lib/x86_64-linux-gnu/libffi.so.8.1.4",
+      "sha256": "00f593fe192f2851b8ce23b25cec2488d769beb5a8f63e8c9e563071e1075153",
+      "target_mode": "0o444",
+      "bytes": 47672,
+      "provenance": "PYTHON_CLOSURE_PROVENANCE.json",
+      "current_host_validation": "REQUIRED_NOT_OBSERVED"
     }
   },
   "historical_bindings": {
@@ -1978,6 +2041,69 @@
       "provenance": "recovery-provenance/PROVENANCE.json#9d2765da2ba345a56f2e5784bc48e4f32acf649f91024162692310b1ac8cf9fa",
       "sha256": "9d2765da2ba345a56f2e5784bc48e4f32acf649f91024162692310b1ac8cf9fa",
       "source": "objects/9d2765da2ba345a56f2e5784bc48e4f32acf649f91024162692310b1ac8cf9fa"
+    },
+    "rootfs/usr/lib/python3.12/datetime.py": {
+      "kind": "installed",
+      "source": "/usr/lib/python3.12/datetime.py",
+      "sha256": "ef20dc6b3554cd585dddffdc573f1f9a7a54c522f2a3fb4576c44edbb1e14238",
+      "target_mode": "0o444",
+      "bytes": 268,
+      "provenance": "PYTHON_CLOSURE_PROVENANCE.json",
+      "current_host_validation": "REQUIRED_NOT_OBSERVED"
+    },
+    "rootfs/usr/lib/python3.12/struct.py": {
+      "kind": "installed",
+      "source": "/usr/lib/python3.12/struct.py",
+      "sha256": "9c231f9497caf513a22dee8f790b07f969b0e45854a0bdd6dd84b492e08c2856",
+      "target_mode": "0o444",
+      "bytes": 257,
+      "provenance": "PYTHON_CLOSURE_PROVENANCE.json",
+      "current_host_validation": "REQUIRED_NOT_OBSERVED"
+    },
+    "rootfs/usr/lib/python3.12/signal.py": {
+      "kind": "installed",
+      "source": "/usr/lib/python3.12/signal.py",
+      "sha256": "0363c964c90ac0b3e515de5749205e6e6454051a1211058375d84d91eab6071a",
+      "target_mode": "0o444",
+      "bytes": 2495,
+      "provenance": "PYTHON_CLOSURE_PROVENANCE.json",
+      "current_host_validation": "REQUIRED_NOT_OBSERVED"
+    },
+    "rootfs/usr/lib/python3.12/ctypes/__init__.py": {
+      "kind": "installed",
+      "source": "/usr/lib/python3.12/ctypes/__init__.py",
+      "sha256": "0782592567ad71097198a3afe985ac3e2ea0b9b5e75452402c9460c89a86318a",
+      "target_mode": "0o444",
+      "bytes": 18182,
+      "provenance": "PYTHON_CLOSURE_PROVENANCE.json",
+      "current_host_validation": "REQUIRED_NOT_OBSERVED"
+    },
+    "rootfs/usr/lib/python3.12/ctypes/_endian.py": {
+      "kind": "installed",
+      "source": "/usr/lib/python3.12/ctypes/_endian.py",
+      "sha256": "c5d692bdce10dfee242752620061bab684633bc72445a3def484961ef1bdbf3a",
+      "target_mode": "0o444",
+      "bytes": 2535,
+      "provenance": "PYTHON_CLOSURE_PROVENANCE.json",
+      "current_host_validation": "REQUIRED_NOT_OBSERVED"
+    },
+    "rootfs/usr/lib/python3.12/lib-dynload/_ctypes.cpython-312-x86_64-linux-gnu.so": {
+      "kind": "installed",
+      "source": "/usr/lib/python3.12/lib-dynload/_ctypes.cpython-312-x86_64-linux-gnu.so",
+      "sha256": "aad3e24f186e6c0a1c7efa8f16004f951f527db86f6451d30118657384a456c1",
+      "target_mode": "0o444",
+      "bytes": 137968,
+      "provenance": "PYTHON_CLOSURE_PROVENANCE.json",
+      "current_host_validation": "REQUIRED_NOT_OBSERVED"
+    },
+    "rootfs/usr/lib/x86_64-linux-gnu/libffi.so.8.1.4": {
+      "kind": "installed",
+      "source": "/usr/lib/x86_64-linux-gnu/libffi.so.8.1.4",
+      "sha256": "00f593fe192f2851b8ce23b25cec2488d769beb5a8f63e8c9e563071e1075153",
+      "target_mode": "0o444",
+      "bytes": 47672,
+      "provenance": "PYTHON_CLOSURE_PROVENANCE.json",
+      "current_host_validation": "REQUIRED_NOT_OBSERVED"
     }
   },
   "note": "Exact byte-recovery map, not a stage or authorization to replace missing host facts.",
@@ -1993,7 +2119,8 @@
     "/usr/lib/x86_64-linux-gnu/libexpat.so.1": "/usr/lib/x86_64-linux-gnu/libexpat.so.1.9.1",
     "/usr/lib/x86_64-linux-gnu/libpcre2-8.so.0": "/usr/lib/x86_64-linux-gnu/libpcre2-8.so.0.11.2",
     "/usr/lib/x86_64-linux-gnu/libz.so.1": "/usr/lib/x86_64-linux-gnu/libz.so.1.3",
-    "/usr/lib64/ld-linux-x86-64.so.2": "/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2"
+    "/usr/lib64/ld-linux-x86-64.so.2": "/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2",
+    "/usr/lib/x86_64-linux-gnu/libffi.so.8": "libffi.so.8.1.4"
   },
   "version": 1
 }

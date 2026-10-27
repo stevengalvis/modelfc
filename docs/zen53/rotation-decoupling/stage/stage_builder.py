@@ -20,7 +20,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import operator_entry
 import restricted_launcher as restricted
 
-RECOVERY_SHA256 = 'bc8f681b770a804f3cb044245865cb2ee7df47c95b9bcbd719620f9d498d41f4'
+RECOVERY_SHA256 = '5d953b26bd8e8a6e1274e2888cded9c2b6e9ff8eededb10a518c07fab110c1a2'
 TOOL_FILES = ('admission.py', 'capture_once.py', 'controller.py', 'evidence.py',
               'operator_entry.py', 'owner_adapter.py', 'owner_context_v4.py',
               'restricted_launcher.py', 'runtime_dependencies.json',

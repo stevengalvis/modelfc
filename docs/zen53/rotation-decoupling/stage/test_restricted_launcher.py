@@ -68,7 +68,7 @@ class LauncherTests(unittest.TestCase):
         contract = launcher.projection_contract(manifest, dependencies)
         self.assertEqual((len(contract['regular']),
                           len(contract['symlinks']),
-                          len(contract['additions'])), (44, 9, 3))
+                          len(contract['additions'])), (51, 10, 3))
         self.assertIn('/usr/bin/python3.12', contract['regular'])
         self.assertEqual(contract['symlinks']['/usr/bin/python3'],
                          'python3.12')

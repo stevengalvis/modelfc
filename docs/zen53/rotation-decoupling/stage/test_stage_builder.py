@@ -346,8 +346,8 @@ class BuilderTests(unittest.TestCase):
             (package / 'runtime_dependencies.json').read_bytes(),
             expected_inventory_sha=pin(inventory),
             source_owner_uid=self.owner, source_owner_gid=self.group)
-        self.assertEqual(len(plan['regular']), 44)
-        self.assertEqual(len(plan['projection_contract']['symlinks']), 9)
+        self.assertEqual(len(plan['regular']), 51)
+        self.assertEqual(len(plan['projection_contract']['symlinks']), 10)
         self.assertEqual(len(plan['tool']), 10)
         self.assertEqual(plan['regular']['/opt/codex/bin/codex']['source_uid'],
                          1001)

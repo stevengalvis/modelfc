@@ -1,3 +1,9 @@
+# Restricted Python closure successor
+
+See [PYTHON_CLOSURE.md](PYTHON_CLOSURE.md) for the current correction, offline tests,
+authenticated package provenance and protected failed-attempt boundary. The
+following sections describe predecessor amendments, not acceptance of this successor.
+
 # ZEN-53 two-file successor, offline candidate only
 
 ## Inactive deploy user-manager admission amendment

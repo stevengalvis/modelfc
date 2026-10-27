@@ -55,7 +55,7 @@
   "review-source/comment-6321538424.md": "b1c866c03113fee1f7a85a808d20c5468b668bf435a1ac53183381ca0fa3b054",
   "reviewed.patch": "542b2698e8dc346385ed3421d2e755b1c47df76ca702c325a372ca5872cc27c2",
   "rootfs/diagnostic/launch.py": "14a8ec5d0b1eb043566ef6c59d3186fe6f06090cc1515bc65a6c43b838d3e29c",
-  "rootfs/diagnostic/pins.json": "b5346565221ae40199ff677ff767f1609833589a5ea6317ecb246964177ea7a4",
+  "rootfs/diagnostic/pins.json": "5643fb6ff137109b68a8aa253a2618802b2fee9412a1818bc6bebda1d232d1b3",
   "rootfs/diagnostic/report.py": "ec4c7e553178e61677a961ff1e0c0a88103ffe3d95cfef7dd43cef2acf38aa22",
   "rootfs/etc/codex/requirements.toml": "2567e3290e66d17e3128f6741f64392dc6f90917bb95d0becec34db945fb12bb",
   "rootfs/opt/codex/bin/codex": "628e35487d888a28f0427fc37501da529dd3d81fcbad7a2c3421c1e8670d92e1",
@@ -120,5 +120,12 @@
   "true.dynamic.txt": "6e19d3fe8768e42f7c43a6fef41c4736f15af47775214a37e2246ac0507e6157",
   "true.program_headers.txt": "9d2765da2ba345a56f2e5784bc48e4f32acf649f91024162692310b1ac8cf9fa",
   "published-baseline/ARTIFACT_SHA256.json": "7e58d98710b5ee0c78feba30e154a7bc7aa43f996162d0f5f32b1426a4bc719f",
-  "rootfs/usr/lib/python3.12/os.py": "316d1b7307fd851bded3423c9d437e0a383c725d993f0fcff2e8b749fe560b62"
+  "rootfs/usr/lib/python3.12/os.py": "316d1b7307fd851bded3423c9d437e0a383c725d993f0fcff2e8b749fe560b62",
+  "rootfs/usr/lib/python3.12/datetime.py": "ef20dc6b3554cd585dddffdc573f1f9a7a54c522f2a3fb4576c44edbb1e14238",
+  "rootfs/usr/lib/python3.12/struct.py": "9c231f9497caf513a22dee8f790b07f969b0e45854a0bdd6dd84b492e08c2856",
+  "rootfs/usr/lib/python3.12/signal.py": "0363c964c90ac0b3e515de5749205e6e6454051a1211058375d84d91eab6071a",
+  "rootfs/usr/lib/python3.12/ctypes/__init__.py": "0782592567ad71097198a3afe985ac3e2ea0b9b5e75452402c9460c89a86318a",
+  "rootfs/usr/lib/python3.12/ctypes/_endian.py": "c5d692bdce10dfee242752620061bab684633bc72445a3def484961ef1bdbf3a",
+  "rootfs/usr/lib/python3.12/lib-dynload/_ctypes.cpython-312-x86_64-linux-gnu.so": "aad3e24f186e6c0a1c7efa8f16004f951f527db86f6451d30118657384a456c1",
+  "rootfs/usr/lib/x86_64-linux-gnu/libffi.so.8.1.4": "00f593fe192f2851b8ce23b25cec2488d769beb5a8f63e8c9e563071e1075153"
 }

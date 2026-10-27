@@ -389,6 +389,83 @@
       "source_gid": 0,
       "source_mode": "0o644",
       "mode": "0o444"
+    },
+    "/usr/lib/python3.12/datetime.py": {
+      "source": "/usr/lib/python3.12/datetime.py",
+      "resolved_source": "/usr/lib/python3.12/datetime.py",
+      "sha256": "ef20dc6b3554cd585dddffdc573f1f9a7a54c522f2a3fb4576c44edbb1e14238",
+      "source_uid": 0,
+      "source_gid": 0,
+      "source_mode": "0o644",
+      "mode": "0o444",
+      "provenance": "PYTHON_CLOSURE_PROVENANCE.json",
+      "current_host_validation": "REQUIRED_NOT_OBSERVED"
+    },
+    "/usr/lib/python3.12/struct.py": {
+      "source": "/usr/lib/python3.12/struct.py",
+      "resolved_source": "/usr/lib/python3.12/struct.py",
+      "sha256": "9c231f9497caf513a22dee8f790b07f969b0e45854a0bdd6dd84b492e08c2856",
+      "source_uid": 0,
+      "source_gid": 0,
+      "source_mode": "0o644",
+      "mode": "0o444",
+      "provenance": "PYTHON_CLOSURE_PROVENANCE.json",
+      "current_host_validation": "REQUIRED_NOT_OBSERVED"
+    },
+    "/usr/lib/python3.12/signal.py": {
+      "source": "/usr/lib/python3.12/signal.py",
+      "resolved_source": "/usr/lib/python3.12/signal.py",
+      "sha256": "0363c964c90ac0b3e515de5749205e6e6454051a1211058375d84d91eab6071a",
+      "source_uid": 0,
+      "source_gid": 0,
+      "source_mode": "0o644",
+      "mode": "0o444",
+      "provenance": "PYTHON_CLOSURE_PROVENANCE.json",
+      "current_host_validation": "REQUIRED_NOT_OBSERVED"
+    },
+    "/usr/lib/python3.12/ctypes/__init__.py": {
+      "source": "/usr/lib/python3.12/ctypes/__init__.py",
+      "resolved_source": "/usr/lib/python3.12/ctypes/__init__.py",
+      "sha256": "0782592567ad71097198a3afe985ac3e2ea0b9b5e75452402c9460c89a86318a",
+      "source_uid": 0,
+      "source_gid": 0,
+      "source_mode": "0o644",
+      "mode": "0o444",
+      "provenance": "PYTHON_CLOSURE_PROVENANCE.json",
+      "current_host_validation": "REQUIRED_NOT_OBSERVED"
+    },
+    "/usr/lib/python3.12/ctypes/_endian.py": {
+      "source": "/usr/lib/python3.12/ctypes/_endian.py",
+      "resolved_source": "/usr/lib/python3.12/ctypes/_endian.py",
+      "sha256": "c5d692bdce10dfee242752620061bab684633bc72445a3def484961ef1bdbf3a",
+      "source_uid": 0,
+      "source_gid": 0,
+      "source_mode": "0o644",
+      "mode": "0o444",
+      "provenance": "PYTHON_CLOSURE_PROVENANCE.json",
+      "current_host_validation": "REQUIRED_NOT_OBSERVED"
+    },
+    "/usr/lib/python3.12/lib-dynload/_ctypes.cpython-312-x86_64-linux-gnu.so": {
+      "source": "/usr/lib/python3.12/lib-dynload/_ctypes.cpython-312-x86_64-linux-gnu.so",
+      "resolved_source": "/usr/lib/python3.12/lib-dynload/_ctypes.cpython-312-x86_64-linux-gnu.so",
+      "sha256": "aad3e24f186e6c0a1c7efa8f16004f951f527db86f6451d30118657384a456c1",
+      "source_uid": 0,
+      "source_gid": 0,
+      "source_mode": "0o644",
+      "mode": "0o444",
+      "provenance": "PYTHON_CLOSURE_PROVENANCE.json",
+      "current_host_validation": "REQUIRED_NOT_OBSERVED"
+    },
+    "/usr/lib/x86_64-linux-gnu/libffi.so.8.1.4": {
+      "source": "/usr/lib/x86_64-linux-gnu/libffi.so.8.1.4",
+      "resolved_source": "/usr/lib/x86_64-linux-gnu/libffi.so.8.1.4",
+      "sha256": "00f593fe192f2851b8ce23b25cec2488d769beb5a8f63e8c9e563071e1075153",
+      "source_uid": 0,
+      "source_gid": 0,
+      "source_mode": "0o644",
+      "mode": "0o444",
+      "provenance": "PYTHON_CLOSURE_PROVENANCE.json",
+      "current_host_validation": "REQUIRED_NOT_OBSERVED"
     }
   },
   "symlinks": {
@@ -400,7 +477,8 @@
     "/usr/lib/x86_64-linux-gnu/libcap.so.2": "/usr/lib/x86_64-linux-gnu/libcap.so.2.66",
     "/usr/lib/x86_64-linux-gnu/libz.so.1": "/usr/lib/x86_64-linux-gnu/libz.so.1.3",
     "/usr/lib/x86_64-linux-gnu/libexpat.so.1": "/usr/lib/x86_64-linux-gnu/libexpat.so.1.9.1",
-    "/usr/lib/x86_64-linux-gnu/libpcre2-8.so.0": "/usr/lib/x86_64-linux-gnu/libpcre2-8.so.0.11.2"
+    "/usr/lib/x86_64-linux-gnu/libpcre2-8.so.0": "/usr/lib/x86_64-linux-gnu/libpcre2-8.so.0.11.2",
+    "/usr/lib/x86_64-linux-gnu/libffi.so.8": "libffi.so.8.1.4"
   },
   "elf_closure": {
     "/usr/bin/true": {
@@ -501,6 +579,19 @@
       "interpreters": []
     },
     "/usr/lib/x86_64-linux-gnu/libcrypto.so.3": {
+      "needed": [
+        "libc.so.6"
+      ],
+      "interpreters": []
+    },
+    "/usr/lib/python3.12/lib-dynload/_ctypes.cpython-312-x86_64-linux-gnu.so": {
+      "needed": [
+        "libffi.so.8",
+        "libc.so.6"
+      ],
+      "interpreters": []
+    },
+    "/usr/lib/x86_64-linux-gnu/libffi.so.8.1.4": {
       "needed": [
         "libc.so.6"
       ],

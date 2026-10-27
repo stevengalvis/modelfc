@@ -256,13 +256,13 @@ SCHEDULE_QUIESCENCE_CODES = frozenset((
 SCHEDULE_RESOURCE_CODES = frozenset((
     'ADMISSION_HEADROOM', 'ADMISSION_DISK_HEADROOM'))
 ADMISSION_SHA = '0b6b00bfa8cff5f767a445fffe016f99c2f2d1e440d747d647e043459ef93838'
-PREFLIGHT_SHA = 'bc43a36b25e077ceb4af876e538abcb97c3e52fbf8b01b31152fd956ceb20e59'
-LAUNCHER_SHA = 'daf6e0299b20948fa348db9386f4d0207923e254a080e454cdb10f7b4419fb47'
+PREFLIGHT_SHA = 'b495be1555ef2de926669763f59535dc379b74efa51b50776256b541e8673fad'
+LAUNCHER_SHA = 'ddf36319a8aaadc25d00955d87cfa6a045bf2a4c0377931e77d34191b33d5c05'
 APPROVED_BINDING_SHA = '3781ef084eb18efab6dbe864cc3c4ba300fbba47daf8e63cdda725efc9f0aa0c'
 INSTALL_CONFIG_SHA = '9e4b0b419c82048b4026f44e6bff409c5f88b0acbdfcfd8b81bf57bc27b82296'
 BINDING_STORE_SHA = '67342c993e4ec5344a10d2d629014d42bb3ff145aeb8e6d0063ca94dc6e0c3ab'
-PACKAGE_ARCHIVE_SHA = 'a527085d5fb968fed1577a9afdea4d8173fef1b931ec06012cc49c3d909a4d33'
-PACKAGE_INVENTORY_SHA = 'c74f259e3a94fc31c1792d66c13fff4f2149430688dc18db932137db157a985c'
+PACKAGE_ARCHIVE_SHA = '918b7ce69929f375b588a5f4e691e35ed63a7d845fd4ef780d09a03c084e3abc'
+PACKAGE_INVENTORY_SHA = '98550b8a7fa5842cb2b8afbbd710722d8dfa78c36373c05d1a197caaa543b744'
 SYSTEMD_SHA = 'de28cc5757d3789efa5f6fed5659893410469f68b42175d4531f5b34d3a09e16'
 PYTHON = '/usr/bin/python3.12'
 ENV = {'PATH': '/usr/sbin:/usr/bin:/sbin:/bin', 'LANG': 'C.UTF-8'}
@@ -650,14 +650,14 @@ class Host:
                              now_mono, time.time_ns() // 1000)
 
     def preflight(self, package, recovery, archive):
-        # Run only the reviewed, read-only 55-source validator. A nonzero exit
+        # Run only the reviewed, read-only 62-source validator. A nonzero exit
         # blocks; this command never creates a stage or starts a scope.
         args = [PYTHON, '-I', '-S', '-B', self.preflight_path,
                 package, recovery, archive, PACKAGE_INVENTORY_SHA,
                 PACKAGE_ARCHIVE_SHA]
         code, stdout, stderr = bounded_command(args)
         need(code == 0 and not stderr and
-             stdout == b'PREFLIGHT_PASS routes=55 origins=8:0\n',
+             stdout == b'PREFLIGHT_PASS routes=62 origins=8:0\n',
              'OP_PREFLIGHT_BLOCK')
         # Protected root-owned source must still be the same reviewed bytes.
         need(read_pinned(self.preflight_path, PREFLIGHT_SHA) ==

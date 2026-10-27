@@ -4,9 +4,9 @@
   "predecessor_stage_builder_archive_sha256": "b7b0d34fdc28f2d15fb6bbc243f35da84bd0b51eae342dd75a2824bb1e783ad5",
   "first_preparation_report_url": "https://github.com/stevengalvis/modelfc/pull/191#issuecomment-6391466007",
   "predecessor_contract_audit_archive_sha256": "7bd886a00a0f651ce367d6883c6892df5d8edf5cd8eca64def335dec43e32ef0",
-  "recovery_contract_sha256": "bc8f681b770a804f3cb044245865cb2ee7df47c95b9bcbd719620f9d498d41f4",
+  "recovery_contract_sha256": "5d953b26bd8e8a6e1274e2888cded9c2b6e9ff8eededb10a518c07fab110c1a2",
   "current_launch_source_sha256": "14a8ec5d0b1eb043566ef6c59d3186fe6f06090cc1515bc65a6c43b838d3e29c",
-  "current_pins_source_sha256": "b5346565221ae40199ff677ff767f1609833589a5ea6317ecb246964177ea7a4",
+  "current_pins_source_sha256": "5643fb6ff137109b68a8aa253a2618802b2fee9412a1818bc6bebda1d232d1b3",
   "predecessor_origin_io_archive_sha256": "dd466cda7d1a8478734f7cdc97fb176856a8ed4c9cc35afaee40fa7692e4e5f6",
   "predecessor_successor_archive_sha256": "2b4a34b6c921fbf6d6baa2340f3f22e9c618fad43f4b80b35285b6f75d7ec4f0",
   "predecessor_noatime_archive_sha256": "381c137ba9ef1853354435fe9bebb9020a82ea74ab9a3cc8396aee4d58748fe2",
@@ -19,8 +19,8 @@
   "historical_validator_v3_sha256": "9e4734d1b071678f4f9556ef8334160ba7a6a14157a8850bb7262624193df045",
   "successor_validator_v4_sha256": "01bc98232685f7672ad229d7b185e0da7631e0a8af6f581492f1f5e868f63430",
   "zlib_refresh_provenance_sha256": "69d5d5462bfb5e6087e9cb7466ce5e0b45e1fc0f9dc2774d0bbfd852265c4336",
-  "runtime_dependencies_sha256": "5f37df07072a83d5c5f8244e6294d76b7205ab4aa00c2b1779bc93b48573d938",
-  "runtime_manifest_sha256": "e9af4af0287a975ed1eb8d285bc5d9e14c404a0e95fcebf8e43abd8b83d6a640",
+  "runtime_dependencies_sha256": "5d22624d4f42ac8040fc73a9f13bf710eacce17a9cbfab8fc6e5f6808a2cd758",
+  "runtime_manifest_sha256": "521b445d1c477b271de5a5421bb1f62776f5d9cb91bdff911bac866235f2778e",
   "live_file_bind_mount_behavior": "UNTESTED",
   "service_owner_cooperation": "REQUIRES_SEPARATE_APPROVAL",
   "host_alias_immutability": "NOT_CLAIMED",
@@ -28,5 +28,6 @@
   "historical_sender_delivery": "UNKNOWN",
   "predecessor_zlib_refresh_archive_sha256": "fb311796da34be4557638cc9270d8fb4aef1d23fabce7bf62df61ff72b49e6db",
   "inactive_manager_admission_sha256": "0b6b00bfa8cff5f767a445fffe016f99c2f2d1e440d747d647e043459ef93838",
-  "existing_prepared_stage_reusable": "NO_SEALED_OLD_ADMISSION_PIN"
+  "existing_prepared_stage_reusable": "NO_FAILED_ATTEMPT_PROTECTED_NO_RETRY",
+  "python_closure_provenance_sha256": "82e7fdfebaa5e4f104f1e07f9112190876aa10100e392d177a9ab60191bc49df"
 }

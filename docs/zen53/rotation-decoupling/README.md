@@ -1,10 +1,24 @@
-# ZEN-53 rotation source distribution
+# ZEN-53 restricted Python closure successor
 
-This local distribution is for source review only. It contains two separate packages:
+This is an offline source candidate stacked on PR #212. See
+[the closure contract](stage/PYTHON_CLOSURE.md) for the defect, authenticated
+seven-file dependency addition, regression coverage and remaining host gates.
+`SOURCE_TREE_MANIFEST.json` identifies the two **new** archives and inventories.
+No archive is interchangeable with the October 27 failed attempt's packages.
+The original files remain available at PR212 commit
+`0a2b1771c1770193f95d917ace1bcdd4a944598f`.
 
-- The stage package is unchanged: `zen53-api-rotation-decoupling-stage-offline.tar.gz`, 126,618 bytes, SHA256 `a527085d5fb968fed1577a9afdea4d8173fef1b931ec06012cc49c3d909a4d33`, with package inventory SHA256 `c74f259e3a94fc31c1792d66c13fff4f2149430688dc18db932137db157a985c`.
-- The reduced operator source distribution is `zen53-api-rotation-operator-v4-source-reduced-offline.tar.gz`, 67,338 bytes, SHA256 `692386f512bdea0dab54426c5a0336f4f9d0ae9fbcfce712eb89143275b705a1`. Its static operator and launcher-test trees retain every source byte, file metadata and internal inventory from the reviewed candidate. Its operator inventory SHA256 is `b8edd449ae8ef62b8596ba4c52c38c0f84dc7a82fd80636be9d529cc922ebd80`.
+The historical `packaging/zen53_reconstruct_pr212_archives.py` recipe remains
+unchanged and only reconstructs its own pinned historical checkout. For this
+successor, `packaging/build_python_closure_candidate.py --gzip-sha256 HASH
+--output NEW_DIRECTORY` verifies all derived inventories/pins and emits the new
+archives; `--refresh` is a developer-only source regeneration operation. The
+gzip hash must be independently authenticated on any target machine; local
+cloud ownership/hash is not a VPS pin. Both recipes retain the same bounded
+gzip invocation and source checks. Tests use the existing local gzip explicitly.
 
-The operator distribution has a new outer archive hash and is not interchangeable with the preceding outer archive pin. The exact source-tree members and hashes are recorded in `ZEN53_API_ROTATION_REDUCED_SOURCE_MANIFEST.json`. A repository checkout is also not a substitute for either pinned archive in the existing VPS preparation contract. Any acquisition and installation procedure must authenticate the selected distribution independently before use.
-
-No code here is installed or activated by this distribution. It does not create an approval record, change a service or security policy, launch the Python diagnostic, or run Codex.
+A checkout is not an installed package. The successor requires independent
+review, exact-head CI/OFFLINE gates and separately authorized preparation and
+installation before any future diagnostic. The failed nonce, approval, claim,
+protected audit and evidence remain unchanged with no retry or retirement.
+No service, security policy, production package or persistent access is changed.

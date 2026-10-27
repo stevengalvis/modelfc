@@ -1279,7 +1279,7 @@ class OperatorTests(unittest.TestCase):
         host.preflight_bytes = b'pinned'
         with patch.object(op, 'read_pinned', return_value=b'pinned'), \
                 patch.object(op, 'bounded_command', return_value=(
-                    0, b'PREFLIGHT_PASS routes=55 origins=8:0\n', b'')) as call:
+                    0, b'PREFLIGHT_PASS routes=62 origins=8:0\n', b'')) as call:
             host.preflight('/p', '/r', '/a')
         argv = call.call_args.args[0]
         self.assertEqual(argv[:5], [op.PYTHON, '-I', '-S', '-B',
@@ -1292,7 +1292,7 @@ class OperatorTests(unittest.TestCase):
         host = object.__new__(op.Host)
         host.preflight_path = '/trusted/preflight.py'
         host.preflight_bytes = b'pinned'
-        cases = [(1, b'PREFLIGHT_PASS routes=55 origins=8:0\n'),
+        cases = [(1, b'PREFLIGHT_PASS routes=62 origins=8:0\n'),
                  (0, b'PREFLIGHT_PASS routes=54 origins=8:0\n'),
                  (0, b'X' * 4097)]
         for code, output in cases:
@@ -1302,7 +1302,7 @@ class OperatorTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, 'OP_PREFLIGHT_BLOCK'):
                     host.preflight('/p', '/r', '/a')
         with patch.object(op, 'bounded_command', return_value=(
-                0, b'PREFLIGHT_PASS routes=55 origins=8:0\n', b'')), \
+                0, b'PREFLIGHT_PASS routes=62 origins=8:0\n', b'')), \
                 patch.object(op, 'read_pinned', return_value=b'changed'):
             with self.assertRaisesRegex(ValueError, 'OP_PREFLIGHT_CHANGED'):
                 host.preflight('/p', '/r', '/a')

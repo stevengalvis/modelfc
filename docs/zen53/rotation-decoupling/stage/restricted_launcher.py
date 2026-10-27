@@ -17,8 +17,8 @@ BWRAP = '/usr/bin/bwrap'
 BWRAP_SHA256 = 'e318903862396f96de3df57264e0158682b952fd3fb53ac23d876413e7b30f71'
 COLLECTOR = '/diagnostic/capture_ownership_v3.py'
 COLLECTOR_SHA256 = '5ea2e4269204b72b4dab7d1fbda3a5d1a94e76f6db08756a5a15c77f00a8b604'
-RUNTIME_MANIFEST_SHA256 = 'e9af4af0287a975ed1eb8d285bc5d9e14c404a0e95fcebf8e43abd8b83d6a640'
-RUNTIME_DEPENDENCIES_SHA256 = '5f37df07072a83d5c5f8244e6294d76b7205ab4aa00c2b1779bc93b48573d938'
+RUNTIME_MANIFEST_SHA256 = '521b445d1c477b271de5a5421bb1f62776f5d9cb91bdff911bac866235f2778e'
+RUNTIME_DEPENDENCIES_SHA256 = '5d22624d4f42ac8040fc73a9f13bf710eacce17a9cbfab8fc6e5f6808a2cd758'
 SOURCES = (
     '/root/.codex/packages/standalone/releases/0.162.1-x86_64-unknown-linux-musl/bin/codex',
     '/root/.codex/packages/standalone/releases/0.162.1-x86_64-unknown-linux-musl/codex-package.json',
@@ -108,9 +108,11 @@ def projection_contract(manifest_bytes, dependencies_bytes):
     regular = {'/' + name[len('rootfs/'):]: digest for name, digest
                in manifest.items() if name.startswith('rootfs/')}
     symlinks = dependencies['symlinks']
-    if (len(regular) != 44 or len(symlinks) != 9 or
+    if (len(regular) != 51 or len(symlinks) != 10 or
             set(regular) != set(dependencies['dependencies']) |
             {'/diagnostic/pins.json'} or
+            any(regular[path] != row['sha256'] for path, row in
+                dependencies['dependencies'].items()) or
             set(regular) & set(symlinks) or
             set(expected_projection_additions()) &
             (set(regular) | set(symlinks)) or

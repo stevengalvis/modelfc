@@ -36,7 +36,13 @@ jobs:
           "$RUNNER_TEMP/modelfc-locked/bin/python" -m pip install --require-hashes --only-binary=:all: --no-cache-dir -r requirements-mcp.lock
           "$RUNNER_TEMP/modelfc-locked/bin/python" -m pip check
 
+      - name: Prepare authenticated ZEN53 offline Python fixture
+        run: |
+          python3 docs/zen53/rotation-decoupling/packaging/prepare_python_fixture.py --download --cache "$RUNNER_TEMP/zen53-packages" --output "$RUNNER_TEMP/zen53-python"
+
       - name: Run test suite
+        env:
+          ZEN53_PYTHON_FIXTURE: ${{ runner.temp }}/zen53-python
         run: PYTHONPATH=src "$RUNNER_TEMP/modelfc-locked/bin/python" -m unittest discover -v
 
       - name: Verify real Linux cross-user history ACL publication

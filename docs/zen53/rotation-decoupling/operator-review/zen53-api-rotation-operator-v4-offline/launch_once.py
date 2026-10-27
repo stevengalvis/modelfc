@@ -19,8 +19,8 @@ APPROVED_TOOL_ID = APPROVED_STAGE_ID = APPROVED_MANIFEST_ID = APPROVED_SEAL_SHA 
 SYSTEMD_RUN = '/usr/bin/systemd-run'
 SYSTEMD_RUN_SHA = 'de28cc5757d3789efa5f6fed5659893410469f68b42175d4531f5b34d3a09e16'
 PYTHON = '/usr/bin/python3.12'
-ARCHIVE_SHA = 'a527085d5fb968fed1577a9afdea4d8173fef1b931ec06012cc49c3d909a4d33'
-INVENTORY_SHA = 'c74f259e3a94fc31c1792d66c13fff4f2149430688dc18db932137db157a985c'
+ARCHIVE_SHA = '918b7ce69929f375b588a5f4e691e35ed63a7d845fd4ef780d09a03c084e3abc'
+INVENTORY_SHA = '98550b8a7fa5842cb2b8afbbd710722d8dfa78c36373c05d1a197caaa543b744'
 TOOL_PINS = {
     'admission.py': '0b6b00bfa8cff5f767a445fffe016f99c2f2d1e440d747d647e043459ef93838',
     'capture_once.py': '52864425678d8a986cd07109266a2b1fbd1962ff7da5016393a522ebefc38578',
@@ -29,9 +29,9 @@ TOOL_PINS = {
     'operator_entry.py': 'd7402cc58c1871294fedc85d3c484ed7ca5858ca598d78d8f409a5cf903cd173',
     'owner_adapter.py': '83622ce50dfd253ee796004e2e8799a88d9686a8df0d9fb74d8a85386251d9c6',
     'owner_context_v4.py': '01bc98232685f7672ad229d7b185e0da7631e0a8af6f581492f1f5e868f63430',
-    'restricted_launcher.py': '6a289f06b784a9570dbcc10637b57622c953b23a1610e52920912dbaa0a479e5',
-    'runtime_dependencies.json': '5f37df07072a83d5c5f8244e6294d76b7205ab4aa00c2b1779bc93b48573d938',
-    'runtime_source_manifest.json': 'e9af4af0287a975ed1eb8d285bc5d9e14c404a0e95fcebf8e43abd8b83d6a640',
+    'restricted_launcher.py': '8955df787d86d7f4bea6776cb3b1a7a598933baa73bdce8c29a63c07b1f3a364',
+    'runtime_dependencies.json': '5d22624d4f42ac8040fc73a9f13bf710eacce17a9cbfab8fc6e5f6808a2cd758',
+    'runtime_source_manifest.json': '521b445d1c477b271de5a5421bb1f62776f5d9cb91bdff911bac866235f2778e',
 }
 ORIGIN = '8:0'
 BLOCK_NODE = '/dev/sda'

@@ -16,7 +16,7 @@ def routes(plan):
     rows += [('tool:' + name, pin)
              for name, pin in sorted(plan['tool'].items())]
     rows.append(('collector', plan['collector']))
-    if len(rows) != 55 or len({pin['source'] for _, pin in rows}) != 55:
+    if len(rows) != 62 or len({pin['source'] for _, pin in rows}) != 62:
         raise ValueError('PREFLIGHT_ROUTE_SET')
     return rows
 
@@ -77,7 +77,7 @@ def main(args):
                     expected_gid=pin['source_gid'],
                     expected_mode=pin['source_mode'])
             except Exception as exc:
-                print(f'PREFLIGHT_BLOCK route={index:02d}/55 code={failure_code(exc)}',
+                print(f'PREFLIGHT_BLOCK route={index:02d}/62 code={failure_code(exc)}',
                       file=sys.stderr)
                 raise SystemExit(2) from None
         builder._release_observations(observations, plan)
@@ -94,7 +94,7 @@ def main(args):
     snapshot = entry._verified_backing(paths, devices)
     if set(snapshot['origin_nodes']) != set(devices):
         raise ValueError('PREFLIGHT_ORIGINS')
-    print('PREFLIGHT_PASS routes=55 origins=' + ','.join(devices))
+    print('PREFLIGHT_PASS routes=62 origins=' + ','.join(devices))
 
 
 if __name__ == '__main__':
