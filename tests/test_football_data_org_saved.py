@@ -148,3 +148,81 @@ class NativeSavedTests(TestCase):
         e=convert(p,m)
         self.assertEqual(e,convert(p,m))
         self.assertEqual(json.loads(e.calendar)['matches'][0]['kickoff'],'2026-10-15T23:30:00Z')
+
+
+# Synthetic season-policy tests. Official policy identifiers are configuration,
+# not a claim that these generated team/fixture records are genuine.
+def policy_inputs():
+    p, m = inputs('I1')
+    m.update(source_season_id='2494', season_calendar_policy='SA_2026_CU200_CU208')
+    for row in p['matches']:
+        row['season'].update(id=2494, startDate='2026-08-23', endDate='2027-05-30')
+    p['matches'][0]['utcDate'] = '2026-08-22T16:30:00Z'
+    return p, m
+
+
+class SeasonPolicyTests(TestCase):
+    def test_explicit_opt_in_preserves_native_metadata_and_fresh_response_identity(self):
+        p, m = policy_inputs()
+        absent = dict(m); absent.pop('season_calendar_policy')
+        with self.assertRaisesRegex(CalendarRejected, 'FIXTURE_TIME_REJECTED'):
+            convert(p, absent, 'I1')
+        e = convert(p, m, 'I1')
+        b = json.loads(e.calendar)
+        self.assertEqual(b['season_start'], '2026-08-23')
+        self.assertEqual(json.loads(b['source_payload']), p)
+        gate = cal(e)['gates']['calendar']
+        self.assertEqual(gate['season_calendar_policy']['kickoff_start'], '2026-08-22')
+        self.assertEqual(gate['season_calendar_policy']['kickoff_end'], '2027-05-30')
+        p['matches'][10]['utcDate'] = '2027-05-02T14:00:00Z'
+        fresh = convert(p, m, 'I1', retrieved_at=NOW+timedelta(minutes=1), as_of=NOW+timedelta(minutes=1))
+        self.assertNotEqual(e.calendar_sha256, fresh.calendar_sha256)
+        self.assertEqual(json.loads(fresh.calendar)['retrieved_at'], (NOW+timedelta(minutes=1)).isoformat())
+        self.assertEqual(cal(fresh, NOW+timedelta(minutes=1))['gates']['calendar']['season_calendar_policy'], gate['season_calendar_policy'])
+        self.assertFalse(cal(e)['validated']); self.assertFalse(cal(e)['live'])
+
+    def test_policy_scope_and_unknown_policy_fail_closed(self):
+        for key, value in (('season_calendar_policy', None), ('season_calendar_policy', {}),
+                           ('season_calendar_policy', 'UNREVIEWED'), ('source', 'other'),
+                           ('source_competition_id', '2014'), ('timezone', 'UTC'),
+                           ('season_year', 2025), ('source_season_id', '2495')):
+            p, m = policy_inputs(); m[key] = value
+            if key == 'source_season_id':
+                for row in p['matches']: row['season']['id'] = 2495
+            with self.subTest(key=key, value=value), self.assertRaises(CalendarRejected):
+                convert(p, m, 'I1')
+        p, m = inputs('SP1'); m['season_calendar_policy'] = 'SA_2026_CU200_CU208'
+        with self.assertRaises(CalendarRejected): convert(p, m)
+
+    def test_exact_local_interval_and_native_consistency(self):
+        for kickoff in ('2026-08-21T21:59:59Z', '2027-05-30T22:00:00Z'):
+            p, m = policy_inputs(); p['matches'][1]['utcDate'] = kickoff
+            with self.subTest(kickoff=kickoff), self.assertRaisesRegex(CalendarRejected, 'FIXTURE_TIME_REJECTED'):
+                convert(p, m, 'I1')
+        p, m = policy_inputs(); p['matches'][0]['utcDate'] = '2026-08-21T22:00:00Z'
+        p['matches'][1]['utcDate'] = '2027-05-30T21:59:59Z'
+        convert(p, m, 'I1')
+        p['matches'][1]['season']['startDate'] = '2026-08-22'
+        with self.assertRaisesRegex(CalendarRejected, 'SOURCE_SEASON_REJECTED'): convert(p, m, 'I1')
+
+    def test_policy_does_not_override_other_gates(self):
+        p, m = policy_inputs()
+        self.assertEqual(cal(convert(p, m, 'I1', provenance='UNKNOWN'))['gates']['calendar']['state'], 'UNKNOWN')
+        self.assertEqual(cal(convert(p, m, 'I1', retrieved_at=NOW-timedelta(hours=7)))['gates']['calendar']['state'], 'STALE')
+        row = p['matches'][0]
+        row['status'] = 'CANCELLED'; row['score'].update(fullTime={'home':None,'away':None},winner=None)
+        p['resultSet']['played'] = 0
+        e = convert(p, m, 'I1')
+        self.assertIsNone(json.loads(e.calendar)['matches'][0]['goals'])
+        self.assertEqual(cal(e)['gates']['calendar']['reason'], 'CALENDAR_PRIOR_UNRESOLVED')
+
+    def test_cancelled_placeholder_is_never_a_played_draw(self):
+        for code in COMPETITIONS:
+            p, m = inputs(code)
+            row = p['matches'][0]
+            row['status'] = 'CANCELLED'
+            row['score']['halfTime'] = {'home':None, 'away':None}
+            p['resultSet']['played'] = 0
+            # Exact score shape observed in PD564698, with synthetic identities.
+            with self.assertRaisesRegex(CalendarRejected, 'UNFINISHED_SCORE_REJECTED'):
+                convert(p, m, code)

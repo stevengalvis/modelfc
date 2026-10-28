@@ -30,7 +30,8 @@ models, collectors or runtime activation are added. All new fixtures are synthet
 Use existing immutable `five_league_readiness.Evidence` and `SavedQuotes` values.
 Calendar and mapping are UTF-8 JSON bytes with SHA256 pins; duplicate JSON keys
 are rejected. Mapping maximum is 20,000 bytes, calendar maximum is the existing
-`MAX_CALENDAR_BYTES`. These fields are exact; additional fields are rejected.
+`MAX_CALENDAR_BYTES`. These fields are exact; additional fields are rejected except the optional mapping
+`season_calendar_policy` identifier described below.
 
 Mapping version 1 contains:
 
@@ -100,3 +101,9 @@ season roster and provider IDs, demonstrated faithful normalization, pinned
 Football-Data history and independently reviewed fixture/quote bindings. Do not
 acquire anything to satisfy this offline task. Shared-contract/MLS changes require
 coordination; this slice adds only its own module, tests and documentation.
+
+A mapping may explicitly select a reviewed `season_calendar_policy` identifier.
+See [native saved normalization](FOOTBALL_DATA_ORG_SP1_I1_SAVED.md#explicit-reviewed-season-calendar-policy).
+Without it, native season dates remain strict kickoff bounds. With it, native
+metadata is retained while the scoped, independently evidenced interval supplies
+kickoff bounds. This does not authenticate supplied normalization or team bindings.

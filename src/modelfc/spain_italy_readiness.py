@@ -3,7 +3,9 @@
 The explicit normalized schema is supplied evidence, not a provider response or
 authentication claim. Original source bytes are pinned separately in the bundle.
 """
+from dataclasses import dataclass
 from datetime import date
+from types import MappingProxyType
 from zoneinfo import ZoneInfo
 
 from modelfc.acquisition_planner import LEAGUES
@@ -17,6 +19,31 @@ from modelfc.providers.oddspapi_saved_response import _json
 
 CONFIG = {'SP1': 'Europe/Madrid', 'I1': 'Europe/Rome'}
 MARKETS = ('corners', 'btts', 'goal_totals')
+
+
+@dataclass(frozen=True)
+class SeasonCalendarPolicy:
+    source: str
+    competition: str
+    source_competition_id: str
+    source_season_id: str
+    season_year: int
+    timezone: str
+    first: date
+    last: date
+    evidence: tuple[str, ...]
+
+
+# Reviewed season semantics, independent of any one response hash. Explicit
+# mapping opt-in only. Unknown policies cannot be supplied as self-attestation.
+SEASON_CALENDAR_POLICIES = MappingProxyType({
+    'SA_2026_CU200_CU208': SeasonCalendarPolicy(
+        'football-data.org', 'I1', '2019', '2494', 2026, 'Europe/Rome',
+        date(2026, 8, 22), date(2027, 5, 30), (
+            'https://images.legaseriea.it/image/private/fl_attachment/prd/gereett2fnj7hcgsmgfi.pdf',
+            'https://images.legaseriea.it/image/private/fl_attachment/prd/czailts3apyt3kuxjran.pdf',
+        )),
+})
 
 
 class CalendarRejected(ValueError):
@@ -42,7 +69,8 @@ def calendar(e, observed):
     require(e.mapping is not None, 'MAPPING_MISSING')
     require(_pin(e.mapping, e.mapping_sha256) and len(e.mapping) <= 20000, 'MAPPING_PIN_REJECTED')
     c = _json(e.mapping)
-    require(fields(c, 'version competition source source_competition_id source_season_id season_year timezone team_bindings')
+    mapping_fields = 'version competition source source_competition_id source_season_id season_year timezone team_bindings'
+    require((fields(c, mapping_fields) or fields(c, mapping_fields+' season_calendar_policy'))
             and type(c['version']) is int and c['version'] == 1
             and c['competition'] == e.competition and type(c['season_year']) is int
             and c['season_year'] == e.season_year and c['timezone'] == CONFIG[e.competition]
@@ -65,6 +93,16 @@ def calendar(e, observed):
             and _pin(b['source_payload'].encode('utf-8'), b['source_sha256']), 'SOURCE_PIN_REJECTED')
     first, last = date.fromisoformat(b['season_start']), date.fromisoformat(b['season_end'])
     require(date(e.season_year, 7, 1) <= first <= last < date(e.season_year+1, 7, 1), 'SEASON_REJECTED')
+    policy_id = c.get('season_calendar_policy')
+    policy = None
+    if 'season_calendar_policy' in c:
+        require(isinstance(policy_id, str) and policy_id in SEASON_CALENDAR_POLICIES,
+                'SEASON_POLICY_REJECTED')
+        policy = SEASON_CALENDAR_POLICIES[policy_id]
+        require(all(c[key] == getattr(policy, key) for key in (
+            'source', 'competition', 'source_competition_id', 'source_season_id',
+            'season_year', 'timezone')), 'SEASON_POLICY_SCOPE_REJECTED')
+        first, last = policy.first, policy.last
     retrieved = _time(b['retrieved_at']) if b['retrieved_at'] is not None else None
     require(retrieved is None or retrieved <= observed, 'CALENDAR_FUTURE')
     rows = b['matches']
@@ -106,6 +144,12 @@ def calendar(e, observed):
         'selected_count': sum(r['day'] == e.selected_day for r in normalized),
         'retrieved_at': retrieved.isoformat() if retrieved else None,
         'normalization_authenticated': False}
+    if policy is not None:
+        result['season_calendar_policy'] = {
+            'id': policy_id, 'kickoff_start': first.isoformat(), 'kickoff_end': last.isoformat(),
+            'native_start': b['season_start'], 'native_end': b['season_end'],
+            'evidence': list(policy.evidence),
+        }
     return result, gate('VALID', 'SUPPLIED_BINDINGS_CONSISTENT_ONLY', [e.mapping_sha256]), normalized
 
 
