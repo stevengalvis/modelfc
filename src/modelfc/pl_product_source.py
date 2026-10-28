@@ -210,10 +210,16 @@ def _offers(state, observation, at):
                                         qualification_sha256=r['data']['qualification_sha256'])
 
 
-def select(state, at, *, approved_contracts=(), strategy="best_value"):
+def select(state, at, *, approved_contracts=(), strategy="best_value", diagnostics=None):
     """Newest captured cohort then latest observation; no best-model cherry-pick."""
     if not approved_contracts: return {}
     # A newer eligible frozen cohort without quotes suppresses older prices too.
+    def diagnostic(record, identity, reason, reference=None):
+        if diagnostics is not None:
+            diagnostics.identity(identity, reason, at,
+                market='BTTS' if record['data']['qualification']['market']=='BTTS' else 'CORNER_TEAM_TOTAL',
+                strategy=strategy, reference_id=reference or record['record_hash'],
+                evidence_hash=record['record_hash'])
     forecasts={}
     for raw in _inventory(state,'forecast'):
         if timestamp(raw['recorded_at'])>at or raw['data']['qualification_sha256'] not in approved_contracts: continue
@@ -221,6 +227,9 @@ def select(state, at, *, approved_contracts=(), strategy="best_value"):
         key=tuple(i.values())+(r['data']['qualification']['market'],)
         order=(timestamp(r['recorded_at']),r['record_hash'])
         if key not in forecasts or order>forecasts[key][0]: forecasts[key]=(order,r['record_hash'])
+    for _, forecast_id in forecasts.values():
+        record, identity = _frozen(state, forecast_id)
+        diagnostic(record, identity, 'FORECAST_REUSED')
     latest={}
     for o in _inventory(state,'observation'):
         r,i=_frozen(state,o['data']['forecast_id'])
@@ -231,9 +240,28 @@ def select(state, at, *, approved_contracts=(), strategy="best_value"):
         if key not in latest or order>latest[key][0]:latest[key]=(order,o)
     from modelfc.published_recommendations import _identity
     candidates=[]
+    observed = {o['data']['forecast_id'] for _, o in latest.values()}
+    for _, forecast_id in forecasts.values():
+        if forecast_id not in observed:
+            record, identity = _frozen(state, forecast_id)
+            diagnostic(record, identity, 'EPL_QUOTES_NOT_OBSERVED')
     for _,o in latest.values():
-        try: candidates.extend(_offers(state,o,at))
-        except (ValueError,TypeError,KeyError): continue  # never fall back to older evidence
+        record, identity = _frozen(state, o['data']['forecast_id'])
+        before = len(candidates)
+        try:
+            candidates.extend(_offers(state,o,at))
+        except (ValueError,TypeError,KeyError) as exc:
+            from modelfc.fixture_diagnostics import epl_quote_reason
+            diagnostic(record, identity, epl_quote_reason(exc), o['record_hash'])
+            continue  # never fall back to older evidence
+        diagnostic(record, identity, 'ODDS_OBSERVED', o['record_hash'])
+        diagnostic(record, identity, 'BASE_VALUE_QUALIFIED' if len(candidates)>before
+                   else 'NO_QUALIFYING_VALUE', o['record_hash'])
+    for offer, _, evidence in candidates:
+        record, identity = _frozen(state, evidence['forecast_id'])
+        reason = ('STRATEGY_PROBABILITY_THRESHOLD' if strategy == 'higher_probability'
+                  and offer['model_probability'] < .65 else 'VALUE_QUALIFIED')
+        diagnostic(record, identity, reason, evidence['observation_id'])
     if strategy == "higher_probability":
         candidates=[row for row in candidates if row[0]['model_probability']>=.65]
     ranked=published_btts.rank_candidates([(v,t) for v,t,_ in candidates if v['market_type']=='BTTS'])

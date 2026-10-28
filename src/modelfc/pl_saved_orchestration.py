@@ -7,6 +7,7 @@ from dataclasses import dataclass, fields, is_dataclass
 from datetime import date, datetime
 from pathlib import Path
 import re
+import json
 import os
 import stat
 
@@ -153,6 +154,9 @@ def run_once(state_dir, *, config=Configuration(), operation_id, stage, inputs=N
                        'EPL_OPERATION_RECOVERY_REQUIRED')
         source.require(len(paths) <= 1998, 'EPL_OPERATION_CAPACITY_EXCEEDED')
         _save(directory, intent_path.name, dict(request=request, stage=stage))
+        from modelfc.fixture_diagnostics import Recorder
+        diagnostics = Recorder()
+        diagnostic_start = source.now()
         # Do not catch mutation errors or continue to publication after them.
         if stage == 'freeze':
             value = source.freeze(state, **inputs, approved_contracts=pins, enabled=True)
@@ -164,9 +168,20 @@ def run_once(state_dir, *, config=Configuration(), operation_id, stage, inputs=N
             from modelfc.pick_strategies import publish_locked
             # No policy activation or unrelated E1 publication from an empty or
             # stale EPL batch. The shared writer revalidates again at link time.
-            eligible = any(source.select(state, source.now(), approved_contracts=pins, strategy=strategy)
+            eligible = any(source.select(state, source.now(), approved_contracts=pins, strategy=strategy,
+                                         diagnostics=diagnostics)
                            for strategy in ('best_value', 'higher_probability'))
-            value = publish_locked(state, epl_approved_contracts=pins, epl_only=True) if eligible else 0
+            value = publish_locked(state, epl_approved_contracts=pins, epl_only=True, diagnostics=diagnostics) if eligible else 0
         result = dict(stage=stage, value=value, provider_requests=0)
-        _save(directory, done_path.name, dict(request=request, result=result))
+        completion = dict(request=request, result=result)
+        if stage == 'publish':
+            completion.update(diagnostic_started_at=diagnostic_start.isoformat(),
+                              diagnostic_completed_at=source.now().isoformat(),
+                              fixture_diagnostics=diagnostics.snapshot())
+            # Keep the existing operation-record bound even at recorder capacity.
+            while len((json.dumps(dict(data=completion, sha256='0'*64),
+                                  indent=2, sort_keys=True, allow_nan=False)+'\n').encode()) > 65536:
+                completion['fixture_diagnostics']['status'] = 'INCOMPLETE'
+                completion['fixture_diagnostics']['events'].pop()
+        _save(directory, done_path.name, completion)
         return result
