@@ -91,7 +91,8 @@ def calendar(e, observed):
     require(e.calendar is not None, 'CALENDAR_MISSING')
     require(_pin(e.calendar, e.calendar_sha256) and len(e.calendar) <= MAX_CALENDAR_BYTES, 'CALENDAR_PIN_REJECTED')
     b = _json(e.calendar)
-    require(fields(b, 'version competition source source_competition_id source_season_id season_start season_end stage retrieved_at source_payload source_sha256 matches')
+    calendar_fields = 'version competition source source_competition_id source_season_id season_start season_end stage retrieved_at source_payload source_sha256 matches'
+    require((fields(b, calendar_fields) or fields(b, calendar_fields+' diagnostic_quarantine'))
             and type(b['version']) is int and b['version'] == 1
             and all(b[k] == c[k] for k in ('competition', 'source', 'source_competition_id', 'source_season_id'))
             and b['stage'] == 'REGULAR_SEASON', 'CALENDAR_SCOPE_REJECTED')
@@ -137,6 +138,25 @@ def calendar(e, observed):
     for round_number in range(1, 39):
         participants = [r[s] for r in normalized if r['matchday'] == round_number for s in ('home_id', 'away_id')]
         require(len(participants) == 20 and set(participants) == set(bindings), 'CALENDAR_ROUND_INCOMPLETE')
+    quarantined = b.get('diagnostic_quarantine', [])
+    if 'diagnostic_quarantine' in b:
+        require(isinstance(quarantined, list) and 0 < len(quarantined) <= 380,
+                'QUARANTINE_REJECTED')
+        native = _json(b['source_payload'].encode('utf-8'))
+        require(isinstance(native.get('matches'), list), 'QUARANTINE_REJECTED')
+        seen = set()
+        for q in quarantined:
+            require(fields(q, 'fixture_id native_status native_score reason played_result_usable')
+                    and text(q['fixture_id']) and q['fixture_id'] not in seen
+                    and q['native_status'] == 'CANCELLED'
+                    and q['reason'] == 'NONFINAL_SCORE_CONTRADICTION'
+                    and q['played_result_usable'] is False, 'QUARANTINE_REJECTED')
+            seen.add(q['fixture_id'])
+            matched = [r for r in rows if r['fixture_id'] == q['fixture_id']]
+            originals = [r for r in native['matches'] if str(r.get('id')) == q['fixture_id']]
+            require(len(matched) == len(originals) == 1 and matched[0]['status'] == 'CANCELLED'
+                    and matched[0]['goals'] is None and originals[0]['status'] == 'CANCELLED'
+                    and originals[0]['score'] == q['native_score'], 'QUARANTINE_REJECTED')
     refs = [e.calendar_sha256, e.mapping_sha256, b['source_sha256']]
     state, reason = 'VALID', 'SUPPLIED_CALENDAR_STRUCTURALLY_COMPLETE_ONLY'
     if retrieved is None or e.provenance == 'UNKNOWN':
@@ -150,6 +170,11 @@ def calendar(e, observed):
         'selected_count': sum(r['day'] == e.selected_day for r in normalized),
         'retrieved_at': retrieved.isoformat() if retrieved else None,
         'normalization_authenticated': False}
+    if quarantined:
+        result['underlying_calendar_gate'] = {'state': state, 'reason': reason}
+        result.update(state='BLOCKED', reason='CALENDAR_DIAGNOSTIC_QUARANTINE',
+                      diagnostic_only=True, quarantined_fixtures=quarantined,
+                      quarantined_count=len(quarantined))
     if policy is not None:
         result['season_calendar_policy'] = {
             'id': policy_id, 'kickoff_start': first.isoformat(), 'kickoff_end': last.isoformat(),
@@ -168,7 +193,11 @@ def coverage(rows, records, e, market, observed):
     actual = {(r.match_date, r.team, r.opponent): r for r in records
               if r.venue == Venue.HOME and r.season == f'{e.season_year}/{e.season_year+1}' and r.match_date < cutoff}
     if set(expected) != set(actual):
-        return gate('BLOCKED', 'HISTORY_CALENDAR_MISSING_OR_EXTRA')
+        return {**gate('BLOCKED', 'HISTORY_CALENDAR_MISSING_OR_EXTRA'),
+                'missing_results': [{'date': k[0].isoformat(), 'home': k[1], 'away': k[2],
+                                     'fixture_id': expected[k]['fixture_id']} for k in sorted(set(expected)-set(actual))],
+                'extra_results': [{'date': k[0].isoformat(), 'home': k[1], 'away': k[2]}
+                                  for k in sorted(set(actual)-set(expected))]}
     for key, row in actual.items():
         if [row.goals_for, row.goals_against] != expected[key]['goals']:
             return gate('BLOCKED', 'HISTORY_CALENDAR_SCORE_CONFLICT')
@@ -215,6 +244,11 @@ def _apply(result, evidence, *, observed, snapshot, quote_gate, contracts):
             gates.update(calendar=cal, mapping=mapping)
             scope = 'GOALS_CORNERS' if market == 'corners' else 'GOALS'
             gates['coverage'] = coverage(rows, scoped[scope][1], e, market, observed) if rows is not None else gate('BLOCKED', 'CALENDAR_UNVERIFIED')
+            if cal.get('diagnostic_only'):
+                gates['coverage'].update(diagnostic_only=True,
+                    reconciliation_scope='NON_QUARANTINED_FINISHED_ONLY',
+                    complete_calendar_reconciliation=False,
+                    excluded_fixture_ids=[q['fixture_id'] for q in cal['quarantined_fixtures']])
             if market == 'goal_totals':
                 q = quote_gate
                 if snapshot is not None:

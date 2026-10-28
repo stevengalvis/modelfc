@@ -107,3 +107,9 @@ See [native saved normalization](FOOTBALL_DATA_ORG_SP1_I1_SAVED.md#explicit-revi
 Without it, native season dates remain strict kickoff bounds. With it, native
 metadata is retained while the scoped, independently evidenced interval supplies
 kickoff bounds. This does not authenticate supplied normalization or team bindings.
+
+Diagnostic bundles may additionally carry `diagnostic_quarantine` annotations,
+source-checked against retained native records. Such calendars are always BLOCKED;
+coverage is explicitly partial and excludes quarantined nonfinished fixtures from
+played-result calculations. See the native reader's opt-in diagnostic contract.
+The default native reader retains strict rejection; model qualification is unchanged.

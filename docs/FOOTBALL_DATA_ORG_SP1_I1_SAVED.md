@@ -136,3 +136,28 @@ The handoff reports suspension/postponement and no played score or verified
 replacement date. These references support retaining the unresolved blocker;
 they do not authorize rewriting native CANCELLED, accepting the score placeholder,
 or filling a history gap. No November4 reschedule is accepted.
+
+## Opt-in diagnostic quarantine (never admission)
+
+`normalize(..., diagnostic_quarantine=True)` is a separate offline diagnostic use.
+The default false path still rejects CANCELLED score values. Only CANCELLED with
+coherent nonnegative integer full-time scores, REGULAR duration and matching winner
+can be quarantined. Active, malformed, extra-time and contradictory-winner records
+still reject. No identity, season, roster, duplicate, mapping or played-count check
+is relaxed. All380 fixture identities remain present.
+
+The original payload and native scores are unchanged. A `diagnostic_quarantine`
+annotation records fixture ID, native status, complete native score object,
+NONFINAL_SCORE_CONTRADICTION and played_result_usable=false. Normalized goals=null
+means no usable played result, not missing native source statistics; the annotation
+preserves that distinction. The shared calendar validates annotation/source identity
+and always reports BLOCKED/CALENDAR_DIAGNOSTIC_QUARANTINE, retaining its underlying
+stale/unknown/unresolved gate. No forecast, settlement or admission path is changed.
+
+Only nonquarantined FINISHED fixtures participate in result reconciliation.
+Coverage explicitly reports diagnostic_only, NON_QUARANTINED_FINISHED_ONLY,
+complete_calendar_reconciliation=false and excluded_fixture_ids. An apparent match
+of those remaining results never clears the calendar or qualifies opponents/models.
+Missing/extra result keys are now enumerated in the existing coverage gate, independent
+of unknown acquisition provenance. This supports exploratory historical inspection,
+not proof of pre-match availability or a leakage-safe prospective acceptance.

@@ -19,7 +19,7 @@ def _id(value):
 
 
 def normalize(raw, *, source_sha256, retrieved_at, mapping, mapping_sha256,
-              competition, season_year, selected_day, as_of, sources=(), provenance='UNKNOWN'):
+              competition, season_year, selected_day, as_of, sources=(), provenance='UNKNOWN', diagnostic_quarantine=False):
     """Return frozen Evidence from supplied original bytes and reviewed bindings.
 
     retrieved_at is the original response-completion receipt time (or None), not
@@ -28,14 +28,15 @@ def normalize(raw, *, source_sha256, retrieved_at, mapping, mapping_sha256,
     """
     try:
         return _normalize(raw, source_sha256, retrieved_at, mapping, mapping_sha256,
-                          competition, season_year, selected_day, as_of, sources, provenance)
+                          competition, season_year, selected_day, as_of, sources, provenance, diagnostic_quarantine)
     except CalendarRejected:
         raise
     except (ValueError, TypeError, KeyError, AttributeError, OverflowError, UnicodeError):
         raise CalendarRejected('FOOTBALL_DATA_ORG_SAVED_REJECTED') from None
 
 
-def _normalize(raw, pin, retrieved, mapping, mapping_pin, code, year, day, as_of, sources, provenance):
+def _normalize(raw, pin, retrieved, mapping, mapping_pin, code, year, day, as_of, sources, provenance, diagnostic_quarantine):
+    require(type(diagnostic_quarantine) is bool, 'DIAGNOSTIC_MODE_REJECTED')
     require(isinstance(code, str) and code in COMPETITIONS, 'COMPETITION_UNSUPPORTED')
     require(type(year) is int and 2020 <= year <= 2100 and type(day) is date
             and date(year, 7, 1) <= day < date(year+1, 7, 1), 'SEASON_REJECTED')
@@ -64,7 +65,7 @@ def _normalize(raw, pin, retrieved, mapping, mapping_pin, code, year, day, as_of
     matches = value['matches']; result = value['resultSet']
     require(isinstance(matches, list) and len(matches) == 380
             and type(result['count']) is int and result['count'] == len(matches), 'CALENDAR_INCOMPLETE')
-    normalized, seasons = [], set()
+    normalized, seasons, quarantined = [], set(), []
     for row in matches:
         identity(row['competition'])
         require(_id(row['id']) and row['stage'] == 'REGULAR_SEASON'
@@ -81,6 +82,14 @@ def _normalize(raw, pin, retrieved, mapping, mapping_pin, code, year, day, as_of
             require(score['duration'] == 'REGULAR' and all(type(v) is int and v >= 0 for v in pair), 'REGULATION_SCORE_REJECTED')
             winner = 'HOME_TEAM' if pair[0] > pair[1] else 'AWAY_TEAM' if pair[1] > pair[0] else 'DRAW'
             require('winner' not in score or score['winner'] == winner, 'SCORE_WINNER_CONTRADICTION')
+        elif diagnostic_quarantine and row['status'] == 'CANCELLED' and pair != [None, None]:
+            require(score.get('duration') == 'REGULAR'
+                    and all(type(v) is int and v >= 0 for v in pair), 'UNFINISHED_SCORE_REJECTED')
+            winner = 'HOME_TEAM' if pair[0] > pair[1] else 'AWAY_TEAM' if pair[1] > pair[0] else 'DRAW'
+            require(score.get('winner') == winner, 'UNFINISHED_SCORE_REJECTED')
+            quarantined.append({'fixture_id': str(row['id']), 'native_status': row['status'],
+                'native_score': score, 'reason': 'NONFINAL_SCORE_CONTRADICTION',
+                'played_result_usable': False})
         else:
             require(pair == [None, None] and score.get('winner') is None
                     and score.get('duration') in (None, 'REGULAR'), 'UNFINISHED_SCORE_REJECTED')
@@ -93,11 +102,14 @@ def _normalize(raw, pin, retrieved, mapping, mapping_pin, code, year, day, as_of
         normalized.append(out)
     require(type(result['played']) is int and result['played'] == sum(r['status'] == 'FT' for r in normalized), 'PLAYED_COUNT_REJECTED')
     first, last = next(iter(seasons))
-    bundle = encoded({'version': 1, 'competition': code, 'source': 'football-data.org',
+    bundle_value = {'version': 1, 'competition': code, 'source': 'football-data.org',
         'source_competition_id': str(source_id), 'source_season_id': contract['source_season_id'],
         'season_start': first, 'season_end': last, 'stage': 'REGULAR_SEASON',
         'retrieved_at': receipt_time.isoformat() if receipt_time else None,
-        'source_payload': raw.decode('utf-8'), 'source_sha256': pin, 'matches': normalized})
+        'source_payload': raw.decode('utf-8'), 'source_sha256': pin, 'matches': normalized}
+    if quarantined:
+        bundle_value['diagnostic_quarantine'] = quarantined
+    bundle = encoded(bundle_value)
     e = Evidence(code, next(l.tournament_id for l in LEAGUES if l.competition == code), year, day,
         calendar=bundle, calendar_sha256=fingerprint(bundle), mapping=mapping, mapping_sha256=mapping_pin,
         sources=sources, provenance=provenance)

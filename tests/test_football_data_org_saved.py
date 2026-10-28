@@ -260,3 +260,72 @@ class SpainPolicyTests(TestCase):
         with self.assertRaisesRegex(CalendarRejected, 'SEASON_POLICY_SCOPE_REJECTED'): convert(p, m)
         p, m = policy_inputs(); m['season_calendar_policy'] = 'PD_2026_RFEF_GETAFE'
         with self.assertRaisesRegex(CalendarRejected, 'SEASON_POLICY_SCOPE_REJECTED'): convert(p, m, 'I1')
+
+
+class DiagnosticQuarantineTests(TestCase):
+    def test_opt_in_preserves_all_native_evidence_and_blocks_every_market(self):
+        from modelfc.spain_italy_readiness import calendar
+        for code in COMPETITIONS:
+            p,m=inputs(code); p['matches'][0]['status']='CANCELLED';p['resultSet']['played']=0
+            p['matches'][0]['score']['halfTime']={'home':None,'away':None}
+            with self.assertRaisesRegex(CalendarRejected,'UNFINISHED_SCORE_REJECTED'):convert(p,m,code)
+            e=convert(p,m,code,diagnostic_quarantine=True,retrieved_at=NOW-timedelta(hours=7))
+            b=json.loads(e.calendar)
+            self.assertEqual(json.loads(b['source_payload']),p)
+            self.assertEqual(len(b['matches']),380)
+            self.assertEqual({r['fixture_id'] for r in b['matches']},{str(r['id']) for r in p['matches']})
+            q=b['diagnostic_quarantine'][0]
+            self.assertEqual(q['native_score'],p['matches'][0]['score'])
+            self.assertFalse(q['played_result_usable']);self.assertIsNone(b['matches'][0]['goals'])
+            gate,_,rows=calendar(e,NOW)
+            self.assertEqual(gate['state'],'BLOCKED')
+            self.assertEqual(gate['underlying_calendar_gate']['state'],'STALE')
+            self.assertEqual(sum(r['status']=='FT' for r in rows),0)
+            r=report({code:e},as_of=NOW,spain_italy=True)
+            for market in next(x for x in r['leagues'] if x['competition']==code)['markets'].values():
+                self.assertFalse(market['validated']);self.assertFalse(market['live'])
+                self.assertEqual(market['input_state'],'UNSUPPORTED')
+                self.assertFalse(market['gates']['coverage']['complete_calendar_reconciliation'])
+
+    def test_valid_results_survive_and_missing_history_is_enumerated(self):
+        from dataclasses import replace
+        from modelfc.spain_italy_readiness import calendar
+        p,m=inputs();r=p['matches'][1];r['status']='CANCELLED'
+        r['score'].update(fullTime={'home':0,'away':0},winner='DRAW')
+        e=convert(p,m,diagnostic_quarantine=True)
+        _,_,rows=calendar(e,NOW)
+        self.assertEqual(sum(r['status']=='FT' for r in rows),1)
+        header=b'Div,Date,HomeTeam,AwayTeam,FTHG,FTAG,FTR,HC,AC\n'
+        # Empty current history is structurally valid but cannot fill the finished fixture.
+        e=replace(e,sources=(('SP1_2627.csv',header,fingerprint(header),None),))
+        cov=cal(e)['gates']['coverage']
+        self.assertEqual(cov['reason'],'HISTORY_CALENDAR_MISSING_OR_EXTRA')
+        self.assertEqual([x['fixture_id'] for x in cov['missing_results']],[str(p['matches'][0]['id'])])
+        self.assertNotIn(str(r['id']),[x['fixture_id'] for x in cov['missing_results']])
+        self.assertFalse(cov['complete_calendar_reconciliation'])
+
+    def test_fatal_checks_stay_fatal_in_diagnostic_mode(self):
+        for variant in ('id','season','team','partial','stage','negative','bool','active','winner'):
+            p,m=inputs();r=p['matches'][0];r['status']='CANCELLED';p['resultSet']['played']=0
+            if variant=='id':p['matches'][1]['id']=r['id']
+            if variant=='season':r['season']['id']=1
+            if variant=='team':r['homeTeam']['name']='Unknown'
+            if variant=='partial':p['matches'].pop()
+            if variant=='stage':r['stage']='PLAYOFFS'
+            if variant=='negative':r['score']['fullTime']['home']=-1
+            if variant=='bool':r['score']['fullTime']['home']=True
+            if variant=='active':r['status']='IN_PLAY'
+            if variant=='winner':r['score']['winner']='HOME_TEAM'
+            with self.subTest(variant=variant),self.assertRaises(CalendarRejected):convert(p,m,diagnostic_quarantine=True)
+        for value in (1,'true',None):
+            with self.assertRaisesRegex(CalendarRejected,'DIAGNOSTIC_MODE_REJECTED'):convert(diagnostic_quarantine=value)
+
+    def test_quarantine_annotation_cannot_claim_finished_or_wrong_source(self):
+        from dataclasses import replace
+        from modelfc.spain_italy_readiness import calendar
+        p,m=inputs();p['matches'][0]['status']='CANCELLED';p['resultSet']['played']=0
+        e=convert(p,m,diagnostic_quarantine=True)
+        for field,value in (('fixture_id','not-present'),('native_score',{}),('played_result_usable',True)):
+            b=json.loads(e.calendar);b['diagnostic_quarantine'][0][field]=value
+            raw=encoded(b)
+            with self.assertRaises(CalendarRejected):calendar(replace(e,calendar=raw,calendar_sha256=fingerprint(raw)),NOW)
