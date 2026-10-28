@@ -430,6 +430,42 @@ remain failures. No raw exception messages are retained. It does not
 authorize promotion or change the fixed GitHub JSON report. The normal
 host execution context is used, independent of coding-agent mount restrictions.
 
+### Supplemental failure retention (source only)
+
+Failure callbacks now send an independent bounded outcome stream before unittest
+formats exception text. Long stderr tails and rejected timing observations cannot
+erase an accepted failure observation. `outcomes.events` contains at most eight
+`[kind, test_id, exception_category, frames, frames_omitted]` records. Subtests use
+the enclosing test identity, never parameter values. Exception categories are a
+fixed built-in vocabulary or `OTHER`; custom names and all exception messages
+are discarded. Each of up to four frames contains only a source-declared test
+method symbol and a line number validated against that method's AST range.
+Non-test frames (including setup, application and library frames), excess frames,
+and nested test functions are omitted explicitly. This is a sanitized partial
+traceback, not a complete stack or a diagnosis of the historical PR219 error.
+
+The source inventory remains bounded to 256 non-symlink test files, 1 MiB per
+file and 20,000 aliases. It previously stopped after 4,096 aliases, which is below
+the current suite's inventory. Dynamic/inherited identities not declared in this
+inventory remain unknown. No arbitrary runtime name or path can leave the sandbox.
+The outcome pipe has separate sequencing, a final event count, a 1 MiB input
+ceiling and 1024-byte records. `outcomes.complete` means a consistent end was
+observed, not that tests passed or that all frames/events were retained.
+`outcomes.truncated` marks lost/rejected input or omitted records; individual
+`frames_omitted` flags mark partial stacks. Unknown or malformed outcome records
+stop outcome collection, preserving only the accepted prefix. Progress remains
+separate and cannot identify the failing test.
+
+The existing 4096-byte report ceiling is unchanged. When necessary, the producer
+removes slow timing entries first, then frames, then outcome details, preserving
+the bounded failure-ID list and setting truncation flags. The controller validates
+source bindings again and saves the protected report before candidate cleanup.
+Exit status and the final unittest summary remain the only test acceptance gate.
+Service-wide termination before report writing can still lose diagnostics.
+This source-only change does not update `/opt/modelfc-deploy/deploy_main.py`:
+a separately reviewed, authorized controller upgrade and exact installed-byte
+acceptance are required before it affects any VPS deployment.
+
 ### Supplemental unittest timing (source only)
 
 The trusted test runner wraps the same unittest discovery/verbose CLI with
@@ -449,8 +485,8 @@ retained `tests_run=null`. Dropped, malformed, out-of-order, unknown-ID or exces
 events stop timing aggregation and mark it incomplete, preserving only the
 accepted prefix. The pipe is drained even after rejection so instrumentation
 cannot block tests. At most 4 MiB/20,000 events are accepted; individual records
-are capped at 1024 bytes. No descriptions, parameters, tracebacks or raw pipe
-payloads are retained. The existing 4096-byte final report ceiling is unchanged.
+are capped at 1024 bytes. No descriptions, parameters or raw timing-pipe payloads are retained.
+Sanitized failure frames use the independent outcome channel described above. The existing 4096-byte final report ceiling is unchanged.
 
 These candidate-process observations are supplemental, not trusted attestations
 or proof that the last test caused a timeout. Timing adds small overhead. Normal
