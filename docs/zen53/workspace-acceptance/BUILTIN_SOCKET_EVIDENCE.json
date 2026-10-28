@@ -1,0 +1,13 @@
+{
+  "state": "STATIC_PINNED_BINARY_INSPECTION_NOT_RUNTIME_IMPORT",
+  "binary_route": "/usr/bin/python3.12",
+  "binary_sha256": "e50d468e8b0adfb05733f5b87b3cff34829c4a8c1aea50c865aa8bdfe4bb150f",
+  "existing_pin": "docs/zen53/native-compatibility/candidate/DEPENDENCIES.json",
+  "format": "ELF64 little-endian",
+  "PyImport_Inittab_symbol_address": "0xa4c200",
+  "builtin_name": "_socket",
+  "entry_function_address": "0x6c7b70",
+  "PyInit__socket_symbol_address": "0x6c7b70",
+  "new_dependencies": [],
+  "method": "Read ELF section mappings and pointer table after matching existing exact binary hash; no binary execution."
+}

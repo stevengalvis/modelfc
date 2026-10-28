@@ -1,0 +1,9 @@
+default_permissions = "zen53_workspace_fixture"
+allowed_approval_policies = ["never"]
+[allowed_permission_profiles]
+zen53_workspace_fixture = true
+[permissions.zen53_workspace_fixture.filesystem]
+":root" = "read"
+"/workspace-fixture" = "write"
+[permissions.zen53_workspace_fixture.network]
+enabled = false
