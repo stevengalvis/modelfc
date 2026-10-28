@@ -14,6 +14,7 @@ from modelfc import pl_btts, pl_corner_capture, pl_corner_odds, published_btts
 from modelfc.goal_totals import GoalAggregates
 from modelfc.five_league_readiness import SavedQuotes
 from modelfc.history_coverage import timestamp
+from modelfc.providers.oddspapi import _selection_american
 from modelfc.corner_analysis_store import _canonical_hash as digest
 from modelfc.corner_forecasts import CornerLineProbability
 from modelfc.corner_markets import price_corner_market, american_odds_terms
@@ -180,7 +181,9 @@ def _offers(state, observation, at):
     quotes=result['quotes']; implied={v['outcome'].upper():1/v['decimal_odds'] for v in quotes}; total=sum(implied.values())
     from modelfc.published_recommendations import OFFER_FIELDS
     for quote in quotes:
-        side=quote['outcome'].upper(); american=int(quote['american_odds']); profit,break_even=american_odds_terms(american)
+        side=quote['outcome'].upper()
+        american=_selection_american(dict(price=quote['decimal_odds'],priceAmerican=quote['american_odds']))
+        profit,break_even=american_odds_terms(american)
         if q['market']=='BTTS':
             probability=r['data']['forecast']['probabilities'][0 if side=='YES' else 1]
             offer=dict(**identity,market_type='BTTS',side=side,forecast_id=d['forecast_id'],comparison_id=observation['record_hash'],
