@@ -24,6 +24,13 @@ SCHEMA_VERSION = 1
 PROVIDER = "sportmonks"
 
 
+class SupplementalCsvConflict(ValueError):
+    """Validated supplemental values disagree with an installed CSV result."""
+
+    def __init__(self):
+        super().__init__("SUPPLEMENTAL_CSV_CONFLICT")
+
+
 def _sha(raw: bytes) -> str:
     return hashlib.sha256(raw).hexdigest()
 
@@ -210,7 +217,7 @@ def augment_sources(sources: tuple[tuple[str, bytes], ...],
             raise ValueError("SUPPLEMENTAL_CALENDAR_CONFLICT")
         if record.key in installed:
             if installed[record.key] != values:
-                raise ValueError("SUPPLEMENTAL_CSV_CONFLICT")
+                raise SupplementalCsvConflict()
             continue
         row = {name: "" for name in fields}
         row.update(Div="E1", Date=record.match_date.strftime("%d/%m/%Y"),

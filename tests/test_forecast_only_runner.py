@@ -368,6 +368,191 @@ class ForecastOnlyRunnerTests(unittest.TestCase):
         for path in (self.state / "research-predictions").glob("*.json"):
             self.assertEqual(json.loads(path.read_text())["supplemental_sources"], [])
 
+    def supplemental(self, *, season=999, away_corners=4, home_goals=2):
+        bindings = {row['history_name']: row['provider_team_id']
+                    for row in self.configuration['sportmonks_team_bindings']}
+        return make_result(competition='E1', provider='sportmonks',
+            provider_fixture_id=777001, provider_league_id=9, provider_season_id=season,
+            kickoff_utc='2026-09-20T14:00:00+00:00', match_date=date(2026, 9, 20),
+            home_provider_team_id=bindings['Birmingham'],
+            away_provider_team_id=bindings['Blackburn'], home_team='Birmingham',
+            away_team='Blackburn', home_goals=home_goals, away_goals=1,
+            home_corners=5, away_corners=away_corners, retrieved_at_utc=NOW.isoformat(),
+            response_sha256='9' * 64)
+
+    def assert_diagnostic_rejection(self, receipt, reason, *, requests=0):
+        from modelfc.fixture_diagnostics import report
+        from modelfc.prospective_run_receipts import _hash
+        self.assertEqual(receipt['status'], 'REJECTED')
+        self.assertEqual(receipt['reason'], reason)
+        self.assertEqual(receipt['forecasts_prepared'], 0)
+        self.assertEqual(receipt['forecasts_reused'], 0)
+        self.assertEqual(receipt['retry_after_utc'], None)
+        self.assertEqual(receipt['provider_requests'],
+                         {'football_data_org': 1, 'sportmonks': requests, 'oddspapi': 0})
+        self.assertFalse(list((self.state / 'research-predictions').glob('*.json')))
+        path = next((self.state / 'forecast-only-receipts').glob('*.json'))
+        self.assertEqual(json.loads(path.read_bytes()), receipt)
+        self.assertEqual(receipt['schema_version'], 2)
+        self.assertEqual(receipt['record_hash'], _hash(receipt))
+        before = self.state_bytes()
+        observed = report(self.state, day=NOW.date(), now=NOW)
+        self.assertEqual(observed['runs'][0]['run_reasons'], [reason])
+        self.assertEqual(before, self.state_bytes())
+
+    def test_selected_season_csv_conflict_is_precise_and_preserves_evidence(self):
+        publish_result(self.state, self.supplemental(away_corners=3))
+        before = self.state_bytes()
+        with patch('modelfc.forecast_only_runner.prepare_forecast') as prepare, \
+                patch('modelfc.forecast_only_runner.publish_prediction') as publish:
+            receipt = self.execute()
+        prepare.assert_not_called()
+        publish.assert_not_called()
+        self.assert_diagnostic_rejection(receipt, 'SUPPLEMENTAL_CSV_CONFLICT')
+        after = self.state_bytes()
+        for path, original in before.items():
+            self.assertEqual(after[path], original)
+        self.assertFalse((self.state / 'supplemental-history-attempts').exists())
+
+    def test_matching_supplement_keeps_forecast_and_source_hashes_unchanged(self):
+        first = self.execute()
+        publish_result(self.state, self.supplemental())
+        before = self.state_bytes()
+        second = self.execute(NOW + timedelta(seconds=1))
+        self.assertEqual(second['status'], 'RECORDED', second)
+        self.assertEqual(second['forecasts_prepared'], 0)
+        self.assertEqual(second['forecasts_reused'], first['forecasts_prepared'])
+        after = self.state_bytes()
+        for path, original in before.items():
+            self.assertEqual(after[path], original)
+
+    def test_other_selected_season_filters_an_actual_csv_conflict(self):
+        publish_result(self.state, self.supplemental(season=998, away_corners=3))
+        before = self.state_bytes()
+        receipt = self.execute()
+        self.assertEqual(receipt['status'], 'RECORDED', receipt)
+        self.assertEqual(receipt['provider_requests']['sportmonks'], 0)
+        for path, original in before.items():
+            self.assertEqual(self.state_bytes()[path], original)
+
+    def test_calendar_mismatch_does_not_claim_csv_conflict(self):
+        publish_result(self.state, self.supplemental(home_goals=9))
+        receipt = self.execute()
+        self.assert_diagnostic_rejection(receipt, 'FORECAST_RUN_REJECTED')
+
+    def diagnostic_gap_run(self, *, fetched_conflict=False):
+        value = bundle()
+        response = json.loads(value['payload'])
+        installed = next(row for row in response['matches']
+                         if row['status'] == 'TIMED' and row['matchday'] != 9)
+        installed.update(status='FINISHED', utcDate='2026-09-21T14:00:00Z')
+        installed['score']['fullTime'] = {'home': 2, 'away': 1}
+        response['resultSet']['played'] = 2
+        value['payload'] = json.dumps(response)
+        content = raw(value)
+        home = installed['homeTeam']['name'].removeprefix('Source ')
+        away = installed['awayTeam']['name'].removeprefix('Source ')
+        archive = (histories()[0], ('E1_2627.csv',
+            ('Div,Date,HomeTeam,AwayTeam,FTHG,FTAG,HC,AC\n'
+             f'E1,21/09/2026,{home},{away},2,1,5,4\n').encode()))
+        records = (self.supplemental(),)
+        if fetched_conflict:
+            bindings = {row['history_name']: row['provider_team_id']
+                        for row in self.configuration['sportmonks_team_bindings']}
+            records += (make_result(competition='E1', provider='sportmonks',
+                provider_fixture_id=777002, provider_league_id=9, provider_season_id=999,
+                kickoff_utc='2026-09-21T14:00:00+00:00', match_date=date(2026, 9, 21),
+                home_provider_team_id=bindings[home], away_provider_team_id=bindings[away],
+                home_team=home, away_team=away, home_goals=2, away_goals=1,
+                home_corners=5, away_corners=3, retrieved_at_utc=NOW.isoformat(),
+                response_sha256='9' * 64),)
+
+        class Calendar:
+            def __init__(self, *_args, on_request, **_kwargs): self.on_request = on_request
+            def fetch(self, *_args, **_kwargs):
+                self.on_request()
+                return CalendarFetch(content, hashlib.sha256(value['payload'].encode()).hexdigest(), NOW, 1)
+
+        class Results:
+            def __init__(self, *_args, on_request, **_kwargs): self.on_request = on_request
+            def fetch(self, *_args, **_kwargs):
+                self.on_request()
+                return FetchResult(records, 1, ('9' * 64,), NOW)
+
+        return run_once(state_dir=self.state, data_config_path=self.config_path,
+            configuration=self.configuration, sportmonks_token='results-token',
+            football_data_token='calendar-token', clock=lambda: NOW,
+            calendar_client_type=Calendar, results_client_type=Results,
+            history_loader=lambda *_: archive)
+
+    def test_postfetch_csv_conflict_precedes_retention_and_preserves_claim(self):
+        with patch('modelfc.forecast_only_runner.prepare_forecast') as prepare, \
+                patch('modelfc.forecast_only_runner.publish_prediction') as publish:
+            receipt = self.diagnostic_gap_run(fetched_conflict=True)
+        prepare.assert_not_called()
+        publish.assert_not_called()
+        self.assert_diagnostic_rejection(receipt, 'SUPPLEMENTAL_CSV_CONFLICT', requests=1)
+        self.assertFalse(list((self.state / 'supplemental-history/E1').glob('*.json')))
+        claims = list((self.state / 'supplemental-history-attempts').glob('*.json'))
+        self.assertEqual(len(claims), 1)
+        original = claims[0].read_bytes()
+        with self.assertRaisesRegex(ProviderUnavailable, 'SPORTMONKS_RETRY_WAIT'):
+            _claim_results_request(self.state, start=date(2026, 9, 20), end=date(2026, 9, 21),
+                season_id=999, requested_at=NOW + timedelta(minutes=1), deployed_sha='f' * 40)
+        self.assertEqual(claims[0].read_bytes(), original)
+
+    def test_all_augmentation_boundaries_classify_by_type_never_message(self):
+        from modelfc.supplemental_history import SupplementalCsvConflict, augment_sources
+        secret = 'fake-secret /private/config.json provider-body'
+        errors = (SupplementalCsvConflict(), ValueError(secret), OSError(secret),
+                  ValueError('SUPPLEMENTAL_CSV_CONFLICT'))
+        for boundary in (1, 2, 3):
+            for index, error in enumerate(errors):
+                with self.subTest(boundary=boundary, error=type(error).__name__, index=index):
+                    self.state = self.root / f'boundary-{boundary}-{index}'
+                    (self.state / 'prospective').mkdir(parents=True)
+                    (self.state / 'prospective/runner.lock').touch(mode=0o600)
+                    (self.state / 'prospective/control.json').write_text('{}')
+                    calls = 0
+                    def augment(*args):
+                        nonlocal calls
+                        calls += 1
+                        if calls == boundary:
+                            raise error
+                        return augment_sources(*args)
+                    # Even a typed exception with contaminated args emits only the literal code.
+                    if isinstance(error, SupplementalCsvConflict):
+                        error.args = (secret,)
+                    with patch('modelfc.forecast_only_runner.augment_sources', side_effect=augment), \
+                            patch('modelfc.forecast_only_runner.prepare_forecast') as prepare, \
+                            patch('modelfc.forecast_only_runner.publish_prediction') as publish:
+                        receipt = self.diagnostic_gap_run()
+                    self.assertEqual(calls, boundary)
+                    expected = ('SUPPLEMENTAL_CSV_CONFLICT' if isinstance(error, SupplementalCsvConflict)
+                                else 'FORECAST_RUN_REJECTED')
+                    self.assert_diagnostic_rejection(receipt, expected, requests=int(boundary > 1))
+                    self.assertNotIn(secret, json.dumps(receipt))
+                    self.assertTrue(all(secret.encode() not in raw for raw in self.state_bytes().values()))
+                    prepare.assert_not_called()
+                    publish.assert_not_called()
+
+    def test_legacy_generic_receipts_remain_unknown_and_byte_identical(self):
+        from modelfc.fixture_diagnostics import report
+        from modelfc.forecast_only_runner import _publish_receipt
+        with patch('modelfc.forecast_only_runner.augment_sources', side_effect=ValueError('private')):
+            original = self.execute()
+        legacy = {key: value for key, value in original.items() if key not in
+                  {'schema_version', 'fixture_diagnostics', 'record_hash', 'completed_at_utc'}}
+        legacy['run_at_utc'] = (NOW - timedelta(seconds=1)).isoformat()
+        _publish_receipt(self.state, legacy)
+        before = self.state_bytes()
+        observed = report(self.state, day=NOW.date(), now=NOW)
+        self.assertEqual(len(observed['runs']), 2)
+        self.assertTrue(all(run['run_reasons'] == ['FORECAST_RUN_REJECTED'] for run in observed['runs']))
+        self.assertEqual(observed['runs'][0]['diagnostics'], 'UNKNOWN')
+        self.assertEqual(observed['runs'][0]['events'], [])
+        self.assertEqual(before, self.state_bytes())
+
     def test_systemd_schedule_identity_credentials_and_no_oddspapi(self):
         service = (ROOT / "deploy/modelfc-forecast-only.service").read_text()
         timer = (ROOT / "deploy/modelfc-forecast-only.timer").read_text()
