@@ -466,6 +466,73 @@ This source-only change does not update `/opt/modelfc-deploy/deploy_main.py`:
 a separately reviewed, authorized controller upgrade and exact installed-byte
 acceptance are required before it affects any VPS deployment.
 
+### Exact installed-baseline retention package (local preparation only)
+
+The [2026-10-28 23:46 UTC read-only inventory](https://github.com/stevengalvis/modelfc/pull/224#issuecomment-6483724564)
+reports installed controller SHA256
+`26b7acb8ca99268e2710cf5cc89f82f395087ba1d69a8c98d1fcc6b5e66e797c`,
+83,946 bytes, root:root mode `0555`. This fingerprint matches the output of
+`ops/ci/build_admission.py`; it is not itself installation or compatibility acceptance.
+`ops/ci/build_retention.py` reconstructs that exact input through the existing
+hash-verified chain and applies only `patches/deploy-main-26b7-retention.patch`.
+That patch is the reviewed PR224 retention change without porting edits.
+Its manifest and builder pin all three identities:
+
+| Artifact | SHA256 |
+| --- | --- |
+| Installed-baseline input | `26b7acb8ca99268e2710cf5cc89f82f395087ba1d69a8c98d1fcc6b5e66e797c` |
+| Retention patch | `ed28204efdbd260ae38b3f143edae92dfd88080292953253944454e669dd35b1` |
+| Candidate output (92,677 bytes) | `9d3e94dac40fae1285f13fe522efe38bce559554d58356078c2ce874cf3a3be5` |
+
+For a local artifact only, choose a new output path:
+
+```bash
+.venv/bin/python -B ops/ci/build_retention.py --output /tmp/retention-controller.py
+sha256sum /tmp/retention-controller.py
+```
+
+The builder creates the output exclusively, rejects existing files/symlinks,
+checks patch applicability and final bytes, and compiles without executing the
+controller. No installed path, permissions, unit or service is changed. Artifact
+regressions enforce that only the reviewed retention functions/constants and
+validation callsite change; every other top-level source segment remains exact
+installed-baseline content, including admission, deployment, promotion, recovery
+and candidate cleanup. The reconstructed artifact runs the retention privacy,
+truncation, process-capture and before-cleanup report regressions locally.
+
+The unchanged 936-byte test unit hashes to
+`4833e637436a6fdd7bdc1c7b895c29c602082b7d99740a65da7931728c5e97fa`,
+matching the read-only inventory. A future authorized operation replaces only
+`/opt/modelfc-deploy/deploy_main.py`. It requires no unit edit, daemon reload,
+new grants, API restart or deployment retry. Never install main's whole controller.
+
+Before asking for installation approval, separately review these exact candidate
+bytes and complete CI/exact-head OFFLINE plus disposable real-systemd acceptance
+of this artifact and the unchanged effective unit. Earlier acceptance of `08f7`
+or `26b7` is not acceptance of `9d3e`. Local PID1 is `tail`, so real-systemd
+acceptance has not been performed here. No new acceptance workflow is triggered
+or claimed by this package; the older harness still builds its older artifact.
+
+After those gates and explicit installation authorization, the one-file procedure
+must freshly verify the installed input hash, protected ancestors, root ownership,
+mode and identity; recheck effective unit/no drop-ins; preserve the bounded prior
+failure evidence under its SHA/release binding; and hold the existing deployment
+exclusion with no active test/dependency/deploy invocation. Preserve a protected,
+hash-verified independent copy of the exact old controller (not a hard link). Stage the approved candidate in
+the same protected filesystem as root:root mode `0555`, verify its hash, fsync and
+atomically replace the controller under exclusion. Re-read the installed hash,
+mode and identity and confirm unit bytes/effective properties and current release
+are unchanged. Do not start tests or retry deployment as part of this replacement.
+If replacement or verification fails, stop further action; reconcile uncertain
+publication first. Restore only if the installed bytes and identity still match
+the approved candidate; an unchanged verified original is a no-op. Unknown bytes,
+identity drift or third-party changes require operator review, not an overwrite.
+For the verified candidate, restore the independent old-controller copy with the
+same atomic procedure under exclusion and verify the original hash and metadata. Preserve
+both the operation evidence and historical failure report. This documents a
+future installation/rollback boundary; no installation or rollback is authorized
+or performed by building this local package.
+
 ### Supplemental unittest timing (source only)
 
 The trusted test runner wraps the same unittest discovery/verbose CLI with
