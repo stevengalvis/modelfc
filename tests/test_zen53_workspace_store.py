@@ -78,7 +78,7 @@ class WorkspaceStoreTests(unittest.TestCase):
         store = self.seed()
         with self.assertRaises(ValueError):
             w.open_verified(self.stage_fd, self.rootfs_fd, store.contract)
-        for method in (store.provision, store.postverify):
+        for method in (store.provision, store.postverify, store.cleanupverify):
             with self.assertRaises(ValueError):
                 method(self.identity)
 
@@ -197,6 +197,95 @@ class WorkspaceStoreTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             store.postverify_fixture(self.identity | {'start': self.identity['start']+1})
         self.assertEqual(store.postverify_fixture(self.identity)['patch'], w.WS_PATCH)
+
+    def test_cleanupverify_exact_before_after_without_patch_or_phase_change(self):
+        store = self.seed()
+        store.provision_fixture(self.identity)
+        for state in ('BEFORE', 'AFTER'):
+            if state == 'AFTER':
+                self.edit()
+            with self.subTest(state=state):
+                self.assertEqual(store.cleanupverify_fixture(self.identity), {
+                    'state': 'WORKSPACE_INTEGRITY_VERIFIED', 'fixture_state': state})
+                self.assertEqual(store.phase, 'PROVISIONED')
+                if state == 'BEFORE':
+                    with self.assertRaises(ValueError):
+                        store.postverify_fixture(self.identity)
+                else:
+                    self.assertEqual(store.postverify_fixture(self.identity)['patch'], w.WS_PATCH)
+
+    def test_cleanupverify_requires_provision_and_exact_transaction(self):
+        store = self.seed()
+        with self.assertRaises(ValueError):
+            store.cleanupverify_fixture(self.identity)
+        store.provision_fixture(self.identity)
+        for change in ({'start': self.identity['start']+1}, {'pid': True},
+                       {'uid': self.identity['uid']+1}, {'invocation': 'b'*32}, {'extra': 1}):
+            with self.subTest(change=change), self.assertRaises(ValueError):
+                store.cleanupverify_fixture(self.identity | change)
+        store.phase = 'PROVISIONING'
+        with self.assertRaises(ValueError):
+            store.cleanupverify_fixture(self.identity)
+        store.close()
+        with self.assertRaises(ValueError):
+            store.cleanupverify_fixture(self.identity)
+
+    def test_cleanupverify_rejects_tampering_in_both_states(self):
+        # Independent disposable cases ensure no restoration accidentally hides
+        # an earlier mutation. All writes remain on caller-owned fixture files.
+        changes = ('partial', 'same_size', 'test', 'outside', 'secret', 'extra',
+                   'mode', 'owner', 'replace', 'hardlink', 'symlink', 'mountpoint',
+                   'directory_mode', 'base_mode', 'rootfs_replace')
+        for state in ('BEFORE', 'AFTER'):
+            for change in changes:
+                with self.subTest(state=state, change=change), tempfile.TemporaryDirectory() as tmp:
+                    base = Path(tmp)
+                    rootfs = base / 'rootfs'
+                    rootfs.mkdir(mode=0o700)
+                    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC
+                    stage_fd, rootfs_fd = os.open(base, flags), os.open(rootfs, flags)
+                    store = None
+                    try:
+                        store = w.seed_fixture(stage_fd, rootfs_fd)
+                        store.provision_fixture(self.identity)
+                        calc = base / 'workspace/calc.py'
+                        calc.write_bytes(w.WS_AFTER if state == 'AFTER' else w.WS_BEFORE)
+                        if change == 'partial': calc.write_bytes(w.WS_AFTER[:12])
+                        elif change == 'same_size': calc.write_bytes(b'x' * len(w.WS_BEFORE))
+                        elif change in ('test', 'outside', 'secret'):
+                            name = {'test': 'workspace/test_calc.py',
+                                    'outside': 'rootfs/readonly-fixture/outside.txt',
+                                    'secret': 'rootfs/secret-fixture/canary'}[change]
+                            os.lseek(store.fds[name], 0, os.SEEK_SET)
+                            os.write(store.fds[name], b'X')
+                        elif change == 'extra': (base / 'workspace/extra').touch()
+                        elif change == 'mode': calc.chmod(0o640)
+                        elif change == 'owner':
+                            # Model a mismatched expected owner, never chown to
+                            # another UID or acquire privileged access.
+                            store.provisioned_contract['entries']['workspace/calc.py']['identity'][3] += 1
+                        elif change == 'replace':
+                            calc.unlink()
+                            calc.write_bytes(w.WS_AFTER if state == 'AFTER' else w.WS_BEFORE)
+                            calc.chmod(0o600)
+                        elif change == 'hardlink': os.link(calc, base / 'alias')
+                        elif change == 'symlink':
+                            escape = base / 'workspace/escape'
+                            escape.unlink()
+                            escape.symlink_to('/different')
+                        elif change == 'mountpoint': (rootfs / 'workspace-fixture/extra').touch()
+                        elif change == 'directory_mode': (base / 'workspace').chmod(0o750)
+                        elif change == 'base_mode': base.chmod(0o750)
+                        else:
+                            rootfs.rename(base / 'old-rootfs')
+                            rootfs.mkdir(mode=0o700)
+                        with self.assertRaises(ValueError):
+                            store.cleanupverify_fixture(self.identity)
+                    finally:
+                        if store is not None:
+                            store.close()
+                        os.close(rootfs_fd)
+                        os.close(stage_fd)
 
     def test_postverify_rejects_extra_and_symlink_drift(self):
         store = self.seed()

@@ -230,6 +230,30 @@ class WorkspaceStore:
         ws_need(self.fixture)
         return self._postverify(identity)
 
+    def cleanupverify(self, identity):
+        """Integrity only; an unchanged fixture does not establish task success."""
+        ws_root()
+        ws_need(not self.fixture)
+        return self._cleanupverify(identity)
+
+    def cleanupverify_fixture(self, identity):
+        ws_need(self.fixture)
+        return self._cleanupverify(identity)
+
+    def _cleanupverify(self, identity):
+        ws_identity(identity)
+        ws_need(self.phase == 'PROVISIONED' and identity == self.transaction)
+        before = self.provisioned_contract
+        after = ws_copy(before)
+        after['entries']['workspace/calc.py']['sha256'] = hashlib.sha256(WS_AFTER).hexdigest()
+        # These fixed alternatives have identical metadata, including size.
+        # Preserve the existing metadata-before-read guard for both states.
+        ws_need(len(WS_BEFORE) == len(WS_AFTER))
+        observed = self._snapshot(before)
+        ws_need(observed == before or observed == after)
+        return {'state': 'WORKSPACE_INTEGRITY_VERIFIED',
+                'fixture_state': 'BEFORE' if observed == before else 'AFTER'}
+
     def _postverify(self, identity):
         ws_identity(identity)
         ws_need(self.phase == 'PROVISIONED' and identity == self.transaction)

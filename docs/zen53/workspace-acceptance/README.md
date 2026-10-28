@@ -28,13 +28,20 @@ metadata, and provisions ownership of only the workspace directory and two files
 to the existing verified dynamic identity. The symlink and synthetic canaries
 remain root-owned. The existing release transaction checks observations before
 publishing readiness and immediately before release. After unit cleanup, trusted
-readback permits only the fixed one-line edit in the same inode and exports a
-constant patch. Missing, changed, partial or uncertain evidence fails closed.
+cleanup readback recognizes only the exact provisioned BEFORE or AFTER fixture.
+An unchanged BEFORE fixture after an early test failure does not itself create a
+cleanup hold; it never earns task acceptance or exports a patch. Only AFTER plus
+all existing native, transition, proof and cleanup gates permits the strict
+postverification and constant patch export. Partial or unexpected contents,
+changed identities/canaries, residual resources or descriptor errors retain the
+protective hold. Historical failures are never reclassified by this change.
 
 `native_generator.py` preserves the original proc proof and resource/cleanup
 controls. It requires an exact visible writable mount, matching held directory
 and fdinfo mount ID, no aliases or submounts, and a mandatory version-2 workspace
-frame tied to the original nonce/provision and fixture/payload hashes. The payload
+frame tied to the original nonce/provision and fixture/payload hashes. Mount
+failures carry fixed bounded identifiers and owned-helper trace locations;
+arbitrary exception messages, locals and private contents are never serialized. The payload
 uses direct syscalls for the fixed edit and two assertions, outside/traversal/
 symlink writes, a synthetic secret read, and IPv4/IPv6 socket creation. Successful
 forbidden access fails. ENOENT/ELOOP never count as denial. No connection is made;

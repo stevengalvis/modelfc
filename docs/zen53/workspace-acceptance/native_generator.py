@@ -15,6 +15,36 @@ def change(source, old, new):
 
 
 COMMON = r'''
+WORKSPACE_MOUNT_CHECKS = (
+    'WORKSPACE_MOUNT_CONTRACT', 'WORKSPACE_MOUNT_IDENTITY_SCHEMA',
+    'WORKSPACE_MOUNT_VISIBLE', 'WORKSPACE_MOUNT_OPTIONS', 'WORKSPACE_MOUNT_SUBMOUNT',
+    'WORKSPACE_MOUNT_ALIAS', 'WORKSPACE_MOUNT_OPEN', 'WORKSPACE_MOUNT_STAT',
+    'WORKSPACE_MOUNT_METADATA', 'WORKSPACE_MOUNT_DEVICE', 'WORKSPACE_MOUNT_VFS_READ',
+    'WORKSPACE_MOUNT_READONLY', 'WORKSPACE_MOUNT_FDINFO_READ', 'WORKSPACE_MOUNT_FDINFO',
+    'WORKSPACE_MOUNT_NAMED_STAT', 'WORKSPACE_MOUNT_REPLACED', 'WORKSPACE_MOUNT_CLOSE',
+)
+
+
+def workspace_need(value, code):
+    if not value:
+        raise RuntimeError(code)
+
+
+def workspace_checked(operation, code):
+    try:
+        return operation()
+    except Exception:
+        raise RuntimeError(code) from None
+
+
+def workspace_code_tree(code):
+    result = (code,)
+    for child in code.co_consts:
+        if type(child) is type(code):
+            result += workspace_code_tree(child)
+    return result
+
+
 def workspace_record(value, observation):
     proof_keys(value, 'version nonce provision contract_sha256 payload_sha256 tests_passed probes')
     proof_need(type(value['version']) is int and value['version'] == 1)
@@ -55,34 +85,37 @@ def workspace_contract_at(path):
 
 
 def workspace_mount(mounts, visible, owners):
-    contract = workspace_contract_at('/diagnostic/pins.json')
-    expected = contract['entries']['workspace']['identity'][:2]
-    proof_pair(expected)
+    contract = workspace_checked(lambda: workspace_contract_at('/diagnostic/pins.json'), 'WORKSPACE_MOUNT_CONTRACT')
+    expected = workspace_checked(lambda: contract['entries']['workspace']['identity'][:2], 'WORKSPACE_MOUNT_IDENTITY_SCHEMA')
+    workspace_checked(lambda: proof_pair(expected), 'WORKSPACE_MOUNT_IDENTITY_SCHEMA')
     rows = [m for m in mounts if m['destination'] == '/workspace-fixture']
-    proof_need(len(rows) == 1 and rows[0]['id'] in visible)
+    workspace_need(len(rows) == 1 and rows[0]['id'] in visible, 'WORKSPACE_MOUNT_VISIBLE')
     row = rows[0]
-    proof_need('rw' in row['options'].split(',') and not row['propagation'])
-    proof_need(not any(m['destination'].startswith('/workspace-fixture/') for m in mounts))
-    proof_need(not any(m['id'] != row['id'] and m['device'] == row['device'] and
+    workspace_need('rw' in row['options'].split(',') and not row['propagation'], 'WORKSPACE_MOUNT_OPTIONS')
+    workspace_need(not any(m['destination'].startswith('/workspace-fixture/') for m in mounts), 'WORKSPACE_MOUNT_SUBMOUNT')
+    workspace_need(not any(m['id'] != row['id'] and m['device'] == row['device'] and
                (m['root'] == row['root'] or m['root'].startswith(row['root'].rstrip('/') + '/')
-                or row['root'].startswith(m['root'].rstrip('/') + '/')) for m in mounts))
-    fd = os.open('/workspace-fixture', os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+                or row['root'].startswith(m['root'].rstrip('/') + '/')) for m in mounts), 'WORKSPACE_MOUNT_ALIAS')
+    fd = workspace_checked(lambda: os.open('/workspace-fixture', os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC), 'WORKSPACE_MOUNT_OPEN')
     try:
-        info = os.fstat(fd)
-        proof_need([info.st_dev, info.st_ino] == expected and stat.S_IMODE(info.st_mode) == 0o700
-                   and (info.st_uid,info.st_gid) == tuple(owners))
-        proof_need(row['device'] == str(os.major(info.st_dev)) + ':' + str(os.minor(info.st_dev)))
-        proof_need(not os.fstatvfs(fd).f_flag & os.ST_RDONLY)
-        with open('/proc/self/fdinfo/' + str(fd), encoding='ascii') as stream:
-            raw = stream.read(4097)
-        proof_need(len(raw) <= 4096 and [line.split(':',1)[1].strip() for line in raw.splitlines()
-                   if line.startswith('mnt_id:')] == [str(row['id'])])
-        named = os.stat('/workspace-fixture', follow_symlinks=False)
-        proof_need((named.st_dev,named.st_ino,named.st_mode,named.st_uid,named.st_gid) ==
-                   (info.st_dev,info.st_ino,info.st_mode,info.st_uid,info.st_gid))
+        info = workspace_checked(lambda: os.fstat(fd), 'WORKSPACE_MOUNT_STAT')
+        workspace_need([info.st_dev, info.st_ino] == expected and stat.S_IMODE(info.st_mode) == 0o700
+                   and (info.st_uid,info.st_gid) == tuple(owners), 'WORKSPACE_MOUNT_METADATA')
+        workspace_need(row['device'] == str(os.major(info.st_dev)) + ':' + str(os.minor(info.st_dev)), 'WORKSPACE_MOUNT_DEVICE')
+        budget = workspace_checked(lambda: os.fstatvfs(fd), 'WORKSPACE_MOUNT_VFS_READ')
+        workspace_need(not budget.f_flag & os.ST_RDONLY, 'WORKSPACE_MOUNT_READONLY')
+        def read_fdinfo():
+            with open('/proc/self/fdinfo/' + str(fd), encoding='ascii') as stream:
+                return stream.read(4097)
+        raw = workspace_checked(read_fdinfo, 'WORKSPACE_MOUNT_FDINFO_READ')
+        workspace_need(len(raw) <= 4096 and [line.split(':',1)[1].strip() for line in raw.splitlines()
+                   if line.startswith('mnt_id:')] == [str(row['id'])], 'WORKSPACE_MOUNT_FDINFO')
+        named = workspace_checked(lambda: os.stat('/workspace-fixture', follow_symlinks=False), 'WORKSPACE_MOUNT_NAMED_STAT')
+        workspace_need((named.st_dev,named.st_ino,named.st_mode,named.st_uid,named.st_gid) ==
+                   (info.st_dev,info.st_ino,info.st_mode,info.st_uid,info.st_gid), 'WORKSPACE_MOUNT_REPLACED')
         return row['id']
     finally:
-        os.close(fd)
+        workspace_checked(lambda: os.close(fd), 'WORKSPACE_MOUNT_CLOSE')
 
 
 def workspace_canaries(mounts, visible, root_owners, workspace_id):
@@ -153,9 +186,19 @@ def workspace_cleanup():
     global workspace_rootfd
     try:
         if workspace_store is not None:
-            result['workspace_readback'] = workspace_store.postverify(provision_transaction.identity)
-            if workspace_verified and result.get('cleanup') == 'PASS' and result.get('status') == 'WORKSPACE_READBACK_PENDING':
+            integrity = workspace_store.cleanupverify(provision_transaction.identity)
+            proof_need(type(integrity) is dict and set(integrity) == {'state', 'fixture_state'}
+                       and integrity['state'] == 'WORKSPACE_INTEGRITY_VERIFIED'
+                       and integrity['fixture_state'] in ('BEFORE', 'AFTER'))
+            result['workspace_integrity'] = integrity
+            result['workspace_readback'] = {'state': 'NOT_ACCEPTED', 'fixture_state': integrity['fixture_state']}
+            if (integrity['fixture_state'] == 'AFTER' and workspace_verified
+                    and result.get('native_runtime') == 'PASS' and result.get('transition') == 'PASS'
+                    and result.get('cleanup') == 'PASS' and result.get('status') == 'WORKSPACE_READBACK_PENDING'):
+                result['workspace_readback'] = workspace_store.postverify(provision_transaction.identity)
                 result['status'] = 'FIXED_WORKSPACE_PASS_NOT_AGENT_ACCEPTANCE'
+            elif result.get('status') == 'WORKSPACE_READBACK_PENDING':
+                result['status'] = 'BLOCKED'
     except BaseException as error:
         result['workspace_readback'] = {'state': 'UNKNOWN', 'error_class': type(error).__name__}
         result['cleanup'] = 'BLOCKED:WORKSPACE_READBACK'
@@ -243,6 +286,14 @@ def generate(files):
             source = change(source, '        certificate = proof_verify(frames[0], self.before, after)',
                             "        certificate = proof_verify(frames[0], self.before, after)\n        proof_need(proof_parse(frames[0])['workspace']['contract_sha256'] == hashlib.sha256(proof_bytes(workspace_contract_at('/diagnostic/pins.json'))).hexdigest())")
         elif name == 'report.py':
+            source = change(source, 'FAILURE_REPORTER_CODES = tuple(code for function in (',
+                'FAILURE_CHECKS = FAILURE_CHECKS | frozenset(WORKSPACE_MOUNT_CHECKS)\n\n'
+                'FAILURE_REPORTER_CODES = tuple(code for function in (\n'
+                '    workspace_mount, workspace_contract_at, workspace_canaries, workspace_need, workspace_checked,\n'
+                '    proof_need, proof_pair, proof_int, proof_pairs,')
+            source = change(source,
+                ') for code in (function.__code__,) + tuple(\n    value for value in function.__code__.co_consts\n    if type(value) is type(function.__code__)))',
+                ') for code in workspace_code_tree(function.__code__))')
             source = change(source, "    for mount in mounts:\n        if mount['id'] in visible and 'rw'", "    workspace_id = workspace_mount(mounts, visible, (os.getuid(), os.getgid()))\n    workspace_canaries(mounts, visible, (INNER_ROOT_UID, INNER_ROOT_GID), workspace_id)\n    for mount in mounts:\n        if mount['id'] in visible and 'rw'")
             source = change(source, "need((mount['type'], mount['destination']) in", "need(mount['id'] == workspace_id or (mount['type'], mount['destination']) in")
             source = change(source, "proof_inner_record = None", "workspace_payload = {}\nexec(" + repr(payload) + ", workspace_payload)\nproof_inner_record = None")

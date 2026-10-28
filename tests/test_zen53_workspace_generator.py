@@ -156,7 +156,7 @@ class WorkspaceGenerator(unittest.TestCase):
         env = dict(os=NS(close=Mock()), result={'cleanup': 'PASS', 'status': 'WORKSPACE_READBACK_PENDING'},
                    provision_transaction=NS(identity={'fixture': True}))
         exec(self.generator.SUPERVISOR, env)
-        store = NS(postverify=Mock(side_effect=ValueError('fixture')), close=Mock())
+        store = NS(cleanupverify=Mock(side_effect=ValueError('fixture')), close=Mock())
         env.update(workspace_store=store, workspace_rootfd=42, workspace_verified=True)
         env['workspace_cleanup']()
         self.assertEqual(env['result']['status'], 'BLOCKED')
@@ -166,12 +166,16 @@ class WorkspaceGenerator(unittest.TestCase):
 
     def test_cleanup_only_complete_bound_proof_can_advance_status(self):
         for verified, cleanup, expected in ((True, 'PASS', 'FIXED_WORKSPACE_PASS_NOT_AGENT_ACCEPTANCE'),
-                                             (False, 'PASS', 'WORKSPACE_READBACK_PENDING'),
-                                             (True, 'BLOCKED', 'WORKSPACE_READBACK_PENDING')):
-            env = dict(os=NS(close=Mock()), result={'cleanup': cleanup, 'status': 'WORKSPACE_READBACK_PENDING'},
+                                             (False, 'PASS', 'BLOCKED'),
+                                             (True, 'BLOCKED', 'BLOCKED')):
+            env = dict(os=NS(close=Mock()), proof_need=self.assertTrue,
+                       result={'cleanup': cleanup, 'status': 'WORKSPACE_READBACK_PENDING',
+                               'native_runtime':'PASS', 'transition':'PASS'},
                        provision_transaction=NS(identity={}))
             exec(self.generator.SUPERVISOR, env)
-            env.update(workspace_store=NS(postverify=Mock(return_value={'state': 'FIXED_WORKSPACE_READBACK_ONLY'}),
+            env.update(workspace_store=NS(cleanupverify=Mock(return_value={'state':'WORKSPACE_INTEGRITY_VERIFIED',
+                                                                         'fixture_state':'AFTER'}),
+                                          postverify=Mock(return_value={'state': 'FIXED_WORKSPACE_READBACK_ONLY'}),
                                            close=Mock()), workspace_verified=verified)
             env['workspace_cleanup']()
             self.assertEqual(env['result']['status'], expected)
@@ -241,3 +245,71 @@ class WorkspaceGenerator(unittest.TestCase):
             finally:
                 infos[23].st_ino=original_inode;infos[23].st_uid=original_uid
                 entries['workspace/escape']['target']='/readonly-fixture/outside.txt'
+
+    def diagnostic_runtime(self):
+        tree=ast.parse(self.generated['report.py'])
+        # Definitions/constants only; exclude payload exec, reporter main and its catch block.
+        nodes=[node for node in tree.body if isinstance(node,(ast.Import,ast.ImportFrom,ast.FunctionDef,ast.ClassDef,ast.Assign))]
+        env={}
+        exec(compile(ast.Module(body=nodes,type_ignores=[]),'<reporter-diagnostic-fixture>','exec'),env)
+        return env
+
+    def test_each_mount_failure_has_fixed_bounded_reporter_identifier(self):
+        covered=set()
+        for code in self.diagnostic_runtime()['WORKSPACE_MOUNT_CHECKS']:
+            env=self.diagnostic_runtime()
+            info=NS(st_dev=2049,st_ino=123,st_mode=stat.S_IFDIR|0o700,st_uid=77,st_gid=77)
+            fake=NS(**{key:getattr(os,key) for key in ('O_RDONLY','O_DIRECTORY','O_NOFOLLOW','O_CLOEXEC','ST_RDONLY','major','minor')},
+                    open=Mock(return_value=9),close=Mock(),fstat=Mock(return_value=info),
+                    stat=Mock(return_value=info),fstatvfs=Mock(return_value=NS(f_flag=0)))
+            contract={'entries':{'workspace':{'identity':[2049,123]}}}
+            env.update(os=fake,workspace_contract_at=Mock(return_value=contract),
+                       open=Mock(side_effect=lambda *a,**kw:io.StringIO('mnt_id:\t5\n')))
+            row=dict(id=5,destination='/workspace-fixture',device='8:1',root='/fixture/workspace',options='rw',propagation=[])
+            rows=[row];visible={5}
+            secret='PRIVATE_CANARY_VALUE_MUST_NOT_LEAK'
+            failure=OSError(13,secret)
+            suffix=code.removeprefix('WORKSPACE_MOUNT_')
+            if suffix=='CONTRACT': env['workspace_contract_at'].side_effect=failure
+            elif suffix=='IDENTITY_SCHEMA': contract['entries']['workspace']['identity']=[0,123]
+            elif suffix=='VISIBLE': visible=set()
+            elif suffix=='OPTIONS': row['options']='ro'
+            elif suffix=='SUBMOUNT': rows.append({**row,'id':6,'destination':'/workspace-fixture/sub'})
+            elif suffix=='ALIAS': rows.append({**row,'id':6,'destination':'/other'})
+            elif suffix=='OPEN': fake.open.side_effect=failure
+            elif suffix=='STAT': fake.fstat.side_effect=failure
+            elif suffix=='METADATA': info.st_uid=78
+            elif suffix=='DEVICE': row['device']='8:2'
+            elif suffix=='VFS_READ': fake.fstatvfs.side_effect=failure
+            elif suffix=='READONLY': fake.fstatvfs.return_value=NS(f_flag=os.ST_RDONLY)
+            elif suffix=='FDINFO_READ': env['open'].side_effect=failure
+            elif suffix=='FDINFO': env['open'].side_effect=lambda *a,**kw:io.StringIO('mnt_id:\t6\n')
+            elif suffix=='NAMED_STAT': fake.stat.side_effect=failure
+            elif suffix=='REPLACED': fake.stat.return_value=NS(**{**vars(info),'st_ino':999})
+            elif suffix=='CLOSE': fake.close.side_effect=failure
+            else: self.fail('uncovered diagnostic '+code)
+            with self.subTest(code=code):
+                try: env['workspace_mount'](rows,visible,(77,77))
+                except RuntimeError as error:
+                    self.assertEqual(error.args,(code,))
+                    line=env['failure_line'](error)
+                    self.assertIn('check='+code+' ',line)
+                    self.assertNotIn(secret,line)
+                    self.assertNotIn('lines=0\n',line)
+                    self.assertTrue(line.isascii());self.assertLessEqual(len(line.encode('ascii')),384)
+                    covered.add(code)
+                else: self.fail('failed predicate accepted')
+        self.assertEqual(covered,set(self.diagnostic_runtime()['WORKSPACE_MOUNT_CHECKS']))
+
+    def test_reporter_unknown_exceptions_and_nested_helpers_are_sanitized(self):
+        env=self.diagnostic_runtime()
+        secret='PRIVATE_TOKEN_'+'x'*5000+'\u2603'
+        class PrivateError(Exception): pass
+        for error in (RuntimeError(secret),PrivateError(secret),OSError(99999,secret)):
+            line=env['failure_line'](error)
+            self.assertIn('check=UNKNOWN',line)
+            self.assertNotIn('PRIVATE_TOKEN',line)
+            self.assertTrue(line.isascii());self.assertLessEqual(len(line),384)
+        for name in ('workspace_mount','workspace_contract_at','workspace_canaries','workspace_checked','workspace_need'):
+            for code in env['workspace_code_tree'](env[name].__code__):
+                self.assertIn(code,env['FAILURE_REPORTER_CODES'])
