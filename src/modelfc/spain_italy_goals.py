@@ -1,13 +1,13 @@
 """Opt-in saved-input goals consumer. No qualification, publication or provider IO."""
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, replace, field
 from zoneinfo import ZoneInfo
 from pathlib import Path
 
 from modelfc import goal_totals as totals
-from modelfc.acquisition_planner import utc
+from modelfc.acquisition_planner import utc, LEAGUES
 from modelfc.acquisition_storage import encoded, fingerprint
 from modelfc.btts_model import btts_probabilities
-from modelfc.five_league_readiness import CONTRACTS, _history_for_scope
+from modelfc.five_league_readiness import CONTRACTS, Evidence, _scope, _history_for_scope
 from modelfc.matches import Venue
 from modelfc.spain_italy_readiness import CONFIG, calendar, coverage
 
@@ -20,21 +20,26 @@ def require(ok, reason):
 @dataclass(frozen=True)
 class PreparedGoals:
     frozen: totals.FrozenGoals
-    calendar_sha256: str
-    mapping_sha256: str
+    evidence: Evidence
+    observations: tuple[totals.GoalObservation, ...]
+    implementation_sha256: str = field(default_factory=lambda: fingerprint(Path(__file__).read_bytes()))
 
     def __post_init__(self):
         require(isinstance(self.frozen, totals.FrozenGoals) and
                 self.frozen.fixture.competition in CONFIG and
                 self.frozen.fixture.timezone == CONFIG[self.frozen.fixture.competition],
                 "PREPARED_SCOPE_REJECTED")
-        totals.digest(self.calendar_sha256); totals.digest(self.mapping_sha256)
+        require(type(self.observations) is tuple and self.implementation_sha256 ==
+                fingerprint(Path(__file__).read_bytes()), 'PREPARATION_PROVENANCE_REJECTED')
+        expected = _freeze_inputs(self.evidence, self.frozen.fixture.fixture_id,
+                                  self.observations, self.frozen.frozen_at)
+        require(expected == self.frozen, 'PREPARATION_CONTRADICTION')
 
     def wire(self):
         yes, no = btts_probabilities(self.frozen.home_rate, self.frozen.away_rate)
-        return {'forecast_id': self.frozen.record_id, 'calendar_sha256': self.calendar_sha256,
-                'mapping_sha256': self.mapping_sha256, 'history_sha256': self.frozen.history_sha256,
-                'consumer_implementation_sha256': fingerprint(Path(__file__).read_bytes()),
+        return {'forecast_id': self.frozen.record_id, 'calendar_sha256': self.evidence.calendar_sha256,
+                'mapping_sha256': self.evidence.mapping_sha256, 'history_sha256': self.frozen.history_sha256,
+                'consumer_implementation_sha256': self.implementation_sha256,
                 'provenance_authenticated': False,
                 'sources': self.frozen.sources, 'btts_probabilities': {'yes': yes, 'no': no},
                 'state': 'RESEARCH_ONLY', 'market_qualification': 'UNQUALIFIED',
@@ -50,11 +55,19 @@ def prepare(evidence, fixture_id, observations, *, as_of, enabled=False):
     This is an offline consumer, not authentication of the supplied provenance.
     """
     require(enabled is True, 'OPT_IN_REQUIRED')
+    observations = tuple(observations)
+    frozen = _freeze_inputs(evidence, fixture_id, observations, as_of)
+    return PreparedGoals(frozen, evidence, observations)
+
+
+def _freeze_inputs(evidence, fixture_id, observations, as_of):
     e, now = evidence, utc(as_of)
+    require(isinstance(e, Evidence), 'EVIDENCE_REQUIRED')
     require(e.competition in CONFIG and e.selected_day == now.astimezone(
         ZoneInfo(CONFIG[e.competition])).date(), 'CONSUMER_SCOPE_REJECTED')
     contract = next(c for c in CONTRACTS if c.competition == e.competition)
-    require(e.tournament_id == {'SP1': 8, 'I1': 23}[e.competition], 'IDENTITY_REJECTED')
+    league = next(l for l in LEAGUES if l.competition == e.competition)
+    require(_scope(e, contract, league) is None, 'EVIDENCE_SCOPE_REJECTED')
     cal, mapping, rows = calendar(e, now)
     require(cal['state'] == mapping['state'] == 'VALID', 'CALENDAR_NOT_ELIGIBLE')
     gates, records = _history_for_scope(e, contract, now, 'GOALS')
@@ -96,7 +109,7 @@ def prepare(evidence, fixture_id, observations, *, as_of, enabled=False):
         actual[key] = (o.home_goals, o.away_goals, o.source_sha256, o.retrieved_at)
     require(actual == expected, 'OBSERVATION_HISTORY_MISMATCH')
     frozen = totals.freeze(fixture, observations, frozen_at=now, cutoff=e.selected_day)
-    return PreparedGoals(frozen, e.calendar_sha256, e.mapping_sha256)
+    return frozen
 
 
 def consume(prepared, saved, **options):

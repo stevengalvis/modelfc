@@ -88,3 +88,15 @@ class ConsumerTests(unittest.TestCase):
             self.assertFalse(out['live']);self.assertIsNone(out['recommendation'])
             bad=json.loads(binding);bad['quote_fixture_id']='another';bad=encoded(bad)
             with self.assertRaises(ValueError):consumer.consume(p,saved,**{**options,'binding_raw':bad,'binding_sha256':fingerprint(bad)})
+
+    def test_scope_and_reconstructed_preparation_reject_fabricated_evidence(self):
+        e,f,rows=inputs();p=consumer.prepare(e,f,rows,as_of=NOW,enabled=True)
+        for bad in (replace(e,stage='PLAYOFF'),replace(e,provenance='invented'),
+                    replace(e,calendar_sha256='a'*64),replace(e,mapping_sha256='a'*64)):
+            with self.assertRaises(ValueError):consumer.prepare(bad,f,rows,as_of=NOW,enabled=True)
+            with self.assertRaises(ValueError):replace(p,evidence=bad)
+        with self.assertRaises(ValueError):replace(p,implementation_sha256='a'*64)
+        from unittest.mock import patch
+        stored=p.implementation_sha256
+        with patch('modelfc.spain_italy_goals.Path.read_bytes',side_effect=AssertionError('no source reread')):
+            self.assertEqual(p.wire()['consumer_implementation_sha256'],stored)
