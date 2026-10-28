@@ -12,6 +12,34 @@ def instrument(raw):
     lines = source.splitlines(keepends=True)
     lines[old.lineno-1:old.end_lineno] = [RUNTIME + '\n']
     source = ''.join(lines)
+    # Only reads within the pinned proc identity parser can classify disappearance.
+    tree = ast.parse(source)
+    parser = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == 'parse_proc_identity')
+    lines = source.splitlines(keepends=True)
+    body = ''.join(lines[parser.lineno-1:parser.end_lineno])
+    if body.count('read_at(procfd, ') != 3:
+        raise ValueError('HARNESS_PROC_READ_SITES')
+    body = body.replace('read_at(procfd, ', 'read_proc_identity_at(procfd, ')
+    declaration = 'def parse_proc_identity(procfd, invocation, group):'
+    death = '    require(fields[0] not in ("Z", "X", "x"), "PROVISION_PROCESS_DEAD")'
+    if body.count(declaration) != 1 or body.count(death) != 1:
+        raise ValueError('HARNESS_PROC_IDENTITY_SITES')
+    body = body.replace(declaration,
+        'def parse_proc_identity(procfd, invocation, group, expected_identity=None):', 1)
+    body = body.replace(death,
+        '    require(len(fields) >= 20 and len(fields[0]) == 1 and pid > 0, "PROVISION_STAT_SHAPE")\n'
+        '    start = int(fields[19])\n'
+        '    require(start > 0, "PROVISION_STAT_SHAPE")\n'
+        '    if expected_identity is not None:\n'
+        '        require(pid == expected_identity["pid"] and start == expected_identity["start"],\n'
+        '                "PROVISION_PROCESS_IDENTITY_CHANGED")\n' + death, 1)
+    lines[parser.lineno-1:parser.end_lineno] = [body]
+    source = ''.join(lines)
+    identity_call = 'parse_proc_identity(self.procfd, expected["invocation"], expected["group"])'
+    if source.count(identity_call) != 1:
+        raise ValueError('HARNESS_MONITOR_IDENTITY_SITE')
+    source = source.replace(identity_call,
+        'parse_proc_identity(self.procfd, expected["invocation"], expected["group"], expected)', 1)
     marker = '    identity = io.identity if io is not None else None\n'
     if source.count(marker) != 1:
         raise ValueError('HARNESS_CLEANUP_SITE')

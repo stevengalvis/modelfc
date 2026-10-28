@@ -17,8 +17,8 @@
       "size": 2186
     },
     "HARNESS_DIAGNOSTICS.md": {
-      "sha256": "3a4ba162ed99a6d9de6707b07ffef0be61f5f030cbbe98e9816667f7d4762738",
-      "size": 4104
+      "sha256": "dd2960bf6c3bcf30cbf4c37606cc3047d568c63a5de589b17f80b66db45e61af",
+      "size": 5753
     },
     "NATIVE_ZLIB_PROVENANCE.json": {
       "sha256": "cbf45d6ddf647ad2b561cbcb63516e51cbc395a7470b1b28065ee0feabf3eda9",
@@ -133,12 +133,12 @@
       "size": 11458
     },
     "harness.py": {
-      "sha256": "1dcb1732325760fbf32674d7d65e2ddef708576e51d6bc5540b2562c2f5c8fc3",
-      "size": 6178
+      "sha256": "7f91099696b3756399419a7da48cc0b533543c4d42af794b553e98b951750c90",
+      "size": 7969
     },
     "harness_runtime.inc": {
-      "sha256": "0a8a07240a2f46a112db5ce3d7e422870313005beee74ed5ffbe3366fb9cceb9",
-      "size": 3918
+      "sha256": "6cfb2790dcb031fe0033921f3df694ac0b722024032fd97aa01588958afc56bc",
+      "size": 4549
     },
     "historical/DEPENDENCIES.json": {
       "sha256": "d68773386095a4b7b909e1ec44fa5cf8297dce52fb7e2f916af10c931a520809",
@@ -499,6 +499,10 @@
     "tests/test_proc_bracket.py": {
       "sha256": "7bba26ea07d7482bdd316c7b52e9a537e243608c5eb9e20c5e0cdea41a6f0693",
       "size": 7686
+    },
+    "tests/test_process_exit.py": {
+      "sha256": "4766f6cc86fde2119bb8517406a5fe3c198310ae3582d70669f784d1a6ffd96c",
+      "size": 6926
     },
     "tests/test_provisional.py": {
       "sha256": "9b45bbba3fc4fc4f181c3dff6e861567c922ffa6ea6c70253114a1c3291d211e",

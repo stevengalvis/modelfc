@@ -1,3 +1,15 @@
+def read_proc_identity_at(procfd, name, limit=4096):
+    # Called only by the authenticated pinned-proc identity parser. No pathname
+    # reopening, no malformed-data fallback, and no arbitrary I/O error masking.
+    require(name in ("stat", "status", "cgroup"), "PROVISION_PROC_READ_TARGET")
+    try:
+        return read_at(procfd, name, limit)
+    except OSError as error:
+        if error.errno not in (2, 3):  # ENOENT / ESRCH, not EIO/EACCES/EBADF.
+            raise
+        require(False, "PROVISION_PROC_DISAPPEARED")
+
+
 def completed_provision_unit(transaction):
     # A terminal observation permits final proof verification, never acceptance.
     need(transaction is not None and transaction.phase == "released",
@@ -34,9 +46,10 @@ def monitor_provision(transaction):
         transaction.io.check()
     except RuntimeError as error:
         diagnostic = error_diagnostic("supervisor", error)
-        # Only the authenticated liveness/unit-query assertions can reconcile.
-        # No release, parsing, stage, proc-identity or arbitrary exception fallback.
-        if diagnostic["predicate"] not in ("PROVISION_PIDFD_DEAD", "PROVISION_UNIT_IDENTITY_CHANGED"):
+        # Only authenticated exit observations can attempt terminal reconciliation.
+        # Malformed data, identity/credential changes and stage errors still fail.
+        if diagnostic["predicate"] not in ("PROVISION_PIDFD_DEAD", "PROVISION_UNIT_IDENTITY_CHANGED",
+                                            "PROVISION_PROCESS_DEAD", "PROVISION_PROC_DISAPPEARED"):
             raise
         return completed_provision_unit(transaction)
     return None

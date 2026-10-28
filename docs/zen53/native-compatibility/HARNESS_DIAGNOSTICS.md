@@ -37,8 +37,9 @@ dead-process snapshot; the journal recorded successful deactivation. The exact
 exit cause and failing-loop unit snapshot were not retained. This local candidate
 does not retroactively accept that attempt or infer its missing status.
 
-Only a source-authenticated PIDFD_DEAD or UNIT_IDENTITY_CHANGED assertion from
-the monitoring check can enter terminal reconciliation, and only after the
+Only a source-authenticated PIDFD_DEAD, UNIT_IDENTITY_CHANGED, PROCESS_DEAD or
+PROC_DISAPPEARED assertion from the monitoring check can enter terminal
+reconciliation, and only after the
 release transaction reached `released`. Initial provisioning and release checks
 remain strict. Both the race path and the ordinary terminal-loop path require
 two fresh matching loaded/active/exited unit snapshots: original InvocationID,
@@ -59,6 +60,29 @@ Terminal reconciliation only ends monitoring. It sets no success field and still
 runs the unchanged ordered authenticated proof, privilege, transition and workspace
 checks. Missing native transition samples or incomplete/conflicting proofs remain
 failures. Cleanup still runs independently and can retain the protective hold.
+
+The b135c16 attempt (PR219 comment 6477473353) reached the proc identity parser
+after a live pidfd observation and unit query, then rejected state Z/X/x. The
+exact state and exit cause were not retained; its historical BLOCKED result is
+unchanged. The successor instruments only the parser's three pinned-directory
+reads of stat, status and cgroup. ENOENT/ESRCH at those reads produces a fixed
+authenticated disappearance predicate, not acceptance. No proc pathname is
+reopened. Both these observations and Z/X/x enter the same terminal verifier.
+Before classifying a terminal stat state, the generated parser requires its
+minimum complete identity fields and positive PID/start ticks. Monitoring passes
+the original identity and checks PID/start equality before the death predicate;
+truncated terminal-state text or a contradictory observed identity is not an exit
+observation. Normal credential/cgroup validation remains unchanged.
+
+The checkpoint regression matrix covers initial pidfd, unit-query transition,
+proc terminal state, each of three proc reads disappearing and final pidfd.
+Malformed/empty/partial data, changed start identity or credentials, mismatched
+or deleted cgroup text, unrelated file/stage errors and other I/O errors remain
+fatal. The identical errno outside those pinned reads does not reconcile. If
+systemd has not yet settled into the exact required terminal state, or has
+already lost its retained properties, the result remains unknown/blocked. This
+does not promise every possible completion race is eliminated and adds no grace
+period, polling retry or weakened terminal requirement.
 
 Tests use generated definitions and fake observations only. No new host run or
 kernel behavior is established; cloud privileged chroot remains unavailable.
