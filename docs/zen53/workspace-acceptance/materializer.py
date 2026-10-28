@@ -43,7 +43,7 @@ def profile_bytes():
     return Path(__file__).with_name('profile.toml').read_bytes()
 
 
-def derive(base_plan, contract, os_bytes):
+def derive(base_plan, contract, os_bytes, *, source_generator=None):
     """Pure amendment of an independently recomputed baseline plan."""
     store.ws_contract(contract)
     need(set(base_plan['bind_identities']) == {'/empty-home','/var/tmp'})
@@ -51,7 +51,8 @@ def derive(base_plan, contract, os_bytes):
     files=copy.deepcopy(base_plan['files'])
     pins=json.loads(files['pins.json']);pins['workspace']=copy.deepcopy(contract)
     files['pins.json']=encoded(pins)
-    files=native_generator.generate(files)
+    # An explicit trusted local component, never a callable from request/model data.
+    files=(native_generator.generate if source_generator is None else source_generator)(files)
     files['requirements.toml']=profile_bytes()
     unit=files['diagnostic.service'].decode('ascii')
     need('BindPaths=' not in unit and 'ReadWritePaths=' not in unit)
@@ -213,7 +214,7 @@ def write_seeded_tree(stage_fd,rootfs_fd,fixture,targets,links,native_materializ
         need(not errors)
 
 
-def prepare(stage,historical,objects,evidence,recovery_bytes,bundled,native_bridge,native_materialize):
+def prepare(stage,historical,objects,evidence,recovery_bytes,bundled,native_bridge,native_materialize, *, source_generator=None):
     """Root-only API; no unit start, permissions outside this fresh stage or retry."""
     need(os.geteuid()==os.getegid()==0)
     stage_fd=native_materialize.open_absolute(stage)
@@ -238,7 +239,7 @@ def prepare(stage,historical,objects,evidence,recovery_bytes,bundled,native_brid
         rootfs=os.open('rootfs',os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW|os.O_CLOEXEC,dir_fd=stage_fd)
         os.fchmod(rootfs,0o555);os.fsync(rootfs);os.fsync(stage_fd)
         fixture=store.seed(stage_fd,rootfs)
-        amended=derive(base,fixture.contract,objects[native_bridge.OS_PY])
+        amended=derive(base,fixture.contract,objects[native_bridge.OS_PY],source_generator=source_generator)
         final=seal(amended,objects_fd,native_materialize)
         targets,links=compile_targets(recovery_bytes,final,bundled,native_bridge)
         binding=native_bridge.verify_stage_objects_binding(stage,objects_fd)
