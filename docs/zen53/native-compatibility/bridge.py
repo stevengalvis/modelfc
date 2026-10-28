@@ -13,6 +13,7 @@ import stat
 import owner_binding_v4 as owner_context
 import zlib_amendment
 import proc_bracket
+import provisional
 
 HISTORICAL_SHA256 = {
     'DEPENDENCIES.json': 'd68773386095a4b7b909e1ec44fa5cf8297dce52fb7e2f916af10c931a520809',
@@ -95,7 +96,7 @@ def patch_launcher(raw, home, vartmp):
              for n, value in zip(nodes, home + vartmp)]
     for begin, end, value in sorted(edits, reverse=True):
         text = text[:begin] + value + text[end:]
-    return proc_bracket.instrument(text.encode('ascii'))
+    return provisional.launcher(proc_bracket.instrument(text.encode('ascii')))
 
 
 def build(historical, object_bytes, stage_path, home_identity, vartmp_identity,
@@ -114,8 +115,8 @@ def build(historical, object_bytes, stage_path, home_identity, vartmp_identity,
     for key in (NEW_REPORT, NEW_SUPERVISOR, OS_PY, HISTORICAL_SHA256['requirements.toml']):
         require(key in object_bytes, 'REQUIRED_OBJECT')
     files = dict(historical)
-    files['report.py'] = object_bytes[NEW_REPORT]
-    files['supervisor.py'] = object_bytes[NEW_SUPERVISOR]
+    files['report.py'] = provisional.reporter(object_bytes[NEW_REPORT])
+    files['supervisor.py'] = provisional.supervisor(object_bytes[NEW_SUPERVISOR])
     files['launch.py'] = patch_launcher(historical['launch.py'], home, vartmp)
     pins = load_json(historical['pins.json'])
     deps = load_json(historical['DEPENDENCIES.json'])
@@ -124,7 +125,7 @@ def build(historical, object_bytes, stage_path, home_identity, vartmp_identity,
             '/var/tmp': [2049, 129326]}, 'HISTORICAL_BIND_PINS')
     pins['empty_directories'] = {'/empty-home': home, '/var/tmp': vartmp}
     pins['files']['/diagnostic/launch.py'] = sha(files['launch.py'])
-    pins['files']['/diagnostic/report.py'] = NEW_REPORT
+    pins['files']['/diagnostic/report.py'] = sha(files['report.py'])
     files['pins.json'] = json_bytes(pins)
     bindings = load_json(historical['EMPTY_BINDINGS.json'])
     require(set(bindings) == {'/empty-home', '/var/tmp'}, 'HISTORICAL_BIND_KEYS')

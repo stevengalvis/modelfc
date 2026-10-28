@@ -1,5 +1,9 @@
 # Local evidence-only instrumentation; not published or run
 
+This document describes the a64d152 evidence-only layer. The new local
+[provisional protocol](PROVISIONAL_PROTOCOL.md) adds a separately gated
+conditional acceptance path; its requirements and limitations also apply.
+
 The existing reporter still rejects inherited-proc ENOENT. No probe, runtime
 policy, cleanup rule, acceptance predicate or external observer is added.
 The bridge injects definitions and three hooks into the generated launcher;

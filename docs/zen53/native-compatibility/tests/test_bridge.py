@@ -72,8 +72,9 @@ class Bridge(unittest.TestCase):
                              result['owner_context_sha256'])
         self.assertEqual(self.historical['DEPENDENCIES.json'],
                          (ROOT / 'candidate/DEPENDENCIES.json').read_bytes())
-        self.assertEqual(manifest['rootfs/diagnostic/report.py'], bridge.NEW_REPORT)
-        self.assertEqual(manifest['supervisor.py'], bridge.NEW_SUPERVISOR)
+        self.assertEqual(manifest['rootfs/diagnostic/report.py'],
+                         hashlib.sha256(result['files']['report.py']).hexdigest())
+        self.assertEqual(manifest['supervisor.py'], hashlib.sha256(result['files']['supervisor.py']).hexdigest())
         self.assertEqual(manifest['rootfs/diagnostic/launch.py'],
                          hashlib.sha256(result['files']['launch.py']).hexdigest())
 
@@ -231,15 +232,16 @@ class Bridge(unittest.TestCase):
                                                                           'BRIDGE_RESULT_SCHEMA'):
             bridge.finalize(final, self.historical, self.objects,
                             FAKE_STAGE, HOME, VARTMP, self.owner_evidence, 7)
-        bad_info = copy.copy(info[bridge.NEW_REPORT])
+        generated_report = hashlib.sha256(plan["files"]["report.py"]).hexdigest()
+        bad_info = copy.copy(info[generated_report])
         bad_info.st_mode = bridge.stat.S_IFREG | 0o644
-        info[bridge.NEW_REPORT] = bad_info
+        info[generated_report] = bad_info
         read_offset.update({fd: 0 for fd in digest_to_fd.values()})
         with patch.object(bridge, 'os', adapter), self.assertRaisesRegex(ValueError,
                                                                           'OBJECT_METADATA'):
             bridge.finalize(plan, self.historical, self.objects,
                             FAKE_STAGE, HOME, VARTMP, self.owner_evidence, 7)
-        info[bridge.NEW_REPORT].st_mode = bridge.stat.S_IFREG | 0o444
+        info[generated_report].st_mode = bridge.stat.S_IFREG | 0o444
         unrelated = copy.copy(parent)
         unrelated.st_ino += 1
         dirs[7] = unrelated

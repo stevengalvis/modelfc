@@ -1,8 +1,14 @@
 # Native preparation candidate: local only, not launch-ready
 
+The current local revision adds the versioned
+[provisional inherited-proc proof](native-compatibility/PROVISIONAL_PROTOCOL.md).
+It is not published or run. Previously published preparations and failed
+attempts remain immutable. Fresh-proc compatibility is explicitly unsupported
+in this revision; no missing observation is accepted as a denial.
+
 This source snapshot integrates the reviewed v4 ownership bridge, fixed-map
 materialization, deterministic packaging and offline repository tests. No VPS
-stage, native execution or installed change has occurred. The lifecycle patch
+stage, native execution or installed change of this revision has occurred. The lifecycle patch
 and PR215 admission work are separate.
 
 ## Explicit zlib reconciliation completed offline
