@@ -84,18 +84,96 @@ def workspace_contract_at(path):
         os.close(fd)
 
 
-def workspace_mount(mounts, visible, owners):
+def workspace_topology(mounts, visible, inner=False):
+    rows = [m for m in mounts if m['destination'] == '/workspace-fixture']
+    active = [m for m in rows if m['id'] in visible]
+    workspace_need(len(active) == 1 and len(rows) == (2 if inner else 1), 'WORKSPACE_MOUNT_VISIBLE')
+    row = active[0]
+    workspace_need('rw' in row['options'].split(',') and not row['propagation'], 'WORKSPACE_MOUNT_OPTIONS')
+    allowed = {row['id']}
+    masks = [m for m in mounts if m['destination'].startswith('/workspace-fixture/')]
+    if inner:
+        covered = [m for m in rows if m['id'] != row['id']][0]
+        workspace_need(row['parent'] == covered['id'] and covered['id'] not in visible
+                       and covered['device'] == row['device'] and covered['root'] == row['root']
+                       and covered['type'] == row['type'] and covered['source'] == row['source']
+                       and covered['super'] == row['super']
+                       and 'ro' in covered['options'].split(',') and not covered['propagation'],
+                       'WORKSPACE_MOUNT_OPTIONS')
+        roots = [m for m in mounts if m['id'] == covered['parent'] and m['id'] in visible
+                 and m['destination'] == '/' and 'ro' in m['options'].split(',')]
+        workspace_need(len(roots) == 1, 'WORKSPACE_MOUNT_VISIBLE')
+        allowed.add(covered['id'])
+        names = {'/workspace-fixture/' + name for name in ('.git', '.agents', '.codex', '.aws')}
+        workspace_need(len(masks) == 4 and {m['destination'] for m in masks} == names,
+                       'WORKSPACE_MOUNT_SUBMOUNT')
+        devices = set()
+        for mask in masks:
+            options = set(mask['options'].split(','))
+            super_fields = mask['super'].split(',')
+            workspace_need(options <= {'ro', 'nosuid', 'nodev', 'noatime', 'relatime', 'strictatime', 'nodiratime'}
+                           and len(options & {'noatime', 'relatime', 'strictatime'}) <= 1
+                           and mask['source'] == 'tmpfs'
+                           and [part for part in super_fields if part.split('=', 1)[0] == 'mode'] == ['mode=555'],
+                           'WORKSPACE_MOUNT_OPTIONS')
+            workspace_need(mask['id'] in visible and mask['parent'] == row['id']
+                           and mask['root'] == '/' and mask['type'] == 'tmpfs'
+                           and {'ro', 'nosuid', 'nodev'} <= set(mask['options'].split(','))
+                           and not mask['propagation'], 'WORKSPACE_MOUNT_SUBMOUNT')
+            workspace_need(mask['device'] not in devices and mask['device'] != row['device']
+                           and sum(m['device'] == mask['device'] for m in mounts) == 1,
+                           'WORKSPACE_MOUNT_ALIAS')
+            devices.add(mask['device'])
+    else:
+        workspace_need(not masks, 'WORKSPACE_MOUNT_SUBMOUNT')
+    workspace_need(not any(m['id'] not in allowed and m['device'] == row['device'] and
+               (m['root'] == row['root'] or m['root'].startswith(row['root'].rstrip('/') + '/')
+                or row['root'].startswith(m['root'].rstrip('/') + '/')) for m in mounts), 'WORKSPACE_MOUNT_ALIAS')
+    return row, masks
+
+
+def workspace_masks(masks, owners):
+    for mask in masks:
+        fd = workspace_checked(lambda: os.open(mask['destination'], os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC), 'WORKSPACE_MOUNT_OPEN')
+        try:
+            info = workspace_checked(lambda: os.fstat(fd), 'WORKSPACE_MOUNT_STAT')
+            workspace_need(stat.S_ISDIR(info.st_mode) and stat.S_IMODE(info.st_mode) == 0o555
+                           and (info.st_uid, info.st_gid) == tuple(owners), 'WORKSPACE_MOUNT_METADATA')
+            workspace_need(mask['device'] == str(os.major(info.st_dev)) + ':' + str(os.minor(info.st_dev)), 'WORKSPACE_MOUNT_DEVICE')
+            budget = workspace_checked(lambda: os.fstatvfs(fd), 'WORKSPACE_MOUNT_VFS_READ')
+            required = os.ST_RDONLY | os.ST_NOSUID | os.ST_NODEV
+            workspace_need(budget.f_flag & required == required, 'WORKSPACE_MOUNT_READONLY')
+            def read_fdinfo():
+                with open('/proc/self/fdinfo/' + str(fd), encoding='ascii') as stream:
+                    return stream.read(4097)
+            raw = workspace_checked(read_fdinfo, 'WORKSPACE_MOUNT_FDINFO_READ')
+            workspace_need(len(raw) <= 4096 and [line.split(':',1)[1].strip() for line in raw.splitlines()
+                           if line.startswith('mnt_id:')] == [str(mask['id'])], 'WORKSPACE_MOUNT_FDINFO')
+            workspace_need(workspace_checked(lambda: os.listdir(fd), 'WORKSPACE_MOUNT_SUBMOUNT') == [], 'WORKSPACE_MOUNT_SUBMOUNT')
+            named = workspace_checked(lambda: os.stat(mask['destination'], follow_symlinks=False), 'WORKSPACE_MOUNT_NAMED_STAT')
+            after = workspace_checked(lambda: os.fstat(fd), 'WORKSPACE_MOUNT_STAT')
+            fields = ('st_dev', 'st_ino', 'st_mode', 'st_uid', 'st_gid')
+            workspace_need(tuple(getattr(info, k) for k in fields) == tuple(getattr(named, k) for k in fields)
+                           == tuple(getattr(after, k) for k in fields), 'WORKSPACE_MOUNT_REPLACED')
+        finally:
+            workspace_checked(lambda: os.close(fd), 'WORKSPACE_MOUNT_CLOSE')
+
+
+def workspace_mount(mounts, visible, owners, inner=False):
+    context = workspace_context_begin(mounts, visible)
+    try:
+        return workspace_mount_checked(mounts, visible, owners, inner=inner)
+    except BaseException as error:
+        workspace_context_attach(error, context)
+        raise
+
+
+def workspace_mount_checked(mounts, visible, owners, inner=False):
     contract = workspace_checked(lambda: workspace_contract_at('/diagnostic/pins.json'), 'WORKSPACE_MOUNT_CONTRACT')
     expected = workspace_checked(lambda: contract['entries']['workspace']['identity'][:2], 'WORKSPACE_MOUNT_IDENTITY_SCHEMA')
     workspace_checked(lambda: proof_pair(expected), 'WORKSPACE_MOUNT_IDENTITY_SCHEMA')
-    rows = [m for m in mounts if m['destination'] == '/workspace-fixture']
-    workspace_need(len(rows) == 1 and rows[0]['id'] in visible, 'WORKSPACE_MOUNT_VISIBLE')
-    row = rows[0]
-    workspace_need('rw' in row['options'].split(',') and not row['propagation'], 'WORKSPACE_MOUNT_OPTIONS')
-    workspace_need(not any(m['destination'].startswith('/workspace-fixture/') for m in mounts), 'WORKSPACE_MOUNT_SUBMOUNT')
-    workspace_need(not any(m['id'] != row['id'] and m['device'] == row['device'] and
-               (m['root'] == row['root'] or m['root'].startswith(row['root'].rstrip('/') + '/')
-                or row['root'].startswith(m['root'].rstrip('/') + '/')) for m in mounts), 'WORKSPACE_MOUNT_ALIAS')
+    row, masks = workspace_topology(mounts, visible, inner)
+    workspace_masks(masks, owners)
     fd = workspace_checked(lambda: os.open('/workspace-fixture', os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC), 'WORKSPACE_MOUNT_OPEN')
     try:
         info = workspace_checked(lambda: os.fstat(fd), 'WORKSPACE_MOUNT_STAT')
@@ -149,6 +227,9 @@ def workspace_canaries(mounts, visible, root_owners, workspace_id):
     check('/workspace-fixture/escape','workspace/escape',False,workspace_id)
     proof_need(os.readlink('/workspace-fixture/escape') == '/readonly-fixture/outside.txt')
 '''
+
+
+COMMON += '\n' + Path(__file__).with_name('failure_context.py').read_text('ascii')
 
 
 SUPERVISOR = r'''
@@ -286,15 +367,17 @@ def generate(files):
             source = change(source, '        certificate = proof_verify(frames[0], self.before, after)',
                             "        certificate = proof_verify(frames[0], self.before, after)\n        proof_need(proof_parse(frames[0])['workspace']['contract_sha256'] == hashlib.sha256(proof_bytes(workspace_contract_at('/diagnostic/pins.json'))).hexdigest())")
         elif name == 'report.py':
+            source = change(source, 'line = failure_context_line(error) + failure_line(error)',
+                'line = workspace_failure_context_line(error, WORKSPACE_MOUNT_CHECKS, failure_line) + failure_context_line(error) + failure_line(error)')
             source = change(source, 'FAILURE_REPORTER_CODES = tuple(code for function in (',
                 'FAILURE_CHECKS = FAILURE_CHECKS | frozenset(WORKSPACE_MOUNT_CHECKS)\n\n'
                 'FAILURE_REPORTER_CODES = tuple(code for function in (\n'
-                '    workspace_mount, workspace_contract_at, workspace_canaries, workspace_need, workspace_checked,\n'
+                '    workspace_mount, workspace_mount_checked, workspace_topology, workspace_masks, workspace_contract_at, workspace_canaries, workspace_need, workspace_checked,\n'
                 '    proof_need, proof_pair, proof_int, proof_pairs,')
             source = change(source,
                 ') for code in (function.__code__,) + tuple(\n    value for value in function.__code__.co_consts\n    if type(value) is type(function.__code__)))',
                 ') for code in workspace_code_tree(function.__code__))')
-            source = change(source, "    for mount in mounts:\n        if mount['id'] in visible and 'rw'", "    workspace_id = workspace_mount(mounts, visible, (os.getuid(), os.getgid()))\n    workspace_canaries(mounts, visible, (INNER_ROOT_UID, INNER_ROOT_GID), workspace_id)\n    for mount in mounts:\n        if mount['id'] in visible and 'rw'")
+            source = change(source, "    for mount in mounts:\n        if mount['id'] in visible and 'rw'", "    workspace_id = workspace_mount(mounts, visible, (os.getuid(), os.getgid()), inner=True)\n    workspace_canaries(mounts, visible, (INNER_ROOT_UID, INNER_ROOT_GID), workspace_id)\n    for mount in mounts:\n        if mount['id'] in visible and 'rw'")
             source = change(source, "need((mount['type'], mount['destination']) in", "need(mount['id'] == workspace_id or (mount['type'], mount['destination']) in")
             source = change(source, "proof_inner_record = None", "workspace_payload = {}\nexec(" + repr(payload) + ", workspace_payload)\nproof_inner_record = None")
             source = change(source, "    frame = {'version': 1, 'observation': proof_inner_record, 'report': lines}",
@@ -304,7 +387,7 @@ def generate(files):
                 "    proof_need(hashlib.sha256(workspace_raw.encode('ascii')).hexdigest() == proof_inner_record['topology_sha256'])\n"
                 "    workspace_mounts = parse_mounts(workspace_raw)\n"
                 "    workspace_visible, _ = mount_visibility(workspace_mounts)\n"
-                "    workspace_id = workspace_mount(workspace_mounts, workspace_visible, (os.getuid(), os.getgid()))\n"
+                "    workspace_id = workspace_mount(workspace_mounts, workspace_visible, (os.getuid(), os.getgid()), inner=True)\n"
                 "    workspace_canaries(workspace_mounts, workspace_visible, (INNER_ROOT_UID, INNER_ROOT_GID), workspace_id)\n"
                 "    workspace = {'version': 1, 'nonce': proof_inner_record['nonce'], 'provision': proof_inner_record['provision'], 'contract_sha256': contract_hash, 'payload_sha256': WORKSPACE_PAYLOAD_HASH, 'tests_passed': observation['tests_passed'], 'probes': observation['probes']}\n"
                 "    frame = {'version': 2, 'observation': proof_inner_record, 'report': lines, 'workspace': workspace}")

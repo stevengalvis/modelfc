@@ -38,7 +38,7 @@ protective hold. Historical failures are never reclassified by this change.
 
 `native_generator.py` preserves the original proc proof and resource/cleanup
 controls. It requires an exact visible writable mount, matching held directory
-and fdinfo mount ID, no aliases or submounts, and a mandatory version-2 workspace
+and fdinfo mount ID, no unapproved aliases or submounts, and a mandatory version-2 workspace
 frame tied to the original nonce/provision and fixture/payload hashes. Mount
 failures carry fixed bounded identifiers and owned-helper trace locations;
 arbitrary exception messages, locals and private contents are never serialized. The payload
@@ -87,3 +87,44 @@ run, publication or installation is included in this local task.
 The older `bridge.plan()` and synthetic verifier remain explicitly unmaterialized
 planning/fixture helpers; runtime preparation uses `materializer.prepare()` and
 the generated native verifier, not those normalized synthetic observations.
+
+## Layered workspace topology contract
+
+The local successor validates the outer single writable workspace separately from
+Codex's inner read-only workspace bind covered by a writable bind. It does not
+infer visibility from mount IDs or mountinfo line order. The inner layout requires
+exactly four protective read-only child masks: `.git`, `.agents`, `.codex`, and
+`.aws`. Additional writable mounts, aliases, children or ambiguous stacks remain
+failures; existing held-FD identity, ownership, mode, VFS and topology checks remain
+required. These masks are protection within the workspace, not additional writable
+workspace grants.
+
+The four names are defined by pinned Codex commit
+`092d3acd6bec3e3a14bdc7e7a2810ab628ab759d` in
+[`permissions.rs:40`](https://github.com/openai/codex/blob/092d3acd6bec3e3a14bdc7e7a2810ab628ab759d/codex-rs/protocol/src/permissions.rs#L40).
+[`bwrap.rs:699`](https://github.com/openai/codex/blob/092d3acd6bec3e3a14bdc7e7a2810ab628ab759d/codex-rs/linux-sandbox/src/bwrap.rs#L699)
+applies the protected names;
+[`bwrap.rs:1277`](https://github.com/openai/codex/blob/092d3acd6bec3e3a14bdc7e7a2810ab628ab759d/codex-rs/linux-sandbox/src/bwrap.rs#L1277)
+constructs missing protected directories using mode 0555, tmpfs and a read-only
+remount. Its retained authenticated source SHA256 is
+`a6b97db5acaec475066f3a5338776f875f7f2033f008ee2532907a1e5e50ffc0`.
+A writable superblock does not override a read-only mount view.
+
+The historical c98d attempt remains BLOCKED. Authenticated saved result
+`6d7861632d7185379ae666272de3087ba047796b6a60c3963dee75d1add2ab7a`
+and stdout `31096679be07d68ce59c656149d90129e714f7ce18e4fe5b20efb4f91db9fd63`
+were examined read-only in PR219 comments 6466975779 and 6467317477. Their inner
+samples show the layered layout, but do not bind the exact topology to the
+reporter's failure instant. Sample mount IDs and host UID/GID are not runtime
+constants. This source change does not retroactively accept that attempt or prove
+this successor on the VPS.
+
+Workspace-mount failures additionally emit a bounded `ZEN53_WORKSPACE_CONTEXT`
+record, separate from the unchanged 384-byte failure line. The record binds that
+line's digest to the process/procfs PID mapping, start ticks, mount namespace,
+monotonic bracket and a hash of the exact parsed mount arguments checked. Numeric
+fixed-path classifications describe relevant topology without emitting arbitrary
+paths or filesystem contents. It is observation-only, not a new acceptance proof
+or a claim that raw mountinfo was reread within that bracket. Missing observations,
+identity drift or output overflow produce UNKNOWN; no truncated affirmative
+record is accepted. Existing proof, stream and cleanup limits are unchanged.
