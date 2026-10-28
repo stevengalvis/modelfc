@@ -226,3 +226,37 @@ class SeasonPolicyTests(TestCase):
             # Exact score shape observed in PD564698, with synthetic identities.
             with self.assertRaisesRegex(CalendarRejected, 'UNFINISHED_SCORE_REJECTED'):
                 convert(p, m, code)
+
+
+class SpainPolicyTests(TestCase):
+    def test_spain_policy_boundaries_and_preserved_metadata(self):
+        p, m = inputs('SP1')
+        m.update(source_season_id='2518', season_calendar_policy='PD_2026_RFEF_GETAFE')
+        for row in p['matches']:
+            row['season'].update(id=2518, startDate='2026-08-16', endDate='2027-05-30')
+        p['matches'][0]['utcDate'] = '2026-08-15T17:30:00Z'
+        absent = dict(m); absent.pop('season_calendar_policy')
+        with self.assertRaisesRegex(CalendarRejected, 'FIXTURE_TIME_REJECTED'): convert(p, absent)
+        e = convert(p, m)
+        self.assertEqual(json.loads(e.calendar)['season_start'], '2026-08-16')
+        self.assertEqual(json.loads(json.loads(e.calendar)['source_payload']), p)
+        policy = cal(e)['gates']['calendar']['season_calendar_policy']
+        self.assertEqual(policy['kickoff_start'], '2026-08-15')
+        self.assertEqual(policy['kickoff_end'], '2027-05-30')
+        for kickoff in ('2026-08-14T21:59:59Z', '2027-05-30T22:00:00Z'):
+            p['matches'][1]['utcDate'] = kickoff
+            with self.subTest(kickoff=kickoff), self.assertRaisesRegex(CalendarRejected, 'FIXTURE_TIME_REJECTED'):
+                convert(p, m)
+        p['matches'][1]['utcDate'] = '2027-05-30T21:59:59Z'
+        p['matches'][0]['utcDate'] = '2026-08-14T22:00:00Z'
+        convert(p, m)
+        p['matches'][0]['status'] = 'CANCELLED'
+        p['resultSet']['played'] = 0
+        with self.assertRaisesRegex(CalendarRejected, 'UNFINISHED_SCORE_REJECTED'): convert(p, m)
+        p['matches'][0]['score'].update(fullTime={'home':None,'away':None},winner=None)
+        self.assertEqual(cal(convert(p, m))['gates']['calendar']['reason'], 'CALENDAR_PRIOR_UNRESOLVED')
+        m['source_season_id'] = '2519'
+        for row in p['matches']: row['season']['id'] = 2519
+        with self.assertRaisesRegex(CalendarRejected, 'SEASON_POLICY_SCOPE_REJECTED'): convert(p, m)
+        p, m = policy_inputs(); m['season_calendar_policy'] = 'PD_2026_RFEF_GETAFE'
+        with self.assertRaisesRegex(CalendarRejected, 'SEASON_POLICY_SCOPE_REJECTED'): convert(p, m, 'I1')

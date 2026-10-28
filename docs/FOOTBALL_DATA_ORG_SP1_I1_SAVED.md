@@ -94,7 +94,7 @@ Per-response bytes, SHA256, receipt, native date consistency and all other gates
 remain mandatory. The report includes the selected policy, effective bounds,
 native bounds and official evidence references. It makes no authenticity claim.
 
-The one configured policy is `SA_2026_CU200_CU208`: football-data.org / I1 / 2019 /
+The Italy policy is `SA_2026_CU200_CU208`: football-data.org / I1 / 2019 /
 2494 / 2026 / Europe/Rome, inclusive local dates **2026-08-22–2027-05-30**.
 Lega Serie A CU208 (24 June 2026), page 1, schedules four opening matches August22;
 CU200 (25 May 2026), page 1, specifies the May30 end. Official source URLs are
@@ -109,9 +109,17 @@ reports SA season2494 and four corresponding August22 rows. Its projection hash
 is `db38129a857aa60cbba06544febb2cd140ed9fd27fc341ce4500675f7fff9eea`.
 This workspace has inspected the posted report, not the private original bytes;
 full roster/history binding and genuine normalization acceptance remain pending.
-Spain has opening-day evidence but no approved complete interval in this change;
-there is deliberately no SP1 policy. Native season end alone is not independent
-approval. No policy is automatically enabled, including Italy's.
+The Spain policy `PD_2026_RFEF_GETAFE` scopes football-data.org / SP1 / 2014 /
+2518 / 2026 / Europe/Madrid to inclusive local dates **2026-08-15–2027-05-30**.
+The Getafe official opening-match announcement identifies the 2026/2027 season
+and August15 kickoff. The RFEF calendar dated June30, 2026 identifies that season
+and page13 places round38 on May30, 2027. Both sources were independently read
+for this change; their exact URLs are in the registry. The supplementary RFEF
+season-announcement page was inaccessible through the browser tool and is not
+relied upon. These are scheduled bounds, not a guarantee against later postponements.
+Any out-of-interval rescheduling still rejects pending a reviewed policy update.
+The registry and evidence references are pinned by the code revision; this is not
+a claim of retained official-document byte hashes. No policy is automatically enabled.
 
 CANCELLED with fullTime 0–0 / winner DRAW / duration REGULAR (the reported PD564698
 shape) still rejects as `UNFINISHED_SCORE_REJECTED`. It is never a played draw.

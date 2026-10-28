@@ -37,6 +37,12 @@ class SeasonCalendarPolicy:
 # Reviewed season semantics, independent of any one response hash. Explicit
 # mapping opt-in only. Unknown policies cannot be supplied as self-attestation.
 SEASON_CALENDAR_POLICIES = MappingProxyType({
+    'PD_2026_RFEF_GETAFE': SeasonCalendarPolicy(
+        'football-data.org', 'SP1', '2014', '2518', 2026, 'Europe/Madrid',
+        date(2026, 8, 15), date(2027, 5, 30), (
+            'https://www.getafecf.com/noticias/venta-de-entradas-para-el-partido-en-vitoria',
+            'https://rfef.es/sites/default/files/2026-06/Campeonato_de_Primera_Division_0.pdf',
+        )),
     'SA_2026_CU200_CU208': SeasonCalendarPolicy(
         'football-data.org', 'I1', '2019', '2494', 2026, 'Europe/Rome',
         date(2026, 8, 22), date(2027, 5, 30), (
