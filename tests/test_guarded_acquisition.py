@@ -148,8 +148,17 @@ class CoordinatorTests(unittest.TestCase):
             self.calendar['competitions'][code]=[self.calendar['competitions']['E1'][0]|{'fixture_id':code,'tournament_id':tid}]
             self.rows.append(provider_row(tid,code))
         self.auth['enabled_competitions']=list(self.calendar['competitions']); self.sync()
+        from modelfc.acquisition_dry_run import preview
+        raw = self.calendar_path.read_bytes()
+        plan = preview(raw, calendar_sha256=hashlib.sha256(raw).hexdigest(),
+                       enabled_competitions=self.auth["enabled_competitions"],
+                       as_of=NOW, reserved=self.reserved())
+        self.assertEqual(plan["request_demand"], 1)
+        self.assertEqual(self.reserved(), 0)
         result=self.run_acquisition()
         self.assertEqual(result['status'],'RECORDED',result)
+        self.assertEqual(self.reserved(), 1)
+        self.assertEqual(self.calls,[tuple(plan["batches"][0]["tournament_ids"])])
         self.assertEqual(self.calls,[(18,17,8,23,242)])
         self.assertEqual(result['forecasts'],2)
 
