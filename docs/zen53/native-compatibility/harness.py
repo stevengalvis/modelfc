@@ -38,6 +38,20 @@ def instrument(raw):
     if source.count(query) != 1:
         raise ValueError('HARNESS_CLEANUP_QUERY')
     source = source.replace(query, query.replace('"ActiveState",', '"ActiveState", "SubState",'), 1)
+    monitoring = '        if props.get("SubState") == "running":\n            provision_transaction.io.check()'
+    terminal = '        if props.get("ActiveState") in ("inactive", "failed") or props.get("SubState") == "exited":\n            break'
+    if source.count(monitoring) != 1 or source.count(terminal) != 1:
+        raise ValueError('HARNESS_COMPLETION_SITE')
+    source = source.replace(monitoring,
+        '        if props.get("SubState") == "running":\n'
+        '            completion = monitor_provision(provision_transaction)\n'
+        '            if completion is not None:\n'
+        '                result["terminal_completion"] = completion\n'
+        '                break', 1)
+    source = source.replace(terminal,
+        '        if props.get("ActiveState") in ("inactive", "failed") or props.get("SubState") == "exited":\n'
+        '            result["terminal_completion"] = completed_provision_unit(provision_transaction)\n'
+        '            break', 1)
     marker = '\ntry:\n    need(len(sys.argv)'
     if source.count(marker) != 1:
         raise ValueError('HARNESS_REGISTRY_SITE')

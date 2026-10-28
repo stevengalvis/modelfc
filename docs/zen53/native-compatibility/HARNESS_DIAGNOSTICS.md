@@ -1,8 +1,8 @@
 # Local harness diagnostics and terminal cleanup
 
 This revision is local, unpublished and unexecuted. Historical failed attempts
-remain immutable. It does not identify the original live failed predicate or
-change runtime acceptance, polling, isolation settings, resources or hold policy.
+remain immutable. Final proof, privilege, transition, workspace, isolation,
+resource and cleanup requirements remain mandatory.
 
 The generated supervisor now reports at most eight source-bound traceback
 locations, with fixed generated function IDs and numeric source lines. Traversal
@@ -27,9 +27,38 @@ remaining cgroups or stop failure do not authorize fallback or retry.
 
 The original live-unit stop branch, all post-stop resource checks, acceptance
 logic and protective lock hold remain unchanged. There is no automatic supervisor
-termination, cleanup deletion, recovery escalation or native retry. Regression
-fixtures demonstrate the running-to-exited observation race still fails, now with
-a precise predicate; they do not equate a dead outer process with acceptance.
+termination, cleanup deletion, recovery escalation or native retry.
+
+## Post-release completion reconciliation
+
+The retained 2cc66b6 attempt (PR219 comment 6474211222) failed at the loop's first
+pidfd check after release. Complete reporter/launcher output preceded its saved
+dead-process snapshot; the journal recorded successful deactivation. The exact
+exit cause and failing-loop unit snapshot were not retained. This local candidate
+does not retroactively accept that attempt or infer its missing status.
+
+Only a source-authenticated PIDFD_DEAD or UNIT_IDENTITY_CHANGED assertion from
+the monitoring check can enter terminal reconciliation, and only after the
+release transaction reached `released`. Initial provisioning and release checks
+remain strict. Both the race path and the ordinary terminal-loop path require
+two fresh matching loaded/active/exited unit snapshots: original InvocationID,
+stage RootDirectory and ExecMainPID, zero MainPID/ControlPID, empty ControlGroup,
+Result=success, ExecMainCode=1 (CLD_EXITED), ExecMainStatus=0. The original held
+pidfd must be ready, the original cgroup absent, and stage identities checked
+before and after observations. Only FileNotFoundError establishes cgroup absence;
+read errors, unknown/missing unit properties, PID reuse/replacement, nonzero or
+signal exit, timeout/OOM result and pre-release death fail closed.
+
+The retained systemd 255.4 source establishes these property semantics:
+service.c retains main_exec_status on main exit and selects SERVICE_EXITED for
+RemainAfterExit; execute.c exec_status_exit records pid/code/status; dbus-service.c
+and dbus-execute.h expose ExecMainPID/Code/Status. A collected unit with no retained
+properties is deliberately UNKNOWN. No polling retry or grace period is added.
+
+Terminal reconciliation only ends monitoring. It sets no success field and still
+runs the unchanged ordered authenticated proof, privilege, transition and workspace
+checks. Missing native transition samples or incomplete/conflicting proofs remain
+failures. Cleanup still runs independently and can retain the protective hold.
 
 Tests use generated definitions and fake observations only. No new host run or
 kernel behavior is established; cloud privileged chroot remains unavailable.

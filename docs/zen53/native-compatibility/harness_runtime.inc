@@ -1,3 +1,47 @@
+def completed_provision_unit(transaction):
+    # A terminal observation permits final proof verification, never acceptance.
+    need(transaction is not None and transaction.phase == "released",
+         "COMPLETION_NOT_RELEASED")
+    io, identity = transaction.io, transaction.identity
+    need(identity is not None and io.identity == identity and io.pidfd is not None,
+         "COMPLETION_PIN_MISSING")
+    valid_identity(identity)
+    need(identity["group"] == "/system.slice/" + UNIT, "COMPLETION_GROUP")
+    expected = {
+        "LoadState": "loaded", "ActiveState": "active", "SubState": "exited",
+        "MainPID": "0", "ControlPID": "0", "ControlGroup": "",
+        "InvocationID": identity["invocation"], "RootDirectory": str(BASE / "rootfs"),
+        "ExecMainPID": str(identity["pid"]), "ExecMainCode": "1",
+        "ExecMainStatus": "0", "Result": "success",
+    }
+    # ExecMainCode 1 is CLD_EXITED; require the recorded normal, successful exit.
+    io.stage_check()
+    for _ in range(2):
+        need(bool(select.select([io.pidfd], [], [], 0)[0]), "COMPLETION_PROCESS_LIVE")
+        need(properties(UNIT, tuple(expected)) == expected, "COMPLETION_UNIT_BINDING")
+        try:
+            os.stat("/sys/fs/cgroup" + identity["group"], follow_symlinks=False)
+        except FileNotFoundError:
+            pass
+        else:
+            need(False, "COMPLETION_CGROUP_REMAINS")
+        io.stage_check()
+    return expected
+
+
+def monitor_provision(transaction):
+    try:
+        transaction.io.check()
+    except RuntimeError as error:
+        diagnostic = error_diagnostic("supervisor", error)
+        # Only the authenticated liveness/unit-query assertions can reconcile.
+        # No release, parsing, stage, proc-identity or arbitrary exception fallback.
+        if diagnostic["predicate"] not in ("PROVISION_PIDFD_DEAD", "PROVISION_UNIT_IDENTITY_CHANGED"):
+            raise
+        return completed_provision_unit(transaction)
+    return None
+
+
 def error_diagnostic(stage, error):
     # Fixed code identities/line numbers only: never messages, locals or paths.
     allowed = ("RuntimeError", "TypeError", "ValueError", "KeyError", "IndexError",

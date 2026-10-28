@@ -17,8 +17,8 @@
       "size": 2186
     },
     "HARNESS_DIAGNOSTICS.md": {
-      "sha256": "9b07464ae7bbc82a7d0feb3838f0c540e7ef3f9457a0fe334bdcdfc32d9941ff",
-      "size": 2277
+      "sha256": "3a4ba162ed99a6d9de6707b07ffef0be61f5f030cbbe98e9816667f7d4762738",
+      "size": 4104
     },
     "NATIVE_ZLIB_PROVENANCE.json": {
       "sha256": "cbf45d6ddf647ad2b561cbcb63516e51cbc395a7470b1b28065ee0feabf3eda9",
@@ -133,12 +133,12 @@
       "size": 11458
     },
     "harness.py": {
-      "sha256": "95f563e9d653cd6eb11ef16582b48bf2216edbd2c30707598ceec29b74644bd3",
-      "size": 5188
+      "sha256": "1dcb1732325760fbf32674d7d65e2ddef708576e51d6bc5540b2562c2f5c8fc3",
+      "size": 6178
     },
     "harness_runtime.inc": {
-      "sha256": "8d99b091ecce0e53dd0a76c724a84dbd5e61989a64ea383c511c1c53f80dc2bb",
-      "size": 1956
+      "sha256": "0a8a07240a2f46a112db5ce3d7e422870313005beee74ed5ffbe3366fb9cceb9",
+      "size": 3918
     },
     "historical/DEPENDENCIES.json": {
       "sha256": "d68773386095a4b7b909e1ec44fa5cf8297dce52fb7e2f916af10c931a520809",
@@ -468,6 +468,10 @@
       "sha256": "458f247b3ef4fbad0f143aa5d118c89478e39394fec6e7ee174b2abecfec32da",
       "size": 1945
     },
+    "tests/test_completion.py": {
+      "sha256": "03f5630dc8cdf4b330cede5e2d467fac53771a1e1a3ee35035aceb882dbcdc2c",
+      "size": 8158
+    },
     "tests/test_failure_context.py": {
       "sha256": "3b3ba320d2bdc37886193b8dac79581d5abe37a35fcf42f992c4c5914dfed08c",
       "size": 11684
@@ -477,8 +481,8 @@
       "size": 7150
     },
     "tests/test_harness.py": {
-      "sha256": "4d02e48453e64ad56ecf8d29240529ea9b7ff4e4876c2ef0bcc8e586b649a19c",
-      "size": 10525
+      "sha256": "197261e0c74e37e351c0b2a8480f36bb7f4da2774ab92260a64c082df93347cd",
+      "size": 10508
     },
     "tests/test_materialize.py": {
       "sha256": "7d6bb6f18278f49d8a96ba8c5839fea9bef269db9e0d1e1e2cb7cba4343f28a3",

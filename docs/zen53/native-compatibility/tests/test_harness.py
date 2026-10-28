@@ -50,9 +50,9 @@ class Harness(unittest.TestCase):
         ast.parse(new)
         self.assertNotIn(".co_consts[", new)
         with self.assertRaises(ValueError):harness.instrument(new.encode())
-        # All acceptance and post-stop cleanup/hold instructions remain byte-identical.
-        self.assertEqual(new[new.index('    end = time.monotonic() + 63'):],
-                         old[old.index('    end = time.monotonic() + 63'):])
+        # Final proof/acceptance and post-stop cleanup/hold remain byte-identical.
+        marker = '    raw = (EVIDENCE / "stdout.log").read_text()'
+        self.assertEqual(new[new.index(marker):], old[old.index(marker):])
         tail = '    need(identity is not None and props.get("InvocationID")'
         self.assertEqual(new[new.index(tail):].split('def provision_query',1)[0],
                          old[old.index(tail):].split('def provision_query',1)[0])
