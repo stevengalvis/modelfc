@@ -42,7 +42,7 @@ class EPLProductTests(unittest.TestCase):
             approved_contracts=self.approved,enabled=True,**opts)
         return ids[0]
 
-    def observe(self, identity, *, missing=False):
+    def observe(self, identity, *, missing=False, decimal_only=False):
         r,_=epl._frozen(self.state,identity);f=r['data']['forecast']
         if r['data']['qualification']['market']=='BTTS':
             forecast=pl_btts.FrozenPLBtts(encoded(f['evidence']),epl.GoalAggregates(**f['aggregates']))
@@ -58,6 +58,12 @@ class EPLProductTests(unittest.TestCase):
             rows=[row];binding=encoded(dict(forecast_id=f['forecast_sha256'],competition='E0',source_fixture_id=str(i['fixture_id']),
                 quote_fixture_id=row['fixtureId'],home=i['home']['history_name'],away=i['away']['history_name'],kickoff=i['kickoff'],bookmaker='fanduel'))
             opts=dict(team_side='HOME',line=4.5)
+        if decimal_only:
+            for row in rows:
+                for market in row['bookmakerOdds']['fanduel']['markets'].values():
+                    for outcome in market['outcomes'].values():
+                        for player in outcome['players'].values():
+                            player.pop('priceAmerican', None)
         if missing: rows[0]['bookmakerOdds']['fanduel']['markets']={}
         return epl.observe(self.state,identity,replay.saved(rows),binding,enabled=True,**opts)
 
@@ -198,6 +204,30 @@ class EPLResultTests(EPLProductTests):
         self.assertEqual(published.read(self.state,as_of=replay.NOW+timedelta(minutes=1))['publications'][0]['result'],'PENDING')
         self.do_api(report)
         self.assertEqual(len(epl.result_history(self.state,epl._frozen(self.state,identity)[1],self.time)),2)
+
+    def test_decimal_only_quotes_publish_and_settle_at_original_price(self):
+        for market in ('BTTS', 'TEAM_TOTAL'):
+            with self.subTest(market=market):
+                self.state=Path(self.temp.name)/market
+                self.time=replay.NOW
+                identity=self.freeze(market);self.time+=timedelta(seconds=2)
+                observation=self.observe(identity,decimal_only=True)
+                raw=(self.state/epl.DIRECTORY/(observation+'.json')).read_bytes()
+                self.assertNotIn('priceAmerican',json.loads(raw)['data']['payload'])
+                self.assertEqual(self.publish(),1)
+                original=published.read(self.state)['publications'][0]['offer']
+                self.assertEqual(original['decimal_odds'],2.0 if market=='BTTS' else 1.9)
+                self.assertEqual(original['american_odds'],100 if market=='BTTS' else -111)
+                self.assertEqual(original['market_type'],market)
+                self.assertEqual(self.publish(),0)
+                self.time=replay.NOW+timedelta(hours=8)
+                result,pin=self.result(identity,away_goals=0,home_corners=6)
+                epl.record_result(self.state,identity,result,result_sha256=pin,enabled=True)
+                settled=published.read(self.state)['publications'][0]
+                self.assertEqual(settled['offer'],original)
+                self.assertEqual(settled['result'],'WIN')
+                self.assertAlmostEqual(settled['profit_units'],1.0 if market=='BTTS' else 100/111)
+                self.assertEqual((self.state/epl.DIRECTORY/(observation+'.json')).read_bytes(),raw)
 
     def test_corner_publication_missing_stats_and_correction(self):
         identity=self.freeze('TEAM_TOTAL');self.time+=timedelta(seconds=2);self.observe(identity)
