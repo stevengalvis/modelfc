@@ -16,6 +16,10 @@
       "sha256": "8b81e66d354293902f675b3fba014eb33e44fc17fbbd37121cc90be1bcec2057",
       "size": 2186
     },
+    "HARNESS_DIAGNOSTICS.md": {
+      "sha256": "9b07464ae7bbc82a7d0feb3838f0c540e7ef3f9457a0fe334bdcdfc32d9941ff",
+      "size": 2277
+    },
     "NATIVE_ZLIB_PROVENANCE.json": {
       "sha256": "cbf45d6ddf647ad2b561cbcb63516e51cbc395a7470b1b28065ee0feabf3eda9",
       "size": 1424
@@ -65,8 +69,8 @@
       "size": 4128
     },
     "bridge.py": {
-      "sha256": "63a7f2d9122df07c733d0a48ac3181210eb97fe4e254c78b35de3f8c8e255762",
-      "size": 18606
+      "sha256": "46da186239149789eb58eb90708b1980804515a702eebdd506958a88d1a0942c",
+      "size": 18641
     },
     "bridge_objects/2567e3290e66d17e3128f6741f64392dc6f90917bb95d0becec34db945fb12bb": {
       "sha256": "2567e3290e66d17e3128f6741f64392dc6f90917bb95d0becec34db945fb12bb",
@@ -127,6 +131,14 @@
     "diagnostic-amendment.diff": {
       "sha256": "ffbdbaab75fb6a5ff75ad36aad92a4bb7e853e73eb1ba906dcd5f26e45b887b1",
       "size": 11458
+    },
+    "harness.py": {
+      "sha256": "95f563e9d653cd6eb11ef16582b48bf2216edbd2c30707598ceec29b74644bd3",
+      "size": 5188
+    },
+    "harness_runtime.inc": {
+      "sha256": "8d99b091ecce0e53dd0a76c724a84dbd5e61989a64ea383c511c1c53f80dc2bb",
+      "size": 1956
     },
     "historical/DEPENDENCIES.json": {
       "sha256": "d68773386095a4b7b909e1ec44fa5cf8297dce52fb7e2f916af10c931a520809",
@@ -464,6 +476,10 @@
       "sha256": "523462d3c2cad22630eeaa941e8e672d1920486fff3fbdf8c1171b34044eaa4e",
       "size": 7150
     },
+    "tests/test_harness.py": {
+      "sha256": "4d02e48453e64ad56ecf8d29240529ea9b7ff4e4876c2ef0bcc8e586b649a19c",
+      "size": 10525
+    },
     "tests/test_materialize.py": {
       "sha256": "7d6bb6f18278f49d8a96ba8c5839fea9bef269db9e0d1e1e2cb7cba4343f28a3",
       "size": 10657
@@ -485,8 +501,8 @@
       "size": 15402
     },
     "tests/test_v4_integration.py": {
-      "sha256": "8d98f9f7c3782a1ccc760cb262af20f1597ac4f7072a003a666a48c9f276d714",
-      "size": 5634
+      "sha256": "88a53c3dd48d406d01d88b08dcaf0e2ac1760f7267ff7c91a16be5155ba3b9d9",
+      "size": 5661
     },
     "tests/test_zlib_amendment.py": {
       "sha256": "d20516eae762e924985a47669ae29ef25afeb3f8f04e121d0b02f62318908ff7",

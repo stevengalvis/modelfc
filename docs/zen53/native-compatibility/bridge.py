@@ -14,6 +14,7 @@ import owner_binding_v4 as owner_context
 import zlib_amendment
 import proc_bracket
 import provisional
+import harness
 
 HISTORICAL_SHA256 = {
     'DEPENDENCIES.json': 'd68773386095a4b7b909e1ec44fa5cf8297dce52fb7e2f916af10c931a520809',
@@ -116,7 +117,7 @@ def build(historical, object_bytes, stage_path, home_identity, vartmp_identity,
         require(key in object_bytes, 'REQUIRED_OBJECT')
     files = dict(historical)
     files['report.py'] = provisional.reporter(object_bytes[NEW_REPORT])
-    files['supervisor.py'] = provisional.supervisor(object_bytes[NEW_SUPERVISOR])
+    files['supervisor.py'] = harness.instrument(provisional.supervisor(object_bytes[NEW_SUPERVISOR]))
     files['launch.py'] = patch_launcher(historical['launch.py'], home, vartmp)
     pins = load_json(historical['pins.json'])
     deps = load_json(historical['DEPENDENCIES.json'])

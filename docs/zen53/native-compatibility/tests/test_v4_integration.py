@@ -93,7 +93,7 @@ class Integration(unittest.TestCase):
         self.assertEqual(plan['files']['diagnostic.service'].replace(
             self.args[2].encode(), bridge.OLD_STAGE.encode()), self.historical['diagnostic.service'])
         self.assertEqual(plan['files']['report.py'], bridge.provisional.reporter(self.objects[bridge.NEW_REPORT]))
-        self.assertEqual(plan['files']['supervisor.py'], bridge.provisional.supervisor(self.objects[bridge.NEW_SUPERVISOR]))
+        self.assertEqual(plan['files']['supervisor.py'], bridge.harness.instrument(bridge.provisional.supervisor(self.objects[bridge.NEW_SUPERVISOR])))
         changed = bridge.patch_launcher(self.historical['launch.py'], [77, 101], [77, 102])
         self.assertEqual(plan['files']['launch.py'], changed)
         deps = json.loads(plan['files']['DEPENDENCIES.json'])
