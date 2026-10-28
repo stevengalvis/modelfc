@@ -1,0 +1,97 @@
+"""Preparation only: verified copies, exact patch, static ELF closure and fake tests.
+Never executes operational sources, true, bwrap, Codex or a sandbox workload.
+"""
+import ast
+import datetime
+import difflib
+import hashlib
+import json
+import os
+import pathlib
+import shutil
+import stat
+import subprocess
+
+BASE=pathlib.Path(__file__).resolve().parent
+OLD=pathlib.Path('/tmp/zen53-minimal-compat-o5j8utk6')
+def digest(path): return hashlib.sha256(path.read_bytes()).hexdigest()
+def run(args,timeout=30):
+    assert args[0] in ('/usr/bin/python3','/usr/bin/patch','/usr/bin/readelf','/usr/bin/dpkg-query')
+    return subprocess.run(args,cwd=BASE,env={'PATH':'/usr/bin:/bin','LANG':'C.UTF-8','PYTHONDONTWRITEBYTECODE':'1'},stdin=subprocess.DEVNULL,capture_output=True,timeout=timeout,close_fds=True)
+
+assert digest(OLD/'ARTIFACT_SHA256.json')=='7e58d98710b5ee0c78feba30e154a7bc7aa43f996162d0f5f32b1426a4bc719f'
+original_manifest=json.loads((OLD/'ARTIFACT_SHA256.json').read_text())
+assert all(digest(OLD/name)==value for name,value in original_manifest.items())
+for path in (BASE/'published-baseline').iterdir():
+    assert path.read_bytes()==(OLD/path.name).read_bytes()
+assert digest(BASE/'reviewed.patch')=='542b2698e8dc346385ed3421d2e755b1c47df76ca702c325a372ca5872cc27c2'
+assert digest(BASE/'test_reviewed_patch.py')=='6c0a089c88cf79f9c7b64f2b5dbdb3b97611a3ad45d25e06a260f4934ce404f9'
+
+for name in ('launch.py','supervisor.py','report.py','prepare.py'):
+    assert not (BASE/name).exists()
+    shutil.copyfile(OLD/name,BASE/name)
+patch=run(['/usr/bin/patch','--batch','--forward','--fuzz=0','--no-backup-if-mismatch','-p1','-i',str(BASE/'reviewed.patch')])
+(BASE/'patch.stdout').write_bytes(patch.stdout)
+(BASE/'patch.stderr').write_bytes(patch.stderr)
+assert patch.returncode==0 and b'offset' not in patch.stdout.lower() and b'fuzz' not in patch.stdout.lower()
+expected={'launch.py':'704998046378e737ff7db16f19393dbdc47e2169e05e98db16c8fce1b952c753','supervisor.py':'ad8920c4320e88bca7c2e12403f282e7cd448fb3238ec4e16731a5ae5046d22b','report.py':'e0e8953a537ab25509db0f74d7d813e8e8a6cc8f9f8bd7e41214e66f69ddd0c1'}
+assert all(digest(BASE/n)==h for n,h in expected.items())
+
+# Unchanged published fixture, with its original source-only baseline and candidate
+# layout. Patched launcher/supervisor bytes here are identical to final runtime copies.
+fixture=BASE/'fixture'
+for name in ('baseline','candidate','source','tests'):
+    (fixture/name).mkdir(parents=True)
+for name in ('launch.py','supervisor.py','report.py','prepare.py','diagnostic.service','requirements.toml','DEPENDENCIES.json'):
+    shutil.copyfile(OLD/name,fixture/'baseline'/name)
+    shutil.copyfile(BASE/name if name in ('launch.py','supervisor.py') else OLD/name,fixture/'candidate'/name)
+shutil.copyfile(OLD/'source/source-linux_run_main.rs',fixture/'source/linux_run_main.rs')
+shutil.copyfile(BASE/'test_reviewed_patch.py',fixture/'tests/test_reviewed_patch.py')
+tests=run(['/usr/bin/python3','-I','-S','-B',str(fixture/'tests/test_reviewed_patch.py')])
+(BASE/'OFFLINE_TESTS.stdout').write_bytes(tests.stdout)
+(BASE/'OFFLINE_TESTS.stderr').write_bytes(tests.stderr)
+assert tests.returncode==0 and b'Ran 18 tests' in tests.stderr and tests.stderr.rstrip().endswith(b'OK')
+
+# Attribute true to the installed package, with no execution of utility or loader.
+source=pathlib.Path('/usr/bin/true')
+info=source.lstat()
+assert stat.S_ISREG(info.st_mode) and info.st_uid==info.st_gid==0 and stat.S_IMODE(info.st_mode)==0o755 and info.st_nlink==1
+assert source.resolve()==source and pathlib.Path('/bin/true').resolve()==source
+assert 'security.capability' not in os.listxattr(source)
+md5lines=pathlib.Path('/var/lib/dpkg/info/coreutils.md5sums').read_text().splitlines()
+md5record=next(line.split() for line in md5lines if line.split()[-1]=='usr/bin/true')
+assert hashlib.md5(source.read_bytes()).hexdigest()==md5record[0]
+for parent in source.parents:
+    item=parent.lstat()
+    assert stat.S_ISDIR(item.st_mode) and item.st_uid==0 and not item.st_mode&0o022
+package=run(['/usr/bin/dpkg-query','-W','-f=${Package} ${Version} ${Architecture}\n','coreutils'])
+assert package.returncode==0
+true_evidence={'canonical_path':str(source),'aliases':['/usr/bin/true','/bin/true'],'uid':info.st_uid,'gid':info.st_gid,'mode':oct(stat.S_IMODE(info.st_mode)),'nlink':info.st_nlink,'device':info.st_dev,'inode':info.st_ino,'sha256':digest(source),'package':package.stdout.decode().strip(),'installed_package_md5_match':True,'file_capability':False,'executions':0}
+for option,label in [('-d','dynamic'),('-l','program_headers')]:
+    result=run(['/usr/bin/readelf',option,str(source)])
+    assert result.returncode==0
+    (BASE/('true.'+label+'.txt')).write_bytes(result.stdout)
+(BASE/'TRUE_PROVENANCE.json').write_text(json.dumps(true_evidence,indent=2)+'\n')
+
+original=(BASE/'prepare.py').read_text()
+needle='# Static ELF dependency closure. readelf parses files; never ldd or execute inputs.\n'
+assert original.count(needle)==1
+prepared=original.replace(needle,'# Native proc preflight uses this installed utility; copy only, never execute.\ncopy("/usr/bin/true", "/usr/bin/true", True)\n\n'+needle)
+prepared=prepared.replace('source_dir = pathlib.Path("/tmp/zen53-readonly-audit-gh9lgs6f")','source_dir = BASE / "source-input"\n(BASE / "source").mkdir(mode=0o700)')
+(BASE/'prepare.py').write_text(prepared)
+(BASE/'constructor.diff').write_text(''.join(difflib.unified_diff(original.splitlines(True),prepared.splitlines(True),fromfile='baseline/prepare.py',tofile='revised/prepare.py')))
+(BASE/'source-input').mkdir(mode=0o700)
+for path in (OLD/'source').iterdir():
+    assert path.is_file() and not path.is_symlink()
+    shutil.copyfile(path,BASE/'source-input'/path.name)
+
+# Compile only. The constructor's reviewed top level copies data, queries stdlib
+# metadata in isolated Python, and calls readelf. No operational source is imported.
+for name in ('report.py','launch.py','supervisor.py','prepare.py'):
+    compile((BASE/name).read_bytes(),str(BASE/name),'exec')
+constructor=run(['/usr/bin/python3','-I','-S','-B',str(BASE/'prepare.py')],timeout=60)
+(BASE/'CONSTRUCTION.stdout').write_bytes(constructor.stdout)
+(BASE/'CONSTRUCTION.stderr').write_bytes(constructor.stderr)
+assert constructor.returncode==0, 'CONSTRUCTOR_FAILED'
+assert all(digest(BASE/n)==h for n,h in expected.items())
+print(json.dumps({'stage':str(BASE),'offline_tests':'18 PASS','patch_sha256':digest(BASE/'reviewed.patch'),'true':true_evidence,'construction':json.loads(constructor.stdout)},indent=2))

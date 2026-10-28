@@ -1,0 +1,22 @@
+{
+  "/empty-home": {
+    "source": "/tmp/zen53-revised-ca59ysva/empty-home",
+    "uid": 0,
+    "gid": 0,
+    "mode": "0555",
+    "device_inode": [
+      2049,
+      37098
+    ]
+  },
+  "/var/tmp": {
+    "source": "/tmp/zen53-revised-ca59ysva/empty-vartmp",
+    "uid": 0,
+    "gid": 0,
+    "mode": "0555",
+    "device_inode": [
+      2049,
+      37100
+    ]
+  }
+}

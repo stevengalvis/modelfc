@@ -1,0 +1,202 @@
+"""Offline: AST-extract pure parser and command loop using ONLY fake operations.
+Never import/execute launch, supervisor, prepare, reporter, or any native binary.
+"""
+import ast
+import pathlib
+import types
+import sys
+import json
+import unittest
+
+def forbid_operational(event, args):
+    if event.startswith(('subprocess.', 'socket.', 'ctypes.', 'os.exec', 'os.spawn', 'os.fork')) or event == 'os.system':
+        raise RuntimeError('OFFLINE_ONLY:' + event)
+    if event == 'import' and args[0].split('.')[0] in {'launch','supervisor','prepare','report'}:
+        raise RuntimeError('OPERATIONAL_IMPORT_FORBIDDEN')
+
+sys.addaudithook(forbid_operational)
+
+ROOT = pathlib.Path(__file__).resolve().parents[1]
+TREE = ast.parse((ROOT/'candidate/launch.py').read_text())
+# Explicit declaration allowlist; no module imports or top-level entry points.
+selected = [n for n in TREE.body if
+    isinstance(n, (ast.FunctionDef, ast.ClassDef)) and n.name in
+    {'need', 'NativeOutput', 'fixed_command'} or
+    isinstance(n, ast.Assign) and any(isinstance(t, ast.Name) and t.id in
+    {'EXPECTED_ALIAS_WARNING', 'ENV'} for t in n.targets)]
+NS = {}
+exec(compile(ast.Module(body=selected, type_ignores=[]), '<fixture declarations>', 'exec'), NS)
+WARNING = NS['EXPECTED_ALIAS_WARNING']
+REPORT = b'ZEN53_REPORT_V1\napparmor=bwrap//&unpriv_bwrap (enforce)\nZEN53_REPORT_END\n'
+
+
+def predicate(tree, code, **values):
+    call = next(n for n in ast.walk(tree) if isinstance(n, ast.Call) and
+                isinstance(n.func, ast.Name) and n.func.id == 'need' and
+                len(n.args) == 2 and isinstance(n.args[1], ast.Constant) and n.args[1].value == code)
+    env = dict(values, need=NS['need'])
+    exec(compile(ast.fix_missing_locations(ast.Module(body=[ast.Expr(value=call)], type_ignores=[])), '<fixture predicate>', 'exec'), env)
+
+
+def simulated_command(chunks, status=0, label='native', events=None):
+    # No real process, fd, time, socket or syscall API is used.
+    chunks = list(chunks) + [b'']
+    if events is None:
+        events = []
+    fake_os = types.SimpleNamespace(
+        O_CLOEXEC=1, WNOHANG=1, pipe2=lambda flags:(10,11), fork=lambda:123,
+        close=lambda fd:None, set_blocking=lambda fd,value:None,
+        read=lambda fd,size:chunks.pop(0), waitpid=lambda pid,flags:(pid,status),
+        WIFEXITED=lambda value:value & 127 == 0, WEXITSTATUS=lambda value:value >> 8)
+    env = dict(NS, os=fake_os, time=types.SimpleNamespace(monotonic=lambda:0),
+               select=types.SimpleNamespace(select=lambda fds,a,b,t:(fds,[],[])),
+               emit=lambda phase,**data:events.append(dict(phase=phase,**data)))
+    # Function globals must contain the fake objects above, not module globals.
+    fn = types.FunctionType(NS['fixed_command'].__code__, env)
+    output = fn(['/synthetic-not-an-executable'], 35, label)
+    return output, events
+
+
+class CompatTests(unittest.TestCase):
+    def parse(self,chunks):
+        p=NS['NativeOutput']();observations=0
+        for chunk in chunks:observations+=p.feed(chunk)
+        p.finish();return p,observations
+
+    def test_every_two_chunk_split(self):
+        data=WARNING+REPORT
+        for cut in range(len(data)+1):
+            with self.subTest(cut=cut):
+                p,n=self.parse([data[:cut],data[cut:]])
+                self.assertEqual((p.alias_warnings,n),(1,1))
+
+    def test_single_byte_chunks(self):
+        p,n=self.parse([bytes([v]) for v in WARNING+REPORT])
+        self.assertEqual((p.alias_warnings,n),(1,1))
+
+    def test_warning_is_only_an_observation_and_raw_output_preserved(self):
+        output,events=simulated_command([WARNING[:30],WARNING[30:],REPORT])
+        self.assertEqual(output,WARNING+REPORT)
+        observations=[e for e in events if e['phase']=='native_alias_warning_observation']
+        self.assertEqual(len(observations),1)
+        self.assertEqual(observations[0]['result'],'OBSERVATION_NOT_PASS')
+        self.assertNotIn('PASS',[e.get('result') for e in events])
+
+    def test_no_warning_report_still_allowed(self):
+        p,n=self.parse([REPORT]);self.assertEqual((p.alias_warnings,n),(0,0))
+        simulated_command([REPORT])
+
+    def test_duplicate_warning_blocked_at_all_splits(self):
+        data=WARNING+WARNING+REPORT
+        for cut in range(len(data)+1):
+            with self.assertRaisesRegex(RuntimeError,'DUPLICATE_ALIAS_WARNING'):
+                self.parse([data[:cut],data[cut:]])
+
+    def test_altered_warning_blocked(self):
+        variants=[WARNING.replace(b'30',b'13'),WARNING.replace(b'Read-only file system',b'Permission denied'),
+                  WARNING.lower(),b'x'+WARNING,WARNING.replace(b'\n',b' extra\n'),
+                  WARNING.replace(b'\n',b'\r\n'),WARNING.replace(b'PATH',b'path'),
+                  WARNING.replace(b':',b'',1),b'\x1b[33m'+WARNING,
+                  WARNING.replace(b'WARNING',b'WARN'),WARNING.replace(b'\n',b'\x00\n')]
+        for v in variants:
+            with self.subTest(v=v):
+                with self.assertRaises(RuntimeError):self.parse([v,REPORT])
+
+    def test_truncated_warning_with_newline_is_not_exempted(self):
+        for n in range(1,len(WARNING)-1):
+            with self.subTest(prefix=n):
+                with self.assertRaises(RuntimeError):self.parse([WARNING[:n]+b'\n',REPORT])
+
+    def test_unterminated_lines_and_warning_blocked(self):
+        for tail in (WARNING[:-1],b'Permission denied',b'ordinary unfinished text'):
+            with self.assertRaisesRegex(RuntimeError,'UNTERMINATED'):
+                self.parse([REPORT,tail])
+        for n in range(1,len(WARNING)):
+            with self.assertRaisesRegex(RuntimeError,'UNTERMINATED'):
+                self.parse([WARNING[:n]])
+
+    def test_unterminated_finish_retains_bounded_raw_tail(self):
+        events=[]
+        raw=WARNING+REPORT+b'unterminated:'+b'x'*5000
+        with self.assertRaisesRegex(RuntimeError,'NATIVE_OUTPUT_UNTERMINATED'):
+            simulated_command([raw[:4000],raw[4000:]],events=events)
+        evidence=[e for e in events if e['phase']=='native_stop_evidence']
+        self.assertEqual(len(evidence),1)
+        self.assertEqual(evidence[0]['output'].encode('ascii'),raw[-4096:])
+        self.assertEqual(len(evidence[0]['output']),4096)
+        self.assertNotIn('native_finish',[e['phase'] for e in events])
+
+    def test_unrelated_denials_not_exempted(self):
+        for error in (b'Permission denied\n',b'Read-only file system\n',b'Operation not permitted\n',
+                      b'ERROR: unavailable\n',b'WARNING: different warning\n',b'failed to mount\n'):
+            for cut in range(len(error)+1):
+                with self.assertRaisesRegex(RuntimeError,'ACCESS_OR_WRITE_FAILURE'):
+                    self.parse([WARNING,error[:cut],error[cut:],REPORT])
+
+    def test_exact_warning_must_be_complete_before_observation(self):
+        p=NS['NativeOutput']()
+        self.assertFalse(p.feed(WARNING[:-1]));self.assertEqual(p.alias_warnings,0)
+        self.assertTrue(p.feed(b'\n'));self.assertEqual(p.alias_warnings,1)
+
+    def test_output_bound_no_extra_warning_allowance(self):
+        self.parse([b'x'*16383+b'\n'])
+        for chunks in ([b'x'*16385],[WARNING,b'x'*(16385-len(WARNING))]):
+            with self.assertRaisesRegex(RuntimeError,'OUTPUT_BOUND'):self.parse(chunks)
+            with self.assertRaisesRegex(RuntimeError,'OUTPUT_BOUND'):simulated_command(chunks)
+
+    def test_missing_or_duplicate_reporter_blocks(self):
+        for output in (b'',WARNING,WARNING+b'ZEN53_REPORT_V1\n',REPORT+REPORT):
+            with self.assertRaisesRegex(RuntimeError,'REPORT_MISSING_OR_DUPLICATE'):
+                predicate(TREE,'REPORT_MISSING_OR_DUPLICATE',output=output)
+        predicate(TREE,'REPORT_MISSING_OR_DUPLICATE',output=WARNING+REPORT)
+
+    def test_nonzero_or_signal_blocks_even_with_report_and_warning(self):
+        for status in (1<<8,125<<8,9,15):
+            with self.assertRaisesRegex(RuntimeError,'native_NONZERO'):
+                simulated_command([WARNING,REPORT],status)
+
+    def test_fallback_requires_all_three_help_flags(self):
+        flags=[b'--as-pid-1',b'--perms',b'--argv0']
+        predicate(TREE,'BWRAP_REQUIRED_FEATURES',help_output=b' '.join(flags))
+        for missing in flags:
+            with self.assertRaisesRegex(RuntimeError,'BWRAP_REQUIRED_FEATURES'):
+                predicate(TREE,'BWRAP_REQUIRED_FEATURES',help_output=b' '.join(x for x in flags if x!=missing))
+        with self.assertRaises(RuntimeError):
+            predicate(TREE,'BWRAP_REQUIRED_FEATURES',help_output=b'--as-pid-1 --perms --argv0-extra')
+
+    def test_capbnd_is_required_and_zero(self):
+        tree=ast.parse((ROOT/'candidate/supervisor.py').read_text())
+        values={'status.NoNewPrivs':'1','status.Seccomp':'2'}
+        for k in ('CapInh','CapPrm','CapEff','CapBnd','CapAmb'):values['status.'+k]='0000000000000000'
+        predicate(tree,'REPORTED_PRIVILEGES',values=values)
+        for value in (None,'0000000000000001'):
+            changed=values.copy()
+            if value is None:changed.pop('status.CapBnd')
+            else:changed['status.CapBnd']=value
+            with self.assertRaisesRegex(RuntimeError,'REPORTED_PRIVILEGES'):
+                predicate(tree,'REPORTED_PRIVILEGES',values=changed)
+
+    def test_true_dependency_gap_is_preserved_as_unresolved(self):
+        deps=json.loads((ROOT/'baseline/DEPENDENCIES.json').read_text())
+        self.assertEqual(len(deps['dependencies']),41)
+        self.assertNotIn('/usr/bin/true',deps['dependencies'])
+        self.assertNotIn('/bin/true',deps['dependencies'])
+        text=(ROOT/'source/linux_run_main.rs').read_text()
+        self.assertIn('for candidate in ["/usr/bin/true", "/bin/true"]',text)
+        self.assertIn('Ok(!is_proc_mount_failure(stderr.as_str()))',text)
+
+    def test_security_and_reporter_unchanged(self):
+        for name in ('report.py','diagnostic.service','requirements.toml','prepare.py','DEPENDENCIES.json'):
+            self.assertEqual((ROOT/'candidate'/name).read_bytes(),(ROOT/'baseline'/name).read_bytes())
+        original=ast.parse((ROOT/'baseline/launch.py').read_text())
+        for name in ('admission','ENV','NATIVE'):
+            def find(tree):
+                return next(n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name==name or
+                    isinstance(n,ast.Assign) and any(isinstance(t,ast.Name) and t.id==name for t in n.targets))
+            self.assertEqual(ast.dump(find(original)),ast.dump(find(TREE)))
+        original=(ROOT/'baseline/supervisor.py').read_text()
+        self.assertEqual((ROOT/'candidate/supervisor.py').read_text(),original.replace(
+            'for key in ("CapInh", "CapPrm", "CapEff", "CapAmb")), "REPORTED_PRIVILEGES")',
+            'for key in ("CapInh", "CapPrm", "CapEff", "CapBnd", "CapAmb")), "REPORTED_PRIVILEGES")'))
+
+if __name__=='__main__':unittest.main(verbosity=2)

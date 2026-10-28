@@ -1,0 +1,69 @@
+{
+  "collector_control_semantics": {
+    "does_completion_event_acknowledge_finish_delivery": false,
+    "does_marker_prove_elapsed_180_seconds": false,
+    "error_marker": "FINISH_SIGNAL_MISSING_OR_TIMEOUT",
+    "failure_predicate": "not ready or sys.stdin.readline().strip() != 'finish'",
+    "individual_branch_taken": "UNKNOWN",
+    "positive_finish_ack_event_in_collector": false,
+    "select_wait_argument_seconds": 180
+  },
+  "collector_sha256": "a10c63987a7526331dde2eda7ca05a47ba182633d466d9167b1ad14f13c47902",
+  "completion_event": {
+    "blockers": [
+      {
+        "error": "FINISH_SIGNAL_MISSING_OR_TIMEOUT",
+        "gate": "HOST_BRACKET"
+      }
+    ],
+    "completed_at_utc": "2026-10-24T00:36:11.231185+00:00",
+    "event": "HOST_CAPTURE_COMPLETE",
+    "original_field": "host_end_tool_output",
+    "sha256": "5f26d1530c5822224e7d71d4262fbcaf92200fd90587ae37b44a57dc6c1978cf"
+  },
+  "evidence_limit": "The retained record contains an intended finish payload, not a timestamped transport request or receipt transcript. A send request is not proof of delivery. The combined marker cannot distinguish no readiness, EOF, or other nonmatching input.",
+  "export_kind": "NEW_DERIVED_ALLOWLIST_NOT_VERBATIM",
+  "finish_input": {
+    "actual_delivery_time": "UNKNOWN",
+    "delivery_confirmed": "UNKNOWN",
+    "observed_received_line": "UNKNOWN",
+    "observed_stdin_ready": "UNKNOWN",
+    "original_field": "host_signal_text",
+    "positive_acknowledgement": "UNKNOWN",
+    "recorded_delivery_time_field": "UNKNOWN_NOT_CAPTURED",
+    "recorded_text": "finish\n",
+    "send_request_time": "UNKNOWN",
+    "sender_api": "UNKNOWN",
+    "sender_session_id": "UNKNOWN"
+  },
+  "format": "zen53-finish-control-export-v1",
+  "held_event": {
+    "event": "HOST_DESCRIPTORS_HELD",
+    "event_time": "UNKNOWN",
+    "max_hold_seconds": 180,
+    "original_field": "host_ready_tool_output",
+    "pid": 46429
+  },
+  "host_start_time": "UNKNOWN",
+  "host_start_tool_output": "",
+  "omitted": [
+    "original command strings and their environment-variable assignments",
+    "private evidence output-directory paths",
+    "file metadata nested in held event",
+    "unrelated stage/activity flags",
+    "unused original-collector hash"
+  ],
+  "original_commands_record": {
+    "bytes": 1924,
+    "name": "COMMANDS_AND_EXECUTION.json",
+    "sha256": "d1699752090dde21dde5954ee3cccf2df0a93fbbbb428f5d8d09b3deecb531a6"
+  },
+  "recorded_counts_and_exits": {
+    "host_entrypoint_invocations": 1,
+    "host_exit_code": 2,
+    "restricted_entrypoint_invocations": 1,
+    "restricted_exit_code": 0,
+    "retries": 0
+  },
+  "source_report": "https://github.com/stevengalvis/modelfc/pull/191#issuecomment-6384364441"
+}

@@ -1,0 +1,22 @@
+--- baseline/prepare.py
++++ revised/prepare.py
+@@ -73,6 +73,9 @@
+ dependencies["/usr/bin/bwrap"]["mode"] = "0o755"
+ for name in ("report.py", "launch.py"):
+     copy(BASE / name, "/diagnostic/" + name)
++
++# Native proc preflight uses this installed utility; copy only, never execute.
++copy("/usr/bin/true", "/usr/bin/true", True)
+ 
+ # Static ELF dependency closure. readelf parses files; never ldd or execute inputs.
+ queue = [path for path in dependencies if (ROOT / path.lstrip("/")).read_bytes()[:4] == b"\x7fELF"]
+@@ -168,7 +171,8 @@
+     if path.is_dir() and not path.is_symlink():
+         os.chmod(path, 0o555)
+ os.chmod(ROOT, 0o555)
+-source_dir = pathlib.Path("/tmp/zen53-readonly-audit-gh9lgs6f")
++source_dir = BASE / "source-input"
++(BASE / "source").mkdir(mode=0o700)
+ for name in ("source-launcher.rs", "source-bundled_bwrap.rs", "cli-debug.rs", "sandbox-bwrap.rs",
+              "source-linux_run_main.rs", "source-bwrap.rs", "sources.json"):
+     shutil.copyfile(source_dir / name, BASE / "source" / name)

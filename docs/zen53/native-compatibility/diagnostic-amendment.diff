@@ -1,0 +1,251 @@
+--- a/report.py
++++ b/report.py
+@@ -4,6 +4,7 @@
+ import stat
+ import json
+ import hashlib
++import time
+ 
+ FIELDS = ("Name", "Pid", "PPid", "Uid", "Gid", "NSpid", "CapInh", "CapPrm",
+           "CapEff", "CapBnd", "CapAmb", "NoNewPrivs", "Seccomp")
+@@ -354,16 +355,18 @@
+     need(sorted(live) == [0, 1, 2], 'BOOKKEEPING_MISSING_STDIO')
+ 
+ 
+-def deny_outer_aliases(pid, fresh_proc):
++def deny_outer_aliases(pid, fresh_proc, context=None):
+     # O_PATH follows proc magic links but never reads external file contents.
+     # For inherited proc, a live outer launcher must be permission-denied, not
+     # merely missing. Fresh proc cannot name ancestor PIDs; ENOENT is accepted.
+     for suffix, probe in (('root', 'ROOT'), ('cwd', 'CWD'), ('fd/0', 'FD0'),
+                           ('fd/1', 'FD1'), ('fd/2', 'FD2'),
+                           ('ns/mnt', 'NS_MNT'), ('ns/user', 'NS_USER')):
++        before_ns = time.monotonic_ns()
+         try:
+             fd = os.open('/proc/' + str(pid) + '/' + suffix, os.O_PATH | os.O_CLOEXEC)
+         except OSError as error:
++            after_ns = time.monotonic_ns()
+             try:
+                 need(error.errno in (1, 13) or (fresh_proc and error.errno == 2),
+                      'BOOKKEEPING_OUTER_IDENTITY_UNCERTAIN')
+@@ -373,6 +376,7 @@
+                     number = 0
+                 mode = 'FRESH' if fresh_proc is True else 'INHERITED' if fresh_proc is False else 'UNKNOWN'
+                 failure._zen53_outer_alias = (number, probe, mode)
++                failure._zen53_probe_context = (context, before_ns, after_ns)
+                 raise
+         else:
+             os.close(fd)
+@@ -380,7 +384,7 @@
+ 
+ 
+ def inner_root_mapping():
+-    mappings, overflow = [], []
++    mappings, overflow, map_rows = [], [], []
+     for name, current in (('uid', os.geteuid()), ('gid', os.getegid())):
+         raw = text('/proc/self/' + name + '_map', 256)
+         rows = raw.splitlines()
+@@ -395,12 +399,56 @@
+              and int(value) != inside, 'BOOKKEEPING_OVERFLOW_ID')
+         mappings.append(outside)
+         overflow.append(int(value))
+-    return tuple(mappings), tuple(overflow)
++        map_rows.append((inside, outside, count))
++    return tuple(mappings), tuple(overflow), tuple(map_rows)
++
++
++def diagnostic_context(status, namespaces, map_rows, identity, mounts, visible):
++    """Format only already-read numeric observations; failure never authorizes PASS."""
++    try:
++        def row(value, count):
++            parts = value.split()
++            if not 0 < len(parts) <= count or not all(p.isascii() and p.isdecimal() for p in parts):
++                return None
++            numbers = tuple(map(int, parts))
++            return numbers if all(0 <= n < 2**32 for n in numbers) else None
++        nspid = row(status['NSpid'], 8)
++        uid, gid = row(status['Uid'], 4), row(status['Gid'], 4)
++        if not nspid or not uid or not gid:
++            return None
++        if len(uid) != 4 or len(gid) != 4 or type(map_rows) is not tuple or len(map_rows) != 2:
++            return None
++        if any(type(r) is not tuple or len(r) != 3 or
++               any(type(n) is not int or not 0 <= n < 2**32 for n in r) for r in map_rows):
++            return None
++        ns = []
++        for name in ('pid', 'mnt', 'net', 'user'):
++            value = namespaces[name]
++            prefix = name + ':['
++            if type(value) is not str or not value.startswith(prefix) or not value.endswith(']'):
++                return None
++            number = value[len(prefix):-1]
++            if not number.isascii() or not number.isdecimal():
++                return None
++            ns.append(int(number))
++        proc = [m for m in mounts if m['id'] in visible and m['destination'] == '/proc'
++                and m['type'] == 'proc']
++        if len(proc) != 1:
++            return None
++        device = row(proc[0]['device'].replace(':', ' '), 2)
++        outer = (identity['pid'], identity['start'])
++        values = tuple(ns) + (proc[0]['id'],) + tuple(device or ()) + outer
++        if not device or any(type(n) is not int or not 0 <= n < 2**64 for n in values):
++            return None
++        return (nspid, uid, gid, map_rows[0], map_rows[1], outer,
++                tuple(ns), (proc[0]['id'],) + device)
++    except (KeyError, ValueError, TypeError, AttributeError, OverflowError):
++        return None
+ 
+ 
+ def report_bookkeeping(status, namespaces):
+     global INNER_ROOT_UID, INNER_ROOT_GID
+-    mappings, owners = inner_root_mapping()
++    mappings, owners, map_rows = inner_root_mapping()
+     INNER_ROOT_UID, INNER_ROOT_GID = owners
+     need(os.environ.get('TMPDIR') == BOOKKEEPING, 'BOOKKEEPING_TMPDIR_PROPAGATION')
+     need(status['NoNewPrivs'] == '1' and status['Seccomp'] == '2' and
+@@ -451,7 +499,9 @@
+     fresh = len(pids) == 1
+     if fresh:
+         need(os.readlink('/proc/1/ns/pid') == namespaces['pid'], 'BOOKKEEPING_PROC_NAMESPACE')
+-    deny_outer_aliases(outer_pid, fresh)
++    context = diagnostic_context(status, namespaces, map_rows,
++                                 provision['identity'], mounts, visible)
++    deny_outer_aliases(outer_pid, fresh, context)
+     check_inherited_fds()
+     need(text('/proc/self/mountinfo', 131072) == raw, 'BOOKKEEPING_INNER_TOPOLOGY_CHANGED')
+     return ['bookkeeping.readonly=1', 'bookkeeping.no_aliases=1',
+@@ -626,6 +676,7 @@
+     check_inherited_fds,
+     deny_outer_aliases,
+     inner_root_mapping,
++    diagnostic_context,
+     report_bookkeeping,
+     main,
+ ) for code in (function.__code__,) + tuple(
+@@ -677,11 +728,37 @@
+     return line
+ 
+ 
++def failure_context_line(error):
++    if type(error) is not RuntimeError or error.args != ('BOOKKEEPING_OUTER_IDENTITY_UNCERTAIN',):
++        return ''
++    fallback = 'ZEN53_REPORT_CONTEXT version=1 state=UNKNOWN\n'
++    saved = getattr(error, '_zen53_probe_context', None)
++    if type(saved) is not tuple or len(saved) != 3:
++        return fallback
++    context, before, after = saved
++    if type(context) is not tuple or len(context) != 8 or any(
++            type(row) is not tuple or not row or len(row) > 8 or
++            any(type(n) is not int or not 0 <= n < 2**64 for n in row)
++            for row in context):
++        return fallback
++    if any(len(context[i]) != length for i, length in
++           ((1, 4), (2, 4), (3, 3), (4, 3), (5, 2), (6, 4), (7, 3))):
++        return fallback
++    if type(before) is not int or type(after) is not int or not 0 < before <= after < 2**64:
++        return fallback
++    names = ('nspid', 'uid', 'gid', 'uidmap', 'gidmap', 'outer', 'ns', 'proc')
++    fields = ['ZEN53_REPORT_CONTEXT version=1']
++    fields += [name + '=' + ','.join(map(str, row)) for name, row in zip(names, context)]
++    fields.append('clock=' + str(before) + ',' + str(after))
++    line = ' '.join(fields) + '\n'
++    return line if len(line) <= 512 and line.isascii() else fallback
++
++
+ try:
+     main()
+ except BaseException as error:
+     try:
+-        line = failure_line(error)
++        line = failure_context_line(error) + failure_line(error)
+     except BaseException:
+         line = "ZEN53_REPORT_REQUIRED_OBSERVATION_FAILED class=UNKNOWN errno=0 check=UNKNOWN lines=0\n"
+     try:
+--- a/supervisor.py
++++ b/supervisor.py
+@@ -650,6 +650,71 @@
+     return observations
+ 
+ 
++def pinned_outer_failure_snapshot(io):
++    """Bounded numeric context from the existing pidfd/procfd, never a new PID path."""
++    record = {"state": "UNKNOWN", "monotonic_ns": time.monotonic_ns()}
++    if io is None or io.pidfd is None or io.procfd is None or io.identity is None:
++        return record
++    record["expected_pid"] = io.identity["pid"]
++    record["expected_start"] = io.identity["start"]
++    try:
++        ready = select.select([io.pidfd], [], [], 0)[0]
++        record["state"] = "DEAD" if ready else "LIVE"
++        if ready:
++            return record
++        current = parse_proc_identity(io.procfd, io.identity["invocation"], io.identity["group"])
++        record["identity_match"] = current == io.identity
++        if not record["identity_match"]:
++            record["state"] = "MISMATCH"
++            return record
++        raw = read_at(io.procfd, "status", 16384).decode("ascii")
++        rows = dict(line.split(":", 1) for line in raw.splitlines() if ":" in line)
++        def numeric(value, limit):
++            parts = value.split()
++            if not 0 < len(parts) <= limit or not all(p.isascii() and p.isdecimal() for p in parts):
++                raise ValueError("numeric snapshot")
++            result = [int(p) for p in parts]
++            if any(not 0 <= n < 2**32 for n in result):
++                raise ValueError("numeric snapshot")
++            return result
++        record["nspid"] = numeric(rows["NSpid"], 8)
++        record["uid"] = numeric(rows["Uid"], 4)
++        record["gid"] = numeric(rows["Gid"], 4)
++        if len(record["uid"]) != 4 or len(record["gid"]) != 4:
++            raise ValueError("credential snapshot")
++        for name in ("uid", "gid"):
++            mapping = read_at(io.procfd, name + "_map", 256).decode("ascii").splitlines()
++            if len(mapping) != 1:
++                raise ValueError("mapping snapshot")
++            values = numeric(mapping[0], 3)
++            if len(values) != 3:
++                raise ValueError("mapping snapshot")
++            record[name + "_map"] = values
++        for name in ("pid", "mnt", "net", "user"):
++            link = os.readlink("ns/" + name, dir_fd=io.procfd)
++            prefix = name + ":["
++            if not link.startswith(prefix) or not link.endswith("]"):
++                raise ValueError("namespace snapshot")
++            value = link[len(prefix):-1]
++            if not value.isascii() or not value.isdecimal() or not 0 < int(value) < 2**64:
++                raise ValueError("namespace snapshot")
++            record[name + "_ns"] = int(value)
++        record["monotonic_end_ns"] = time.monotonic_ns()
++        if record["monotonic_end_ns"] < record["monotonic_ns"]:
++            raise ValueError("clock snapshot")
++        if select.select([io.pidfd], [], [], 0)[0]:
++            record["state"] = "DEAD_AT_END"
++            return record
++        if parse_proc_identity(io.procfd, io.identity["invocation"], io.identity["group"]) != io.identity:
++            record["state"] = "MISMATCH"
++            record["identity_match"] = False
++        return record
++    except (OSError, ValueError, KeyError, UnicodeError, TypeError, RuntimeError,
++            IndexError, OverflowError):
++        return {"state": "UNKNOWN", "monotonic_ns": record["monotonic_ns"],
++                "expected_pid": io.identity["pid"], "expected_start": io.identity["start"]}
++
++
+ try:
+     need(len(sys.argv) == 2 and sys.argv[1] == "--approved-launch", "SEPARATE_LAUNCH_APPROVAL_REQUIRED")
+     need(os.geteuid() == 0, "ROOT_SUPERVISOR_REQUIRED")
+@@ -794,6 +859,12 @@
+ except BaseException as error:
+     result["failure_diagnostic"] = error_diagnostic("supervisor", error)
+     result["failure"] = result["failure_diagnostic"]["error_class"]
++    try:
++        result["pinned_outer_at_failure"] = pinned_outer_failure_snapshot(
++            provision_transaction.io if provision_transaction is not None else None)
++    except BaseException:
++        # Observation failure cannot replace the original BLOCKED result.
++        result["pinned_outer_at_failure"] = {"state": "UNKNOWN"}
+ finally:
+     if started:
+         try:

@@ -1,0 +1,21 @@
+{
+  "status": "EXPLICIT_NATIVE_ZLIB_AMENDMENT_OFFLINE_ONLY",
+  "source_route": "/usr/lib/x86_64-linux-gnu/libz.so.1.3",
+  "historical_sha256": "86200da370f20476a2507e9097a789b5ef97269b4ca8d5e164ad82dab9d99892",
+  "replacement_sha256": "f61677c7bdb7c2aa2a243ea781bfd16afcb361cede7b4ef76127a9d8eb9a5242",
+  "replacement_bytes": 113000,
+  "member_uid": 0,
+  "member_gid": 0,
+  "member_mode": "0o644",
+  "package": "zlib1g:amd64",
+  "version": "1:1.3.dfsg-3.1ubuntu2.3",
+  "package_sha256": "376249c8de139568221dbb242318cc8cb8f02299e3a62b7432948e1754fbddf9",
+  "package_bytes": 63158,
+  "member": "./usr/lib/x86_64-linux-gnu/libz.so.1.3",
+  "signer_fingerprint": "F6ECB3762474EDA9D21B7022871920D1991BC93C",
+  "inrelease_sha256": "25fe752bf07eb17eb5db1fd5a1fe4e40c0382dc2308a602ee9da1abb9d49bac7",
+  "packages_sha256": "b1966b71cca741b2253ffe9c14bb14c5eeb0032ee6f065d9d0e454e372ef5b58",
+  "signature_observation": "GnuPG VALIDSIG matched existing pinned Ubuntu archive fingerprint; signed index binds exact Packages.xz, package stanza binds archive, regular member verified without execution.",
+  "prior_collector_provenance_sha256": "69d5d5462bfb5e6087e9cb7466ce5e0b45e1fc0f9dc2774d0bbfd852265c4336",
+  "note": "Retained October26 signed index differs from the older collector proof envelope; exact package/member identity is unchanged. No new key or trust source, host observation, package installation or security setting."
+}
