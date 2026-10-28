@@ -3,8 +3,9 @@ from dataclasses import asdict
 from hashlib import sha256
 
 from modelfc.acquisition_planner import configured_leagues, plan_acquisition, utc
-from modelfc.corner_prospective_budget import MONTHLY_ALLOWANCE
+from modelfc.corner_prospective_budget import MONTHLY_ALLOWANCE, validate_calendar_control
 from modelfc.guarded_acquisition import _calendar
+from modelfc.providers.oddspapi_saved_response import _json
 
 
 def preview(calendar_raw, *, calendar_sha256, enabled_competitions, as_of,
@@ -50,3 +51,38 @@ def preview(calendar_raw, *, calendar_sha256, enabled_competitions, as_of,
                 'provider_quota_and_floor', 'budget_period_and_rollover', 'shared_lock',
                 'durable_claims', 'metadata', 'forecast_preparation', 'permissions',
                 'dispatch_time_calendar_and_window_recheck']}
+
+
+def preview_from_control(calendar_raw, *, control_raw, control_sha256,
+                         control_observed_at, calendar_sha256,
+                         enabled_competitions, as_of, completed=()):
+    """Project supplied existing control bytes into a disconnected preview.
+
+    Only the budget section is validated; discovery/attempts and filesystem
+    permissions are not assessed. No period rollover or live balance is inferred.
+    Observation time is caller-supplied provenance, not authenticated freshness.
+    """
+    now, observed = utc(as_of), utc(control_observed_at)
+    if observed > now:
+        raise ValueError('CONTROL_OBSERVATION_IN_FUTURE')
+    if (type(control_raw) is not bytes or not 0 < len(control_raw) <= 2_000_000
+            or sha256(control_raw).hexdigest() != control_sha256):
+        raise ValueError('CONTROL_HASH_OR_SIZE_REJECTED')
+    control = _json(control_raw)
+    if not isinstance(control, dict):
+        raise ValueError('CONTROL_INVALID')
+    validate_calendar_control(control)
+    period = control['period']
+    same_period = (period['start'] <= observed.date().isoformat()
+                   <= now.date().isoformat() < period['end'])
+    result = preview(calendar_raw, calendar_sha256=calendar_sha256,
+                     enabled_competitions=enabled_competitions, as_of=now,
+                     completed=completed, reserved=period['reserved'] if same_period else None)
+    result['control_observation'] = {
+        'sha256': control_sha256, 'observed_at': observed.isoformat(),
+        'period': dict(period),
+        'status': 'SAME_PERIOD_OBSERVATION' if same_period else 'PERIOD_NOT_CURRENT',
+        'validation_scope': 'BUDGET_ONLY', 'other_control_fields': 'UNASSESSED',
+        'provider_quota': 'UNKNOWN', 'current_balance': 'UNKNOWN',
+        'rollover_performed': False}
+    return result
