@@ -85,7 +85,7 @@ class ObservedFinalTests(unittest.TestCase):
         with self.assertRaises(ValueError):consumer.prepare(e,f,rows,as_of=NOW,enabled=True)
         with self.assertRaises(ValueError):prepare(e,f,rows,replace(n,calendar_sha256='a'*64))
         with self.assertRaises(ValueError):prepare(e,f,rows,replace(n,provenance='UNKNOWN'))
-        for bad in (replace(n,stage='PLAYOFF'),replace(n,tournament_id=8),replace(n,season_kind='CALENDAR_YEAR')):
+        for bad in (replace(n,stage='PLAYOFF'),replace(n,tournament_id=8),replace(n,season_year=1900)):
             with self.assertRaises(ValueError):prepare(e,f,rows,bad)
 
     def test_rates_same_provenance_different_and_old_record_shape(self):
