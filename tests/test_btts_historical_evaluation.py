@@ -92,6 +92,13 @@ class HistoricalBttsTests(unittest.TestCase):
                     s[1].raw.replace(b',0,0,D',b',0,0,H')):
             with self.assertRaises(ValueError): self.run_report([s[0],Source(s[1].filename,raw,hashlib.sha256(raw).hexdigest())])
 
+    def test_missing_or_blank_native_div_is_not_inferred(self):
+        s=inputs()[0]
+        for raw in (s.raw.replace(b"Div,",b"",1).replace(b"SP1,",b""),
+                    s.raw.replace(b"SP1,",b",")):
+            with self.assertRaisesRegex(ValueError,"native Div"):
+                self.run_report([Source(s.filename,raw,hashlib.sha256(raw).hexdigest())])
+
     def test_cli_pins_output_and_refuses_overwrite(self):
         with tempfile.TemporaryDirectory() as d:
             root=Path(d); entries=[]

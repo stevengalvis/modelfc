@@ -1,5 +1,7 @@
 """Pinned SP1/I1 chronological final-data research; never a live consumer."""
 import argparse
+import csv
+from io import StringIO
 from collections import defaultdict
 from dataclasses import asdict, dataclass
 from datetime import date, datetime
@@ -65,6 +67,12 @@ def load_sources(competition, sources, as_of):
             retrieved = timestamp(source.retrieved_at) if source.retrieved_at is not None else None
             if retrieved is not None and retrieved > observed:
                 raise ValueError('future source receipt')
+            # The generic loader permits a caller-supplied league when Div is
+            # absent. Research must establish native identity rather than fill it.
+            reader = csv.DictReader(StringIO(source.raw.decode("utf-8-sig")))
+            if not reader.fieldnames or "Div" not in reader.fieldnames or any(
+                    row.get("Div") != competition for row in reader):
+                raise ValueError("explicit native Div identity required")
             path = Path(directory) / source.filename
             path.write_bytes(source.raw)
             parsed = load_team_match_stats(path, competition=competition, validation_scope='GOALS')
