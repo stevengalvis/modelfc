@@ -149,6 +149,9 @@ def _native_history(histories, competition, now):
     for e in histories:
         require(isinstance(e, Evidence) and e.competition == competition
                 and e.provenance in ('SUPPLIED', 'SYNTHETIC'), 'NATIVE_HISTORY_REJECTED')
+        contract = next(c for c in CONTRACTS if c.competition == competition)
+        league = next(l for l in LEAGUES if l.competition == competition)
+        require(_scope(e, contract, league) is None, 'NATIVE_HISTORY_SCOPE_REJECTED')
         b = _json(e.calendar)
         require(b.get('retrieved_at') is not None, 'NATIVE_RECEIPT_REQUIRED')
         receipt = utc(datetime.fromisoformat(b['retrieved_at']))
