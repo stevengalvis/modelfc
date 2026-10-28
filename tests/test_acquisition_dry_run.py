@@ -129,6 +129,13 @@ class ControlPreviewTests(unittest.TestCase):
         self.assertEqual(self.call(enabled=[])['reason'],'DISABLED')
         self.assertEqual(self.call(enabled=['MLS'])['batches'][0]['tournament_ids'],[242])
 
+    def test_compact_iso_period_compares_dates_not_strings(self):
+        c=self.control(); c['period'].update(start='2026-09-01',end='20261001')
+        self.assertEqual(self.call(c)['control_observation']['status'],'PERIOD_NOT_CURRENT')
+        self.assertIsNone(self.call(c)['observed_remaining'])
+        c['period'].update(start='20261001',end='20261101')
+        self.assertEqual(self.call(c)['observed_remaining'],25)
+
     def test_invalid_budget_and_duplicate_json_fail_closed(self):
         for change in ('version','negative','overflow','period','allowance'):
             c=self.control()

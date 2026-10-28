@@ -1,5 +1,6 @@
 """Deterministic supplied-input preview; no authorization, IO, reservation or HTTP."""
 from dataclasses import asdict
+from datetime import date
 from hashlib import sha256
 
 from modelfc.acquisition_planner import configured_leagues, plan_acquisition, utc
@@ -73,8 +74,8 @@ def preview_from_control(calendar_raw, *, control_raw, control_sha256,
         raise ValueError('CONTROL_INVALID')
     validate_calendar_control(control)
     period = control['period']
-    same_period = (period['start'] <= observed.date().isoformat()
-                   <= now.date().isoformat() < period['end'])
+    same_period = (date.fromisoformat(period['start']) <= observed.date()
+                   <= now.date() < date.fromisoformat(period['end']))
     result = preview(calendar_raw, calendar_sha256=calendar_sha256,
                      enabled_competitions=enabled_competitions, as_of=now,
                      completed=completed, reserved=period['reserved'] if same_period else None)
