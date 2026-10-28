@@ -18,6 +18,12 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Check Python lint
+        run: |
+          python3 -m venv "$RUNNER_TEMP/modelfc-lint"
+          "$RUNNER_TEMP/modelfc-lint/bin/python" -m pip install --require-hashes --only-binary=:all: -r requirements-lint.lock
+          "$RUNNER_TEMP/modelfc-lint/bin/python" -m ruff check .
+
       - name: Create fresh locked environment
         run: |
           python3 -m venv "$RUNNER_TEMP/modelfc-locked"
@@ -30,13 +36,43 @@ jobs:
           "$RUNNER_TEMP/modelfc-locked/bin/python" -m pip install --require-hashes --only-binary=:all: --no-cache-dir -r requirements-mcp.lock
           "$RUNNER_TEMP/modelfc-locked/bin/python" -m pip check
 
+      - name: Prepare authenticated ZEN53 offline Python fixture
+        run: |
+          mkdir -m 700 "$RUNNER_TEMP/zen53-test-tmp"
+          python3 docs/zen53/rotation-decoupling/packaging/prepare_python_fixture.py --download --cache "$RUNNER_TEMP/zen53-packages" --output "$RUNNER_TEMP/zen53-python"
+
       - name: Run test suite
+        env:
+          ZEN53_PYTHON_FIXTURE: ${{ runner.temp }}/zen53-python
+          ZEN53_CHROOT_TEST: "1"
+          TMPDIR: ${{ runner.temp }}/zen53-test-tmp
         run: PYTHONPATH=src "$RUNNER_TEMP/modelfc-locked/bin/python" -m unittest discover -v
 
-      - name: Verify real Linux cross-user history ACL publication
+      - name: Verify real Linux cross-user history and EPL projection ACL publication
         run: |
-          sudo -n env PYTHONPATH=src "$RUNNER_TEMP/modelfc-locked/bin/python" -c 'import ctypes.util, os; from tests.test_team_history_acl import cross_uid_available; assert os.geteuid() == 0 and ctypes.util.find_library("acl") and cross_uid_available(), "cross-user ACL test must not skip in CI"'
-          sudo -n env PYTHONPATH=src "$RUNNER_TEMP/modelfc-locked/bin/python" -m unittest tests.test_team_history_acl.PublicHistoryAclTests.test_real_atomic_replacement_cross_uid_isolation tests.test_corner_api_capabilities.RestrictedCapabilityTests.test_real_readonly_identity_gets_functional_content_without_private_access tests.test_settlement_review_access.ReviewCrossUserTests -v
+          sudo -n env PYTHONPATH=src "$RUNNER_TEMP/modelfc-locked/bin/python" - <<'ACL_PY'
+          import ctypes.util
+          import os
+          import unittest
+          from tests.test_team_history_acl import cross_uid_available
+
+          if not (os.geteuid() == 0 and ctypes.util.find_library("acl")
+                  and cross_uid_available() and os.access("/usr/bin/setfacl", os.X_OK)):
+              raise SystemExit("cross-user ACL prerequisites missing; acceptance must not skip")
+          names = [
+              "tests.test_team_history_acl.PublicHistoryAclTests.test_real_atomic_replacement_cross_uid_isolation",
+              "tests.test_corner_api_capabilities.RestrictedCapabilityTests.test_real_readonly_identity_gets_functional_content_without_private_access",
+              "tests.test_settlement_review_access.ReviewCrossUserTests",
+              "tests.test_pl_public_evidence.ProjectionCrossUserTests.test_public_api_and_corrections_without_raw_read_or_write_access",
+              "tests.test_pl_public_evidence.ProjectionCrossUserTests.test_actual_writer_acl_grants_projection_only",
+          ]
+          suite = unittest.defaultTestLoader.loadTestsFromNames(names)
+          if suite.countTestCases() != 6:
+              raise SystemExit("expected six cross-user ACL acceptance tests")
+          result = unittest.TextTestRunner(verbosity=2).run(suite)
+          if not result.wasSuccessful() or result.skipped or result.testsRun != 6:
+              raise SystemExit("cross-user ACL acceptance requires all six tests to pass without skips")
+          ACL_PY
 
       - name: Compile Python sources and tests
         run: '"$RUNNER_TEMP/modelfc-locked/bin/python" -m compileall -q src tests'
@@ -59,6 +95,9 @@ jobs:
 
       - name: Install frontend dependencies
         run: npm ci
+
+      - name: Check frontend lint
+        run: npm run lint
 
       - name: Type check frontend
         run: npm run typecheck

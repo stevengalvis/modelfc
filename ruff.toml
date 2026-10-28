@@ -1,0 +1,9 @@
+required-version = "==0.17.2"
+target-version = "py312"
+# Authored Python, including operational/factory helpers and synthetic API tooling.
+include = ["src/**/*.py", "tests/**/*.py", "ops/**/*.py", "benchmarks/**/*.py", "web/scripts/**/*.py", "docs/zen53/rotation-decoupling/stage/*.py", "docs/zen53/rotation-decoupling/packaging/*.py", "docs/zen53/rotation-decoupling/operator-review/**/*.py"]
+force-exclude = true
+
+[lint]
+# Syntax/name/control-flow errors; unused imports/locals and formatting are separate.
+select = ["E9", "F63", "F7", "F82"]

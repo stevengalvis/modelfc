@@ -343,7 +343,8 @@ def report(evidence, *, as_of, quotes=None, contracts=CONTRACTS, spain_italy=Fal
                 model = gate('BLOCKED', histories[market]['reason'], histories[market]['references'])
             q = quote_gate
             if snap is not None:
-                families = {'HOME_TEAM_CORNERS', 'AWAY_TEAM_CORNERS'} if market == 'corners' else {'BTTS'}
+                families = ({'MATCH_CORNER_TOTALS', 'HOME_TEAM_CORNERS', 'AWAY_TEAM_CORNERS'}
+                            if market == 'corners' else {'BTTS'})
                 available = sum(q.status == 'AVAILABLE' and q.family in families
                     for f in snap.fixtures if f.identity.competition == league.competition
                     and f.identity.kickoff_utc > observed for q in f.quotes)

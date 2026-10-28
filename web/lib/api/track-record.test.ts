@@ -34,3 +34,16 @@ it("accepts saved BTTS odds and rejects duplicate slots, invalid EV and pushes",
     expect(() => decodeTrackRecord(copy)).toThrow();
   }
 });
+
+it("decodes backend EPL BTTS and corners and requires qualified source references", async () => {
+  const fixture = (await import("../../../tests/fixtures/epl_product_track_record.json")).default;
+  expect(decodeTrackRecord(fixture).summary.picks).toBe(2);
+  for (const mutate of [
+    (v: typeof fixture) => { v.publications[0].epl_evidence.qualification_sha256 = ""; },
+    (v: typeof fixture) => { v.publications[0].epl_evidence.observation_id = "x"; },
+    (v: typeof fixture) => { v.publications[0].offer.availability_checked_at_utc = "2026-01-01T00:00:00Z"; },
+  ]) {
+    const copy = structuredClone(fixture); mutate(copy);
+    expect(() => decodeTrackRecord(copy)).toThrow();
+  }
+});

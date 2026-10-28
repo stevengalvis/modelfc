@@ -8,7 +8,7 @@ export interface TrackSummary {
   pushes: number; voids: number; pending: number; profit_units: number; win_rate: number | null; roi: number | null;
 }
 export interface BttsPublishedOffer {
-  market_type: "BTTS"; side: "YES" | "NO"; competition: "E1";
+  market_type: "BTTS"; side: "YES" | "NO"; competition: "E1" | "E0";
   provider: string; provider_fixture_id: string; home_team: string; away_team: string;
   kickoff_utc: string; forecast_id: string; comparison_id: string; observation_id: string;
   bookmaker: "draftkings" | "fanduel"; american_odds: number; decimal_odds: number;
@@ -21,6 +21,7 @@ export type PublishedOffer = (Recommendation & { opportunity_id: string }) | Btt
 export interface Publication {
   publication_id: string; published_at_utc: string; forecast_created_at_utc: string;
   ranking_views: ShortlistRanking[]; offer: PublishedOffer;
+  epl_evidence?: { forecast_id: string; observation_id: string; qualification_sha256: string };
   qualification_policy: { version: string; minimum_american_odds: number; minimum_no_vig_edge: number };
   result: "WIN" | "LOSS" | "PUSH" | "PENDING" | "SIMULATION_VOID"; simulation_void?: { policy: string; record_hash: string; reason: string; recorded_at_utc: string }; profit_units: number | null;
 }
@@ -88,10 +89,13 @@ export function decodeTrackRecord(value: unknown, independent = false): TrackRec
       || r.qualification_policy.version !== (r.offer.market_type === "BTTS" ? "btts-paired-value-v1" : "team-total-no-vig-v1")
       || r.qualification_policy.minimum_american_odds !== -200
       || r.qualification_policy.minimum_no_vig_edge !== .05) return fail();
+    if (r.offer.competition === "E0" && (!record(r.epl_evidence)
+      || Object.keys(r.epl_evidence).length !== 3
+      || !["forecast_id", "observation_id", "qualification_sha256"].every(k => hash((r.epl_evidence as Record<string, unknown>)[k])))) return fail();
     if (r.offer.market_type === "BTTS") {
       if (!validBtts(r.offer) || r.result === "PUSH") return fail();
     } else {
-      if (typeof r.offer.opportunity_id !== "string" || !/^[0-9a-f]{32}$/.test(r.offer.opportunity_id)) return fail();
+      if (typeof r.offer.opportunity_id !== "string" || !(r.offer.competition === "E0" ? /^[0-9a-f]{64}$/ : /^[0-9a-f]{32}$/).test(r.offer.opportunity_id)) return fail();
       const { opportunity_id: _, ...offer } = r.offer;
       try { decodeRecommendations([offer]); } catch { return fail(); }
     }
@@ -132,7 +136,7 @@ export function decodeTrackRecord(value: unknown, independent = false): TrackRec
 }
 
 function validBtts(v: Record<string, unknown>): boolean {
-  if (v.competition !== "E1" || !["YES", "NO"].includes(v.side as string)
+  if (!["E1", "E0"].includes(v.competition as string) || !["YES", "NO"].includes(v.side as string)
     || !["draftkings", "fanduel"].includes(v.bookmaker as string) || v.policy_version !== "btts-paired-value-v1"
     || !["forecast_id", "comparison_id", "observation_id"].every(k => hash(v[k]))
     || !["provider", "provider_fixture_id", "home_team", "away_team"].every(k => typeof v[k] === "string" && v[k].length > 0)
@@ -147,7 +151,9 @@ function validBtts(v: Record<string, unknown>): boolean {
     && close(o.expected_profit, o.model_probability*o.decimal_odds-1)
     && close(o.sportsbook_implied_probability, 1/o.decimal_odds)
     && close(o.no_vig_probability_edge, o.model_probability-o.no_vig_market_probability)
-    && o.retrieved_at_utc === o.availability_checked_at_utc
+    && (o.competition === "E1" ? o.retrieved_at_utc === o.availability_checked_at_utc
+      : Date.parse(o.retrieved_at_utc) <= Date.parse(o.availability_checked_at_utc)
+        && Date.parse(o.availability_checked_at_utc)-Date.parse(o.retrieved_at_utc) <= 900_000)
     && Date.parse(o.retrieved_at_utc) < Date.parse(o.kickoff_utc);
 }
 

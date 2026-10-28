@@ -1,5 +1,5 @@
 """Synthetic integration evidence only; no genuine EPL acceptance."""
-from contextlib import redirect_stdout
+from contextlib import redirect_stdout, redirect_stderr
 from datetime import timedelta
 import io
 import json
@@ -198,3 +198,25 @@ class PLHistoryTests(unittest.TestCase):
             with redirect_stdout(io.StringIO()):
                 self.assertEqual(main(args), 1)
                 self.assertEqual(main(args[1:]), 1)  # disabled by default
+
+    def test_cli_no_arguments_reports_disabled_without_reading(self):
+        output = io.StringIO()
+        with redirect_stdout(output), patch('modelfc.pl_history_readiness.read_bounded', side_effect=AssertionError('read')):
+            self.assertEqual(main([]), 1)
+        self.assertEqual(json.loads(output.getvalue())['state'], 'DISABLED')
+
+    def test_cli_enabled_requires_each_evidence_argument_before_reading(self):
+        names = ('bundle', 'bundle-sha256', 'contract', 'reviewed-contract-sha256', 'season-year', 'day', 'as-of')
+        for missing in (None, *names):
+            with self.subTest(missing=missing):
+                args = ['--enable-offline-audit']
+                if missing is not None:
+                    for name in names:
+                        if name != missing:
+                            args.extend(['--'+name, 'unused'])
+                error = io.StringIO()
+                with redirect_stderr(error), patch('modelfc.pl_history_readiness.read_bounded', side_effect=AssertionError('read')):
+                    with self.assertRaises(SystemExit) as caught:
+                        main(args)
+                self.assertEqual(caught.exception.code, 2)
+                self.assertEqual(error.getvalue(), 'PL_ARGUMENTS_REJECTED\n')
