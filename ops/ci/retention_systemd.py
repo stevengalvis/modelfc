@@ -141,6 +141,7 @@ def quiet(ledger, unit):
             and fields['ControlPID'] == '0', 'UNIT_NOT_QUIET')
     group = ledger['groups'].get(unit)
     require(group is None or empty_group(group), 'CGROUP_NOT_EMPTY')
+    return fields
 
 
 def cleanup():
@@ -178,8 +179,26 @@ def cleanup():
                 'ACCOUNT_CHANGED')
     else:
         require(account_absent(), 'UNRECORDED_ACCOUNT')
-    if owned_units:
-        command(['systemctl', 'reset-failed', *owned_units])
+    # A stopped transient unit may already have been unloaded. Reset only a
+    # unit observed failed, individually; any reset error remains a failure.
+    for unit in owned_units:
+        if quiet(ledger, unit)['ActiveState'] == 'failed':
+            try:
+                command(['systemctl', 'reset-failed', unit])
+            except subprocess.CalledProcessError as error:
+                raise RuntimeError(f'RESET_FAILED {unit}: {error.stderr}') from error
+    # Reset and manager activity can race with cleanup. Revalidate before
+    # removing any owned resource, including both accounts and cgroups.
+    for name, expected in ledger['paths'].items():
+        require(identity(Path(name)) == expected, 'RESOURCE_CHANGED')
+    for unit in owned_units:
+        quiet(ledger, unit)
+    if ledger['account'] is not None:
+        user, group = pwd.getpwnam('modelfc-deploy'), grp.getgrnam('modelfc-deploy')
+        require([user.pw_uid, group.gr_gid] == ledger['account'] and user.pw_gid == group.gr_gid,
+                'ACCOUNT_CHANGED')
+    else:
+        require(account_absent(), 'UNRECORDED_ACCOUNT')
     for unit in owned_units:
         UNITS[unit].unlink()
         del ledger['paths'][str(UNITS[unit])]

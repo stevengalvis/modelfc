@@ -125,6 +125,47 @@ class RetentionSystemdTests(unittest.TestCase):
         self.assertTrue(marker.exists() and roots[0].exists())
         self.assertTrue(all(path.exists() for path in units.values()))
 
+    def test_cleanup_resets_only_failed_unit(self):
+        roots, units, marker, state, command, inactive = self.owned()
+        state.side_effect = lambda unit: {**inactive, 'ActiveState': 'failed' if unit == harness.UNIT else 'inactive',
+                                          'FragmentPath': str(units[unit]) if units[unit].exists() else ''}
+        with patch.object(harness, 'empty_group', return_value=True):
+            harness.cleanup()
+        resets = [call.args[0] for call in command.call_args_list if call.args[0][1] == 'reset-failed']
+        self.assertEqual(resets, [['systemctl', 'reset-failed', harness.UNIT]])
+
+    def test_reset_failure_keeps_resources_and_reports_stderr(self):
+        roots, units, marker, state, command, inactive = self.owned()
+        state.side_effect = lambda unit: {**inactive, 'ActiveState': 'failed', 'FragmentPath': str(units[unit])}
+        def run(args, **kwargs):
+            if args[1] == 'reset-failed':
+                raise subprocess.CalledProcessError(1, args, stderr='manager refused reset')
+        command.side_effect = run
+        with patch.object(harness, 'empty_group', return_value=True), self.assertRaisesRegex(RuntimeError, 'manager refused reset'):
+            harness.cleanup()
+        self.assertTrue(marker.exists() and roots[0].exists() and all(p.exists() for p in units.values()))
+
+    def test_unloaded_or_replaced_unit_during_cleanup_blocks_deletion(self):
+        for race in ('unloaded', 'replaced', 'populated'):
+            with self.subTest(race=race):
+                case = RetentionSystemdTests()
+                try:
+                    roots, units, marker, state, command, inactive = case.owned()
+                    def run(args, **kwargs):
+                        if args[1] == 'stop':
+                            if race == 'unloaded':
+                                state.side_effect = lambda unit: {**inactive, 'FragmentPath': ''}
+                            elif race == 'replaced':
+                                path = units[harness.API]
+                                replacement = path.with_suffix('.new'); replacement.write_text('foreign'); replacement.replace(path)
+                    command.side_effect = run
+                    with patch.object(harness, 'empty_group', return_value=race != 'populated'), self.assertRaisesRegex(
+                            RuntimeError, 'UNIT_OVERRIDE|RESOURCE_CHANGED|CGROUP_NOT_EMPTY'):
+                        harness.cleanup()
+                    self.assertTrue(marker.exists() and roots[0].exists() and all(p.exists() for p in units.values()))
+                finally:
+                    case.doCleanups()
+
     def test_cleanup_populated_api_group_blocks_deletion(self):
         roots, units, marker, state, command, inactive = self.owned()
         with patch.object(harness, 'empty_group', side_effect=lambda group: not group.endswith(harness.API)), self.assertRaisesRegex(RuntimeError, 'CGROUP_NOT_EMPTY'):
