@@ -1149,3 +1149,56 @@ installation, deployment, provider call, or merge is authorized by this correcti
 The inherited cleanup assurance caveat remains: its stop return is ignored and
 only the test-unit cgroup is checked, so a passing cleanup step is not full proof
 that the synthetic API cgroup was emptied.
+
+
+### Disposable exact-retention systemd acceptance
+
+`ops/ci/retention_systemd.py` and `.github/workflows/retention-systemd.yml` add a
+separate acceptance route for candidate `9d3e94dac40fae1285f13fe522efe38bce559554d58356078c2ce874cf3a3be5`.
+The older production-budget harness and its evidence remain unchanged. The new
+job checks out the exact PR head with credentials disabled, runs only on a fresh
+GitHub-hosted Ubuntu VM, and carries no production secrets, VPS access or model
+calls. Root, PID1 systemd and cgroup v2 are mandatory before mutation. Local
+source/mocked tests do not establish a real-systemd PASS.
+
+The job reconstructs the pinned controller and uses the exact 936-byte test unit,
+without a ProtectHome overlay. Its environment is fixed to PATH/HOME/LANG; no
+home-directory access claim is made. Both synthetic unit names, all fixture roots,
+user/group, marker and effective manager state must be absent before creation;
+dangling links and unit drop-ins are rejected. The runner records ownership
+identities and the GitHub run ID/attempt in a root-only marker. Both the main
+entrypoint and always-cleanup step receive that fixed invocation binding; a
+foreign marker cannot be adopted after a setup collision. Cleanup stops both synthetic units with checked
+exit status, verifies both observed cgroups empty and unit PIDs zero, then removes
+only recorded identities and verifies fixture paths and account/group absent.
+The marker is removed last. Unknown/replaced resources, unrecorded partial setup
+or a corrupt marker fail cleanup and remain for investigation; they never produce
+a cleanup PASS or authorize deletion of pre-existing resources. A standalone
+`--cleanup` step runs even after failure/cancellation. Forced VM destruction can
+still prevent this step; absent cleanup evidence remains unknown.
+
+Five fixed cases exercise normal success, a long exception that pushes its error
+header out of the stderr tail, malformed observations, flooded observations and
+an actual 600-second timeout with a setsid descendant. The long-error case must
+retain its actual source-bound failure ID and sanitized frame while marking tail
+truncation. Malformed/flooded streams must remain bounded, private and explicitly
+incomplete. Timeout requires elapsed time from 600 to under 630 seconds, dead
+descendant and empty service cgroup. No timeout/clock is mocked in this job.
+
+The outer fixture invokes the exact controller's `tests()`/`run_service()` as
+root, using the real isolated service running as `modelfc-deploy`. This avoids
+adding sudoers/polkit grants; it is not deployment-UID authorization acceptance
+or an invocation of the full deployment/promotion path. A root-fixture umask of
+022 makes the request readable by the service inside its deploy-owned 0700 control
+directory. Retained reports are verified root-owned, mode 0644, single-link,
+bounded to 4096 bytes, free of synthetic private payloads and bound to the exact
+synthetic SHA/release ID. After the service/cgroup finishes, the fixture removes
+only its synthetic candidate and verifies the protected failure bytes survive.
+No production release or historical failure record is involved.
+
+The exact-head artifact contains candidate bytes and a bounded `acceptance.json`
+with source SHA, candidate/input/unit hashes, effective boundary properties,
+case results and cleanup status. Require all five cases and cleanup PASS, along
+with a successful job; earlier or incomplete artifacts do not qualify. This job
+is disposable acceptance only. Merge, installation, deployment retry and any
+change to production grants remain separate authorized operations.
