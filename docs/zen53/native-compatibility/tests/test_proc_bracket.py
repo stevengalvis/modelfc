@@ -9,6 +9,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
+OBSERVER_CODE = compile((ROOT / 'proc_bracket_runtime.inc').read_text(), '<bracket>', 'exec')
 
 
 class Bracket(unittest.TestCase):
@@ -35,7 +36,7 @@ class Bracket(unittest.TestCase):
             select=NS(select=lambda *a: ([] if self.alive else [11], [], [])),
             time=NS(monotonic_ns=lambda: self.now),
             emit=lambda phase, **data: self.events.append((phase, data)))
-        exec(compile((ROOT / 'proc_bracket_runtime.inc').read_text(), '<bracket>', 'exec'), env)
+        exec(OBSERVER_CODE, env)
         return env['native_bracket'], env
 
     @staticmethod
@@ -115,12 +116,13 @@ class Bracket(unittest.TestCase):
                     isinstance(n, ast.FunctionDef) and n.name == 'need' or
                     isinstance(n, ast.Assign) and any(isinstance(t, ast.Name) and
                         t.id == 'EXPECTED_ALIAS_WARNING' for t in n.targets)]
+        classifier_code = compile(ast.Module(body=selected, type_ignores=[]), '<classifier>', 'exec')
         block = self.line() + b'ZEN53_REPORT_REQUIRED_OBSERVATION_FAILED\n'
         for split in range(len(block) + 1):
             observer, env = self.setup_observer()
             observer.begin()
             self.now = 200
-            exec(compile(ast.Module(body=selected, type_ignores=[]), '<classifier>', 'exec'), env)
+            exec(classifier_code, env)
             output = env['NativeOutput']()
             with self.assertRaisesRegex(RuntimeError, 'CODEX_STARTUP_ACCESS_OR_WRITE_FAILURE'):
                 output.feed(block[:split])

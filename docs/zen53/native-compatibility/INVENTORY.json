@@ -489,16 +489,16 @@
       "size": 10657
     },
     "tests/test_output_capture.py": {
-      "sha256": "04a557873cd20886daeeb483fa5abc9ba340293ff43e1c11864a00e16c8807a3",
-      "size": 1692
+      "sha256": "1b135af002adc6f0f2be1e3845ddf4e06ee7455cb488f0b9b03e4be0a1062068",
+      "size": 1776
     },
     "tests/test_owner_context.py": {
       "sha256": "cb606254bf268ccb3f0731e407266b597d086b3bdec33fa52d1654ced40400e3",
       "size": 10236
     },
     "tests/test_proc_bracket.py": {
-      "sha256": "7bba26ea07d7482bdd316c7b52e9a537e243608c5eb9e20c5e0cdea41a6f0693",
-      "size": 7686
+      "sha256": "745961c7a049b74624b7a577b7fd2c930949c60133cf48e7cd9aba4ff8a62df0",
+      "size": 7758
     },
     "tests/test_process_exit.py": {
       "sha256": "4766f6cc86fde2119bb8517406a5fe3c198310ae3582d70669f784d1a6ffd96c",
