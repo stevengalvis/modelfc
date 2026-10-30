@@ -10,13 +10,23 @@ PACKAGE = ROOT / 'docs/zen53/native-compatibility'
 
 
 class NativePreparation(unittest.TestCase):
-    def test_all_synthetic_tests_and_inventory(self):
-        for args in ([str(PACKAGE / 'verify_compact.py')],
-                     ['-m', 'unittest', 'discover', '-s', str(PACKAGE / 'tests'), '-q']):
+    def _run_native_check(self, args):
+        try:
             result = subprocess.run([sys.executable, '-B', *args], capture_output=True,
                                     text=True, timeout=90)
-            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-            self.assertNotIn('skipped=', result.stderr)
+        except subprocess.TimeoutExpired:
+            raise TimeoutError('native check timed out') from None
+        except TimeoutError:
+            # A launch error is not evidence that the subprocess exceeded its deadline.
+            raise RuntimeError('native check launch error') from None
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn('skipped=', result.stderr)
+
+    def test_inventory(self):
+        self._run_native_check([str(PACKAGE / 'verify_compact.py')])
+
+    def test_synthetic_tests(self):
+        self._run_native_check(['-m', 'unittest', 'discover', '-s', str(PACKAGE / 'tests'), '-q'])
 
     def test_archive_is_reproducible_and_corruption_rejected(self):
         spec = importlib.util.spec_from_file_location('native_package_builder',
