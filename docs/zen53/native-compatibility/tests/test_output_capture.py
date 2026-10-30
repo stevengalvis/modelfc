@@ -6,7 +6,7 @@ from types import SimpleNamespace as NS
 LAUNCH = Path(__file__).resolve().parents[1] / 'candidate/launch.py'
 
 
-def capture(chunks):
+def _launcher_code():
     tree = ast.parse(LAUNCH.read_text())
     selected = [node for node in tree.body if
                 isinstance(node, (ast.FunctionDef, ast.ClassDef)) and
@@ -14,6 +14,13 @@ def capture(chunks):
                 isinstance(node, ast.Assign) and any(
                     isinstance(target, ast.Name) and target.id == 'EXPECTED_ALIAS_WARNING'
                     for target in node.targets)]
+    return compile(ast.Module(body=selected, type_ignores=[]), '<launcher-parent-only>', 'exec')
+
+
+LAUNCHER_CODE = _launcher_code()
+
+
+def capture(chunks):
     events = []
     queue = iter([chunk for chunk in chunks if chunk])
     fake = NS(O_CLOEXEC=1, WNOHANG=1, pipe2=lambda flags: (10, 11),
@@ -24,7 +31,7 @@ def capture(chunks):
            'emit': lambda phase, **kwargs: events.append((phase, kwargs)),
            'bookkeeping_recheck': lambda: None,
            'provision_worker': NS(before_native=lambda: None)}
-    exec(compile(ast.Module(body=selected, type_ignores=[]), '<launcher-parent-only>', 'exec'), env)
+    exec(LAUNCHER_CODE, env)
     try:
         env['fixed_command'](['fake-native'], 35, 'native')
     except BaseException as error:
