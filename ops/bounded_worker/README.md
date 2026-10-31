@@ -3,8 +3,10 @@
 This library has no scheduler, mailbox, CLI, publication credential, deployment
 hook or automatic retry. A trusted caller supplies a `Task`, a fresh disposable
 standalone checkout at its exact base revision, a private evidence path, a trusted
-`Codex` adapter and a **dedicated authorized containment backend**. No actual
-containment backend is supplied. Missing backend methods block before launch;
+`Codex` adapter and a **dedicated authorized containment backend**. The optional
+`SystemdContainment` backend provides a dedicated transient system service; it
+requires separate host authorization and acceptance before use. Missing backend
+methods block before launch;
 there is no process-group fallback. The backend must atomically launch the worker
 within an exclusive boundary, terminate the entire boundary, and independently
 verify that it is empty, including descendants in other process groups or
@@ -58,11 +60,41 @@ or exceptional launch must not be retried automatically. This library provides
 neither global deduplication nor caller authentication. The caller owns checkout
 provisioning and eventual cleanup; artifacts are written before it can clean up.
 
-The tests use fake backends to check the contract, not actual host containment.
-Before activation, a dedicated authorized backend must be provided and separately
-verified with a real descendant that creates a new session, including termination
-and empty-boundary readback. No host setup, permissions, deployment or service
+The focused backend tests use fake systemd and cgroup responses and do not prove
+actual containment. Before activation, the opt-in
+`tests.test_bounded_systemd_acceptance` test must be separately authorized and run
+in an isolated environment to verify a descendant in a new session, termination,
+and empty-boundary readback. It is skipped by default. No host setup, permissions, deployment or service
 activation is performed here, and this code is not an operational runner. A
 narrow security review must cover atomic contained launch, cleanup and crash
 reconciliation, workspace and credential isolation, executable pinning,
 snapshot/patch validation, evidence access, and app-server protocol checks.
+
+
+## Systemd backend contract
+
+Construct `SystemdContainment(evidence_dir, uid, gid)` with the same absolute
+attempt path passed to `execute` and a trusted dedicated non-root UID and GID.
+`execute` binds this path before launch. The supervisor must be root and have
+authority over the system manager, transient services and cgroup v2 readback;
+there is no privilege or process-group fallback. A random, backend-generated
+unit name is fsynced in `containment.json` within the durable reservation before
+launch. The system service runs `/usr/bin/env` and `/usr/bin/setpriv` inside its
+cgroup to clear the environment and supplementary groups and drop privileges
+before executing the adapter's command. It uses a 180-second maximum runtime,
+1 GiB memory, 64 tasks, a five-second stop timeout and control-group killing.
+The adapter may enforce a shorter task deadline. Manager or cgroup uncertainty
+blocks result acceptance; failure to confirm startup remains uncertain even if
+a subsequent stop succeeds. Systemd 254 or newer is required for disabling
+argument environment expansion. Trusted root controls the manager and cgroup
+mount. The dedicated account must lack cgroup delegation, other service-launch
+authority, and access to privileged credentials. This backend is containment of
+descendants, not a substitute for the adapter's filesystem and network sandbox.
+
+A supervisor crash does not call cleanup. The retained reservation and
+`containment.json` identify the unit for operator investigation; neither an
+absent result nor a missing unit alone permits automatic retry or workspace
+deletion. Until an operator establishes manager quiescence and empty cgroup
+with the relevant launch request no longer in flight, preserve both workspace
+and evidence. Do not activate without a reviewed reconciliation procedure.
+See [PROVISIONING_PLAN.md](PROVISIONING_PLAN.md) for the approval plan.

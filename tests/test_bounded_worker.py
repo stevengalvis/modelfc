@@ -148,6 +148,18 @@ class BoundedWorkerTest(unittest.TestCase):
             execute(self.task, self.work, self.evidence, worker, FakeContainment())
         self.assertEqual(worker.calls, 1)
 
+    def test_attempt_binding_failure_blocks_before_worker(self):
+        class WrongAttempt(FakeContainment):
+            def bind_attempt(self, evidence):
+                raise ValueError('mismatch')
+        worker = FakeWorker('allowed.txt')
+        result = execute(self.task, self.work, self.evidence, worker, WrongAttempt())
+        self.assertEqual(result['status'], 'blocked')
+        self.assertEqual(result['errors'], ['containment_attempt_binding_failed'])
+        self.assertEqual(worker.calls, 0)
+        self.assertTrue((self.evidence / 'reservation.json').exists())
+        self.assertFalse((self.evidence / 'diff.patch').exists())
+
     def test_unavailable_backend_never_calls_worker(self):
         worker = FakeWorker('allowed.txt')
         result = execute(self.task, self.work, self.evidence, worker)
