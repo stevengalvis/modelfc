@@ -8,6 +8,7 @@ import unittest
 from unittest.mock import patch
 
 from ops.bounded_worker.systemd_backend import SystemdContainment
+from tests.test_bounded_systemd_acceptance import ACCEPTANCE_COMMAND
 
 
 class Process:
@@ -83,6 +84,15 @@ class BackendTest(unittest.TestCase):
             self.assertIn(option, command)
         self.assertTrue(self.backend.terminate())
         self.assertTrue(self.backend.verify_empty())
+
+    def test_acceptance_command_passes_backend_argument_validation(self):
+        compile(ACCEPTANCE_COMMAND[2], '<acceptance-command>', 'exec')
+        self.assertIs(self.backend.launch(
+            ACCEPTANCE_COMMAND, cwd='/tmp', env={'PATH': '/usr/bin:/bin'},
+            user=1234, group=1234, extra_groups=[], stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            start_new_session=True, bufsize=0), self.process)
+        self.assertEqual(self.commands[0][-len(ACCEPTANCE_COMMAND):], ACCEPTANCE_COMMAND)
 
     def test_launch_failure_is_uncertain(self):
         with patch('ops.bounded_worker.systemd_backend.subprocess.Popen', side_effect=OSError('failed')):

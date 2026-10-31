@@ -14,6 +14,12 @@ import unittest
 from ops.bounded_worker.systemd_backend import SystemdContainment
 
 
+# The parent and the new-session child both remain alive until containment stops.
+ACCEPTANCE_COMMAND = ['/usr/bin/python3', '-c',
+                      'import os,time; os.fork() or (os.setsid(), '
+                      'print(os.getpid(), flush=True)); time.sleep(300)']
+
+
 @unittest.skipUnless(os.environ.get('MODELFC_SYSTEMD_ACCEPTANCE') == '1',
                      'real systemd acceptance is opt-in and requires isolated-host approval')
 class RealSystemdAcceptance(unittest.TestCase):
@@ -26,15 +32,9 @@ class RealSystemdAcceptance(unittest.TestCase):
         (attempt / 'reservation.json').write_text('{}\n')
         backend = SystemdContainment(attempt, uid, gid)
         backend.bind_attempt(attempt)
-        # The worker forks a child which creates a new session and announces its PID.
-        script = ('import os,time\n'
-                  'if os.fork() == 0:\n'
-                  ' os.setsid(); print(os.getpid(), flush=True); time.sleep(300)\n'
-                  'else:\n'
-                  ' time.sleep(300)\n')
         child = None
         try:
-            child = backend.launch(['/usr/bin/python3', '-c', script], cwd='/tmp',
+            child = backend.launch(ACCEPTANCE_COMMAND, cwd='/tmp',
                                    env={'PATH': '/usr/bin:/bin'}, user=uid, group=gid,
                                    extra_groups=[], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                    stderr=subprocess.PIPE, start_new_session=True, bufsize=0)
