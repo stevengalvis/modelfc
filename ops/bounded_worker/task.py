@@ -171,6 +171,16 @@ def execute(task, workspace, evidence_dir, worker, containment=None):
         result['errors'].append('containment_unavailable')
         (evidence / 'result.json').write_text(json.dumps(result, sort_keys=True) + '\n', encoding='utf-8')
         return result
+    # A backend with durable per-attempt state may bind it to this reservation.
+    try:
+        bind_attempt = getattr(containment, 'bind_attempt', None)
+        if bind_attempt is not None:
+            bind_attempt(evidence)
+    except Exception:
+        result['status'] = 'blocked'
+        result['errors'].append('containment_attempt_binding_failed')
+        (evidence / 'result.json').write_text(json.dumps(result, sort_keys=True) + '\n', encoding='utf-8')
+        return result
     boundary = _Boundary(containment)
     observed = None
     try:
