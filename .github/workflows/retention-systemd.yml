@@ -1,0 +1,44 @@
+name: Retention controller systemd acceptance
+on:
+  pull_request:
+    paths:
+      - 'ops/ci/retention_systemd.py'
+      - 'ops/ci/build_retention.py'
+      - 'ops/ci/build_admission.py'
+      - 'ops/ci/test_progress_systemd.py'
+      - 'ops/vps/patches/**'
+      - 'tests/fixtures/vps/deploy_main_*.py.txt'
+      - 'tests/test_retention_*.py'
+      - 'deploy/modelfc-postmerge-tests.service'
+      - '.github/workflows/retention-systemd.yml'
+permissions:
+  contents: read
+concurrency:
+  group: retention-systemd-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+jobs:
+  acceptance:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Verify exact checkout and run disposable acceptance
+        run: |
+          test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha }}"
+          sudo -n env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin LANG=C GITHUB_ACTIONS=true RUNNER_ENVIRONMENT="$RUNNER_ENVIRONMENT" GITHUB_RUN_ID="$GITHUB_RUN_ID" GITHUB_RUN_ATTEMPT="$GITHUB_RUN_ATTEMPT" \
+            /usr/bin/python3 -I -B ops/ci/retention_systemd.py --source "$GITHUB_WORKSPACE" --output "$RUNNER_TEMP/retention-acceptance"
+      - name: Always clean owned disposable fixtures
+        if: always()
+        run: |
+          sudo -n env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin LANG=C GITHUB_ACTIONS=true RUNNER_ENVIRONMENT="$RUNNER_ENVIRONMENT" GITHUB_RUN_ID="$GITHUB_RUN_ID" GITHUB_RUN_ATTEMPT="$GITHUB_RUN_ATTEMPT" \
+            /usr/bin/python3 -I -B ops/ci/retention_systemd.py --cleanup
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: retention-acceptance-${{ github.event.pull_request.head.sha }}
+          path: ${{ runner.temp }}/retention-acceptance
+          retention-days: 7
+          if-no-files-found: error

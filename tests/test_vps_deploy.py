@@ -2175,6 +2175,30 @@ class TestFailureDiagnosticsTest(unittest.TestCase):
             else:
                 self.assertEqual(result["diagnostics"]["test_ids"], self.names[:1])
 
+    def test_runtime_outcome_survives_report_validation_and_candidate_cleanup(self):
+        self.request.write_text(json.dumps(dict(release_id=self.release.name, sha=self.sha, controller_netns=[4,2])))
+        name = self.names[0]
+        def capture(*args, **kwargs):
+            parser = kwargs['progress'].outcomes
+            parser.feed((json.dumps([1, 'ERROR', name, 'ValueError', [[name, 2]], False]) + '\n').encode())
+            parser.feed(b'[1, "end"]\n')
+            return 1, b'Ran 20 tests in 0.01s\n\nFAILED (errors=1)\n', True
+        with patch.object(deploy, 'REQUEST', self.request), patch.object(deploy, 'TEST_OUTPUT', self.output), patch.object(
+                deploy, 'RELEASES', self.root), patch.object(deploy, 'head', return_value=self.sha), patch.object(
+                deploy, 'verify_test_network'), patch.object(deploy.os, 'access', return_value=False), patch.object(
+                deploy, 'capture_test_process', side_effect=capture):
+            self.assertFalse(deploy.run_tests())
+        result = json.loads(self.output.read_text())
+        self.assertEqual(result['diagnostics']['test_ids'], [name])
+        with self.assertRaisesRegex(deploy.Failure, 'TESTS_FAILED'):
+            self.run_report('FAIL', 20, result['diagnostics'])
+        shutil.rmtree(self.release)
+        record = json.loads((self.root / 'last-test-failure.json').read_text())
+        self.assertEqual(record['diagnostics']['outcomes']['events'][0],
+                         ['ERROR', name, 'ValueError', [[name, 2]], False])
+        self.assertEqual(record['sha'], self.sha)
+        self.assertFalse(self.output.exists())
+
     def test_many_failures_are_bounded_and_payloads_never_retained(self):
         value = self.diagnostic(("FAIL",) * 20)
         self.assertEqual(len(value["test_ids"]), deploy.DIAGNOSTIC_IDS)
@@ -3185,6 +3209,7 @@ class TestTimingProgress(unittest.TestCase):
                 def test_ok(self): pass
         ''')
         read_fd, write_fd = os.pipe()
+        outcome_fd = os.dup(write_fd)
         try:
             os.set_blocking(write_fd, False)
             while True:
@@ -3192,14 +3217,15 @@ class TestTimingProgress(unittest.TestCase):
                     os.write(write_fd, b"x" * 4096)
                 except BlockingIOError:
                     break
-            result = subprocess.run([sys.executable, "-B", "-c", deploy.TEST_BOOTSTRAP, str(write_fd)],
-                                    cwd=self.root, env={}, pass_fds=(write_fd,),
+            result = subprocess.run([sys.executable, "-B", "-c", deploy.TEST_BOOTSTRAP, str(write_fd), str(outcome_fd)],
+                                    cwd=self.root, env={}, pass_fds=(write_fd, outcome_fd),
                                     stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=5)
             self.assertEqual(result.returncode, 0)
             self.assertIn(b"Ran 1 test", result.stderr)
         finally:
             os.close(read_fd)
             os.close(write_fd)
+            os.close(outcome_fd)
 
     def test_descriptors_closed_on_success_timeout_and_spawn_error(self):
         self.source('''
@@ -3248,3 +3274,160 @@ class TestTimingProgress(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FailureOutcomeRetention(unittest.TestCase):
+    setUp = TestTimingProgress.setUp
+    source = TestTimingProgress.source
+
+    def capture(self):
+        progress = deploy.TestProgress(deploy.test_identifiers(self.root), deploy.test_frames(self.root))
+        result = deploy.capture_test_process([sys.executable], cwd=self.root,
+            env={"PATH": "/usr/bin:/bin", "PYTHONDONTWRITEBYTECODE": "1"}, timeout=5, progress=progress)
+        return result, progress
+
+    def test_large_error_keeps_identity_and_source_frame_outside_stderr_tail(self):
+        self.source('''
+            import unittest
+            class Sample(unittest.TestCase):
+                def test_error(self):
+                    raise ValueError("private-token /private/path " * 10000)
+        ''')
+        (code, tail, truncated), progress = self.capture()
+        self.assertEqual(code, 1)
+        self.assertTrue(truncated)
+        self.assertNotIn(b'ERROR: test_error', tail)
+        outcome = progress.outcomes.snapshot()
+        self.assertTrue(outcome['complete'])
+        self.assertEqual(outcome['events'][0][:3], ['ERROR', 'test_sample.Sample.test_error', 'ValueError'])
+        self.assertEqual(outcome['events'][0][3], [['test_sample.Sample.test_error', 5]])
+        self.assertNotIn('private', json.dumps(outcome))
+        self.assertTrue(deploy.valid_outcomes(outcome, deploy.test_identifiers(self.root), deploy.test_frames(self.root)))
+
+    def test_subtest_values_custom_exception_names_and_setup_errors_are_private(self):
+        self.source('''
+            import unittest
+            class private_secret_exception(Exception): pass
+            class Sample(unittest.TestCase):
+                def test_error(self):
+                    with self.subTest(secret="private-parameter"):
+                        raise private_secret_exception("private-message")
+                    with self.subTest(secret="private-parameter2"):
+                        self.fail("private-failure")
+            class Setup(unittest.TestCase):
+                def setUp(self):
+                    raise OSError("private-setup")
+                def test_setup(self): pass
+        ''')
+        (code, _, _), progress = self.capture()
+        self.assertEqual(code, 1)
+        outcome = progress.outcomes.snapshot()
+        self.assertTrue(outcome['complete'])
+        self.assertEqual([e[0] for e in outcome['events']], ['ERROR', 'FAIL', 'ERROR'])
+        self.assertEqual(outcome['events'][0][2], 'OTHER')
+        self.assertEqual(outcome['events'][2][1], 'test_sample.Setup.test_setup')
+        self.assertEqual(outcome['events'][2][3], [])
+        self.assertTrue(outcome['events'][2][4])
+        self.assertNotIn('private', json.dumps(outcome))
+
+    def test_inventory_covers_suite_beyond_old_4096_alias_limit(self):
+        self.source('class Sample:\n' + ''.join(f'    def test_{i}(self): pass\n' for i in range(2500)))
+        names = deploy.test_identifiers(self.root)
+        self.assertEqual(len(names), 5000)
+        self.assertIn('test_sample.Sample.test_2499', names)
+        self.assertGreater(len(deploy.test_identifiers(SOURCE.parents[2])), 4096)
+
+    def test_outcome_parser_rejects_private_unknown_conflicting_and_oversize_events(self):
+        name = 'test_sample.Sample.test_error'
+        good = [1, 'ERROR', name, 'ValueError', [[name, 5]], False]
+        invalid = [
+            [2, *good[1:]], [True, *good[1:]], [1, 'private', *good[2:]],
+            [1, 'ERROR', 'private-id', *good[3:]],
+            [1, *good[1:3], 'private-message', *good[4:]],
+            [1, *good[1:4], [['/private/path', 5]], False],
+            [1, *good[1:4], [[name, 999]], False],
+            [1, *good[1:4], [[name, True]], False],
+            [1, *good[1:4], [], 'private'],
+            {'private': 'text'}, ['private'],
+        ]
+        for event in invalid:
+            with self.subTest(event=event):
+                parser = deploy.TestOutcomes({name}, {name: (4, 5)})
+                parser.feed((json.dumps(event) + '\n').encode())
+                self.assertEqual(parser.snapshot(), dict(events=[], complete=False, truncated=True))
+        parser = deploy.TestOutcomes({name}, {name: (4, 5)})
+        parser.feed((json.dumps(good) + '\n').encode())
+        parser.feed((json.dumps(good) + '\n').encode())
+        self.assertEqual(len(parser.snapshot()['events']), 1)
+        self.assertFalse(parser.snapshot()['complete'])
+        parser = deploy.TestOutcomes({name}, {name: (4, 5)})
+        parser.feed(b'x' * 1025)
+        self.assertTrue(parser.invalid)
+        self.assertEqual(parser.pending, b'')
+
+    def test_independent_progress_failure_overflow_and_missing_end_are_explicit(self):
+        name = 'test_sample.Sample.test_error'
+        progress = deploy.TestProgress({name}, {name: (4, 5)})
+        progress.feed(b'private-invalid-progress\n')
+        for i in range(10):
+            progress.outcomes.feed((json.dumps([i + 1, 'ERROR', name, 'OTHER', [], True]) + '\n').encode())
+        progress.outcomes.feed(b'[10, "end"]\n')
+        self.assertFalse(progress.snapshot()['complete'])
+        outcome = progress.outcomes.snapshot()
+        self.assertTrue(outcome['complete'])
+        self.assertTrue(outcome['truncated'])
+        self.assertEqual(len(outcome['events']), 8)
+        progress.outcomes.feed(b'[10, "end"]\n')
+        self.assertFalse(progress.outcomes.snapshot()['complete'])
+
+    def test_report_budget_keeps_failure_ids_and_trims_timing_then_frames(self):
+        names = ['test_sample.' + 'S' * 100 + '.test_' + str(i) for i in range(8)]
+        frames = {name: (1, 10) for name in names}
+        outcomes = dict(events=[['ERROR', name, 'ValueError', [[name, 5]] * 4, True] for name in names],
+                        complete=True, truncated=False)
+        info = deploy.extended_diagnostics('', None, set(names), False, 'TIMEOUT', False)
+        info.update(test_ids=names, outcomes=outcomes, progress=dict(observed_completed=8, complete=True,
+            last_test_id=names[-1], last_progress_us=10, slowest=[[name, 10] for name in names]))
+        report = dict(sha='a'*40, release_id='a'*40+'-123456789abc', tests_status='FAIL',
+                      tests_run=0, state_boundary_enforced=True, diagnostics=info)
+        deploy.fit_test_report(report)
+        self.assertLessEqual(len(json.dumps(report).encode('ascii')) + 1, 4096)
+        self.assertEqual(info['test_ids'], names)
+        self.assertTrue(info['truncated'])
+        self.assertTrue(info['outcomes']['truncated'])
+        self.assertEqual(info['progress']['slowest'], [])
+        self.assertTrue(deploy.valid_test_diagnostics(info, set(names), frames))
+        info['outcomes']['events'][0][1] = 'private-identity'
+        self.assertFalse(deploy.valid_test_diagnostics(info, set(names), frames))
+
+    def test_source_inventory_bounds_and_symlink_rejection(self):
+        self.source('class Sample:\n' + ''.join(f'    def test_{i}(self): pass\n' for i in range(10001)))
+        names = deploy.test_identifiers(self.root)
+        self.assertEqual(len(names), 20000)
+        self.assertNotIn('test_sample.Sample.test_10000', names)
+        path = self.root / 'tests/test_sample.py'
+        path.unlink()
+        external = self.root / 'external.py'
+        external.write_text('class Sample:\n    def test_external(self): pass\n')
+        path.symlink_to(external)
+        self.assertEqual(deploy.test_frames(self.root), {})
+        path.unlink()
+        path.write_bytes(b'#' * 1048577)
+        self.assertEqual(deploy.test_frames(self.root), {})
+
+    def test_recursive_traceback_is_bounded_and_marks_omitted_frames(self):
+        self.source('''
+            import unittest
+            class Sample(unittest.TestCase):
+                def test_error(self, depth=10):
+                    if depth:
+                        return self.test_error(depth - 1)
+                    raise RuntimeError("private-recursion")
+        ''')
+        (code, _, _), progress = self.capture()
+        self.assertEqual(code, 1)
+        outcome = progress.outcomes.snapshot()
+        self.assertTrue(outcome['complete'])
+        self.assertEqual(len(outcome['events'][0][3]), 4)
+        self.assertTrue(outcome['events'][0][4])
+        self.assertNotIn('private', json.dumps(outcome))
