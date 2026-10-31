@@ -1,3 +1,4 @@
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -201,6 +202,81 @@ class BoundedWorkerTest(unittest.TestCase):
                 self.assertEqual(result['status'], 'blocked')
                 self.assertFalse(result['cleanup_verified'])
                 self.assertEqual(backend.events, ['launch', 'terminate', 'verify_empty'])
+
+    def test_executable_requires_protected_file_and_ancestors(self):
+        install = self.evidence.parent / 'protected-install'
+        install.mkdir(mode=0o755)
+        executable = install / 'codex'
+        executable.write_bytes(b'known executable bytes')
+        executable.chmod(0o755)
+        adapter = Codex.__new__(Codex)
+        adapter.executable = executable
+        adapter.sha256 = hashlib.sha256(executable.read_bytes()).hexdigest()
+
+        # Model a root-owned installation on CI hosts that run tests as non-root.
+        # /tmp is modeled as protected so only the fixture directory's mode varies.
+        actual_lstat, actual_fstat = os.lstat, os.fstat
+        class ProtectedMetadata:
+            def __init__(self, original, protect_tmp=False):
+                self.original = original
+                self.st_uid = 0
+                self.st_mode = original.st_mode & ~0o022 if protect_tmp else original.st_mode
+            def __getattr__(self, name):
+                return getattr(self.original, name)
+        def protected_lstat(path, *args, **kwargs):
+            return ProtectedMetadata(actual_lstat(path, *args, **kwargs), str(path) == '/tmp')
+        def protected_fstat(fd):
+            return ProtectedMetadata(actual_fstat(fd))
+        with patch('ops.bounded_worker.codex.os.lstat', side_effect=protected_lstat), \
+             patch('ops.bounded_worker.codex.os.fstat', side_effect=protected_fstat):
+            self.assertEqual(adapter._binary()[-1], adapter.sha256)
+            # A writer with directory access could substitute a different inode
+            # and restore it after launch; reject even while bytes still match.
+            install.chmod(0o777)
+            with self.assertRaisesRegex(ValueError, 'unprotected_worker_executable'):
+                adapter._binary()
+            install.chmod(0o755)
+            # An open descriptor would not prevent a writable file being changed
+            # in place, so reject that independently of its matching digest.
+            executable.chmod(0o777)
+            with self.assertRaisesRegex(ValueError, 'unprotected_worker_executable'):
+                adapter._binary()
+            executable.chmod(0o755)
+            self.assertEqual(adapter._binary()[-1], adapter.sha256)
+            # A worker-owned 0755 file is still writable in place by its owner.
+            def worker_owned_lstat(path, *args, **kwargs):
+                value = protected_lstat(path, *args, **kwargs)
+                if str(path) == str(executable):
+                    value.st_uid = 1001
+                return value
+            with patch('ops.bounded_worker.codex.os.lstat', side_effect=worker_owned_lstat):
+                with self.assertRaisesRegex(ValueError, 'unprotected_worker_executable'):
+                    adapter._binary()
+
+    def test_executable_rejects_symlink_in_path(self):
+        install = self.evidence.parent / 'install'
+        install.mkdir()
+        executable = install / 'codex'
+        executable.write_bytes(b'known')
+        executable.chmod(0o755)
+        link = self.evidence.parent / 'link'
+        link.symlink_to(install, target_is_directory=True)
+        adapter = Codex.__new__(Codex)
+        adapter.executable = link / 'codex'
+        adapter.sha256 = hashlib.sha256(b'known').hexdigest()
+        actual_lstat = os.lstat
+        class ProtectedMetadata:
+            def __init__(self, original, protect_tmp=False):
+                self.original = original
+                self.st_uid = 0
+                self.st_mode = original.st_mode & ~0o022 if protect_tmp else original.st_mode
+            def __getattr__(self, name):
+                return getattr(self.original, name)
+        def protected_lstat(path, *args, **kwargs):
+            return ProtectedMetadata(actual_lstat(path, *args, **kwargs), str(path) == '/tmp')
+        with patch('ops.bounded_worker.codex.os.lstat', side_effect=protected_lstat):
+            with self.assertRaisesRegex(ValueError, 'unprotected_worker_executable'):
+                adapter._binary()
 
     def test_configuration_rejects_extra_access(self):
         work, binary, home = Path('/tmp/work'), Path('/home/worker/codex-bin'), '/home/worker'

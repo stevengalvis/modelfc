@@ -26,7 +26,16 @@ relaunch but does not itself stop an orphaned worker.
 The task contains bounded instructions, repository, identity, an explicit file
 allowlist and time/output/diff limits. Task content and paths are data, never
 commands. The Codex adapter takes an existing non-root account, absolute
-executable and independently supplied SHA-256. It uses the recorded pilot's
+executable and independently supplied SHA-256. The executable must be a regular,
+single-link, root-owned executable without group or other write permission; every
+ancestor directory must be root-owned, non-symlink and without group or other
+write permission. The path must contain no symlinks or `..` components. The
+supervisor trusts root and other privileged administrators to control the
+underlying filesystem and mounts and not to replace or modify the installation. The earlier worker-owned pilot installation does not
+satisfy this contract; a protected installation must be provisioned separately
+before activation. This code does not provision or change host files. POSIX ACLs
+are constrained by the checked group/other mode bits (the ACL mask limits named
+users and groups). It uses the recorded pilot's
 app-server profile, one ephemeral thread and turn, credential and production
 denies, disabled network and features, and exact-file Codex read. It checks
 effective configuration and thread settings before the turn. No claim is made

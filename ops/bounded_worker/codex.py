@@ -7,6 +7,7 @@ import pwd
 import re
 import selectors
 import select
+import stat
 import subprocess
 import time
 
@@ -62,14 +63,34 @@ class Codex:
             raise ValueError('invalid_worker_configuration')
 
     def _binary(self):
-        with self.executable.open('rb') as source:
+        # Pathname launch is safe only while every component is protected from
+        # the non-root worker. Root and other privileged administrators remain
+        # trusted; this is not protection against a malicious privileged actor.
+        path = self.executable
+        if '..' in path.parts or path == Path('/'):
+            raise ValueError('unprotected_worker_executable')
+        for directory in reversed(path.parents):
+            info = os.lstat(directory)
+            if (not stat.S_ISDIR(info.st_mode) or info.st_uid != 0
+                    or info.st_mode & 0o022):
+                raise ValueError('unprotected_worker_executable')
+        info = os.lstat(path)
+        if (not stat.S_ISREG(info.st_mode) or info.st_uid != 0
+                or info.st_nlink != 1 or info.st_mode & 0o022
+                or not info.st_mode & 0o111):
+            raise ValueError('unprotected_worker_executable')
+        identity = lambda s: (s.st_dev, s.st_ino, s.st_size, s.st_mtime_ns,
+                              s.st_ctime_ns, s.st_uid, s.st_mode, s.st_nlink)
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        with os.fdopen(fd, 'rb') as source:
             before = os.fstat(source.fileno())
+            if identity(before) != identity(info):
+                raise ValueError('worker_binary_changed')
             digest = hashlib.file_digest(source, 'sha256').hexdigest()
             after = os.fstat(source.fileno())
-        identity = lambda s: (s.st_dev, s.st_ino, s.st_size, s.st_mtime_ns, s.st_ctime_ns, s.st_uid, s.st_mode)
-        if identity(before) != identity(after) or identity(self.executable.stat()) != identity(after) or digest != self.sha256:
+        if identity(before) != identity(after) or identity(os.lstat(path)) != identity(after) or digest != self.sha256:
             raise ValueError('worker_binary_changed')
-        return (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns, after.st_ctime_ns, digest)
+        return identity(after) + (digest,)
 
     def run(self, task, work, containment):
         if os.getuid() != 0 or os.geteuid() != 0:
