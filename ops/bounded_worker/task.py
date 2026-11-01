@@ -111,25 +111,52 @@ class _Boundary:
         self.evidence = evidence
         self.events = []
         self.truncated = False
+        self.terminal = None
+        self.tools = set()
+        self.observed = set()
         self.attempted = False
 
-    def record(self, event):
+    def record(self, event, *, kind=None, status=None):
         # Only adapter-defined constants may cross this private evidence boundary.
-        allowed = {'turn_started', 'turn_completed', 'turn_failed',
-                   'tool_started', 'tool_completed', 'tool_failed',
+        allowed = {'turn_started', 'turn_completed', 'turn_failed', 'turn_unknown',
+                   'tool_started', 'tool_completed',
                    'spawn_failed', 'stderr_observed', 'protocol_failed',
                    'adapter_failed', 'deadline'}
         if event not in allowed:
             raise ValueError('invalid_diagnostic_event')
+        entry = event
+        changed = event not in self.observed
+        self.observed.add(event)
+        if event in ('tool_started', 'tool_completed'):
+            if (kind not in ('command', 'file_change', 'mcp', 'dynamic')
+                    or status not in ('started', 'completed', 'failed', 'denied', 'unknown')
+                    or (event == 'tool_started') != (status == 'started')):
+                raise ValueError('invalid_diagnostic_event')
+            entry = {'event': event, 'kind': kind, 'status': status}
+            pair = (kind, status)
+            if pair not in self.tools:
+                self.tools.add(pair)
+                changed = True
+        elif kind is not None or status is not None:
+            raise ValueError('invalid_diagnostic_event')
+        if event in ('turn_completed', 'turn_failed', 'turn_unknown'):
+            self.terminal = event
+            changed = True
         if len(self.events) < 128:
-            self.events.append(event)
+            self.events.append(entry)
+            changed = True
         elif self.truncated:
-            return
+            if not changed:
+                return
         else:
             self.truncated = True
+            changed = True
         try:
             _durable_write(self.evidence / 'lifecycle.json',
-                           (json.dumps({'events': self.events, 'truncated': self.truncated}) + '\n').encode())
+                           (json.dumps({'events': self.events, 'truncated': self.truncated,
+                                        'terminal': self.terminal,
+                                        'observed': sorted(self.observed),
+                                        'tools': [list(pair) for pair in sorted(self.tools)]}) + '\n').encode())
         except OSError as exc:
             raise RuntimeError('diagnostic_write_failed') from exc
 

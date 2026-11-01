@@ -16,6 +16,24 @@ DENIED = ('/root', '/srv/modelfc', '/var/lib/modelfc', '/var/lib/modelfc-validat
           '/opt/modelfc-validator')
 DISABLED = ('apps', 'plugins', 'multi_agent', 'multi_agent_v2', 'code_mode',
             'hooks', 'shell_snapshot', 'view_image')
+TOOL_KINDS = {'commandExecution': 'command', 'fileChange': 'file_change',
+              'mcpToolCall': 'mcp', 'dynamicToolCall': 'dynamic'}
+
+
+def _tool_status(item):
+    status = item.get('status')
+    if status in ('declined', 'denied'):
+        return 'denied'
+    if status == 'failed':
+        return 'failed'
+    if item.get('type') == 'commandExecution':
+        exit_code = item.get('exitCode')
+        if type(exit_code) is int and exit_code != 0:
+            return 'failed'
+        if status == 'completed' and type(exit_code) is int and exit_code == 0:
+            return 'completed'
+        return 'unknown'
+    return 'completed' if status == 'completed' else 'unknown'
 
 
 def _stderr_code(data):
@@ -186,18 +204,18 @@ class Codex:
                             containment.record('turn_started')
                         elif event.get('method') == 'item/started':
                             item = params.get('item') or {}
-                            if item.get('type') in ('commandExecution', 'fileChange', 'mcpToolCall', 'dynamicToolCall'):
-                                containment.record('tool_started')
+                            kind = TOOL_KINDS.get(item.get('type')) if isinstance(item, dict) and isinstance(item.get('type'), str) else None
+                            if kind:
+                                containment.record('tool_started', kind=kind, status='started')
                         elif event.get('method') == 'thread/tokenUsage/updated':
                             usage = params.get('tokenUsage', {}).get('total', {})
                             fields = ('totalTokens', 'inputTokens', 'cachedInputTokens', 'outputTokens', 'reasoningOutputTokens')
                             capture['usage'] = {k: usage[k] for k in fields if type(usage.get(k)) is int and usage[k] >= 0}
                         elif event.get('method') == 'item/completed':
                             item = params.get('item') or {}
-                            if item.get('type') in ('commandExecution', 'fileChange', 'mcpToolCall', 'dynamicToolCall'):
-                                failed = (item.get('status') == 'failed' or
-                                          (item.get('type') == 'commandExecution' and item.get('exitCode') not in (None, 0)))
-                                containment.record('tool_failed' if failed else 'tool_completed')
+                            kind = TOOL_KINDS.get(item.get('type')) if isinstance(item, dict) and isinstance(item.get('type'), str) else None
+                            if kind:
+                                containment.record('tool_completed', kind=kind, status=_tool_status(item))
                         if 'id' in event and ('result' in event or 'error' in event):
                             pending[event['id']] = event
                         elif 'id' in event and 'method' in event:
@@ -239,10 +257,15 @@ class Codex:
             started = request(5, 'turn/start', {'threadId': thread_id, 'effort': 'medium',
                     'serviceTierForTurn': 'default', 'input': [{'type': 'text', 'text': task.instructions}]})
             turn_id = started['turn']['id']
+            if not isinstance(turn_id, str) or not turn_id:
+                raise ValueError('turn_binding_mismatch')
             receive(lambda: completed is not None)
             if not isinstance(completed, dict) or completed.get('id') != turn_id:
                 raise ValueError('turn_binding_mismatch')
-            containment.record('turn_completed' if completed.get('status') == 'completed' else 'turn_failed')
+            turn_status = completed.get('status')
+            terminal = ('turn_completed' if turn_status == 'completed' else
+                        'turn_failed' if turn_status in ('failed', 'interrupted') else 'turn_unknown')
+            containment.record(terminal)
             if completed.get('status') != 'completed':
                 capture['errors'].append({'source': 'turn', 'message': 'turn failed'})
             else:

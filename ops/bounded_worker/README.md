@@ -52,8 +52,10 @@ revalidate base and scope and must not execute patch contents or paths as comman
 Failed or timed-out work does not produce a publishable patch. Credential
 paths under `.aws` and `.codex` cannot be allowed task edits. The Codex adapter
 atomically records up to 128 fixed lifecycle codes in private `lifecycle.json`,
-with a truncation flag. It retains no prompt, command, output, model text or raw
-stderr. `spawn_failed` only classifies a matching stderr chunk; it does not
+with a truncation flag. A separate fixed-size summary retains observed tool
+kinds and statuses and the validated matching turn outcome after truncation;
+unknown statuses remain unknown. It retains no prompt, command, output, model
+text or raw stderr. `spawn_failed` only classifies a matching stderr chunk; it does not
 identify the executable and a split message may be missed. A diagnostic write
 failure makes the outcome uncertain; containment cleanup still runs and no patch
 is accepted. Usage and all attempt evidence remain private.

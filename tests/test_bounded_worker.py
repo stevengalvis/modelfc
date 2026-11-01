@@ -119,7 +119,8 @@ class BoundedWorkerTest(unittest.TestCase):
         backend = FakeContainment()
         result = execute(self.task, self.work, self.evidence, DiagnosticWorker(), backend)
         data = json.loads((self.evidence / 'lifecycle.json').read_text())
-        self.assertEqual(data, {'events': ['spawn_failed'] * 128, 'truncated': True})
+        self.assertEqual(data, {'events': ['spawn_failed'] * 128, 'truncated': True,
+                                'terminal': None, 'observed': ['spawn_failed'], 'tools': []})
         self.assertEqual(result['status'], 'failed')
         self.assertEqual(backend.events, ['launch', 'terminate', 'verify_empty'])
 
@@ -136,6 +137,113 @@ class BoundedWorkerTest(unittest.TestCase):
         self.assertEqual(backend.events, ['launch', 'terminate', 'verify_empty'])
         self.assertNotIn('secret', str(result))
         self.assertFalse((self.evidence.parent / 'interrupted' / 'diff.patch').exists())
+
+    def test_fake_app_server_stream_retains_terminal_and_tool_summary(self):
+        # A subprocess speaks only the offline app-server fixture protocol.
+        script = r'''
+import json, sys
+mode = sys.argv[1]
+def emit(value):
+    print(json.dumps(value), flush=True)
+for line in sys.stdin:
+    req = json.loads(line)
+    if 'id' not in req:
+        continue
+    method = req['method']
+    results = {
+        'initialize': {}, 'config/read': {'config': {}},
+        'permissionProfile/list': {'data': [{'id': 'pilot', 'allowed': True}]},
+        'thread/start': {'thread': {'id': 'thread'}, 'model': 'gpt-6.1-terra',
+            'modelProvider': 'openai', 'approvalPolicy': 'never', 'serviceTier': 'default',
+            'activePermissionProfile': {'id': 'pilot'}, 'cwd': req.get('params', {}).get('cwd')},
+        'turn/start': {'turn': {'id': 'turn'}},
+    }
+    emit({'id': req['id'], 'result': results[method]})
+    if method == 'turn/start':
+        emit({'method': 'turn/started', 'params': {'turn': {'id': 'turn'}}})
+        for _ in range(130):
+            emit({'method': 'item/started', 'params': {'item': {'type': 'commandExecution',
+                 'command': 'PRIVATE_ARGUMENT'}}})
+        for kind, status in [('fileChange', 'failed'), ('fileChange', 'declined'),
+                             ('mcpToolCall', {'unexpected': 'PRIVATE_STATUS'}),
+                             ('dynamicToolCall', 'completed'), ('commandExecution', 'mystery')]:
+            emit({'method': 'item/completed', 'params': {'item': {'type': kind, 'status': status,
+                 'aggregatedOutput': 'PRIVATE_OUTPUT', 'path': 'PRIVATE_PATH'}}})
+        sys.stderr.write('failed to spawn PRIVATE_HELPER: no such file or directory\n')
+        sys.stderr.flush()
+        emit({'method': 'turn/completed', 'params': {'turn': {
+             'id': 'wrong' if mode == 'mismatch' else 'turn',
+             'status': ({'private': 'PRIVATE_STATUS'} if mode == 'unknown' else
+                        'failed' if mode == 'failed' else 'completed'),
+             'error': {'message': 'PRIVATE_MODEL_TEXT'}}}})
+'''
+        adapter = Codex.__new__(Codex)
+        adapter.account = SimpleNamespace(pw_uid=os.getuid(), pw_gid=os.getgid(), pw_dir='/home/fake')
+        adapter.executable = Path('/home/fake/codex-bin')
+        adapter.sha256 = '0' * 64
+
+        class ProcessFixture(FakeContainment):
+            def __init__(self, mode):
+                super().__init__()
+                self.mode = mode
+            def launch(self, _cmd, **kwargs):
+                self.events.append('launch')
+                for key in ('user', 'group', 'extra_groups'):
+                    kwargs.pop(key)
+                self.child = subprocess.Popen([sys.executable, '-u', '-c', script, self.mode], **kwargs)
+                return self.child
+            def terminate(self):
+                self.events.append('terminate')
+                self.child.kill()
+                self.child.wait(timeout=5)
+                return True
+            def verify_empty(self):
+                self.events.append('verify_empty')
+                return self.child.poll() is not None
+
+        from ops.bounded_worker import task as task_module
+        write = task_module._durable_write
+        for mode in ('completed', 'failed', 'unknown', 'mismatch', 'write_failure'):
+            with self.subTest(mode=mode):
+                backend = ProcessFixture(mode)
+                evidence = self.evidence.parent / mode
+                def fail_terminal(path, data):
+                    if mode == 'write_failure' and path.name == 'lifecycle.json' and b'"terminal": "turn_completed"' in data:
+                        raise OSError('PRIVATE_WRITE_FAILURE')
+                    return write(path, data)
+                with patch('ops.bounded_worker.codex.os.getuid', return_value=0), \
+                     patch('ops.bounded_worker.codex.os.geteuid', return_value=0), \
+                     patch('ops.bounded_worker.codex.check_config', return_value=True), \
+                     patch.object(adapter, '_binary', return_value=('pinned',)), \
+                     patch.object(task_module, '_durable_write', side_effect=fail_terminal):
+                    task = Task(self.task.task_id, self.task.repository, self.task.base_revision,
+                                'PRIVATE_PROMPT', self.task.allowed_paths)
+                    result = execute(task, self.work, evidence, adapter, backend)
+                self.assertEqual(backend.events, ['launch', 'terminate', 'verify_empty'])
+                self.assertTrue(result['cleanup_verified'])
+                raw = (evidence / 'lifecycle.json').read_bytes()
+                data = json.loads(raw)
+                self.assertLess(len(raw), 16384)
+                self.assertEqual(len(data['events']), 128)
+                self.assertTrue(data['truncated'])
+                self.assertIn('tool_completed', data['observed'])
+                self.assertIn(['file_change', 'failed'], data['tools'])
+                self.assertIn(['file_change', 'denied'], data['tools'])
+                self.assertIn(['mcp', 'unknown'], data['tools'])
+                self.assertIn(['command', 'unknown'], data['tools'])
+                self.assertIn(['dynamic', 'completed'], data['tools'])
+                self.assertNotIn(b'PRIVATE_', raw)
+                self.assertNotIn('PRIVATE_', json.dumps(result))
+                for path in evidence.iterdir():
+                    self.assertNotIn(b'PRIVATE_', path.read_bytes())
+                self.assertEqual(data['terminal'], {'completed': 'turn_completed', 'unknown': 'turn_unknown',
+                                                    'failed': 'turn_failed', 'mismatch': None,
+                                                    'write_failure': None}[mode])
+                self.assertEqual(result['status'], {'completed': 'completed', 'unknown': 'failed',
+                                                    'failed': 'failed', 'mismatch': 'failed',
+                                                    'write_failure': 'uncertain'}[mode])
+                if mode != 'completed':
+                    self.assertFalse((evidence / 'diff.patch').exists())
 
     def test_out_of_scope(self):
         result = execute(self.task, self.work, self.evidence, FakeWorker('other.txt'), FakeContainment())
