@@ -1,5 +1,6 @@
 """Pure generated-source tests: no host commands, signals or process operations."""
 import ast
+from functools import lru_cache
 import json
 from pathlib import Path
 import select
@@ -7,7 +8,7 @@ import subprocess
 import sys
 from types import SimpleNamespace as NS
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -19,16 +20,38 @@ def generated():
     return harness.instrument(provisional.supervisor((ROOT/'candidate/supervisor.py').read_bytes())).decode()
 
 
-def environment():
-    tree = ast.parse(generated())
+_supervisor = provisional.supervisor
+_change = provisional.change
+_instrument = harness.instrument
+
+
+@lru_cache(maxsize=1)
+def _prepared(raw, provisional_runtime, harness_runtime):
+    # Runtime strings are explicit keys; generators read those same module values.
+    source = harness.instrument(provisional.supervisor(raw)).decode()
+    return _compile_fixture(source)
+
+
+def _compile_fixture(source):
+    tree = ast.parse(source)
     # No imports, assignments or module-level runtime body except the two generated registries.
     nodes = [n for n in tree.body if isinstance(n, (ast.FunctionDef, ast.ClassDef)) or
              isinstance(n, ast.Assign) and any(isinstance(t, ast.Name) and t.id in
                 ('DIAGNOSTIC_CODES', 'DIAGNOSTIC_ASSERTIONS') for t in n.targets)]
+    return compile(ast.Module(body=nodes, type_ignores=[]), '<authenticated-fixture>', 'exec')
+
+
+def environment():
+    raw = (ROOT/'candidate/supervisor.py').read_bytes()
+    if (provisional.supervisor is _supervisor and provisional.change is _change and
+            harness.instrument is _instrument):
+        code = _prepared(raw, provisional.RUNTIME, harness.RUNTIME)
+    else:
+        code = _compile_fixture(harness.instrument(provisional.supervisor(raw)).decode())
     env = dict(sys=sys, select=NS(select=Mock(return_value=([99], [], []))),
                pathlib=NS(Path=Mock(return_value=NS(exists=Mock(return_value=False)))),
                BASE=Path('/tmp/zen53-native-preparation-test-fixture'), UNIT='zen53-mincompat.service')
-    exec(compile(ast.Module(body=nodes, type_ignores=[]), '<authenticated-fixture>', 'exec'), env)
+    exec(code, env)
     return env
 
 
@@ -44,6 +67,40 @@ def terminal(env):
 
 
 class Harness(unittest.TestCase):
+    def test_prepared_fixture_has_independent_state(self):
+        first = environment()
+        second = environment()
+        self.assertIs(first['need'].__code__, second['need'].__code__)
+        self.assertIsNot(first['DIAGNOSTIC_CODES'], second['DIAGNOSTIC_CODES'])
+        self.assertIsNot(first['DIAGNOSTIC_ASSERTIONS'], second['DIAGNOSTIC_ASSERTIONS'])
+        first['DIAGNOSTIC_CODES'].clear()
+        first['DIAGNOSTIC_ASSERTIONS'].clear()
+        first['select'].select()
+        first['custom_state'] = []
+        self.assertTrue(second['DIAGNOSTIC_CODES'])
+        self.assertTrue(second['DIAGNOSTIC_ASSERTIONS'])
+        second['select'].select.assert_not_called()
+        self.assertNotIn('custom_state', second)
+        self.assertIsNot(first['ProvisionRootIO'], second['ProvisionRootIO'])
+        self.assertIs(first['ProvisionRootIO'].check.__globals__, first)
+        self.assertIs(second['ProvisionRootIO'].check.__globals__, second)
+
+    def test_preparation_observes_changed_inputs_and_patched_generator(self):
+        original = Path.read_bytes
+        def changed(path):
+            raw = original(path)
+            return raw.replace(b'def need(ok, code):', b'def need(ok, code):\n    pass', 1) if path == ROOT/'candidate/supervisor.py' else raw
+        baseline = environment()['need'].__code__.co_code
+        with patch.object(Path, 'read_bytes', changed):
+            self.assertNotEqual(environment()['need'].__code__.co_code, baseline)
+        with patch.object(harness, 'RUNTIME', harness.RUNTIME + '\ninvalid syntax !'):
+            with self.assertRaises(SyntaxError): environment()
+        with patch.object(provisional, 'RUNTIME', provisional.RUNTIME + '\ninvalid syntax !'):
+            with self.assertRaises(SyntaxError): environment()
+        with patch.object(harness, 'instrument', wraps=harness.instrument) as instrument:
+            environment(); environment()
+            self.assertEqual(instrument.call_count, 2)
+
     def test_generation_is_exact_and_runtime_scope_unchanged(self):
         old=provisional.supervisor((ROOT/'candidate/supervisor.py').read_bytes()).decode()
         new=generated()
