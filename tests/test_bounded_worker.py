@@ -9,7 +9,7 @@ import sys
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from ops.bounded_worker.codex import Codex, DENIED, DISABLED, check_config
+from ops.bounded_worker.codex import Codex, DENIED, DISABLED, check_config, _stderr_code
 from ops.bounded_worker.task import Task, execute
 
 
@@ -84,6 +84,59 @@ class BoundedWorkerTest(unittest.TestCase):
             execute(self.task, self.work, self.evidence, worker, FakeContainment())
         self.assertEqual(worker.calls, 1)
 
+    def test_spawn_failure_classification_excludes_raw_diagnostics(self):
+        raw = b'failed to spawn secret-helper: no such file or directory TOKEN=private'
+        self.assertEqual(_stderr_code(raw), 'spawn_failed')
+        self.assertEqual(_stderr_code(b'unrelated private diagnostic'), 'stderr_observed')
+        self.assertNotIn('secret', _stderr_code(raw))
+
+    def test_directory_changes_are_out_of_scope(self):
+        class DirectoryWorker(FakeWorker):
+            def run(self, task, workspace, containment):
+                containment.launch()
+                for name in ('.aws', '.codex', '.agents'):
+                    (workspace / name).mkdir()
+                return {'status': 'completed'}
+        result = execute(self.task, self.work, self.evidence, DirectoryWorker(), FakeContainment())
+        self.assertEqual(result['status'], 'rejected')
+        self.assertIn('out_of_scope_change', result['errors'])
+        self.assertTrue(result['cleanup_verified'])
+        self.assertFalse((self.evidence / 'diff.patch').exists())
+
+    def test_credential_paths_cannot_be_allowed(self):
+        for path in ('.aws/config', '.codex/auth.json', 'nested/.aws/config'):
+            task = Task('test', self.task.repository, self.task.base_revision, 'edit', (path,))
+            with self.assertRaisesRegex(ValueError, 'invalid_scope'):
+                task.validate()
+
+    def test_diagnostics_bounded_and_write_failure_cleans_up(self):
+        class DiagnosticWorker:
+            def run(self, task, workspace, containment):
+                containment.launch()
+                for _ in range(130):
+                    containment.record('spawn_failed')
+                return {'status': 'failed'}
+        backend = FakeContainment()
+        result = execute(self.task, self.work, self.evidence, DiagnosticWorker(), backend)
+        data = json.loads((self.evidence / 'lifecycle.json').read_text())
+        self.assertEqual(data, {'events': ['spawn_failed'] * 128, 'truncated': True})
+        self.assertEqual(result['status'], 'failed')
+        self.assertEqual(backend.events, ['launch', 'terminate', 'verify_empty'])
+
+        backend = FakeContainment()
+        from ops.bounded_worker import task as task_module
+        write = task_module._durable_write
+        def interrupted(path, data):
+            if path.name == 'lifecycle.json':
+                raise OSError('secret must not leak')
+            return write(path, data)
+        with patch.object(task_module, '_durable_write', side_effect=interrupted):
+            result = execute(self.task, self.work, self.evidence.parent / 'interrupted', DiagnosticWorker(), backend)
+        self.assertEqual(result['status'], 'uncertain')
+        self.assertEqual(backend.events, ['launch', 'terminate', 'verify_empty'])
+        self.assertNotIn('secret', str(result))
+        self.assertFalse((self.evidence.parent / 'interrupted' / 'diff.patch').exists())
+
     def test_out_of_scope(self):
         result = execute(self.task, self.work, self.evidence, FakeWorker('other.txt'), FakeContainment())
         self.assertEqual(result['status'], 'rejected')
@@ -111,6 +164,8 @@ class BoundedWorkerTest(unittest.TestCase):
         adapter.executable = Path('/home/fake/codex-bin')
         adapter.sha256 = '0' * 64
         class ProcessFixture:
+            def record(self, event):
+                pass
             def launch(self, _cmd, **kwargs):
                 for key in ('user', 'group', 'extra_groups'):
                     kwargs.pop(key)

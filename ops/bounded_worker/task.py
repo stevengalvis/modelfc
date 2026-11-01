@@ -40,7 +40,7 @@ class Task:
             raise ValueError('invalid_task')
         for name in self.allowed_paths:
             if (not isinstance(name, str) or not re.fullmatch(r'[A-Za-z0-9_.\-/]{1,200}', name)
-                    or name.startswith('-') or any(x in ('', '.', '..', '.git')
+                    or name.startswith('-') or any(x in ('', '.', '..', '.git', '.aws', '.codex')
                     for x in name.split('/')) or PurePosixPath(name).is_absolute()):
                 raise ValueError('invalid_scope')
 
@@ -106,9 +106,32 @@ def _snapshot(root):
 
 class _Boundary:
     """One launch through a trusted containment backend; never a process-group fallback."""
-    def __init__(self, backend):
+    def __init__(self, backend, evidence):
         self.backend = backend
+        self.evidence = evidence
+        self.events = []
+        self.truncated = False
         self.attempted = False
+
+    def record(self, event):
+        # Only adapter-defined constants may cross this private evidence boundary.
+        allowed = {'turn_started', 'turn_completed', 'turn_failed',
+                   'tool_started', 'tool_completed', 'tool_failed',
+                   'spawn_failed', 'stderr_observed', 'protocol_failed',
+                   'adapter_failed', 'deadline'}
+        if event not in allowed:
+            raise ValueError('invalid_diagnostic_event')
+        if len(self.events) < 128:
+            self.events.append(event)
+        elif self.truncated:
+            return
+        else:
+            self.truncated = True
+        try:
+            _durable_write(self.evidence / 'lifecycle.json',
+                           (json.dumps({'events': self.events, 'truncated': self.truncated}) + '\n').encode())
+        except OSError as exc:
+            raise RuntimeError('diagnostic_write_failed') from exc
 
     def launch(self, *args, **kwargs):
         if self.attempted:
@@ -205,7 +228,7 @@ def execute(task, workspace, evidence_dir, worker, containment=None):
         result['errors'].append('containment_attempt_binding_failed')
         _write_result(evidence, result)
         return result
-    boundary = _Boundary(containment)
+    boundary = _Boundary(containment, evidence)
     observed = None
     try:
         observed = worker.run(task, work, boundary)
