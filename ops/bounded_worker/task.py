@@ -50,7 +50,7 @@ def _git(work, *args):
            'GIT_TERMINAL_PROMPT': '0', 'LC_ALL': 'C'}
     result = subprocess.run(['/usr/bin/git', '-c', 'core.fsmonitor=false', '-c',
                              'core.hooksPath=/dev/null', '-c', 'credential.helper=',
-                             *args], cwd=work, env=env, stdout=subprocess.PIPE,
+                             '-c', 'safe.directory=' + str(work), *args], cwd=work, env=env, stdout=subprocess.PIPE,
                             stderr=subprocess.PIPE, timeout=10, check=False)
     if result.returncode or len(result.stdout) > 1048576:
         raise ValueError('git_inspection_failed')
@@ -117,6 +117,30 @@ class _Boundary:
         return self.backend.launch(*args, **kwargs)
 
 
+def _durable_write(path, data):
+    """Publish a complete private file and sync its containing directory."""
+    import tempfile
+    fd, name = tempfile.mkstemp(prefix='.pending-', dir=path.parent)
+    try:
+        with os.fdopen(fd, 'wb') as out:
+            out.write(data)
+            out.flush()
+            os.fsync(out.fileno())
+        os.replace(name, path)
+        fd = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+    finally:
+        if os.path.exists(name):
+            os.unlink(name)
+
+
+def _write_result(evidence, result):
+    _durable_write(evidence / 'result.json', (json.dumps(result, sort_keys=True) + '\n').encode())
+
+
 def execute(task, workspace, evidence_dir, worker, containment=None):
     """Run one trusted adapter once and return a validated terminal result.
 
@@ -153,7 +177,7 @@ def execute(task, workspace, evidence_dir, worker, containment=None):
     result = {'task_id': task.task_id, 'repository': task.repository,
               'base_revision': task.base_revision, 'status': 'uncertain',
               'errors': [], 'usage': None, 'diff_sha256': None, 'cleanup_verified': False}
-    with (evidence / 'reservation.json').open('x', encoding='utf-8') as reservation:
+    with os.fdopen(os.open(evidence / 'reservation.json', os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600), 'w', encoding='utf-8') as reservation:
         reservation.write(json.dumps(result) + '\n')
         reservation.flush()
         os.fsync(reservation.fileno())
@@ -169,7 +193,7 @@ def execute(task, workspace, evidence_dir, worker, containment=None):
                                   for name in ('launch', 'terminate', 'verify_empty')):
         result['status'] = 'blocked'
         result['errors'].append('containment_unavailable')
-        (evidence / 'result.json').write_text(json.dumps(result, sort_keys=True) + '\n', encoding='utf-8')
+        _write_result(evidence, result)
         return result
     # A backend with durable per-attempt state may bind it to this reservation.
     try:
@@ -179,7 +203,7 @@ def execute(task, workspace, evidence_dir, worker, containment=None):
     except Exception:
         result['status'] = 'blocked'
         result['errors'].append('containment_attempt_binding_failed')
-        (evidence / 'result.json').write_text(json.dumps(result, sort_keys=True) + '\n', encoding='utf-8')
+        _write_result(evidence, result)
         return result
     boundary = _Boundary(containment)
     observed = None
@@ -205,17 +229,17 @@ def execute(task, workspace, evidence_dir, worker, containment=None):
         if not terminated or not empty:
             result['status'] = 'blocked'
             result['errors'].append('containment_cleanup_unverified')
-            (evidence / 'result.json').write_text(json.dumps(result, sort_keys=True) + '\n', encoding='utf-8')
+            _write_result(evidence, result)
             return result
         result['cleanup_verified'] = True
     else:
         result['status'] = 'blocked'
         result['errors'].append('contained_launch_not_observed')
-        (evidence / 'result.json').write_text(json.dumps(result, sort_keys=True) + '\n', encoding='utf-8')
+        _write_result(evidence, result)
         return result
     if observed is None:
         # Even with verified cleanup, the worker outcome itself may be unknown.
-        (evidence / 'result.json').write_text(json.dumps(result, sort_keys=True) + '\n', encoding='utf-8')
+        _write_result(evidence, result)
         return result
     try:
         if not isinstance(observed, dict) or observed.get('status') not in ('completed', 'failed', 'timeout'):
@@ -253,10 +277,10 @@ def execute(task, workspace, evidence_dir, worker, containment=None):
         if len(diff) > task.diff_bytes or (changed and not diff):
             raise ValueError('diff_rejected')
         if result['status'] == 'completed':
-            (evidence / 'diff.patch').write_bytes(diff)
+            _durable_write(evidence / 'diff.patch', diff)
             result['diff_sha256'] = hashlib.sha256(diff).hexdigest()
     except (OSError, ValueError, subprocess.SubprocessError) as exc:
         result['status'] = 'rejected'
         result['errors'].append(str(exc) if isinstance(exc, ValueError) else type(exc).__name__)
-    (evidence / 'result.json').write_text(json.dumps(result, sort_keys=True) + '\n', encoding='utf-8')
+    _write_result(evidence, result)
     return result

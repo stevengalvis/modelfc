@@ -1,7 +1,7 @@
 # Bounded coding worker (inactive library)
 
 This library has no scheduler, mailbox, CLI, publication credential, deployment
-hook or automatic retry. A trusted caller supplies a `Task`, a fresh disposable
+hook or automatic retry. Its synchronous operator API is described below. A trusted caller supplies a `Task`, a fresh disposable
 standalone checkout at its exact base revision, a private evidence path, a trusted
 `Codex` adapter and a **dedicated authorized containment backend**. The optional
 `SystemdContainment` backend provides a dedicated transient system service; it
@@ -56,8 +56,8 @@ report.
 The evidence parent must be supervisor-owned and mode 0700, outside the checkout.
 Its exclusive child directory is a one-attempt reservation: callers must use the
 same durable path for the same task and retain it across restarts. An interrupted
-or exceptional launch must not be retried automatically. This library provides
-neither global deduplication nor caller authentication. The caller owns checkout
+or exceptional launch must not be retried automatically. The operator API provides task-ID deduplication within its configured evidence
+root; neither the API nor `execute` provides caller authentication. The caller owns checkout
 provisioning and eventual cleanup; artifacts are written before it can clean up.
 
 The focused backend tests use fake systemd and cgroup responses and do not prove
@@ -65,7 +65,7 @@ actual containment. Before activation, the opt-in
 `tests.test_bounded_systemd_acceptance` test must be separately authorized and run
 in an isolated environment to verify a descendant in a new session, termination,
 and empty-boundary readback. It is skipped by default. No host setup, permissions, deployment or service
-activation is performed here, and this code is not an operational runner. A
+activation is performed here, and activation is not established by this code. A
 narrow security review must cover atomic contained launch, cleanup and crash
 reconciliation, workspace and credential isolation, executable pinning,
 snapshot/patch validation, evidence access, and app-server protocol checks.
@@ -98,3 +98,56 @@ deletion. Until an operator establishes manager quiescence and empty cgroup
 with the relevant launch request no longer in flight, preserve both workspace
 and evidence. Do not activate without a reviewed reconciliation procedure.
 See [PROVISIONING_PLAN.md](PROVISIONING_PLAN.md) for the approval plan.
+
+## One-task operator API
+
+`ops.bounded_worker.launcher` provides `Configuration`, `submit(task, config)`
+and `inspect(task_id, config)`. It is a synchronous Python API for trusted root
+operator code, not a service. Construct `Task` from validated task data and
+construct `Configuration` separately from protected operator configuration. The
+configuration selects the account, pinned executable and digest, private roots,
+and maximum task limits. Never put credentials in a task or publish private
+attempt records. The API returns only a status and, for a finished attempt, the
+patch digest; the patch and detailed results remain private evidence.
+
+Before submission an operator must prepare an independent, clean standalone Git
+checkout at `<workspace_root>/<task_id>`, owned by the dedicated worker and mode
+0700. The workspace root must be supervisor-owned mode 0711, so the worker can
+traverse it but cannot list it or replace a checkout. Its ancestors must be
+root-owned and protected from replacement (a root-owned sticky directory is
+permitted); the dedicated worker must have no other running processes or external
+service authority that can modify this workspace. The evidence root must be
+supervisor-owned mode 0700, with protected ancestors, outside the workspace and
+production and credential paths. Roots must be absolute and contain no symlinks.
+The operator must supply a checkout from the intended repository at the exact
+base commit; `execute` independently checks the commit, clean status, standalone
+`.git`, scope, snapshots and patch. Checkout preparation and eventual disposal
+are outside this API. Root and trusted administrators control configuration,
+mounts and repository provenance. The worker account and its authentication are
+separate prerequisites; this API neither provisions nor selects them.
+
+For example, trusted Python code can construct `Configuration` with
+`workspace_root`, `evidence_root`, `username`, `executable`, and
+`executable_sha256`, then call `submit(task, config)`. Optional trusted maximum
+`timeout_seconds`, `output_bytes`, and `diff_bytes` default to the library's
+existing maxima. Submit and inspect must use the same evidence root. The durable
+identity is the task ID within that root; choose unique IDs and retain the root
+across restarts. Exclusive directory creation reserves the identity before any
+launch, and fsynced atomic state and result publication prevent a partial file
+from becoming a finished result. Repeated or concurrent submissions are blocked,
+even when a previous result exists. Use `inspect` to read a finished status.
+
+A missing, malformed, inconsistent or nonterminal record returns `blocked`.
+The launcher does not accept a partial patch, infer safety from a missing unit,
+retry, terminate services, or clean up. In particular, `reserved` and `launching`
+are not proof that no launch request remains in flight. Keep the checkout and all
+evidence, and investigate the recorded attempt and exact backend-generated unit
+with authorized personnel. There is no automatic unblocking procedure in this
+change; unattended crash recovery remains incomplete. A finished status is
+reported only for a result produced by the existing execute path after its normal
+verified containment cleanup and after matching the durable attempt, unit and
+result records. This is not proof of unattended operation or Codex compatibility.
+Activation still requires a separately authorized supervisor/account and credential
+arrangement, a review of the trust boundary and manual investigation procedure,
+and end-to-end adapter and unattended-operation acceptance. The previously
+observed real containment test and protected binary do not establish those claims.
