@@ -481,8 +481,8 @@
       "size": 7150
     },
     "tests/test_harness.py": {
-      "sha256": "197261e0c74e37e351c0b2a8480f36bb7f4da2774ab92260a64c082df93347cd",
-      "size": 10508
+      "sha256": "dcd2cac345f88a572136369eebcb937cdbc3d29c92e771d0c8020e65a6c00bd4",
+      "size": 13280
     },
     "tests/test_materialize.py": {
       "sha256": "7d6bb6f18278f49d8a96ba8c5839fea9bef269db9e0d1e1e2cb7cba4343f28a3",
