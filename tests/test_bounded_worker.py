@@ -211,8 +211,13 @@ for line in sys.stdin:
                     if mode == 'write_failure' and path.name == 'lifecycle.json' and b'"terminal": "turn_completed"' in data:
                         raise OSError('PRIVATE_WRITE_FAILURE')
                     return write(path, data)
-                with patch('ops.bounded_worker.codex.os.getuid', return_value=0), \
-                     patch('ops.bounded_worker.codex.os.geteuid', return_value=0), \
+                class AdapterOS:
+                    getuid = staticmethod(lambda: 0)
+                    geteuid = staticmethod(lambda: 0)
+                    def __getattr__(self, name):
+                        return getattr(os, name)
+                adapter_os = AdapterOS()
+                with patch('ops.bounded_worker.codex.os', adapter_os), \
                      patch('ops.bounded_worker.codex.check_config', return_value=True), \
                      patch.object(adapter, '_binary', return_value=('pinned',)), \
                      patch.object(task_module, '_durable_write', side_effect=fail_terminal):
