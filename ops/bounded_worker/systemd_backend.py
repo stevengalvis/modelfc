@@ -144,6 +144,16 @@ class SystemdContainment:
         except (OSError, subprocess.SubprocessError):
             return False
 
+    def _read_cgroup_events(self, directory):
+        return (directory / 'cgroup.events').read_text(encoding='ascii')
+
+    def _cgroup_exists(self, directory):
+        try:
+            directory.stat()
+            return True
+        except FileNotFoundError:
+            return False
+
     def verify_empty(self):
         if not self.stopped:
             return False
@@ -170,11 +180,11 @@ class SystemdContainment:
                 return False
             directory = _CGROUP / expected.lstrip('/')
             if state == 'not-found':
-                return not directory.exists()
+                return not self._cgroup_exists(directory)
             try:
-                data = (directory / 'cgroup.events').read_text(encoding='ascii')
+                data = self._read_cgroup_events(directory)
             except FileNotFoundError:
-                return not directory.exists()
+                return not self._cgroup_exists(directory)
             values = {}
             for line in data.splitlines():
                 key, value = line.split()
