@@ -40,7 +40,7 @@ class Task:
             raise ValueError('invalid_task')
         for name in self.allowed_paths:
             if (not isinstance(name, str) or not re.fullmatch(r'[A-Za-z0-9_.\-/]{1,200}', name)
-                    or name.startswith('-') or any(x in ('', '.', '..', '.git')
+                    or name.startswith('-') or any(x in ('', '.', '..', '.git', '.aws', '.codex')
                     for x in name.split('/')) or PurePosixPath(name).is_absolute()):
                 raise ValueError('invalid_scope')
 
@@ -106,9 +106,59 @@ def _snapshot(root):
 
 class _Boundary:
     """One launch through a trusted containment backend; never a process-group fallback."""
-    def __init__(self, backend):
+    def __init__(self, backend, evidence):
         self.backend = backend
+        self.evidence = evidence
+        self.events = []
+        self.truncated = False
+        self.terminal = None
+        self.tools = set()
+        self.observed = set()
         self.attempted = False
+
+    def record(self, event, *, kind=None, status=None):
+        # Only adapter-defined constants may cross this private evidence boundary.
+        allowed = {'turn_started', 'turn_completed', 'turn_failed', 'turn_unknown',
+                   'tool_started', 'tool_completed',
+                   'spawn_failed', 'stderr_observed', 'protocol_failed',
+                   'adapter_failed', 'deadline'}
+        if event not in allowed:
+            raise ValueError('invalid_diagnostic_event')
+        entry = event
+        changed = event not in self.observed
+        self.observed.add(event)
+        if event in ('tool_started', 'tool_completed'):
+            if (kind not in ('command', 'file_change', 'mcp', 'dynamic')
+                    or status not in ('started', 'completed', 'failed', 'denied', 'unknown')
+                    or (event == 'tool_started') != (status == 'started')):
+                raise ValueError('invalid_diagnostic_event')
+            entry = {'event': event, 'kind': kind, 'status': status}
+            pair = (kind, status)
+            if pair not in self.tools:
+                self.tools.add(pair)
+                changed = True
+        elif kind is not None or status is not None:
+            raise ValueError('invalid_diagnostic_event')
+        if event in ('turn_completed', 'turn_failed', 'turn_unknown'):
+            self.terminal = event
+            changed = True
+        if len(self.events) < 128:
+            self.events.append(entry)
+            changed = True
+        elif self.truncated:
+            if not changed:
+                return
+        else:
+            self.truncated = True
+            changed = True
+        try:
+            _durable_write(self.evidence / 'lifecycle.json',
+                           (json.dumps({'events': self.events, 'truncated': self.truncated,
+                                        'terminal': self.terminal,
+                                        'observed': sorted(self.observed),
+                                        'tools': [list(pair) for pair in sorted(self.tools)]}) + '\n').encode())
+        except OSError as exc:
+            raise RuntimeError('diagnostic_write_failed') from exc
 
     def launch(self, *args, **kwargs):
         if self.attempted:
@@ -205,7 +255,7 @@ def execute(task, workspace, evidence_dir, worker, containment=None):
         result['errors'].append('containment_attempt_binding_failed')
         _write_result(evidence, result)
         return result
-    boundary = _Boundary(containment)
+    boundary = _Boundary(containment, evidence)
     observed = None
     try:
         observed = worker.run(task, work, boundary)

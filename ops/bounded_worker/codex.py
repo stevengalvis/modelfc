@@ -16,15 +16,32 @@ DENIED = ('/root', '/srv/modelfc', '/var/lib/modelfc', '/var/lib/modelfc-validat
           '/opt/modelfc-validator')
 DISABLED = ('apps', 'plugins', 'multi_agent', 'multi_agent_v2', 'code_mode',
             'hooks', 'shell_snapshot', 'view_image')
+TOOL_KINDS = {'commandExecution': 'command', 'fileChange': 'file_change',
+              'mcpToolCall': 'mcp', 'dynamicToolCall': 'dynamic'}
 
 
-def _safe_text(value):
-    if not isinstance(value, str):
-        return ''
-    value = re.sub(r'(?i)(bearer\s+|(?:token|secret|password|authorization|api[_ -]?key)\s*[:=]\s*)\S+', r'\1[redacted]', value)
-    value = re.sub(r'(?<![A-Za-z0-9])/(?:[^\s:;,)]+)', '[path]', value)
-    value = re.sub(r'\b[A-Za-z0-9_-]{40,}\b', '[redacted]', value)
-    return ''.join(c if c.isprintable() or c in '\n\t' else ' ' for c in value)[:400]
+def _tool_status(item):
+    status = item.get('status')
+    if status in ('declined', 'denied'):
+        return 'denied'
+    if status == 'failed':
+        return 'failed'
+    if item.get('type') == 'commandExecution':
+        exit_code = item.get('exitCode')
+        if type(exit_code) is int and exit_code != 0:
+            return 'failed'
+        if status == 'completed' and type(exit_code) is int and exit_code == 0:
+            return 'completed'
+        return 'unknown'
+    return 'completed' if status == 'completed' else 'unknown'
+
+
+def _stderr_code(data):
+    # Classification is deliberately lossy and does not infer a helper identity.
+    data = data.lower()
+    if b'failed to spawn' in data and b'no such file or directory' in data:
+        return 'spawn_failed'
+    return 'stderr_observed'
 
 
 def check_config(config, work, executable, home):
@@ -172,7 +189,7 @@ class Codex:
                         raise ValueError('worker_output_limit')
                     if key.fileobj is child.stderr:
                         if data:
-                            capture['errors'].append({'source': 'stderr', 'message': _safe_text(data.decode('utf-8', 'replace'))})
+                            containment.record(_stderr_code(data))
                         continue
                     buf += data
                     while b'\n' in buf:
@@ -183,15 +200,22 @@ class Codex:
                         params = event.get('params') or {}
                         if event.get('method') == 'turn/completed':
                             completed = params.get('turn')
+                        elif event.get('method') == 'turn/started':
+                            containment.record('turn_started')
+                        elif event.get('method') == 'item/started':
+                            item = params.get('item') or {}
+                            kind = TOOL_KINDS.get(item.get('type')) if isinstance(item, dict) and isinstance(item.get('type'), str) else None
+                            if kind:
+                                containment.record('tool_started', kind=kind, status='started')
                         elif event.get('method') == 'thread/tokenUsage/updated':
                             usage = params.get('tokenUsage', {}).get('total', {})
                             fields = ('totalTokens', 'inputTokens', 'cachedInputTokens', 'outputTokens', 'reasoningOutputTokens')
                             capture['usage'] = {k: usage[k] for k in fields if type(usage.get(k)) is int and usage[k] >= 0}
                         elif event.get('method') == 'item/completed':
                             item = params.get('item') or {}
-                            if item.get('type') == 'commandExecution' and item.get('exitCode') not in (None, 0):
-                                capture['errors'].append({'source': 'command', 'exit_code': item.get('exitCode'),
-                                                          'message': _safe_text(item.get('aggregatedOutput'))})
+                            kind = TOOL_KINDS.get(item.get('type')) if isinstance(item, dict) and isinstance(item.get('type'), str) else None
+                            if kind:
+                                containment.record('tool_completed', kind=kind, status=_tool_status(item))
                         if 'id' in event and ('result' in event or 'error' in event):
                             pending[event['id']] = event
                         elif 'id' in event and 'method' in event:
@@ -204,8 +228,8 @@ class Codex:
             receive(lambda: number in pending)
             event = pending.pop(number)
             if 'error' in event:
-                error = event['error'] if isinstance(event['error'], dict) else {}
-                capture['errors'].append({'source': method, 'message': _safe_text(error.get('message'))})
+                containment.record('protocol_failed')
+                capture['errors'].append({'source': 'protocol', 'message': 'request failed'})
                 raise ValueError('worker_request_failed')
             return event.get('result', {})
 
@@ -233,22 +257,29 @@ class Codex:
             started = request(5, 'turn/start', {'threadId': thread_id, 'effort': 'medium',
                     'serviceTierForTurn': 'default', 'input': [{'type': 'text', 'text': task.instructions}]})
             turn_id = started['turn']['id']
+            if not isinstance(turn_id, str) or not turn_id:
+                raise ValueError('turn_binding_mismatch')
             receive(lambda: completed is not None)
             if not isinstance(completed, dict) or completed.get('id') != turn_id:
                 raise ValueError('turn_binding_mismatch')
+            turn_status = completed.get('status')
+            terminal = ('turn_completed' if turn_status == 'completed' else
+                        'turn_failed' if turn_status in ('failed', 'interrupted') else 'turn_unknown')
+            containment.record(terminal)
             if completed.get('status') != 'completed':
-                error = completed.get('error') if isinstance(completed, dict) else None
-                capture['errors'].append({'source': 'turn', 'message': _safe_text((error or {}).get('message'))})
+                capture['errors'].append({'source': 'turn', 'message': 'turn failed'})
             else:
                 capture['status'] = 'completed'
             if self._binary() != binary:
                 raise ValueError('worker_binary_changed')
         except TimeoutError:
             capture['status'] = 'timeout'
+            containment.record('deadline')
             capture['errors'].append({'source': 'worker', 'message': 'deadline exceeded'})
         except (OSError, ValueError, KeyError, TypeError) as exc:
             capture['status'] = 'failed'
-            capture['errors'].append({'source': 'worker', 'message': _safe_text(str(exc))})
+            containment.record('protocol_failed' if isinstance(exc, (ValueError, KeyError, TypeError)) else 'adapter_failed')
+            capture['errors'].append({'source': 'worker', 'message': 'adapter or protocol failure'})
         finally:
             # The trusted outer boundary terminates and verifies the whole worker
             # containment before inspecting or accepting workspace output.
