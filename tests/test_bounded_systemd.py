@@ -90,6 +90,49 @@ class BackendTest(unittest.TestCase):
         self.assertTrue(self.backend.terminate())
         self.assertTrue(self.backend.verify_empty())
 
+    def test_bounded_properties_guard_and_revalidation(self):
+        checks = []
+        self.backend.configure_storage(properties=['--property=PrivateMounts=yes'],
+                                       expected={'fixture': True}, guard_path='/safe/guard.py',
+                                       revalidate=lambda: checks.append('checked'))
+        self.launch()
+        command = self.commands[0]
+        self.assertIn('--property=PrivateMounts=yes', command)
+        self.assertIn('/safe/guard.py', command)
+        self.assertLess(command.index('/safe/guard.py'), command.index('/usr/bin/setpriv'))
+        self.assertNotIn('--property=MountImages', command)
+        self.assertEqual(checks, ['checked'])
+        self.assertTrue(self.backend.terminate())
+        self.assertTrue(self.backend.verify_empty())
+        self.assertEqual(checks, ['checked', 'checked'])
+
+    def test_guard_rejection_keeps_attempt_blocked(self):
+        self.backend.configure_storage(properties=[], expected={}, guard_path='/safe/guard.py',
+                                       revalidate=lambda: None)
+        self.launch()
+        self.assertTrue(self.backend.terminate())
+        self.process.returncode = 127
+        self.assertFalse(self.backend.verify_empty())
+
+    def test_failed_storage_revalidation_blocks_launch(self):
+        def reject():
+            raise ValueError('changed')
+        self.backend.configure_storage(properties=[], expected={}, guard_path='/safe/guard.py', revalidate=reject)
+        with self.assertRaisesRegex(ValueError, 'changed'):
+            self.launch()
+        self.assertEqual(self.commands, [])
+
+    def test_storage_replacement_after_cleanup_blocks(self):
+        checks = iter([None, ValueError('changed')])
+        def check():
+            result = next(checks)
+            if result is not None:
+                raise result
+        self.backend.configure_storage(properties=[], expected={}, guard_path='/safe/guard.py', revalidate=check)
+        self.launch()
+        self.assertTrue(self.backend.terminate())
+        self.assertFalse(self.backend.verify_empty())
+
     def test_acceptance_command_passes_backend_argument_validation(self):
         compile(ACCEPTANCE_COMMAND[2], '<acceptance-command>', 'exec')
         self.assertIs(self.backend.launch(

@@ -45,9 +45,11 @@ class Task:
                 raise ValueError('invalid_scope')
 
 
-def _git(work, *args):
+def _git(work, *args, readonly=False):
     env = {'PATH': '/usr/bin:/bin', 'HOME': '/nonexistent', 'GIT_CONFIG_NOSYSTEM': '1',
            'GIT_TERMINAL_PROMPT': '0', 'LC_ALL': 'C'}
+    if readonly:
+        env['GIT_OPTIONAL_LOCKS'] = '0'
     result = subprocess.run(['/usr/bin/git', '-c', 'core.fsmonitor=false', '-c',
                              'core.hooksPath=/dev/null', '-c', 'credential.helper=',
                              '-c', 'safe.directory=' + str(work), *args], cwd=work, env=env, stdout=subprocess.PIPE,
@@ -108,10 +110,11 @@ class _PreparedBaseline:
     """Hold the exact scaffold inodes across one contained attempt."""
     names = ('.agents', '.aws', '.codex')
 
-    def __init__(self, work, uid, gid):
+    def __init__(self, work, uid, gid, expected_workspace=None):
         if type(uid) is not int or uid < 0 or type(gid) is not int or gid < 0:
             raise ValueError('invalid_baseline_owner')
         self.work, self.uid, self.gid = work, uid, gid
+        self.expected_workspace = expected_workspace
         self.root = None
         self.entries = {}
 
@@ -124,7 +127,10 @@ class _PreparedBaseline:
         flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
         self.root = os.open(self.work, flags)
         root_info = os.fstat(self.root)
-        if root_info.st_uid != self.uid or self.metadata(root_info) != self.metadata(os.stat(self.work, follow_symlinks=False)):
+        if (root_info.st_uid != self.uid
+                or (self.expected_workspace is not None
+                    and (root_info.st_dev, root_info.st_ino) != self.expected_workspace)
+                or self.metadata(root_info) != self.metadata(os.stat(self.work, follow_symlinks=False))):
             raise ValueError('baseline_workspace_changed')
         for name in self.names:
             try:
@@ -275,7 +281,7 @@ def _write_result(evidence, result):
 
 
 def execute(task, workspace, evidence_dir, worker, containment=None, *, prepared_baseline=False,
-            baseline_uid=None, baseline_gid=None):
+            baseline_uid=None, baseline_gid=None, expected_workspace=None):
     """Run one trusted adapter once and return a validated terminal result.
 
     An exclusive evidence directory is the durable reservation. Existing or
@@ -293,9 +299,10 @@ def execute(task, workspace, evidence_dir, worker, containment=None, *, prepared
         raise ValueError('evidence_parent_not_private')
     if not (work / '.git').is_dir() or (work / '.git').is_symlink():
         raise ValueError('standalone_checkout_required')
-    if _git(work, 'rev-parse', 'HEAD').strip().decode('ascii') != task.base_revision:
+    if _git(work, 'rev-parse', 'HEAD', readonly=expected_workspace is not None).strip().decode('ascii') != task.base_revision:
         raise ValueError('base_mismatch')
-    if _git(work, 'status', '--porcelain=v1', '--untracked-files=all', '--ignored=matching'):
+    if _git(work, 'status', '--porcelain=v1', '--untracked-files=all', '--ignored=matching',
+            readonly=expected_workspace is not None):
         raise ValueError('workspace_not_clean')
     if type(prepared_baseline) is not bool:
         raise ValueError('invalid_baseline_configuration')
@@ -316,7 +323,7 @@ def execute(task, workspace, evidence_dir, worker, containment=None, *, prepared
     baseline = None
     try:
         if prepared_baseline:
-            baseline = _PreparedBaseline(work, baseline_uid, baseline_gid)
+            baseline = _PreparedBaseline(work, baseline_uid, baseline_gid, expected_workspace)
             baseline.prepare()
             _durable_write(evidence / 'baseline.json', (json.dumps({
                 'status': 'prepared', 'directories': {name: list(entry[1])
