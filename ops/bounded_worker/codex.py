@@ -145,12 +145,24 @@ class Codex:
         completed = None
         buf = b''
         used = 0
+        stage = 'initialize'
+        reason_recorded = False
+        processing_event = False
         deadline = time.monotonic() + task.timeout_seconds
         for pipe in (child.stdout, child.stderr):
             os.set_blocking(pipe.fileno(), False)
             selector.register(pipe, selectors.EVENT_READ)
 
         os.set_blocking(child.stdin.fileno(), False)
+
+        def note(reason):
+            nonlocal reason_recorded
+            containment.diagnostic(stage, reason)
+            reason_recorded = True
+
+        def fail(reason, message):
+            note(reason)
+            raise ValueError(message)
 
         def send(value):
             value = {'jsonrpc': '2.0', **value}
@@ -165,13 +177,16 @@ class Codex:
                     written = os.write(child.stdin.fileno(), data)
                 except BlockingIOError:
                     continue
+                except BrokenPipeError:
+                    note('closed_input')
+                    raise
                 if not written:
-                    raise ValueError('worker_input_closed')
+                    fail('closed_input', 'worker_input_closed')
                 data = data[written:]
 
 
         def receive(predicate):
-            nonlocal buf, used, completed
+            nonlocal buf, used, completed, processing_event
             while not predicate():
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
@@ -182,11 +197,14 @@ class Codex:
                     except BlockingIOError:
                         continue
                     if not data:
+                        containment.diagnostic(stage, 'stdout_eof' if key.fileobj is child.stdout else 'stderr_eof')
+                        if key.fileobj is child.stdout and buf:
+                            containment.diagnostic(stage, 'partial_frame')
                         selector.unregister(key.fileobj)
                         continue
                     used += len(data)
                     if used > task.output_bytes:
-                        raise ValueError('worker_output_limit')
+                        fail('output_limit', 'worker_output_limit')
                     if key.fileobj is child.stderr:
                         if data:
                             containment.record(_stderr_code(data))
@@ -194,9 +212,13 @@ class Codex:
                     buf += data
                     while b'\n' in buf:
                         line, buf = buf.split(b'\n', 1)
-                        event = json.loads(line)
+                        processing_event = True
+                        try:
+                            event = json.loads(line)
+                        except (ValueError, UnicodeError):
+                            fail('json_frame', 'invalid_worker_json')
                         if not isinstance(event, dict):
-                            raise ValueError('invalid_worker_event')
+                            fail('event_shape', 'invalid_worker_event')
                         params = event.get('params') or {}
                         if event.get('method') == 'turn/completed':
                             completed = params.get('turn')
@@ -219,15 +241,18 @@ class Codex:
                         if 'id' in event and ('result' in event or 'error' in event):
                             pending[event['id']] = event
                         elif 'id' in event and 'method' in event:
+                            containment.diagnostic(stage, 'server_request')
                             send({'id': event['id'], 'error': {'code': -32000, 'message': 'Unavailable'}})
+                        processing_event = False
                 if os.waitid(os.P_PID, child.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT) is not None and not predicate():
-                    raise ValueError('worker_exited')
+                    fail('launcher_exit', 'worker_exited')
 
         def request(number, method, params):
             send({'id': number, 'method': method, 'params': params})
             receive(lambda: number in pending)
             event = pending.pop(number)
             if 'error' in event:
+                note('request_error')
                 containment.record('protocol_failed')
                 capture['errors'].append({'source': 'protocol', 'message': 'request failed'})
                 raise ValueError('worker_request_failed')
@@ -237,14 +262,17 @@ class Codex:
             request(1, 'initialize', {'clientInfo': {'name': 'bounded-task', 'version': '1'},
                                        'capabilities': {'experimentalApi': True}})
             send({'method': 'initialized', 'params': {}})
+            stage = 'config'
             config = request(2, 'config/read', {'cwd': str(work), 'includeLayers': False}).get('config')
             if not check_config(config, work, self.executable, account.pw_dir):
                 raise ValueError('worker_configuration_mismatch')
+            stage = 'profile'
             profiles = request(3, 'permissionProfile/list', {'cwd': str(work)})
             if not any(p.get('id') == 'pilot' and p.get('allowed') is True for p in profiles.get('data', [])):
                 raise ValueError('worker_profile_unavailable')
             if self._binary() != binary:
                 raise ValueError('worker_binary_changed')
+            stage = 'thread'
             thread = request(4, 'thread/start', {'cwd': str(work), 'permissions': 'pilot',
                              'approvalPolicy': 'never', 'model': 'gpt-6.1-terra', 'serviceTier': 'default',
                              'allowProviderModelFallback': False, 'ephemeral': True})
@@ -254,14 +282,16 @@ class Codex:
                     or thread.get('cwd') != str(work)):
                 raise ValueError('thread_configuration_mismatch')
             thread_id = thread['thread']['id']
+            stage = 'turn_start'
             started = request(5, 'turn/start', {'threadId': thread_id, 'effort': 'medium',
                     'serviceTierForTurn': 'default', 'input': [{'type': 'text', 'text': task.instructions}]})
             turn_id = started['turn']['id']
             if not isinstance(turn_id, str) or not turn_id:
-                raise ValueError('turn_binding_mismatch')
+                fail('turn_binding', 'turn_binding_mismatch')
+            stage = 'turn'
             receive(lambda: completed is not None)
             if not isinstance(completed, dict) or completed.get('id') != turn_id:
-                raise ValueError('turn_binding_mismatch')
+                fail('turn_binding', 'turn_binding_mismatch')
             turn_status = completed.get('status')
             terminal = ('turn_completed' if turn_status == 'completed' else
                         'turn_failed' if turn_status in ('failed', 'interrupted') else 'turn_unknown')
@@ -270,21 +300,33 @@ class Codex:
                 capture['errors'].append({'source': 'turn', 'message': 'turn failed'})
             else:
                 capture['status'] = 'completed'
+            stage = 'finalize'
             if self._binary() != binary:
                 raise ValueError('worker_binary_changed')
         except TimeoutError:
+            containment.diagnostic(stage, 'deadline')
             capture['status'] = 'timeout'
             containment.record('deadline')
             capture['errors'].append({'source': 'worker', 'message': 'deadline exceeded'})
         except (OSError, ValueError, KeyError, TypeError) as exc:
+            if not reason_recorded:
+                containment.diagnostic(stage, 'io' if isinstance(exc, OSError) else
+                                       ('event_shape' if processing_event else 'response_shape')
+                                       if isinstance(exc, (KeyError, TypeError)) else 'validation')
             capture['status'] = 'failed'
             containment.record('protocol_failed' if isinstance(exc, (ValueError, KeyError, TypeError)) else 'adapter_failed')
             capture['errors'].append({'source': 'worker', 'message': 'adapter or protocol failure'})
+        except AttributeError:
+            containment.diagnostic(stage, 'event_shape' if processing_event else 'response_shape')
+            raise
         finally:
-            # The trusted outer boundary terminates and verifies the whole worker
-            # containment before inspecting or accepting workspace output.
-            selector.close()
-            for pipe in (child.stdin, child.stdout, child.stderr):
-                pipe.close()
+            try:
+                if buf:
+                    containment.diagnostic(stage, 'partial_frame')
+            finally:
+                # The outer boundary always terminates the whole containment.
+                selector.close()
+                for pipe in (child.stdin, child.stdout, child.stderr):
+                    pipe.close()
         capture['errors'] = capture['errors'][:64]
         return capture
