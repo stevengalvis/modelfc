@@ -1242,7 +1242,7 @@ def tests(release, sha, *, request=REQUEST, output=TEST_OUTPUT, service=SERVICE,
                     or value["state_boundary_enforced"] is not True):
                 raise ValueError
             if "diagnostics" in value and (value["tests_status"] != "FAIL" or
-                    not valid_test_diagnostics(value["diagnostics"], test_identifiers(release))):
+                    not valid_test_diagnostics(value["diagnostics"], test_identifiers(release), test_frames(release))):
                 raise ValueError
         except (OSError, ValueError, TypeError):
             raise Failure("STATE_BOUNDARY_FAILED") from None
@@ -1500,6 +1500,10 @@ def verify_test_network(controller_netns):
 TEST_BOOTSTRAP = r"""
 import json, os, runpy, sys, time, unittest
 fd = int(sys.argv[1])
+outcome_fd = int(sys.argv[2])
+os.set_inheritable(outcome_fd, False)
+os.set_blocking(outcome_fd, False)
+outcome_sequence = 0
 os.set_inheritable(fd, False)
 os.set_blocking(fd, False)
 sequence = 0
@@ -1517,7 +1521,59 @@ def emit(kind, name=""):
             os.write(fd, raw)  # One atomic, nonblocking write; loss is observable.
     except Exception:
         pass
+def outcome(test, err, kind):
+    global outcome_sequence
+    outcome_sequence += 1
+    try:
+        name = test.id()
+        if not isinstance(name, str) or len(name) > 160:
+            name = ""
+        frames = []
+        tb = err[2]
+        omitted = False
+        visited = 0
+        while tb is not None and visited < 256:
+            visited += 1
+            code = tb.tb_frame.f_code
+            # Only test-method frames; the parent binds names and line numbers
+            # to parsed candidate source. No filenames, locals or source text.
+            module = tb.tb_frame.f_globals.get("__name__", "")
+            symbol = module + "." + code.co_qualname
+            if (len(symbol) <= 160 and code.co_name.startswith("test")
+                    and (module.startswith("test_") or module.startswith("tests.test_"))
+                    and len(code.co_qualname.split(".")) == 2):
+                frames.append([symbol, tb.tb_lineno])
+                if len(frames) > 4:
+                    frames.pop(0)
+                    omitted = True
+            else:
+                omitted = True
+            tb = tb.tb_next
+        omitted |= tb is not None
+        # Fixed vocabulary, not user-defined exception names or messages.
+        import builtins
+        typ = err[0]
+        exception = next((key for key in ("AssertionError", "OSError", "ValueError",
+            "TypeError", "RuntimeError", "ImportError", "KeyError", "IndexError",
+            "TimeoutError", "PermissionError", "FileNotFoundError")
+            if typ is getattr(builtins, key)), "OTHER")
+        raw = (json.dumps([outcome_sequence, kind, name, exception, frames, omitted],
+                          ensure_ascii=True) + "\n").encode("ascii")
+        if len(raw) <= 1024:
+            os.write(outcome_fd, raw)
+    except Exception:
+        pass
 class TimedResult(unittest.TextTestResult):
+    def addError(self, test, err):
+        outcome(test, err, "ERROR")
+        super().addError(test, err)
+    def addFailure(self, test, err):
+        outcome(test, err, "FAIL")
+        super().addFailure(test, err)
+    def addSubTest(self, test, subtest, err):
+        if err is not None:
+            outcome(test, err, "FAIL" if issubclass(err[0], test.failureException) else "ERROR")
+        super().addSubTest(test, subtest, err)
     def startTest(self, test):
         super().startTest(test)
         try:
@@ -1537,12 +1593,18 @@ try:
 finally:
     emit("end")
     os.close(fd)
+    try:
+        os.write(outcome_fd, (json.dumps([outcome_sequence, "end"]) + "\n").encode("ascii"))
+    except Exception:
+        pass
+    os.close(outcome_fd)
 """
 
 
 class TestProgress:
     """Bounded, untrusted observations; never an input to the pass/fail gate."""
-    def __init__(self, allowed):
+    def __init__(self, allowed, frames=None):
+        self.outcomes = TestOutcomes(allowed, frames or {})
         self.allowed = allowed
         self.pending = b""
         self.bytes = self.sequence = self.last_us = self.completed = 0
@@ -1619,6 +1681,133 @@ def valid_progress(value, allowed):
                     and number(item[1], 630_000_000) for item in value["slowest"]))
 
 
+EXCEPTION_TYPES = {"AssertionError", "OSError", "ValueError", "TypeError", "RuntimeError",
+                   "ImportError", "KeyError", "IndexError", "TimeoutError", "PermissionError",
+                   "FileNotFoundError", "OTHER"}
+
+
+def test_frames(release):
+    """Bounded source inventory; export symbols/line numbers, never paths/text."""
+    frames = {}
+    for path in sorted((release / "tests").glob("test_*.py"))[:256]:
+        if path.is_symlink():
+            continue
+        try:
+            with path.open("rb") as source:
+                data = source.read(1048577)
+            if len(data) > 1048576:
+                continue
+            tree = ast.parse(data)
+        except (OSError, SyntaxError, ValueError):
+            continue
+        for cls in tree.body:
+            if isinstance(cls, ast.ClassDef):
+                for method in cls.body:
+                    name = f"{path.stem}.{cls.name}.{getattr(method, 'name', '')}"
+                    if isinstance(method, (ast.FunctionDef, ast.AsyncFunctionDef)) and TEST_ID.fullmatch(name) and len(name) <= 154:
+                        for alias in (name, "tests." + name):
+                            frames[alias] = (method.lineno, method.end_lineno)
+                        if len(frames) >= 20000:
+                            return frames
+    return frames
+
+
+def valid_outcomes(value, allowed, frames):
+    if not isinstance(value, dict) or set(value) != {"events", "complete", "truncated"}:
+        return False
+    if type(value["complete"]) is not bool or type(value["truncated"]) is not bool:
+        return False
+    if not isinstance(value["events"], list) or len(value["events"]) > DIAGNOSTIC_IDS:
+        return False
+    for event in value["events"]:
+        if (not isinstance(event, list) or len(event) != 5
+                or event[0] not in ("FAIL", "ERROR") or not isinstance(event[1], str)
+                or event[1] not in allowed or len(event[1]) > 160
+                or not isinstance(event[2], str) or event[2] not in EXCEPTION_TYPES
+                or not isinstance(event[3], list) or len(event[3]) > 4
+                or type(event[4]) is not bool):
+            return False
+        for frame in event[3]:
+            if (not isinstance(frame, list) or len(frame) != 2 or not isinstance(frame[0], str)
+                    or frame[0] not in frames or type(frame[1]) is not int
+                    or not frames[frame[0]][0] <= frame[1] <= frames[frame[0]][1]):
+                return False
+    return True
+
+
+class TestOutcomes:
+    """Independent bounded failure channel; loss cannot be mistaken for success."""
+    def __init__(self, allowed, frames):
+        self.allowed, self.frames = allowed, frames
+        self.pending = b""
+        self.bytes = self.sequence = 0
+        self.invalid = self.ended = self.truncated = False
+        self.events = []
+
+    def feed(self, chunk):
+        self.bytes += len(chunk)
+        if self.invalid or self.bytes > 1024 * 1024:
+            self.invalid = True
+            self.pending = b""
+            return
+        self.pending += chunk
+        while b"\n" in self.pending:
+            raw, self.pending = self.pending.split(b"\n", 1)
+            try:
+                if len(raw) > 1024 or self.ended:
+                    raise ValueError
+                event = json.loads(raw)
+                if (not isinstance(event, list) or not event or type(event[0]) is not int):
+                    raise ValueError
+                if event == [self.sequence, "end"]:
+                    self.ended = True
+                    continue
+                if len(event) != 6 or event[0] != self.sequence + 1:
+                    raise ValueError
+                if not valid_outcomes(dict(events=[event[1:]], complete=False, truncated=False),
+                                      self.allowed, self.frames):
+                    raise ValueError
+                self.sequence = event[0]
+                if len(self.events) < DIAGNOSTIC_IDS:
+                    self.events.append(event[1:])
+                else:
+                    self.truncated = True
+            except (ValueError, TypeError, UnicodeError):
+                self.invalid = True
+                self.pending = b""
+                return
+        if len(self.pending) > 1024:
+            self.invalid = True
+            self.pending = b""
+
+    def snapshot(self):
+        complete = self.ended and not self.invalid and not self.pending
+        return dict(events=self.events, complete=complete,
+                    truncated=self.truncated or not complete)
+
+
+def fit_test_report(value):
+    """Keep the 4KiB envelope, sacrificing timing before failure identity."""
+    info = value.get("diagnostics", {})
+    while len(json.dumps(value).encode("ascii")) + 1 > DIAGNOSTIC_LIMIT:
+        info["truncated"] = True
+        progress = info.get("progress", {})
+        outcomes = info.get("outcomes", {})
+        if progress.get("slowest"):
+            progress["slowest"].pop()
+            progress["complete"] = False
+        elif any(event[3] for event in outcomes.get("events", [])):
+            event = next(event for event in reversed(outcomes["events"]) if event[3])
+            event[3].pop(0)
+            event[4] = True
+            outcomes["truncated"] = True
+        elif outcomes.get("events"):
+            outcomes["events"].pop()
+            outcomes["truncated"] = True
+        else:
+            break
+
+
 class TestCaptureFailure(Exception):
     """Internal bounded capture; only allowlisted derived fields may be retained."""
     def __init__(self, classification, captured=b"", truncated=False):
@@ -1630,21 +1819,24 @@ class TestCaptureFailure(Exception):
 
 def capture_test_process(args, *, cwd, env, timeout=600, progress=None):
     """Discard stdout; drain stderr with a fixed tail and an overall deadline."""
-    read_fd = write_fd = None
+    read_fd = write_fd = outcome_read = outcome_write = None
     try:
         if progress is not None:
             read_fd, write_fd = os.pipe()
-            args = [args[0], "-B", "-c", TEST_BOOTSTRAP, str(write_fd)]
+            outcome_read, outcome_write = os.pipe()
+            args = [args[0], "-B", "-c", TEST_BOOTSTRAP, str(write_fd), str(outcome_write)]
         process = subprocess.Popen(args, cwd=cwd, env=env, stdout=subprocess.DEVNULL,
                                    stderr=subprocess.PIPE,
-                                   pass_fds=() if write_fd is None else (write_fd,))
+                                   pass_fds=() if write_fd is None else (write_fd, outcome_write))
     except BaseException:
-        if read_fd is not None:
-            os.close(read_fd)
+        for descriptor in (read_fd, outcome_read):
+            if descriptor is not None:
+                os.close(descriptor)
         raise
     finally:
-        if write_fd is not None:
-            os.close(write_fd)
+        for descriptor in (write_fd, outcome_write):
+            if descriptor is not None:
+                os.close(descriptor)
     tail = b""
     truncated = False
     deadline = time.monotonic() + timeout
@@ -1653,6 +1845,7 @@ def capture_test_process(args, *, cwd, env, timeout=600, progress=None):
             selector.register(process.stderr, selectors.EVENT_READ)
             if read_fd is not None:
                 selector.register(read_fd, selectors.EVENT_READ)
+                selector.register(outcome_read, selectors.EVENT_READ)
             while selector.get_map():
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
@@ -1661,6 +1854,9 @@ def capture_test_process(args, *, cwd, env, timeout=600, progress=None):
                     chunk = os.read(key.fd, 4096)
                     if not chunk:
                         selector.unregister(key.fd)
+                        continue
+                    if key.fd == outcome_read:
+                        progress.outcomes.feed(chunk)
                         continue
                     if key.fd == read_fd:
                         progress.feed(chunk)
@@ -1680,35 +1876,14 @@ def capture_test_process(args, *, cwd, env, timeout=600, progress=None):
             process.kill()
         process.wait()
         process.stderr.close()
-        if read_fd is not None:
-            os.close(read_fd)
+        for descriptor in (read_fd, outcome_read):
+            if descriptor is not None:
+                os.close(descriptor)
 
 
 def test_identifiers(release):
     """Only source-declared names may leave the sandbox, never output payloads."""
-    names = set()
-    for path in sorted((release / "tests").glob("test_*.py"))[:256]:
-        if path.is_symlink():
-            continue
-        try:
-            with path.open("rb") as source:
-                data = source.read(1048577)
-            if len(data) > 1048576:
-                continue
-            tree = ast.parse(data)
-        except (OSError, SyntaxError, ValueError):
-            continue
-        for cls in tree.body:
-            if not isinstance(cls, ast.ClassDef):
-                continue
-            for method in cls.body:
-                if isinstance(method, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                    name = f"{path.stem}.{cls.name}.{method.name}"
-                    if len(name) <= 154 and TEST_ID.fullmatch(name):
-                        names.update((name, "tests." + name))
-                        if len(names) >= 4096:
-                            return names
-    return names
+    return set(test_frames(release))
 
 
 def test_diagnostics(stderr, summary, allowed, truncated):
@@ -1746,7 +1921,13 @@ def extended_diagnostics(stderr, summary, allowed, truncated, classification, co
     return result
 
 
-def valid_test_diagnostics(value, allowed):
+def valid_test_diagnostics(value, allowed, frames=None):
+    if isinstance(value, dict) and "outcomes" in value:
+        if not valid_outcomes(value["outcomes"], allowed, frames or {}):
+            return False
+        if any(event[1] not in value.get("test_ids", []) for event in value["outcomes"]["events"]):
+            return False
+        value = {key: item for key, item in value.items() if key != "outcomes"}
     if isinstance(value, dict) and "progress" in value:
         if not valid_progress(value["progress"], allowed):
             return False
@@ -1795,7 +1976,7 @@ def run_tests():
                "PYTHONDONTWRITEBYTECODE": "1", "PYTHONNOUSERSITE": "1"}
         allowed = test_identifiers(release)
         classification = None
-        progress = TestProgress(allowed)
+        progress = TestProgress(allowed, test_frames(release))
         try:
             code, captured, truncated = capture_test_process([str(release / ".venv/bin/python"), "-B", "-m", "unittest",
                                   "discover", "-v", "-s", "tests"], cwd=release, env=env,
@@ -1824,6 +2005,17 @@ def run_tests():
             if classification is not None:
                 timing["complete"] = False
             value["diagnostics"]["progress"] = timing
+            outcomes = progress.outcomes.snapshot()
+            if classification is not None:
+                outcomes.update(complete=False, truncated=True)
+            info = value["diagnostics"]
+            # Runtime outcome IDs take precedence over lossy stderr observations.
+            names = list(dict.fromkeys(event[1] for event in outcomes["events"]))
+            names.extend(name for name in info["test_ids"] if name not in names)
+            info["test_ids"] = names[:DIAGNOSTIC_IDS]
+            info["truncated"] |= outcomes["truncated"] or len(names) > DIAGNOSTIC_IDS
+            info["outcomes"] = outcomes
+            fit_test_report(value)
     except (Failure, OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
         pass
     try:
