@@ -4,6 +4,7 @@ Construction and credential custody are the trusted operator's responsibility.
 This module does not schedule polling or invoke a worker.
 """
 import json
+import re
 import signal
 import threading
 from contextlib import contextmanager
@@ -18,7 +19,7 @@ QUERY = '''query($owner:String!, $repo:String!, $number:Int!) {
       comments(last:100) {
         pageInfo { hasPreviousPage }
         nodes {
-          id databaseId body lastEditedAt includesCreatedEdit
+          id fullDatabaseId body lastEditedAt includesCreatedEdit
           author { __typename ... on User { databaseId } ... on Bot { databaseId } }
         }
       }
@@ -86,7 +87,8 @@ class GitHubReader:
                 raise ValueError('graphql_error')
             repo = result['data']['repository']
             pr = repo['pullRequest']
-            if repo['nameWithOwner'] != 'stevengalvis/modelfc' or pr['number'] != self._thread:
+            if (repo['nameWithOwner'] != 'stevengalvis/modelfc'
+                    or type(pr['number']) is not int or pr['number'] != self._thread):
                 raise ValueError('channel_mismatch')
             conn = pr['comments']
             if conn['pageInfo']['hasPreviousPage'] is not False:
@@ -98,11 +100,14 @@ class GitHubReader:
             for node in nodes:
                 author = node['author']
                 if (type(node['id']) is not str or not node['id'] or len(node['id']) > 200
-                        or type(node['databaseId']) is not int or node['databaseId'] <= 0
+                        or type(node['fullDatabaseId']) is not str
+                        or not re.fullmatch(r'[1-9][0-9]{0,18}', node['fullDatabaseId'])
+                        or int(node['fullDatabaseId']) > 9223372036854775807
                         or type(node['body']) is not str or len(node['body'].encode()) > 16384
                         or type(node['includesCreatedEdit']) is not bool
                         or type(author) is not dict or author['__typename'] not in ('User', 'Bot')
-                        or type(author['databaseId']) is not int or author['databaseId'] <= 0):
+                        or type(author['databaseId']) is not int
+                        or not 1 <= author['databaseId'] <= 2147483647):
                     raise ValueError('invalid_comment')
                 # Any edit marker blocks; missing fields or nullable author fail closed.
                 edited = node['lastEditedAt']
@@ -110,7 +115,7 @@ class GitHubReader:
                     edited = 'edited'
                 comments.append((node['id'], node['body'].encode(), {
                     'actor_id': author['databaseId'], 'thread': self._thread,
-                    'comment_id': node['databaseId'], 'last_edited_at': edited}))
+                    'comment_id': int(node['fullDatabaseId']), 'last_edited_at': edited}))
             return comments
         except (KeyError, TypeError, AttributeError):
             raise ValueError('invalid_response') from None
