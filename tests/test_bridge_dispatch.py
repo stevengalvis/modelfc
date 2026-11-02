@@ -53,7 +53,10 @@ class DispatchTests(unittest.TestCase):
     def test_launch_at_most_once(self):
         self.assertEqual(self.dispatch.once()['status'], 'completed')
         self.now += 3601
-        self.assertEqual(self.dispatch.once()['status'], 'idle')
+        result = self.dispatch.once()
+        self.assertEqual(result['status'], 'duplicate_observed')
+        self.assertEqual(result['job_id'], 'job1')
+        self.assertEqual(result['comment_id'], 8)
         self.assertEqual(self.worker.calls, 1)
 
     def test_changed_before_launch_is_reserved(self):
@@ -86,6 +89,67 @@ class DispatchTests(unittest.TestCase):
         self.reader.value = [('different-node', json.dumps(altered, sort_keys=True, separators=(',', ':')).encode(),
                               {**meta, 'comment_id': 9})]
         self.now += 3601
+        self.assertEqual(self.dispatch.once()['status'], 'collision_rejected')
+        self.assertEqual(self.worker.calls, 1)
+
+    def test_duplicate_and_collision_do_not_starve_new_valid_job(self):
+        self.assertEqual(self.dispatch.once()['status'], 'completed')
+        node, body, meta = self.reader.value[0]
+        obj = json.loads(body)
+        obj['prompt'] = 'Changed content'
+        collision = ('node-collision', json.dumps(obj, sort_keys=True, separators=(',', ':')).encode(),
+                     {**meta, 'comment_id': 9})
+        obj['job_id'] = 'job2'
+        fresh = ('node2', json.dumps(obj, sort_keys=True, separators=(',', ':')).encode(),
+                 {**meta, 'comment_id': 10})
+        self.reader.value = [(node, body, meta), collision, fresh]
+        self.now += 3601
+        result = self.dispatch.once()
+        self.assertEqual(result['status'], 'completed')
+        self.assertEqual(result['job_id'], 'job2')
+        self.assertEqual(result['duplicate']['job_id'], 'job1')
+        self.assertEqual(result['duplicate']['comment_id'], 8)
+        self.assertIs(result['collision_rejected'], True)
+        self.assertEqual(self.worker.calls, 2)
+
+    def test_identity_or_content_collision_is_not_exact_duplicate(self):
+        self.assertEqual(self.dispatch.once()['status'], 'completed')
+        node, body, meta = self.reader.value[0]
+        changed = json.loads(body)
+        changed['prompt'] = 'Changed content'
+        changed_body = json.dumps(changed, sort_keys=True, separators=(',', ':')).encode()
+        variants = [(node, changed_body, meta),
+                    ('other-node', body, {**meta, 'comment_id': 9}),
+                    ('other-node', body, meta)]
+        for variant in variants:
+            with self.subTest(variant=variant[0]):
+                self.now += 61
+                self.reader.value = [variant]
+                self.assertEqual(self.dispatch.once(), {'status': 'collision_rejected'})
+        self.assertEqual(self.worker.calls, 1)
+
+    def test_collision_precedes_duplicate_when_no_new_job_runs(self):
+        self.assertEqual(self.dispatch.once()['status'], 'completed')
+        node, body, meta = self.reader.value[0]
+        collision = ('other-node', body, {**meta, 'comment_id': 9})
+        self.reader.value = [(node, body, meta), collision]
+        self.now += 61
+        result = self.dispatch.once()
+        self.assertEqual(result['status'], 'collision_rejected')
+        self.assertEqual(result['duplicate']['job_id'], 'job1')
+        self.assertEqual(result['duplicate']['comment_id'], 8)
+        self.assertEqual(self.worker.calls, 1)
+
+    def test_wrong_author_edit_or_expiry_never_counts_as_duplicate(self):
+        self.assertEqual(self.dispatch.once()['status'], 'completed')
+        node, body, meta = self.reader.value[0]
+        self.now += 3601
+        for changed in ({**meta, 'actor_id': 999}, {**meta, 'last_edited_at': 'edited'}):
+            self.reader.value = [(node, body, changed)]
+            self.assertEqual(self.dispatch.once()['status'], 'idle')
+            self.now += 61
+        self.reader.value = [(node, body, meta)]
+        self.now = 8001
         self.assertEqual(self.dispatch.once()['status'], 'idle')
         self.assertEqual(self.worker.calls, 1)
 
