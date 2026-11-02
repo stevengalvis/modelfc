@@ -100,11 +100,40 @@ job ID, base, request and patch hashes, and draft URL. They contain no raw model
 output, private path, patch, prompt or secret. A status-post attempt, like each
 external write, is durably marked before sending and is never blindly repeated.
 
-Reservations, launching records, uncertain publication writes and uncertain status
-posts are never automatically retried. Any unresolved reservation or launch also
-blocks later worker launches, because the previous cgroup may still be active. An uncertain draft-PR creation may be reconciled only after independently
-rebuilding and checking the exact commit and finding one matching draft. Other
-pending writes remain blocked; an operator must investigate the exact branch
-and PR. Do not delete receipts to force a retry. Finished evidence may
-be inspected read-only. This implementation does not perform crash recovery or
-claim unattended host acceptance.
+Under the shared lock, every mode blocks before worker or GitHub I/O if any job is
+reserved or launching, any publication is branch-, commit- or PR-pending, any
+status post is pending, or durable state is malformed, inconsistent or unknown.
+Completed jobs without publication remain eligible for publication; published
+jobs can receive status. Failed, timed-out and rejected terminal results are
+eligible for status only after the existing launcher has verified cleanup.
+Already-posted statuses are not repeated. No mode automatically reconciles a
+pending PR, even if a matching PR exists. Preserve receipts and evidence for
+separately authorized operator investigation; do not delete them to force a retry.
+Finished evidence may be inspected read-only. This change does not provide crash
+recovery or establish unattended host acceptance.
+
+## Separately authorized host upgrade and deadlines
+
+Keep all bridge timers disabled while reviewing and upgrading. For a separately
+approved upgrade, install the reviewed exact source revision using the existing
+protected operator process; retain the existing receipt database, lock, evidence,
+workspaces and policy. Do not reset or migrate receipts to clear uncertainty.
+Review unresolved records and the corresponding worker cgroup or external writes
+through the separately authorized investigation procedure before any future use.
+This change requires no token replacement, broader permissions or new model trial.
+
+For separately installed one-shot service definitions, recommended finite starting
+caps are `TimeoutStartSec=900` for dispatch, `1800` for publish and `120` for
+status; use `TimeoutStopSec=30`, `Restart=no`, `KillMode=control-group` and
+`SendSIGKILL=yes`. These are recommendations to review on the actual host, not
+claims about installed units. Dispatch includes bounded checkout commands, a
+90-second pilot turn and cleanup; publication includes checkout, patch checks and
+multiple bounded GitHub calls. Many paths or slow operations can exceed these
+caps: a deadline may interrupt a valid invocation and leave an uncertain receipt.
+Adjust only after measuring the approved scope and preserve finite limits.
+
+A bridge-service timeout or empty bridge-service cgroup does **not** establish
+that the separate worker containment boundary is empty. Treat a reserved or
+launching receipt as unresolved until an authorized operator independently
+establishes worker-boundary quiescence. Do not enable timers or run a model as
+part of applying or reviewing these source and host-unit changes.

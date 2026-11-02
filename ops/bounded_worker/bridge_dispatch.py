@@ -11,6 +11,7 @@ import stat
 import time
 
 from .bridge_envelope import validate
+from .bridge_guard import safe
 
 
 class Dispatcher:
@@ -35,7 +36,12 @@ class Dispatcher:
                 fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError:
                 return {'status': 'busy'}
-            dbfd = os.open(self.state_dir / 'receipts.sqlite', flags, 0o600)
+            try:
+                dbfd = os.open(self.state_dir / 'receipts.sqlite', flags | os.O_EXCL, 0o600)
+                new_db = True
+            except FileExistsError:
+                dbfd = os.open(self.state_dir / 'receipts.sqlite', flags & ~os.O_CREAT, 0o600)
+                new_db = False
             try:
                 dbinfo = os.fstat(dbfd)
                 if not stat.S_ISREG(dbinfo.st_mode) or dbinfo.st_uid != os.geteuid() or dbinfo.st_nlink != 1 or stat.S_IMODE(dbinfo.st_mode) != 0o600:
@@ -50,12 +56,16 @@ class Dispatcher:
                 os.close(dirfd)
             with sqlite3.connect(self.state_dir / 'receipts.sqlite') as db:
                 db.execute('PRAGMA synchronous=FULL')
+                if not new_db and not safe(db):
+                    return {'status': 'blocked'}
                 db.execute('CREATE TABLE IF NOT EXISTS jobs '
                            '(job TEXT PRIMARY KEY, digest TEXT NOT NULL, comment INTEGER UNIQUE NOT NULL, '
                            'node TEXT UNIQUE NOT NULL, status TEXT NOT NULL, body BLOB NOT NULL)')
                 db.execute('CREATE TABLE IF NOT EXISTS poll (id INTEGER PRIMARY KEY, next REAL NOT NULL, failures INTEGER NOT NULL)')
                 db.commit()
                 os.chmod(self.state_dir / 'receipts.sqlite', 0o600)
+                if not safe(db):
+                    return {'status': 'blocked'}
                 now = self.clock()
                 previous = db.execute('SELECT next,failures FROM poll WHERE id=1').fetchone()
                 next_at, failures = previous or (0, 0)
@@ -70,15 +80,13 @@ class Dispatcher:
                 db.execute('UPDATE poll SET next=?,failures=? WHERE id=1', (self.clock() + delay, failures))
                 db.commit()
                 return result
+        except sqlite3.Error:
+            return {'status': 'blocked'}
         finally:
             os.close(fd)
 
     def _once(self, db):
         try:
-            # A supervisor crash releases flock but may leave a live cgroup.
-            # An unresolved reservation globally blocks every later launch.
-            if db.execute("SELECT 1 FROM jobs WHERE status IN ('reserved','launching') LIMIT 1").fetchone():
-                return {'status': 'blocked'}
             comments = self.reader.comments()
             for node, body, metadata in comments:
                 try:

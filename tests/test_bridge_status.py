@@ -32,5 +32,5 @@ class StatusTests(unittest.TestCase):
     def test_uncertain_post_not_retried(self):
         self.remote.fail = True
         self.assertEqual(post_once(self.fixture.tmp.name, 55, self.remote)['status'], 'blocked')
-        self.assertEqual(post_once(self.fixture.tmp.name, 55, self.remote)['status'], 'idle')
+        self.assertEqual(post_once(self.fixture.tmp.name, 55, self.remote)['status'], 'blocked')
         self.assertEqual(len(self.remote.calls), 1)

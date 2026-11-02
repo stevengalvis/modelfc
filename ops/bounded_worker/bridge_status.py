@@ -6,6 +6,8 @@ from pathlib import Path
 import re
 import sqlite3
 
+from .bridge_guard import safe
+
 
 def post_once(state_dir, thread, github):
     state_dir = Path(state_dir)
@@ -17,6 +19,8 @@ def post_once(state_dir, thread, github):
             return {'status': 'busy'}
         with sqlite3.connect(state_dir / 'receipts.sqlite') as db:
             db.execute('PRAGMA synchronous=FULL')
+            if not safe(db):
+                return {'status': 'blocked'}
             db.execute('CREATE TABLE IF NOT EXISTS status_posts (job TEXT, outcome TEXT, '
                        'phase TEXT NOT NULL, PRIMARY KEY(job,outcome))')
             db.commit()

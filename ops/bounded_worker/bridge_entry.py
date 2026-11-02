@@ -2,7 +2,6 @@
 import argparse
 import json
 from pathlib import Path
-import sqlite3
 import time
 
 from .bridge_checkout import Checkout
@@ -67,23 +66,13 @@ def publish_once(path):
     reader = GitHubReader(_token(settings['reader_token_file']), policy.thread)
     github = PublisherGitHub(_token(settings['publisher_token_file']))
     dbpath = Path(settings['state_root']) / 'receipts.sqlite'
-    if not dbpath.is_file() or dbpath.is_symlink():
-        return {'status': 'idle'}
-    with sqlite3.connect(f'file:{dbpath}?mode=ro', uri=True) as db:
-        exists = db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='publications'").fetchone()
-        query = "SELECT job FROM jobs WHERE status='completed'"
-        if exists:
-            query += " AND (NOT EXISTS (SELECT 1 FROM publications WHERE publications.job=jobs.job) OR EXISTS (SELECT 1 FROM publications WHERE publications.job=jobs.job AND phase='pr_pending'))"
-        rows = db.execute(query + ' ORDER BY rowid LIMIT 100').fetchall()
-    if not rows:
+    if dbpath.is_symlink():
+        return {'status': 'blocked'}
+    if not dbpath.exists():
         return {'status': 'idle'}
     publisher = Publisher(settings['state_root'], policy, reader, Evidence(config),
                           Checkout(settings['mirror'], settings['publisher_root']), github, clock=time.time)
-    for row in rows:
-        result = publisher.publish(row[0])
-        if result.get('status') in ('published', 'busy'):
-            return result
-    return {'status': 'blocked'}
+    return publisher.publish()
 
 
 def status_once(path):
