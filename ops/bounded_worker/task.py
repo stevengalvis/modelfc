@@ -40,7 +40,7 @@ class Task:
             raise ValueError('invalid_task')
         for name in self.allowed_paths:
             if (not isinstance(name, str) or not re.fullmatch(r'[A-Za-z0-9_.\-/]{1,200}', name)
-                    or name.startswith('-') or any(x in ('', '.', '..', '.git', '.aws', '.codex')
+                    or name.startswith('-') or any(x in ('', '.', '..', '.git', '.agents', '.aws', '.codex')
                     for x in name.split('/')) or PurePosixPath(name).is_absolute()):
                 raise ValueError('invalid_scope')
 
@@ -102,6 +102,70 @@ def _snapshot(root):
             if len(entries) > 50000:
                 raise ValueError('workspace_entry_limit')
     return entries
+
+
+class _PreparedBaseline:
+    """Hold the exact scaffold inodes across one contained attempt."""
+    names = ('.agents', '.aws', '.codex')
+
+    def __init__(self, work, uid, gid):
+        if type(uid) is not int or uid < 0 or type(gid) is not int or gid < 0:
+            raise ValueError('invalid_baseline_owner')
+        self.work, self.uid, self.gid = work, uid, gid
+        self.root = None
+        self.entries = {}
+
+    @staticmethod
+    def metadata(info):
+        return (info.st_dev, info.st_ino, info.st_mode, info.st_uid, info.st_gid,
+                info.st_nlink, info.st_mtime_ns, info.st_ctime_ns)
+
+    def prepare(self):
+        flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+        self.root = os.open(self.work, flags)
+        root_info = os.fstat(self.root)
+        if root_info.st_uid != self.uid or self.metadata(root_info) != self.metadata(os.stat(self.work, follow_symlinks=False)):
+            raise ValueError('baseline_workspace_changed')
+        for name in self.names:
+            try:
+                os.stat(name, dir_fd=self.root, follow_symlinks=False)
+            except FileNotFoundError:
+                continue
+            raise ValueError('baseline_path_exists')
+        for name in self.names:
+            os.mkdir(name, 0o700, dir_fd=self.root)
+            fd = os.open(name, flags, dir_fd=self.root)
+            self.entries[name] = (fd, None)
+            os.fchown(fd, self.uid, self.gid)
+            os.fchmod(fd, 0o700)
+            os.fsync(fd)
+            info = os.fstat(fd)
+            if (not stat.S_ISDIR(info.st_mode) or stat.S_IMODE(info.st_mode) != 0o700
+                    or info.st_uid != self.uid or info.st_gid != self.gid or os.listdir(fd)):
+                raise ValueError('baseline_invalid')
+            self.entries[name] = (fd, self.metadata(info))
+        os.fsync(self.root)
+        self.verify()
+
+    def verify(self):
+        if len(self.entries) != len(self.names):
+            raise ValueError('baseline_incomplete')
+        root = os.fstat(self.root)
+        current = os.stat(self.work, follow_symlinks=False)
+        if (not stat.S_ISDIR(current.st_mode) or (root.st_dev, root.st_ino) != (current.st_dev, current.st_ino)):
+            raise ValueError('baseline_workspace_changed')
+        for name, (fd, expected) in self.entries.items():
+            info = os.fstat(fd)
+            path_info = os.stat(name, dir_fd=self.root, follow_symlinks=False)
+            if (expected is None or self.metadata(info) != expected
+                    or self.metadata(path_info) != expected or os.listdir(fd)):
+                raise ValueError('baseline_changed')
+
+    def close(self):
+        for fd, _ in self.entries.values():
+            os.close(fd)
+        if self.root is not None:
+            os.close(self.root)
 
 
 class _Boundary:
@@ -191,7 +255,8 @@ def _write_result(evidence, result):
     _durable_write(evidence / 'result.json', (json.dumps(result, sort_keys=True) + '\n').encode())
 
 
-def execute(task, workspace, evidence_dir, worker, containment=None):
+def execute(task, workspace, evidence_dir, worker, containment=None, *, prepared_baseline=False,
+            baseline_uid=None, baseline_gid=None):
     """Run one trusted adapter once and return a validated terminal result.
 
     An exclusive evidence directory is the durable reservation. Existing or
@@ -213,16 +278,8 @@ def execute(task, workspace, evidence_dir, worker, containment=None):
         raise ValueError('base_mismatch')
     if _git(work, 'status', '--porcelain=v1', '--untracked-files=all', '--ignored=matching'):
         raise ValueError('workspace_not_clean')
-    before = _snapshot(work)
-    original = {}
-    for name in task.allowed_paths:
-        if before.get(name, (None,))[0] != 'file':
-            raise ValueError('scope_requires_existing_file')
-        fd = os.open(work / name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
-        with os.fdopen(fd, 'rb') as source:
-            original[name] = source.read(33554433)
-        if hashlib.sha256(original[name]).hexdigest() != before[name][2]:
-            raise ValueError('workspace_changed_during_read')
+    if type(prepared_baseline) is not bool:
+        raise ValueError('invalid_baseline_configuration')
     evidence.mkdir(mode=0o700)  # fail if an earlier attempt reserved this path
     result = {'task_id': task.task_id, 'repository': task.repository,
               'base_revision': task.base_revision, 'status': 'uncertain',
@@ -237,6 +294,37 @@ def execute(task, workspace, evidence_dir, worker, containment=None):
             os.fsync(fd)
         finally:
             os.close(fd)
+    baseline = None
+    try:
+        if prepared_baseline:
+            baseline = _PreparedBaseline(work, baseline_uid, baseline_gid)
+            baseline.prepare()
+            _durable_write(evidence / 'baseline.json', (json.dumps({
+                'status': 'prepared', 'directories': {name: list(entry[1])
+                                                      for name, entry in baseline.entries.items()}
+            }, sort_keys=True) + '\n').encode())
+        return _execute_reserved(task, work, evidence, worker, containment, result, baseline)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        result['status'] = 'blocked'
+        result['errors'].append('baseline_or_prelaunch_unverified')
+        _write_result(evidence, result)
+        return result
+    finally:
+        if baseline is not None:
+            baseline.close()
+
+
+def _execute_reserved(task, work, evidence, worker, containment, result, baseline):
+    before = _snapshot(work)
+    original = {}
+    for name in task.allowed_paths:
+        if before.get(name, (None,))[0] != 'file':
+            raise ValueError('scope_requires_existing_file')
+        fd = os.open(work / name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        with os.fdopen(fd, 'rb') as source:
+            original[name] = source.read(33554433)
+        if hashlib.sha256(original[name]).hexdigest() != before[name][2]:
+            raise ValueError('workspace_changed_during_read')
     # No built-in or process-group-only backend is supplied. The caller must
     # supply a trusted, dedicated implementation with an atomic contained launch.
     if containment is None or any(not callable(getattr(containment, name, None))
@@ -287,6 +375,18 @@ def execute(task, workspace, evidence_dir, worker, containment=None):
         result['errors'].append('contained_launch_not_observed')
         _write_result(evidence, result)
         return result
+    if baseline is not None:
+        try:
+            baseline.verify()
+            _durable_write(evidence / 'baseline.json', (json.dumps({
+                'status': 'verified', 'directories': {name: list(entry[1])
+                                                      for name, entry in baseline.entries.items()}
+            }, sort_keys=True) + '\n').encode())
+        except (OSError, ValueError):
+            result['status'] = 'blocked'
+            result['errors'].append('prepared_baseline_unverified')
+            _write_result(evidence, result)
+            return result
     if observed is None:
         # Even with verified cleanup, the worker outcome itself may be unknown.
         _write_result(evidence, result)
