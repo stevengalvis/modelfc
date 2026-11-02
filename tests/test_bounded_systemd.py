@@ -82,6 +82,11 @@ class BackendTest(unittest.TestCase):
                        '--property=RuntimeMaxSec=180', '--property=Delegate=no',
                        '--clear-groups', '--no-new-privs'):
             self.assertIn(option, command)
+        properties = command[:command.index('--')]
+        self.assertEqual([item for item in properties if item.startswith('--property=CPUQuota=')],
+                         ['--property=CPUQuota=100%'])
+        self.assertIn('--property=MemoryMax=1G', command)
+        self.assertIn('--property=TasksMax=64', command)
         self.assertTrue(self.backend.terminate())
         self.assertTrue(self.backend.verify_empty())
 
