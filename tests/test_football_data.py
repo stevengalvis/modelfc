@@ -86,6 +86,25 @@ class FootballDataAdapterTests(unittest.TestCase):
         self.assertIn("Away wins: 1", summary)
         self.assertIn("Total goals: 11", summary)
 
+    def test_summarizes_unsorted_matches_without_changing_input(self) -> None:
+        matches = load_matches(FIXTURE)[::-1]
+        original = matches.copy()
+
+        self.assertEqual(
+            summarize(matches).splitlines(),
+            [
+                "Matches: 3",
+                "First match: 2023-08-11: Burnley 0-3 Manchester City",
+                "Last match: 2023-08-12: Bournemouth 1-1 West Ham",
+                "Unique teams: 6",
+                "Home wins: 1",
+                "Draws: 1",
+                "Away wins: 1",
+                "Total goals: 11",
+            ],
+        )
+        self.assertEqual(matches, original)
+
     def test_multiple_files_are_combined_and_sorted_chronologically(self) -> None:
         header = "Date,HomeTeam,AwayTeam,FTHG,FTAG,FTR\n"
         with tempfile.TemporaryDirectory() as directory:
