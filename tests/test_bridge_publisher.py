@@ -3,9 +3,11 @@ from pathlib import Path
 import tempfile
 import subprocess
 import unittest
+from unittest.mock import MagicMock, patch
 
 from ops.bounded_worker.bridge_dispatch import Dispatcher
 from ops.bounded_worker.bridge_publisher import Publisher
+from ops.bounded_worker.bridge_status import post_once
 from tests.test_bridge_dispatch import DispatchTests
 from tests.test_bridge_patch import PatchTests
 
@@ -82,6 +84,15 @@ class PublisherTests(unittest.TestCase):
         self.assertEqual(self.publisher.publish('job1')['status'], 'published')
         self.assertEqual(self.remote.calls, ['branch', 'commit', 'draft'])
 
+    def test_completed_job_publishes_then_posts_once(self):
+        self.assertEqual(self.publisher.publish()['status'], 'published')
+        status_remote = MagicMock()
+        self.assertEqual(post_once(self.fixture.tmp.name, 55, status_remote)['outcome'], 'published')
+        self.assertEqual(post_once(self.fixture.tmp.name, 55, status_remote)['status'], 'idle')
+        self.assertEqual(self.publisher.publish()['status'], 'idle')
+        status_remote.post_status.assert_called_once()
+        self.assertEqual(self.remote.calls, ['branch', 'commit', 'draft'])
+
     def test_uncertain_branch_is_never_repeated(self):
         self.remote.failure = 'branch'
         self.assertEqual(self.publisher.publish('job1')['status'], 'blocked')
@@ -104,10 +115,14 @@ class PublisherTests(unittest.TestCase):
         self.assertEqual(self.publisher.publish('job1')['status'], 'blocked')
         self.assertEqual(self.remote.calls, ['branch', 'commit'])
 
-    def test_lost_pr_response_is_reconciled_read_only(self):
+    def test_lost_pr_response_requires_operator_even_with_matching_pr(self):
         self.remote.failure = 'draft_after_write'
         self.assertEqual(self.publisher.publish('job1')['status'], 'blocked')
-        self.assertEqual(self.publisher.publish('job1')['status'], 'published')
+        calls_before = self.fixture.reader.calls
+        with patch.object(self.remote, 'find_draft', wraps=self.remote.find_draft) as lookup:
+            self.assertEqual(self.publisher.publish('job1')['status'], 'blocked')
+            lookup.assert_not_called()
+        self.assertEqual(self.fixture.reader.calls, calls_before)
         self.assertEqual(self.remote.calls, ['branch', 'commit', 'draft'])
 
     def test_lost_pr_response_without_match_stays_blocked(self):
