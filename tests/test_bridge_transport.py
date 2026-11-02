@@ -90,7 +90,7 @@ class TransportTests(unittest.TestCase):
             with patch.object(self.reader._opener, 'open', side_effect=lambda *_args, **_kwargs: Response(payload)):
                 self.assertEqual(dispatcher.once()['status'], 'completed')
                 now[0] += 3601
-                self.assertEqual(dispatcher.once()['status'], 'idle')
+                self.assertEqual(dispatcher.once()['status'], 'duplicate_observed')
             self.assertEqual(worker.calls, 1)
             with sqlite3.connect(root + '/receipts.sqlite') as db:
                 self.assertEqual(db.execute('SELECT comment FROM jobs').fetchone()[0], 6566494718)

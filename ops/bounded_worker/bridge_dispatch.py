@@ -88,14 +88,22 @@ class Dispatcher:
     def _once(self, db):
         try:
             comments = self.reader.comments()
+            duplicate = None
+            collision = False
             for node, body, metadata in comments:
                 try:
                     task, digest = validate(body, metadata, self.policy, int(self.clock()))
                 except (ValueError, TypeError):
                     continue
-                previous = db.execute('SELECT digest,comment,node,status FROM jobs WHERE job=? OR comment=? OR node=?',
-                                      (task.task_id, metadata['comment_id'], node)).fetchone()
+                previous = db.execute('SELECT job,digest,comment,node,body FROM jobs WHERE job=? OR comment=? OR node=?',
+                                      (task.task_id, metadata['comment_id'], node)).fetchall()
                 if previous:
+                    if len(previous) == 1 and previous[0] == (task.task_id, digest, metadata['comment_id'], node, body):
+                        if duplicate is None:
+                            duplicate = {'job_id': task.task_id, 'request_sha256': digest,
+                                         'comment_id': metadata['comment_id']}
+                    else:
+                        collision = True
                     continue
                 # The durable reservation precedes any checkout or worker action.
                 db.execute('INSERT INTO jobs VALUES (?,?,?,?,?,?)',
@@ -117,7 +125,19 @@ class Dispatcher:
                     return {'status': 'blocked', 'job_id': task.task_id}
                 db.execute('UPDATE jobs SET status=? WHERE job=?', (result['status'], task.task_id))
                 db.commit()
-                return {'status': result['status'], 'job_id': task.task_id, 'digest': digest}
+                outcome = {'status': result['status'], 'job_id': task.task_id, 'digest': digest}
+                if duplicate is not None:
+                    outcome['duplicate'] = duplicate
+                if collision:
+                    outcome['collision_rejected'] = True
+                return outcome
+            if collision:
+                outcome = {'status': 'collision_rejected'}
+                if duplicate is not None:
+                    outcome['duplicate'] = duplicate
+                return outcome
+            if duplicate is not None:
+                return {'status': 'duplicate_observed', **duplicate}
             return {'status': 'idle'}
         except Exception:
             # No exception text, credentials, task body or evidence paths in status.

@@ -91,6 +91,18 @@ with edits or main-branch movement. Unknown edit metadata, races or inaccessible
 API data must block. The live credential's access to these fields and the edit
 semantics must be verified during separately authorized acceptance.
 
+After the normal authorization, expiry and envelope checks, an already-recorded
+job is reported as `duplicate_observed` only when job ID, comment ID, node ID,
+request hash and exact body bytes all match the same receipt. A job, comment or
+node collision that does not match is reported as `collision_rejected` and is
+never launched. In a poll containing a new eligible job, dispatch continues past
+earlier duplicates or collisions and reports the new job's result with at most
+one bounded `duplicate` binding and a `collision_rejected` flag when observed.
+If no new job runs, a collision takes precedence over a duplicate in the result;
+otherwise the first exact duplicate is reported. This observation does not create
+or modify a job receipt and does not itself prove host-level no-relaunch or PR
+uniqueness; those require separate live acceptance.
+
 Each successful worker result must pass the existing inspect and cleanup checks.
 The separate publisher checks the task and patch hashes, current base, existing
 file type and mode, and applies a strictly parsed patch as data to its own clean
@@ -99,6 +111,13 @@ It never approves, merges or deploys. Status comments contain only fixed outcome
 job ID, base, request and patch hashes, and draft URL. They contain no raw model
 output, private path, patch, prompt or secret. A status-post attempt, like each
 external write, is durably marked before sending and is never blindly repeated.
+For verified terminal `failed`, `timeout`, or `rejected` outcomes, status includes
+one fixed reason code and a fixed instruction to review retained attempt evidence
+before approving another task. These are based on the trusted terminal outcome,
+not on model text or unverified error details. Previously posted statuses are not
+reposted. An uncertain job, cleanup or external write remains blocked rather
+than receiving a misleading terminal reason. Usage and cost remain unknown when
+not retrieved from trustworthy evidence; no value is inferred from these codes.
 
 Under the shared lock, every mode blocks before worker or GitHub I/O if any job is
 reserved or launching, any publication is branch-, commit- or PR-pending, any
