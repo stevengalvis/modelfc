@@ -279,6 +279,8 @@ for line in sys.stdin:
         class ProcessFixture:
             def record(self, event):
                 pass
+            def diagnostic(self, stage, reason):
+                pass
             def launch(self, _cmd, **kwargs):
                 for key in ('user', 'group', 'extra_groups'):
                     kwargs.pop(key)

@@ -201,3 +201,17 @@ Only after reviewing that evidence, a separately authorized single live README-o
 trial may use a new checkout and the same model settings, limits and denies; retain
 all evidence, independently verify cleanup, and do not retry automatically. Neither
 acceptance has run as part of this change.
+
+### Adapter failure diagnostics
+
+The private, atomically published `lifecycle.json` may include `diagnostics`,
+a bounded set of fixed `[stage, reason]` pairs. Stages identify an adapter
+phase; reasons identify checks such as output limit, invalid JSON or shape,
+turn binding, request error, closed input, launcher exit, deadline or I/O.
+`server_request`, `stdout_eof`, `stderr_eof` and `partial_frame` are observations,
+not conclusions about why a turn failed. EOF may never be observed; a partial
+frame is not persisted. A reason can be absent when execution stops before that
+check or diagnostic publication fails. The summary survives lifecycle event
+truncation; no arguments, exception text, payloads, IDs or output are recorded.
+Diagnostic publication failure makes the worker outcome uncertain and containment
+cleanup still runs. These codes do not explain the historical docs-task failure.

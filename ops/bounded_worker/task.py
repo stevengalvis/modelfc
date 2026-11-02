@@ -178,6 +178,7 @@ class _Boundary:
         self.terminal = None
         self.tools = set()
         self.observed = set()
+        self.diagnostics = set()
         self.attempted = False
 
     def record(self, event, *, kind=None, status=None):
@@ -215,12 +216,30 @@ class _Boundary:
         else:
             self.truncated = True
             changed = True
+        self._write_lifecycle()
+
+    def diagnostic(self, stage, reason):
+        # Fixed enums only; their finite cross-product bounds the summary even
+        # after event truncation. No worker-controlled values enter evidence.
+        stages = {'initialize', 'config', 'profile', 'thread', 'turn_start', 'turn', 'finalize'}
+        reasons = {'output_limit', 'json_frame', 'event_shape', 'response_shape', 'turn_binding',
+                   'request_error', 'closed_input', 'launcher_exit', 'deadline', 'io',
+                   'validation', 'stdout_eof', 'stderr_eof', 'partial_frame', 'server_request'}
+        if stage not in stages or reason not in reasons:
+            raise ValueError('invalid_diagnostic_reason')
+        pair = (stage, reason)
+        if pair not in self.diagnostics:
+            self.diagnostics.add(pair)
+            self._write_lifecycle()
+
+    def _write_lifecycle(self):
+        value = {'events': self.events, 'truncated': self.truncated,
+                 'terminal': self.terminal, 'observed': sorted(self.observed),
+                 'tools': [list(pair) for pair in sorted(self.tools)]}
+        if self.diagnostics:
+            value['diagnostics'] = [list(pair) for pair in sorted(self.diagnostics)]
         try:
-            _durable_write(self.evidence / 'lifecycle.json',
-                           (json.dumps({'events': self.events, 'truncated': self.truncated,
-                                        'terminal': self.terminal,
-                                        'observed': sorted(self.observed),
-                                        'tools': [list(pair) for pair in sorted(self.tools)]}) + '\n').encode())
+            _durable_write(self.evidence / 'lifecycle.json', (json.dumps(value) + '\n').encode())
         except OSError as exc:
             raise RuntimeError('diagnostic_write_failed') from exc
 
