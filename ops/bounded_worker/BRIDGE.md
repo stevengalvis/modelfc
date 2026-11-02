@@ -156,3 +156,39 @@ that the separate worker containment boundary is empty. Treat a reserved or
 launching receipt as unresolved until an authorized operator independently
 establishes worker-boundary quiescence. Do not enable timers or run a model as
 part of applying or reviewing these source and host-unit changes.
+
+### Optional bounded storage
+
+The protected settings file may contain a `storage` object matching
+`StorageConfiguration` in `storage.py`; omission retains the existing behavior.
+The operator supplies one already mounted, fully allocated loop-backed ext4 image,
+its exact image and filesystem identities and limits, free byte/inode reserves,
+workspace and runtime directories, and the original worker auth/config paths.
+The workspace must equal `workspace_root`; evidence, bridge state and publisher
+storage must remain outside the bounded mount. This code does not create, format,
+mount, resize or remove the image, and does not copy credentials. Admission fails
+closed on missing, replaced, nested, wrongly owned, exhausted or mismatched storage,
+including ext4 discard and loop devices writable by the worker or with ACLs.
+The loop node's ACL xattr query must return ENODATA; unsupported or unreadable ACL
+state blocks admission and must be evaluated on the target host before activation.
+The operator must also exclude host-wide trim of the image while it is in use.
+Tasks and comments cannot select service properties.
+
+The manager binds the existing host-mounted workspace and per-task runtime into
+its private service mount namespace. The runtime supplies writable CODEX_HOME and
+temporary directories; the original auth and config are read-only bind mounts at
+their original CODEX_HOME names. A protected pre-exec guard checks effective mount
+and file identities before the existing privilege drop. The loop device's
+kernel-reported backing device and inode are checked independently of the image
+pathname. Root-owned evidence records the admission identity, which is checked
+before launch, after independently
+verified cleanup, and again when inspecting a result. Storage loss or replacement
+blocks acceptance and retains evidence. A failed or interrupted attempt is not
+resumed. The bounded runtime directories are retained for operator reconciliation.
+
+`ProtectSystem=strict` does not establish complete API-filesystem, device or IPC
+confinement; the guard permits systemd's `/proc`, `/sys` and `/dev` exceptions and
+rejects unrecognized writable mounts elsewhere. Host provisioning and exact service
+namespace readback, byte/inode exhaustion, nested tool behavior, integrated coding,
+authentication refresh and interruption acceptance require separately authorized
+host work. The isolated startup fixture is not evidence of production integration.

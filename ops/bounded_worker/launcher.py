@@ -9,6 +9,8 @@ import stat
 
 from .codex import Codex, DENIED
 from .systemd_backend import SystemdContainment
+from .storage import (StorageConfiguration, LinuxStorageReader, admit, prepare_runtime,
+                      service_properties, source_identity)
 from .task import Task, _durable_write, execute
 
 
@@ -23,6 +25,7 @@ class Configuration:
     output_bytes: int = 262144
     diff_bytes: int = 65536
     prepared_baseline: bool = False
+    storage: StorageConfiguration | None = None
 
 
 def _sync_dir(path):
@@ -58,6 +61,14 @@ def _roots(config, worker):
     evidence = _directory(config.evidence_root, os.geteuid())
     if work == evidence or work in evidence.parents or evidence in work.parents:
         raise ValueError('overlapping_roots')
+    if config.storage is not None:
+        if not isinstance(config.storage, StorageConfiguration):
+            raise ValueError('invalid_storage_configuration')
+        config.storage.validate()
+        mount = Path(config.storage.mount)
+        if (str(work) != config.storage.workspace or evidence == mount
+                or evidence in mount.parents or mount in evidence.parents):
+            raise ValueError('storage_evidence_or_workspace_mismatch')
     if type(config.prepared_baseline) is not bool:
         raise ValueError('invalid_baseline_configuration')
     for value, maximum, minimum in ((config.timeout_seconds, 180, 1),
@@ -115,6 +126,23 @@ def inspect(task_id, config, *, _worker_factory=Codex):
         if (not stat.S_ISDIR(info.st_mode) or info.st_uid != os.geteuid()
                 or stat.S_IMODE(info.st_mode) != 0o700):
             return _blocked(task_id)
+        storage_path = directory / 'storage.json'
+        if config.storage is None:
+            if storage_path.exists() or storage_path.is_symlink():
+                return _blocked(task_id)
+        else:
+            stored_storage = _read(storage_path)
+            if (type(stored_storage) is not dict
+                    or set(stored_storage) != {'identity', 'configuration_sha256', 'guard_expected', 'guard_identity'}
+                    or stored_storage['configuration_sha256'] != hashlib.sha256(
+                        _json_bytes(asdict(config.storage))).hexdigest()
+                    or stored_storage['identity'] != admit(config.storage, worker_uid=worker.account.pw_uid, worker_gid=worker.account.pw_gid)):
+                return _blocked(task_id)
+            admission = _read(_admission_path(root, task_id))
+            if (type(admission) is not dict or admission.get('task_id') != task_id
+                    or admission.get('identity') != stored_storage['identity']
+                    or admission.get('configuration_sha256') != stored_storage['configuration_sha256']):
+                return _blocked(task_id)
         record = _read(directory / 'state.json')
         if (type(record) is not dict or set(record) != {'version', 'task_id', 'task_sha256', 'phase', 'result_sha256', 'unit', 'repository', 'base_revision'}
                 or record['version'] != 1 or record['task_id'] != task_id
@@ -141,6 +169,8 @@ def inspect(task_id, config, *, _worker_factory=Codex):
                 or result.get('cleanup_verified') is not True
                 or hashlib.sha256(_json_bytes(result)).hexdigest() != record['result_sha256']):
             return _blocked(task_id)
+        if config.storage is not None and admission.get('task_sha256') != record['task_sha256']:
+            return _blocked(task_id)
         if result['status'] == 'completed':
             fd = os.open(attempt / 'diff.patch', os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
             with os.fdopen(fd, 'rb') as source:
@@ -151,6 +181,8 @@ def inspect(task_id, config, *, _worker_factory=Codex):
                 os.fsync(source.fileno())
             if digest != result.get('diff_sha256'):
                 return _blocked(task_id)
+        if config.storage is not None and admit(config.storage, worker_uid=worker.account.pw_uid, worker_gid=worker.account.pw_gid) != stored_storage['identity']:
+            return _blocked(task_id)
         # Complete a publication interrupted after rename but before directory sync.
         for path in (attempt, directory, root):
             _sync_dir(path)
@@ -159,11 +191,108 @@ def inspect(task_id, config, *, _worker_factory=Codex):
         return _blocked(task_id)
 
 
-def submit(task, config, *, _worker_factory=Codex, _backend_factory=SystemdContainment):
+def _admission_path(root, task_id):
+    return Path(root) / ('storage-admission-' + task_id + '.json')
+
+
+def _admission_record(task, storage, identity):
+    return {'task_id': task.task_id,
+            'task_sha256': hashlib.sha256(_json_bytes(asdict(task))).hexdigest(),
+            'configuration_sha256': hashlib.sha256(_json_bytes(asdict(storage))).hexdigest(),
+            'identity': identity}
+
+
+def record_storage_admission(task, config, evidence_root, identity):
+    """Durably reserve storage identity before the bridge creates a checkout."""
+    task.validate()
+    record = _admission_record(task, config.storage, identity)
+    fd = os.open(_admission_path(evidence_root, task.task_id),
+                 os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(fd, 'wb') as out:
+        out.write(_json_bytes(record))
+        out.flush()
+        os.fsync(out.fileno())
+    _sync_dir(evidence_root)
+
+
+def _configure_storage(backend, config, task, work, directory, worker, identity):
+    storage = config.storage
+    account = worker.account
+    properties_check = service_properties(storage, work=work,
+                                          runtime=Path(storage.runtime) / task.task_id,
+                                          home=account.pw_dir)
+    sources = {name: source_identity(path, account.pw_uid) for name, path in
+               (('auth', storage.auth_source), ('config', storage.config_source))}
+    # Only a root-owned, immutable installation can supply privileged guard code.
+    guard = Path(__file__).with_name('storage_guard.py')
+    if not guard.is_absolute() or '..' in guard.parts or guard.resolve() != guard:
+        raise ValueError('unprotected_storage_guard')
+    LinuxStorageReader().protected_directory(guard.parent)
+    guard_info = guard.lstat()
+    if (not stat.S_ISREG(guard_info.st_mode) or guard_info.st_uid != 0
+            or guard_info.st_nlink != 1 or guard_info.st_mode & 0o022):
+        raise ValueError('unprotected_storage_guard')
+    evidence = {'identity': identity,
+                'configuration_sha256': hashlib.sha256(_json_bytes(asdict(storage))).hexdigest()}
+    _durable_write(directory / 'storage.json', _json_bytes(evidence))
+    if admit(storage, worker_uid=account.pw_uid, worker_gid=account.pw_gid) != identity:
+        raise ValueError('storage_identity_changed')
+    runtime = prepare_runtime(storage, task.task_id, account.pw_uid, account.pw_gid, identity['device'])
+    if admit(storage, worker_uid=account.pw_uid, worker_gid=account.pw_gid) != identity:
+        raise ValueError('storage_identity_changed')
+    def bounded(path, destination):
+        info = path.lstat()
+        if (not stat.S_ISDIR(info.st_mode)
+                or f'{os.major(info.st_dev)}:{os.minor(info.st_dev)}' != identity['device']):
+            raise ValueError('invalid_runtime_directory')
+        return {'path': str(destination), 'inode': info.st_ino}
+    home = Path(account.pw_dir) / '.codex'
+    expected = {'device': identity['device'], 'home': account.pw_dir, 'workspace': bounded(work, work),
+                'codex_home': bounded(runtime / 'codex', home),
+                'tmp': bounded(runtime / 'tmp', Path('/tmp')),
+                'var_tmp': bounded(runtime / 'var-tmp', Path('/var/tmp')),
+                'shm': '/dev/shm',
+                'auth': {'path': str(home / 'auth.json'), **sources['auth']},
+                'config': {'path': str(home / 'config.toml'), **sources['config']}}
+    evidence['guard_expected'] = expected
+    evidence['guard_identity'] = [guard_info.st_dev, guard_info.st_ino, guard_info.st_size,
+                                  guard_info.st_mtime_ns, guard_info.st_mode]
+    _durable_write(directory / 'storage.json', _json_bytes(evidence))
+    def revalidate():
+        if admit(storage, worker_uid=account.pw_uid, worker_gid=account.pw_gid) != identity:
+            raise ValueError('storage_identity_changed')
+        for name, path in (('auth', storage.auth_source), ('config', storage.config_source)):
+            if source_identity(path, account.pw_uid) != sources[name]:
+                raise ValueError('storage_source_changed')
+        current = guard.lstat()
+        if (current.st_dev, current.st_ino, current.st_size, current.st_mtime_ns, current.st_mode) != (
+                guard_info.st_dev, guard_info.st_ino, guard_info.st_size, guard_info.st_mtime_ns, guard_info.st_mode):
+            raise ValueError('storage_guard_changed')
+    backend.configure_storage(properties=properties_check, expected=expected,
+                              guard_path=str(guard), revalidate=revalidate)
+    major, minor = map(int, identity['device'].split(':'))
+    return (os.makedev(major, minor), expected['workspace']['inode'])
+
+
+def submit(task, config, *, _worker_factory=Codex, _backend_factory=SystemdContainment, _storage_identity=None):
     """Reserve one durable task identity and execute it at most once."""
     task.validate()
     worker = _worker_factory(config.username, config.executable, config.executable_sha256)
     work_root, root = _roots(config, worker)
+    storage_identity = None
+    if config.storage is not None:
+        if config.workspace_root != config.storage.workspace:
+            raise ValueError('storage_workspace_mismatch')
+        storage_identity = admit(config.storage, worker_uid=worker.account.pw_uid, worker_gid=worker.account.pw_gid)
+        if _storage_identity is not None and storage_identity != _storage_identity:
+            raise ValueError('storage_identity_changed')
+        if _storage_identity is None:
+            try:
+                record_storage_admission(task, config, root, storage_identity)
+            except FileExistsError:
+                return _blocked(task.task_id)
+        if _read(_admission_path(root, task.task_id)) != _admission_record(task, config.storage, storage_identity):
+            raise ValueError('storage_admission_mismatch')
     if (task.timeout_seconds > config.timeout_seconds or task.output_bytes > config.output_bytes
             or task.diff_bytes > config.diff_bytes):
         raise ValueError('task_exceeds_trusted_limits')
@@ -188,12 +317,16 @@ def submit(task, config, *, _worker_factory=Codex, _backend_factory=SystemdConta
     attempt = directory / 'attempt'
     try:
         backend = _backend_factory(attempt, worker.account.pw_uid, worker.account.pw_gid)
+        expected_workspace = None
+        if storage_identity is not None:
+            expected_workspace = _configure_storage(backend, config, task, work, directory, worker, storage_identity)
         record['unit'] = backend.unit
         record['phase'] = 'launching'
         _durable_write(directory / 'state.json', _json_bytes(record))
         result = execute(task, work, attempt, worker, backend,
                          prepared_baseline=config.prepared_baseline,
-                         baseline_uid=worker.account.pw_uid, baseline_gid=worker.account.pw_gid)
+                         baseline_uid=worker.account.pw_uid, baseline_gid=worker.account.pw_gid,
+                         expected_workspace=expected_workspace)
         # Only a complete durable result can be published. Blocked and uncertain
         # attempts remain in launching state, even when a partial result exists.
         if result.get('cleanup_verified') is not True or result.get('status') not in ('completed', 'failed', 'timeout', 'rejected'):

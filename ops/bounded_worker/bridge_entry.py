@@ -15,14 +15,27 @@ from .bridge_status import post_once
 from .bridge_security import disjoint, protected_bytes, protected_dir, protected_json
 from .bridge_transport import GitHubReader
 from .launcher import Configuration
+from .storage import StorageConfiguration
 
 
 def _settings(path):
     value = protected_json(path)
     keys = {'policy', 'state_root', 'mirror', 'workspace_root', 'evidence_root', 'publisher_root',
             'username', 'executable', 'executable_sha256', 'reader_token_file', 'publisher_token_file'}
-    if type(value) is not dict or set(value) != keys or any(type(v) is not str or not v for v in value.values()):
+    if (type(value) is not dict or set(value) not in (keys, keys | {'storage'})
+            or any(type(value[k]) is not str or not value[k] for k in keys)):
         raise ValueError('invalid_settings')
+    if 'storage' in value:
+        if type(value['storage']) is not dict:
+            raise ValueError('invalid_storage_configuration')
+        try:
+            storage = StorageConfiguration(**value['storage'])
+            storage.validate()
+        except (TypeError, ValueError):
+            raise ValueError('invalid_storage_configuration') from None
+        if storage.workspace != value['workspace_root']:
+            raise ValueError('storage_workspace_mismatch')
+        value['storage'] = storage
     for key in ('state_root', 'mirror', 'workspace_root', 'evidence_root', 'publisher_root'):
         protected_dir(value[key], 0o700 if key in ('state_root', 'evidence_root', 'publisher_root') else None)
     roots = [Path(value[k]) for k in ('state_root', 'mirror', 'workspace_root', 'evidence_root', 'publisher_root')]
@@ -32,6 +45,12 @@ def _settings(path):
                 raise ValueError('overlapping_roots')
     for key in ('reader_token_file', 'publisher_token_file'):
         disjoint(value[key], *roots)
+    if 'storage' in value:
+        storage = value['storage']
+        for path in (storage.image, storage.auth_source, storage.config_source):
+            disjoint(path, *roots, storage.mount)
+        for key in ('state_root', 'mirror', 'evidence_root', 'publisher_root'):
+            disjoint(value[key], storage.mount)
     return value
 
 
@@ -47,7 +66,8 @@ def _configuration(settings, policy):
                          username=settings['username'], executable=settings['executable'],
                          executable_sha256=settings['executable_sha256'],
                          timeout_seconds=policy.max_timeout, output_bytes=policy.max_output,
-                         diff_bytes=policy.max_diff, prepared_baseline=True)
+                         diff_bytes=policy.max_diff, prepared_baseline=True,
+                         storage=settings.get('storage'))
 
 
 def dispatch_once(path):

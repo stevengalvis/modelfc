@@ -32,6 +32,12 @@ class SystemdContainment:
         self.stopped = False
         self.process = None
         self.bound = False
+        self.storage = None
+
+    def configure_storage(self, *, properties, expected, guard_path, revalidate):
+        if self.attempted or self.storage is not None or not callable(revalidate):
+            raise ValueError('invalid_storage_binding')
+        self.storage = (properties, expected, guard_path, revalidate)
 
     def bind_attempt(self, evidence):
         if self.attempted or Path(evidence) != self.evidence:
@@ -93,6 +99,8 @@ class SystemdContainment:
             raise ValueError('invalid_contained_environment')
         if any(not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', k) for k in env):
             raise ValueError('invalid_contained_environment')
+        if self.storage is not None:
+            self.storage[3]()
         self._record()
         if not (_CGROUP / 'cgroup.controllers').is_file():
             raise ValueError('cgroup_v2_required')
@@ -110,7 +118,11 @@ class SystemdContainment:
                 '--property=MemoryMax=1G', '--property=CPUQuota=100%',
                 '--property=NoNewPrivileges=yes',
                 '--property=ProtectControlGroups=yes',
+                *(self.storage[0] if self.storage is not None else []),
                 '--', '/usr/bin/env', '-i', *[k + '=' + v for k, v in sorted(env.items())],
+                *(['/usr/bin/python3', '-I', self.storage[2],
+                   json.dumps(self.storage[1], sort_keys=True, separators=(',', ':')), '--']
+                  if self.storage is not None else []),
                 '/usr/bin/setpriv', '--reuid=' + str(self.uid), '--regid=' + str(self.gid),
                 '--clear-groups', '--no-new-privs', '--inh-caps=-all',
                 '--ambient-caps=-all', '--bounding-set=-all', '--', *cmd]
@@ -158,6 +170,10 @@ class SystemdContainment:
     def verify_empty(self):
         if not self.stopped:
             return False
+        # The static guard uses 127 for any unverified service namespace; do
+        # not publish a terminal worker result when the guard rejected startup.
+        if self.storage is not None and (self.process is None or self.process.returncode == 127):
+            return False
         try:
             if not (_CGROUP / 'cgroup.controllers').is_file():
                 return False
@@ -181,17 +197,26 @@ class SystemdContainment:
                 return False
             directory = _CGROUP / expected.lstrip('/')
             if state == 'not-found':
-                return not self._cgroup_exists(directory)
+                empty = not self._cgroup_exists(directory)
+                if empty and self.storage is not None:
+                    self.storage[3]()
+                return empty
             try:
                 data = self._read_cgroup_events(directory)
             except FileNotFoundError:
-                return not self._cgroup_exists(directory)
+                empty = not self._cgroup_exists(directory)
+                if empty and self.storage is not None:
+                    self.storage[3]()
+                return empty
             values = {}
             for line in data.splitlines():
                 key, value = line.split()
                 if key in values:
                     return False
                 values[key] = value
-            return values.get('populated') == '0'
+            empty = values.get('populated') == '0'
+            if empty and self.storage is not None:
+                self.storage[3]()
+            return empty
         except (OSError, ValueError, subprocess.SubprocessError):
             return False
