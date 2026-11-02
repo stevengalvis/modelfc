@@ -23,6 +23,7 @@ def summarize(matches: list[Match]) -> str:
     if not matches:
         raise ValueError("cannot summarize an empty season")
 
+    chronological = sorted(matches, key=lambda match: match.match_date)
     results = Counter(match.result for match in matches)
     teams = {
         team
@@ -33,8 +34,8 @@ def summarize(matches: list[Match]) -> str:
     return "\n".join(
         (
             f"Matches: {len(matches)}",
-            f"First match: {format_match(matches[0])}",
-            f"Last match: {format_match(matches[-1])}",
+            f"First match: {format_match(chronological[0])}",
+            f"Last match: {format_match(chronological[-1])}",
             f"Unique teams: {len(teams)}",
             f"Home wins: {results[MatchResult.HOME_WIN]}",
             f"Draws: {results[MatchResult.DRAW]}",
