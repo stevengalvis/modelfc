@@ -158,3 +158,46 @@ Activation still requires a separately authorized supervisor/account and credent
 arrangement, a review of the trust boundary and manual investigation procedure,
 and end-to-end adapter and unattended-operation acceptance. The previously
 observed real containment test and protected binary do not establish those claims.
+
+## Optional prepared sandbox baseline
+
+`Configuration(..., prepared_baseline=True)` is a trusted operator-only opt-in;
+the default is `False`. Task input cannot enable it. Use only a fresh standalone
+checkout for one attempt. After the existing base and complete Git cleanliness
+checks and a durable attempt reservation, the supervisor requires `.agents`,
+`.aws`, and `.codex` to be absent, creates exactly those empty directories as
+mode 0700 owned by the configured worker UID and GID, and takes the normal full
+snapshot. Scope validation forbids these names and descendants. It does not ignore
+any snapshot entries, remove directories after the run, or alter sandbox policy.
+A partial preparation or an existing path blocks the attempt; retain its checkout
+and evidence. No automatic retry is authorized.
+
+The supervisor holds no-follow directory descriptors through the attempt. After
+whole-boundary termination and verified emptiness it checks the workspace and
+scaffold identities, directory type, mode, UID, GID, link count, modification and
+change times, and emptiness; a mismatch or read error blocks the result and patch.
+An uncertain cleanup blocks before that check. A supervisor interruption leaves
+the reserved attempt and checkout for operator reconciliation; it does not
+establish cleanup or enable unattended recovery. The ordinary full snapshot,
+Git metadata checks, patch validation, credential and network restrictions all
+remain in force. This does not establish who created trial C's directories.
+
+Codex 0.166.0 [lists the three names as protected metadata](https://github.com/openai/codex/blob/rust-v0.166.0/codex-rs/protocol/src/permissions.rs)
+and its [Linux bwrap implementation](https://github.com/openai/codex/blob/rust-v0.166.0/codex-rs/linux-sandbox/src/bwrap.rs)
+adds read-only subpath masks after the writable bind. This is source behavior,
+not evidence that the installed binary or actual app-server path has been tested.
+The worker outside a sandbox can still modify its own workspace; the post-cleanup
+identity and metadata checks are required, and are not a substitute for containment.
+Private `baseline.json` records the prepared or verified state and directory
+metadata; incomplete or missing evidence is not verification. The dedicated
+worker account must be quiescent before preparation, as required by provisioning.
+
+Separate acceptance requires explicit authorization and a reviewed exact SHA:
+first run a disposable, credential-free, no-model sandbox fixture with the pinned
+binary and unchanged restrictions; verify the masks, failed writes, directory
+identities and metadata, complete snapshots, and independently empty cgroup after
+normal and interrupted cleanup. Treat missing or ambiguous evidence as blocked.
+Only after reviewing that evidence, a separately authorized single live README-only
+trial may use a new checkout and the same model settings, limits and denies; retain
+all evidence, independently verify cleanup, and do not retry automatically. Neither
+acceptance has run as part of this change.

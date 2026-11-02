@@ -1,3 +1,4 @@
+from dataclasses import replace
 import json
 import os
 from pathlib import Path
@@ -92,6 +93,15 @@ class LauncherTest(unittest.TestCase):
         self.assertEqual(self.inspect()['status'], 'completed')
         self.assertEqual(self.submit()['status'], 'blocked')
         self.assertEqual(Worker.calls, 1)
+
+    def test_opt_in_prepares_before_worker_and_publishes(self):
+        self.config = replace(self.config, prepared_baseline=True)
+        self.assertEqual(self.submit()['status'], 'completed')
+        for name in ('.agents', '.aws', '.codex'):
+            self.assertTrue((self.checkout / name).is_dir())
+        baseline = json.loads((self.evidence / 'one' / 'attempt' / 'baseline.json').read_text())
+        self.assertEqual(baseline['status'], 'verified')
+        self.assertEqual(set(baseline['directories']), {'.agents', '.aws', '.codex'})
 
     def test_concurrent_submission(self):
         Worker.gate = threading.Event()

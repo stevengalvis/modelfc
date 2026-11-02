@@ -22,6 +22,7 @@ class Configuration:
     timeout_seconds: int = 180
     output_bytes: int = 262144
     diff_bytes: int = 65536
+    prepared_baseline: bool = False
 
 
 def _sync_dir(path):
@@ -57,6 +58,8 @@ def _roots(config, worker):
     evidence = _directory(config.evidence_root, os.geteuid())
     if work == evidence or work in evidence.parents or evidence in work.parents:
         raise ValueError('overlapping_roots')
+    if type(config.prepared_baseline) is not bool:
+        raise ValueError('invalid_baseline_configuration')
     for value, maximum, minimum in ((config.timeout_seconds, 180, 1),
                                     (config.output_bytes, 262144, 1024),
                                     (config.diff_bytes, 65536, 1)):
@@ -188,7 +191,9 @@ def submit(task, config, *, _worker_factory=Codex, _backend_factory=SystemdConta
         record['unit'] = backend.unit
         record['phase'] = 'launching'
         _durable_write(directory / 'state.json', _json_bytes(record))
-        result = execute(task, work, attempt, worker, backend)
+        result = execute(task, work, attempt, worker, backend,
+                         prepared_baseline=config.prepared_baseline,
+                         baseline_uid=worker.account.pw_uid, baseline_gid=worker.account.pw_gid)
         # Only a complete durable result can be published. Blocked and uncertain
         # attempts remain in launching state, even when a partial result exists.
         if result.get('cleanup_verified') is not True or result.get('status') not in ('completed', 'failed', 'timeout', 'rejected'):
