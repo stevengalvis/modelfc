@@ -7,13 +7,17 @@ separately visible aliases. It rejects missing/unknown/inconsistent observations
 changed snapshots, noncanonical paths, and ambiguous basic inputs. It does not
 verify mount permissions, source identities, credentials, cleanup or isolation.
 
-The model assumes observations that do not yet exist in this implementation. A
-future observer would need to pin the service's mount, user and PID namespace
-identities, anchor resolution at the correct root, securely open each mountpoint
-without following symlinks or magic links, and obtain the opened object's kernel
-mount ID through a verified kernel interface. Open failure or unsupported kernel
-behavior must block. The observer must account for path aliases and mount IDs,
-protect its own descriptors, and apply the **unchanged writable-mount and identity
+`mount_observer_prototype.py` experimentally holds namespace descriptors, uses
+`openat2` with in-root, no-symlink and no-magic-link resolution, reads the mount ID
+from thread fdinfo and compares mountinfo and namespace identities. Unsupported
+platforms or resolution errors block. It returns raw mount records and is not a
+sanitized report, trusted observer, production check or guard integration.
+
+Before use, an observer must establish trusted procfs and root provenance, keep
+exclusive ownership of its descriptors (including against other threads), and
+pin the service's mount, user and PID namespaces across observation and use.
+It must bound elapsed time and work, account for path aliases and mount IDs,
+and apply the **unchanged writable-mount and identity
 policy** to every effective entry. Mountinfo parent IDs and propagation fields,
 mount stacking, filesystem identity, inherited standard descriptors and access
 through `/proc` or other processes need separate verification. A path-based ID
