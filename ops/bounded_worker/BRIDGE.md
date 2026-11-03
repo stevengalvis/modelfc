@@ -187,8 +187,9 @@ blocks acceptance and retains evidence. A failed or interrupted attempt is not
 resumed. The bounded runtime directories are retained for operator reconciliation.
 
 `ProtectSystem=strict` does not establish complete API-filesystem, device or IPC
-confinement; the guard permits systemd's `/proc`, `/sys` and `/dev` exceptions and
-rejects unrecognized writable mounts elsewhere. Host provisioning and exact service
+confinement. Storage-enabled services request `/dev` and `/sys` read-only; the guard
+rejects unrecognized writable mounts, including `/sys` and its descendants, while
+allowing only the explicitly listed writable API mounts. Host provisioning and exact service
 namespace readback, byte/inode exhaustion, nested tool behavior, integrated coding,
 authentication refresh and interruption acceptance require separately authorized
 host work. The isolated startup fixture is not evidence of production integration.

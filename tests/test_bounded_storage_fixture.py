@@ -41,6 +41,23 @@ class FixtureTests(unittest.TestCase):
             os.close(read_fd)
             os.close(write_fd)
 
+    def test_predicate_hint_accepts_only_one_exact_allowlisted_line(self):
+        for data, expected in ((b'storage_guard:mounts:unexpected_writable_mount\n',
+                                'mounts:unexpected_writable_mount'),
+                               (b'storage_guard:mounts:unknown\n', None),
+                               (b'storage_guard:mounts:unexpected_writable_mount', None),
+                               (b'storage_guard:mounts:unexpected_writable_mount\nextra\n', None),
+                               (b'storage_guard:mounts:secret\x1b[31m\n', None)):
+            with self.subTest(data=data):
+                read_fd, write_fd = os.pipe()
+                try:
+                    os.write(write_fd, data)
+                    with os.fdopen(read_fd, 'rb', closefd=False) as pipe:
+                        self.assertEqual(fixture.untrusted_guard_diagnostic(pipe), expected)
+                finally:
+                    os.close(read_fd)
+                    os.close(write_fd)
+
     def test_unconfirmed_launch_records_untrusted_hint_and_reraises(self):
         read_fd, write_fd = os.pipe()
         try:

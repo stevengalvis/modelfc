@@ -309,6 +309,15 @@ def untrusted_guard_diagnostic(pipe):
         return None
     codes = {b'storage_guard:' + stage + b'\n': stage.decode('ascii') for stage in
              (b'arguments', b'expectation', b'descriptors', b'mountinfo', b'mounts', b'cwd', b'exec')}
+    predicates = (b'invalid_guard_expectation', b'unexpected_mount_topology',
+                  b'host_root_not_readonly', b'home_not_readonly', b'invalid_bounded_identity',
+                  b'duplicate_mount_destination', b'bounded_mount_mismatch',
+                  b'invalid_shared_memory_mount', b'invalid_source_identity',
+                  b'readonly_source_mismatch', b'device_mount_not_readonly',
+                  b'unprotected_device_directory', b'unexpected_nested_mount',
+                  b'unexpected_writable_mount')
+    codes.update({b'storage_guard:mounts:' + reason + b'\n': 'mounts:' + reason.decode('ascii')
+                  for reason in predicates})
     return codes.get(data)
 
 

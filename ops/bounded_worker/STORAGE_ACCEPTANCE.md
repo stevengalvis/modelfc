@@ -180,7 +180,7 @@ any of them:
   --inventory /ROOT/PROTECTED/INVENTORY.json --inventory-sha256 <64-lowercase-hex>
 ```
 
-The optional `untrusted_startup_diagnostic` is a bounded fixed-code hint from stderr shared with the worker; it can be forged and does not establish the failure stage. Exit 127 and unverified cleanup remain blocking. Capture stdout and exit status to a fresh protected report without overwriting any
+The optional `untrusted_startup_diagnostic` is a bounded fixed-code hint from stderr shared with the worker; it can be forged and does not establish the failure stage or predicate. When present, `mounts:<predicate>` names a guard predicate category only; it contains no path or mount details and is not proof of the cause. Exit 127 and unverified cleanup remain blocking. Capture stdout and exit status to a fresh protected report without overwriting any
 prior artifact. The program refuses a non-root supervisor, non-fixture root name,
 non-loop path, image other than 32 MiB, filesystem other than 512 inodes, unknown
 identity, unresolved bridge receipts, existing bounded unit/cgroup/worker process,
@@ -189,6 +189,10 @@ receipt, runs Codex, or invokes a model. It creates only a disposable local Git
 checkout and launcher evidence beneath the fixture roots. No production path is a
 write target. It keeps the bridge lock through checkout, launch, cleanup and final
 inspection; timers remain disabled after it exits.
+
+Storage-enabled services request a read-only `/sys`; the guard still rejects any
+unrecognized writable mount. Actual service-namespace behavior requires separate
+host verification; it is not established as the cause of a prior exit 127.
 
 The static child is launched through the real storage-enabled `launcher.submit`,
 `SystemdContainment` and root-owned pre-exec `storage_guard`, then the existing

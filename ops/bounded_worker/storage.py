@@ -236,7 +236,7 @@ def service_properties(config, *, work, runtime, home):
     bindings = ((work, work), (runtime / 'codex', codex_home),
                 (runtime / 'tmp', Path('/tmp')), (runtime / 'var-tmp', Path('/var/tmp')))
     return ['--property=ProtectSystem=strict', '--property=PrivateMounts=yes',
-            '--property=ReadOnlyPaths=/dev',
+            '--property=ReadOnlyPaths=/dev /sys',
             '--property=ReadWritePaths=-/dev/pts -/dev/mqueue /dev/shm',
             '--property=BindPaths=' + ' '.join(str(src) + ':' + str(dest) for src, dest in bindings),
             '--property=BindReadOnlyPaths=' + ' '.join((str(home),
