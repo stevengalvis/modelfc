@@ -238,6 +238,7 @@ def service_properties(config, *, work, runtime, home):
     # Do not add /dev/shm to ReadWritePaths: systemd may discard the
     # same-destination TemporaryFileSystem entry, including its size limits.
     return ['--property=ProtectSystem=strict', '--property=PrivateMounts=yes',
+            '--property=MountFlags=private',
             '--property=ReadOnlyPaths=/dev /sys',
             '--property=ReadWritePaths=-/dev/pts -/dev/mqueue',
             '--property=BindPaths=' + ' '.join(str(src) + ':' + str(dest) for src, dest in bindings),

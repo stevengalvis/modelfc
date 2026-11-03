@@ -187,6 +187,7 @@ class StorageAdmissionTests(unittest.TestCase):
         args = service_properties(self.config, work='/bound/work/job',
                                   runtime='/bound/runtime/job', home='/home/worker')
         self.assertEqual(args, ['--property=ProtectSystem=strict', '--property=PrivateMounts=yes',
+                         '--property=MountFlags=private',
                          '--property=ReadOnlyPaths=/dev /sys',
                          '--property=ReadWritePaths=-/dev/pts -/dev/mqueue',
                          '--property=BindPaths=/bound/work/job:/bound/work/job '

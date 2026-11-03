@@ -189,7 +189,12 @@ resumed. The bounded runtime directories are retained for operator reconciliatio
 `ProtectSystem=strict` does not establish complete API-filesystem, device or IPC
 confinement. Storage-enabled services request `/dev` and `/sys` read-only; the guard
 rejects unrecognized writable mounts, including `/sys` and its descendants, while
-allowing only the explicitly listed writable API mounts. Host provisioning and exact service
+allowing only the explicitly listed writable API mounts. They also request private
+mount propagation to prevent host mount events from propagating into the worker
+namespace. This can retain a host filesystem in the service namespace after host
+unmount until the unit exits; verify actual behavior and cleanup on the target
+systemd/kernel before use. This property alone does not validate mount visibility
+or establish the confinement boundary. Host provisioning and exact service
 namespace readback, byte/inode exhaustion, nested tool behavior, integrated coding,
 authentication refresh and interruption acceptance require separately authorized
 host work. The isolated startup fixture is not evidence of production integration.
