@@ -1,4 +1,6 @@
 """Offline-only property comparison. Never called by the bridge or launcher."""
+import re
+
 from .storage import service_properties
 
 
@@ -31,3 +33,16 @@ def candidate_with_api_binds(config, *, work, runtime, home):
         raise ValueError('unexpected_baseline_properties')
     api = '/dev:/dev:rbind /run:/run:rbind /sys:/sys:rbind /sys/fs/cgroup:/sys/fs/cgroup:rbind '
     return [prefix + api + value[len(prefix):] if value.startswith(prefix) else value for value in values]
+
+
+def candidate_with_unit_cgroup(config, *, work, runtime, home, unit):
+    """Hypothesize a read-only bind for the backend-selected unit's cgroup."""
+    if type(unit) is not str or not re.fullmatch(r'modelfc-bounded-[0-9a-f]{32}\.service', unit):
+        raise ValueError('invalid_candidate_unit')
+    values = candidate_with_api_binds(config, work=work, runtime=runtime, home=home)
+    prefix = '--property=BindReadOnlyPaths='
+    if sum(value.startswith(prefix) for value in values) != 1:
+        raise ValueError('unexpected_baseline_properties')
+    path = '/sys/fs/cgroup/system.slice/' + unit
+    bind = f' {path}:{path}:rbind'
+    return [value + bind if value.startswith(prefix) else value for value in values]

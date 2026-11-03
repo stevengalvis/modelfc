@@ -2,6 +2,7 @@ import unittest
 from unittest.mock import patch
 
 from ops.bounded_worker import storage_property_candidate as candidate
+from ops.bounded_worker.systemd_backend import SystemdContainment
 from tests import test_bounded_storage as storage_tests
 
 
@@ -52,6 +53,31 @@ class CandidatePropertiesTest(unittest.TestCase):
                                                                '--property=BindReadOnlyPaths=b']):
             with self.assertRaisesRegex(ValueError, 'unexpected_baseline_properties'):
                 candidate.candidate_with_api_binds(self.config, **self.args)
+
+    def test_unit_cgroup_bind_is_exact_and_preserves_other_properties(self):
+        unit = 'modelfc-bounded-' + 'a' * 32 + '.service'
+        before = candidate.candidate_with_api_binds(self.config, **self.args)
+        after = candidate.candidate_with_unit_cgroup(self.config, **self.args, unit=unit)
+        prefix = '--property=BindReadOnlyPaths='
+        old = next(value for value in before if value.startswith(prefix))
+        new = next(value for value in after if value.startswith(prefix))
+        path = '/sys/fs/cgroup/system.slice/' + unit
+        self.assertEqual(new, old + f' {path}:{path}:rbind')
+        self.assertEqual([value for value in after if not value.startswith(prefix)],
+                         [value for value in before if not value.startswith(prefix)])
+
+    def test_backend_generated_unit_is_accepted(self):
+        backend = SystemdContainment('/safe/evidence', 1003, 1003)
+        properties = candidate.candidate_with_unit_cgroup(self.config, **self.args, unit=backend.unit)
+        self.assertTrue(any('/system.slice/' + backend.unit + ':' in value for value in properties))
+
+    def test_unit_cgroup_bind_rejects_untrusted_and_ambiguous_names(self):
+        for unit in ('', '../other.service', 'modelfc-bounded-' + 'a' * 31 + '.service',
+                     'modelfc-bounded-' + 'A' * 32 + '.service',
+                     'modelfc-bounded-' + 'a' * 32 + '.service /etc',
+                     'modelfc-bounded-' + 'a' * 32 + '.service%h', None):
+            with self.subTest(unit=unit), self.assertRaisesRegex(ValueError, 'invalid_candidate_unit'):
+                candidate.candidate_with_unit_cgroup(self.config, **self.args, unit=unit)
 
 
 if __name__ == '__main__':

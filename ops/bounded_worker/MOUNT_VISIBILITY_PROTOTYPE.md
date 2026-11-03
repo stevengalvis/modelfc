@@ -95,6 +95,19 @@ submount remounts, so a requested read-only bind is not evidence of an effective
 read-only tree. Read-only `/run` and API mounts can affect dependencies and do
 not themselves block UNIX socket or device I/O.
 
+PR 246 comment 6614442556 records one writable per-service cgroup alias after
+that second candidate. `candidate_with_unit_cgroup()` is a third **unwired
+hypothesis**: it adds a non-optional read-only recursive self-bind at
+`/sys/fs/cgroup/system.slice/<unit>`, accepting only the backend's canonical
+`modelfc-bounded-<32 lowercase hex>.service` name. The caller must use the same
+backend-generated unit for the property and service, never task-supplied input.
+Before trying it, compare the retained protected topology with that exact target
+template; the public report does not disclose enough to prove they match. If the
+path is absent when systemd sets up the service, setup must fail, not skip the
+bind. The manager may construct, cover or stack the alias in a different order;
+the unchanged effective-mount guard must still reject a writable child. This is
+not evidence of service startup, actual worker behavior or prior cleanup.
+
 After separate authorization, compare this candidate in one bounded non-model
 systemd diagnostic using fake inputs and an invocation-bound root observer. Check
 all effective mount identities/options and the complete guard, pipes, private
