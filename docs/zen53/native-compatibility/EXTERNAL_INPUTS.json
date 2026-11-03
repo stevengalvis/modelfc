@@ -1,0 +1,36 @@
+{
+  "external_inputs": {
+    "sources/fresh-bind-candidate.tar.gz": {
+      "bytes": 117630,
+      "note": "Existing five-part archive; published inventory SHA256 a07e6cd1cf32f2dbe418442dcb9bfe2cb2178ac1af68628aa9f30b08fbfbfb83.",
+      "sha256": "61096f7806f562c8b3bdaa9578c348d17cda83770e3659849bc4c4c99f083b04",
+      "source": "https://github.com/stevengalvis/modelfc/pull/191#issuecomment-6357246740"
+    },
+    "sources/recovery.tar.gz": {
+      "bytes": 1049288,
+      "note": "Existing verified multipart recovery index; reconstruct and hash before use.",
+      "sha256": "a0468ba1cc95fea86f0485595dba352a399a39d001d07193ad861e08cda2baf9",
+      "source": "https://github.com/stevengalvis/modelfc/pull/191#issuecomment-6356492581"
+    },
+    "vendor/systemd_255.4-1ubuntu8.18.debian.tar.xz": {
+      "bytes": 273272,
+      "note": "Pinned by included .dsc. Source retrieval is optional for bridge use; required to independently reproduce patch analysis.",
+      "sha256": "ec3ce620c3e072d34bbeaf9a4155cd91b5bee94eb412071bf81182f230ae2657",
+      "source": "https://archive.ubuntu.com/ubuntu/pool/main/s/systemd/systemd_255.4-1ubuntu8.18.debian.tar.xz"
+    },
+    "vendor/systemd_255.4.orig.tar.gz": {
+      "bytes": 14952427,
+      "note": "Pinned by included .dsc. Source retrieval is optional for bridge use; required to independently reproduce vendor excerpt analysis.",
+      "sha256": "96e75bd08c57ad401677456fb88ef54a9f05bb1695693013bc6ecce839640fd5",
+      "source": "https://archive.ubuntu.com/ubuntu/pool/main/s/systemd/systemd_255.4.orig.tar.gz"
+    }
+  },
+  "format": "zen53-compact-external-inputs-v1",
+  "purpose": "Refer to previously verified archives; no substitute bytes or historical path repinning.",
+  "reviewed_full_archive": {
+    "bytes": 16520225,
+    "sha256": "ca8c331f07691d16893c61d9ff6709f2fd8fed9d42ef6f9689933fc562ae8bf0"
+  },
+  "reviewed_full_inventory_sha256": "6ef7ef160a39ec54ab5fa4675826ed4f735444efdbe7cd9b6be079d8239ff838",
+  "trust_limit": "Byte hashes and installed-file consistency were verified; Ubuntu Release/Packages/deb authentication was not independently established. No future VPS inode, ownership or mount state is asserted."
+}

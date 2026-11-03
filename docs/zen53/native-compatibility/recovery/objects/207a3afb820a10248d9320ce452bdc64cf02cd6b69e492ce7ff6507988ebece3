@@ -1,0 +1,51 @@
+{
+  "commit": "092d3acd6bec3e3a14bdc7e7a2810ab628ab759d",
+  "tag": "rust-v0.162.1",
+  "tag_object": "7a078f6bb4ce0dc2a81408b334ce52979d92c603",
+  "files": {
+    "codex-rs/linux-sandbox/src/linux_run_main.rs": {
+      "git_blob_sha": "5c08c8c39ace69d95fcd5a22fa49c4b6b00eb36c",
+      "url": "https://github.com/openai/codex/blob/092d3acd6bec3e3a14bdc7e7a2810ab628ab759d/codex-rs/linux-sandbox/src/linux_run_main.rs"
+    },
+    "codex-rs/linux-sandbox/src/bwrap.rs": {
+      "git_blob_sha": "f4a428b20b1bfc3efbd14cedc3de08915e873d8a",
+      "url": "https://github.com/openai/codex/blob/092d3acd6bec3e3a14bdc7e7a2810ab628ab759d/codex-rs/linux-sandbox/src/bwrap.rs"
+    },
+    "codex-rs/linux-sandbox/src/launcher.rs": {
+      "git_blob_sha": "84df99c936cdfea16cb8b55bd8bdd7205029e0b1",
+      "url": "https://github.com/openai/codex/blob/092d3acd6bec3e3a14bdc7e7a2810ab628ab759d/codex-rs/linux-sandbox/src/launcher.rs"
+    },
+    "codex-rs/linux-sandbox/src/landlock.rs": {
+      "git_blob_sha": "140daaf8afc9ca83052a780ed4bda9fc846a2e15",
+      "url": "https://github.com/openai/codex/blob/092d3acd6bec3e3a14bdc7e7a2810ab628ab759d/codex-rs/linux-sandbox/src/landlock.rs"
+    },
+    "codex-rs/linux-sandbox/src/bundled_bwrap.rs": {
+      "git_blob_sha": "b267b2b27751123e70ef91b66d4ef45e82b8fa19",
+      "url": "https://github.com/openai/codex/blob/092d3acd6bec3e3a14bdc7e7a2810ab628ab759d/codex-rs/linux-sandbox/src/bundled_bwrap.rs"
+    },
+    "codex-rs/vendor/bubblewrap/network.c": {
+      "git_blob_sha": "373d606a0abe3435fd5909ba8910e25fab4140be",
+      "url": "https://github.com/openai/codex/blob/092d3acd6bec3e3a14bdc7e7a2810ab628ab759d/codex-rs/vendor/bubblewrap/network.c"
+    },
+    "codex-rs/vendor/bubblewrap/bubblewrap.c": {
+      "git_blob_sha": "9039ddfa80aff65d8296a21098bf43befeb00be5",
+      "url": "https://github.com/openai/codex/blob/092d3acd6bec3e3a14bdc7e7a2810ab628ab759d/codex-rs/vendor/bubblewrap/bubblewrap.c"
+    },
+    "codex-rs/vendor/bubblewrap/bind-mount.c": {
+      "git_blob_sha": "a2e1ac6c40741aba9d566fad54691a6552bc859e",
+      "url": "https://github.com/openai/codex/blob/092d3acd6bec3e3a14bdc7e7a2810ab628ab759d/codex-rs/vendor/bubblewrap/bind-mount.c"
+    }
+  },
+  "kernel_reference": {
+    "ref": "v6.8",
+    "git_blob_sha": "5a51315c6678145467520800ceedc3378df5e7da",
+    "path": "fs/namespace.c",
+    "url": "https://github.com/torvalds/linux/blob/v6.8/fs/namespace.c#L5272-L5356",
+    "limitation": "Upstream mechanism reference, not proof of an observed Ubuntu kernel denial."
+  },
+  "docs": [
+    "https://learn.chatgpt.com/docs/cli/reference",
+    "https://learn.chatgpt.com/docs/agent-approvals-security",
+    "https://www.freedesktop.org/software/systemd/man/255/systemd.exec.html"
+  ]
+}

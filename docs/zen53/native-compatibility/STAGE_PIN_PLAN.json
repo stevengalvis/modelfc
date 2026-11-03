@@ -1,0 +1,14 @@
+{
+  "changed_code": {
+    "report.py": "f63c070d3c9f4b07a977fe9dda5fc4de0860a5e8510356e9ade123d5ffb2a09e",
+    "supervisor.py": "5a38ed8fbc2abd8cb9808f7fb92e630ec375161656defc586b0b26979b505c46"
+  },
+  "invariant": "preserve legacy source provenance; verify new acquisition identity and exact bytes before sealing",
+  "stage_metadata_to_regenerate": [
+    "DEPENDENCIES.json",
+    "rootfs/diagnostic/pins.json",
+    "ARTIFACT_SHA256.json"
+  ],
+  "status": "PROPOSAL_ONLY_NOT_STAGE_READY",
+  "version": 1
+}

@@ -1,0 +1,23 @@
+test_altered_warning_blocked (__main__.CompatTests.test_altered_warning_blocked) ... ok
+test_capbnd_is_required_and_zero (__main__.CompatTests.test_capbnd_is_required_and_zero) ... ok
+test_duplicate_warning_blocked_at_all_splits (__main__.CompatTests.test_duplicate_warning_blocked_at_all_splits) ... ok
+test_every_two_chunk_split (__main__.CompatTests.test_every_two_chunk_split) ... ok
+test_exact_warning_must_be_complete_before_observation (__main__.CompatTests.test_exact_warning_must_be_complete_before_observation) ... ok
+test_fallback_requires_all_three_help_flags (__main__.CompatTests.test_fallback_requires_all_three_help_flags) ... ok
+test_missing_or_duplicate_reporter_blocks (__main__.CompatTests.test_missing_or_duplicate_reporter_blocks) ... ok
+test_no_warning_report_still_allowed (__main__.CompatTests.test_no_warning_report_still_allowed) ... ok
+test_nonzero_or_signal_blocks_even_with_report_and_warning (__main__.CompatTests.test_nonzero_or_signal_blocks_even_with_report_and_warning) ... ok
+test_output_bound_no_extra_warning_allowance (__main__.CompatTests.test_output_bound_no_extra_warning_allowance) ... ok
+test_security_and_reporter_unchanged (__main__.CompatTests.test_security_and_reporter_unchanged) ... ok
+test_single_byte_chunks (__main__.CompatTests.test_single_byte_chunks) ... ok
+test_true_dependency_gap_is_preserved_as_unresolved (__main__.CompatTests.test_true_dependency_gap_is_preserved_as_unresolved) ... ok
+test_truncated_warning_with_newline_is_not_exempted (__main__.CompatTests.test_truncated_warning_with_newline_is_not_exempted) ... ok
+test_unrelated_denials_not_exempted (__main__.CompatTests.test_unrelated_denials_not_exempted) ... ok
+test_unterminated_finish_retains_bounded_raw_tail (__main__.CompatTests.test_unterminated_finish_retains_bounded_raw_tail) ... ok
+test_unterminated_lines_and_warning_blocked (__main__.CompatTests.test_unterminated_lines_and_warning_blocked) ... ok
+test_warning_is_only_an_observation_and_raw_output_preserved (__main__.CompatTests.test_warning_is_only_an_observation_and_raw_output_preserved) ... ok
+
+----------------------------------------------------------------------
+Ran 18 tests in 0.095s
+
+OK

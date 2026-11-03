@@ -1,0 +1,319 @@
+**ZEN-53 minimal compatibility diagnostic — 2/5: complete reporter, unit, permission policy and launcher. PREPARED ONLY; NOT EXECUTED.**
+
+The root is an isolated read-only projection, not the host filesystem. No writable HOME, coding workspace or bundled-helper fallback. Exact installed versions/hashes and the known pinned startup write attempt are documented in the package runbook.
+
+### report.py
+
+```python
+"""Trusted ZEN-53 self-observation reporter; accepts no arguments."""
+import os
+import sys
+
+FIELDS = ("Name", "Pid", "PPid", "Uid", "Gid", "NSpid", "CapInh", "CapPrm",
+          "CapEff", "CapBnd", "CapAmb", "NoNewPrivs", "Seccomp")
+
+
+def text(path, maximum):
+    with open(path, "r", encoding="ascii", errors="strict") as stream:
+        value = stream.read(maximum + 1)
+    if len(value) > maximum:
+        raise ValueError("oversized observation")
+    return value
+
+
+def main():
+    if len(sys.argv) != 1:
+        raise ValueError("arguments forbidden")
+    label = text("/proc/self/attr/current", 4096).strip()
+    if not label or any(ord(c) < 32 or ord(c) > 126 for c in label):
+        raise ValueError("invalid label")
+    status = {}
+    for line in text("/proc/self/status", 16384).splitlines():
+        key, separator, value = line.partition(":")
+        if separator and key in FIELDS:
+            if key in status or not value.strip():
+                raise ValueError("invalid status")
+            status[key] = value.strip()
+    if set(status) != set(FIELDS):
+        raise ValueError("missing status")
+    namespaces = {}
+    for name in ("pid", "mnt", "net", "user"):
+        value = os.readlink("/proc/self/ns/" + name)
+        if not value.startswith(name + ":[") or not value.endswith("]"):
+            raise ValueError("invalid namespace")
+        if not value[len(name) + 2:-1].isdigit():
+            raise ValueError("invalid namespace id")
+        namespaces[name] = value
+    lines = ["ZEN53_REPORT_V1", "apparmor=" + label]
+    lines += ["status." + key + "=" + status[key] for key in FIELDS]
+    lines += ["namespace." + key + "=" + namespaces[key] for key in namespaces]
+    output = "\n".join(lines) + "\nZEN53_REPORT_END\n"
+    if len(output.encode("ascii")) > 8192:
+        raise ValueError("output bound")
+    sys.stdout.write(output)
+    sys.stdout.flush()
+
+
+try:
+    main()
+except BaseException:
+    sys.stderr.write("ZEN53_REPORT_REQUIRED_OBSERVATION_FAILED\n")
+    sys.stderr.flush()
+    raise SystemExit(1)
+```
+
+### diagnostic.service
+
+```ini
+[Unit]
+Description=ZEN-53 one credential-free read-only compatibility diagnostic
+
+[Service]
+Type=exec
+RemainAfterExit=yes
+DynamicUser=yes
+User=zen53-mincompat
+RootDirectory=/tmp/zen53-minimal-compat-o5j8utk6/rootfs
+MountAPIVFS=yes
+WorkingDirectory=/diagnostic
+PrivateNetwork=yes
+RestrictAddressFamilies=AF_UNIX AF_NETLINK
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectProc=invisible
+ProcSubset=all
+PrivateUsers=no
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateDevices=yes
+DevicePolicy=closed
+RestrictSUIDSGID=yes
+PrivateTmp=yes
+CPUQuota=50%
+MemoryHigh=256M
+MemoryMax=384M
+MemorySwapMax=0
+TasksMax=32
+RuntimeMaxSec=60
+TimeoutStopSec=3
+KillMode=control-group
+SendSIGKILL=yes
+Restart=no
+OOMPolicy=kill
+Nice=19
+IOWeight=10
+LimitCORE=0
+LimitNOFILE=128
+LimitFSIZE=64K
+UMask=0077
+StandardInput=null
+StandardOutput=append:/tmp/zen53-minimal-compat-o5j8utk6/evidence/stdout.log
+StandardError=append:/tmp/zen53-minimal-compat-o5j8utk6/evidence/stderr.log
+ReadOnlyPaths=/ /run /dev /dev/shm /tmp /var/tmp /empty-home
+InaccessiblePaths=/dev/mqueue /dev/hugepages
+BindReadOnlyPaths=/tmp/zen53-minimal-compat-o5j8utk6/empty-home:/empty-home /tmp/zen53-minimal-compat-o5j8utk6/empty-tmp:/tmp /tmp/zen53-minimal-compat-o5j8utk6/empty-vartmp:/var/tmp /tmp/zen53-minimal-compat-o5j8utk6/empty-run:/run /tmp/zen53-minimal-compat-o5j8utk6/empty-shm:/dev/shm /usr/bin/bwrap:/usr/bin/bwrap
+Environment=PATH=/usr/bin:/bin HOME=/empty-home CODEX_HOME=/empty-home LANG=C.UTF-8 LC_ALL=C.UTF-8 TMPDIR=/tmp TERM=dumb NO_COLOR=1 RUST_LOG=off PYTHONDONTWRITEBYTECODE=1
+ExecStart=/usr/bin/python3 -I -S -B /diagnostic/launch.py
+```
+
+### requirements.toml
+
+```toml
+default_permissions = "zen53_diagnostic"
+allowed_approval_policies = ["never"]
+
+[allowed_permission_profiles]
+zen53_diagnostic = true
+
+[permissions.zen53_diagnostic.filesystem]
+":root" = "read"
+
+[permissions.zen53_diagnostic.network]
+enabled = false
+```
+
+### launch.py
+
+```python
+"""Trusted read-only admission and exactly one fixed native invocation.
+Not executed during preparation. No alternate helper or unsandboxed fallback.
+"""
+import os
+import sys
+import time
+import select
+import json
+import stat
+import hashlib
+
+ENV = {"PATH": "/usr/bin:/bin", "HOME": "/empty-home", "CODEX_HOME": "/empty-home",
+       "LANG": "C.UTF-8", "LC_ALL": "C.UTF-8", "TMPDIR": "/tmp", "TERM": "dumb",
+       "NO_COLOR": "1", "RUST_LOG": "off", "PYTHONDONTWRITEBYTECODE": "1"}
+NATIVE = ["/opt/codex/bin/codex", "--no-daemon",
+          "-c", 'approval_policy="never"',
+          "-c", 'web_search="disabled"',
+          "-c", 'features.network_proxy=false',
+          "-c", 'history.persistence="none"',
+          "-c", 'permissions.zen53_diagnostic.filesystem={":root"="read"}',
+          "-c", 'permissions.zen53_diagnostic.network.enabled=false',
+          "sandbox", "--include-managed-config", "--permission-profile", "zen53_diagnostic",
+          "-C", "/diagnostic", "--", "/usr/bin/python3", "-I", "-S", "-B", "/diagnostic/report.py"]
+
+
+def need(ok, code):
+    if not ok:
+        raise RuntimeError(code)
+
+
+def emit(phase, **data):
+    value = json.dumps(dict(phase=phase, monotonic_ns=time.monotonic_ns(), **data),
+                       separators=(",", ":"))
+    need(len(value) <= 32768, "METADATA_BOUND")
+    print(value, flush=True)
+
+
+def unescape(value):
+    for old, new in (("\\040", " "), ("\\011", "\t"), ("\\012", "\n"), ("\\134", "\\")):
+        value = value.replace(old, new)
+    return value
+
+
+def admission():
+    need(len(sys.argv) == 1 and os.geteuid() != 0, "WORKER_IDENTITY")
+    with open("/diagnostic/pins.json") as stream:
+        pins = json.load(stream)
+    for path, expected in pins["files"].items():
+        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+        try:
+            info = os.fstat(descriptor)
+            need(stat.S_ISREG(info.st_mode) and info.st_uid == 0 and info.st_nlink == 1
+                 and not info.st_mode & 0o222 and not info.st_mode & 0o6000,
+                 "IMMUTABLE_RUNTIME_METADATA")
+            h = hashlib.sha256()
+            while True:
+                data = os.read(descriptor, 65536)
+                if not data:
+                    break
+                h.update(data)
+            need(h.hexdigest() == expected, "RUNTIME_HASH")
+        finally:
+            os.close(descriptor)
+    # System executable retains package mode0755; effective RO mount is required.
+    bwrap = os.stat("/usr/bin/bwrap", follow_symlinks=False)
+    need(stat.S_ISREG(bwrap.st_mode) and bwrap.st_uid == bwrap.st_gid == 0
+         and stat.S_IMODE(bwrap.st_mode) == 0o755 and bwrap.st_nlink == 1,
+         "SYSTEM_BWRAP_METADATA")
+    need(hashlib.sha256(open("/usr/bin/bwrap", "rb").read()).hexdigest()
+         == pins["bwrap_sha256"], "SYSTEM_BWRAP_HASH")
+    with open("/proc/self/mountinfo") as stream:
+        raw = stream.read(131073)
+    need(len(raw) <= 131072, "MOUNTINFO_BOUND")
+    mounts = []
+    destinations = set()
+    for line in raw.splitlines():
+        left, right = line.split(" - ", 1)
+        fields, extra = left.split(), right.split()
+        need(len(fields) >= 6 and len(extra) >= 3, "MOUNT_SCHEMA")
+        destination = unescape(fields[4])
+        need(destination not in destinations, "STACKED_MOUNT_UNRESOLVED")
+        destinations.add(destination)
+        writable = "rw" in fields[5].split(",")
+        # proc/devpts are kernel interfaces, not general writable storage grants.
+        need(not writable or (extra[0], destination) in
+             (("proc", "/proc"), ("devpts", "/dev/pts")), "UNEXPECTED_WRITABLE_MOUNT")
+        mounts.append({"id": fields[0], "parent": fields[1], "device": fields[2],
+                       "root": unescape(fields[3]), "destination": destination,
+                       "options": fields[5], "type": extra[0], "super": extra[2]})
+    need("/" in destinations and "/proc" in destinations, "REQUIRED_MOUNT")
+    for path in ("/", "/diagnostic", "/usr", "/opt", "/usr/bin/bwrap",
+                 "/proc/sys", "/sys", "/sys/fs/cgroup", "/dev", "/dev/shm", "/run",
+                 "/tmp", "/var/tmp", "/empty-home"):
+        need(os.statvfs(path).f_flag & os.ST_RDONLY, "REQUIRED_READONLY_MOUNT")
+    for path, expected in pins["empty_directories"].items():
+        info = os.stat(path, follow_symlinks=False)
+        need(stat.S_ISDIR(info.st_mode) and [info.st_dev, info.st_ino] == expected
+             and info.st_uid == info.st_gid == 0 and not info.st_mode & 0o222
+             and os.listdir(path) == [], "EMPTY_BIND_IDENTITY")
+    selected = {}
+    with open("/proc/self/status") as stream:
+        for line in stream:
+            key, _, value = line.partition(":")
+            if key in ("CapInh", "CapPrm", "CapEff", "CapBnd", "CapAmb", "NoNewPrivs", "Seccomp"):
+                selected[key] = value.strip()
+    need(selected.get("NoNewPrivs") == "1" and selected.get("Seccomp") == "2",
+         "OUTER_PRIVILEGES")
+    need(all(int(selected.get(key, "-1"), 16) == 0 for key in
+             ("CapInh", "CapPrm", "CapEff", "CapBnd", "CapAmb")), "OUTER_CAPABILITIES")
+    # Native children receive exactly ENV and only FDs0/1/2, not PID1's environment.
+    need(os.environ.get("HOME") == ENV["HOME"] and os.environ.get("CODEX_HOME") == ENV["CODEX_HOME"],
+         "HOME_IDENTITY")
+    emit("outer_admission", pid=os.getpid(), uid=os.geteuid(), status=selected,
+         namespaces={name: os.readlink("/proc/self/ns/" + name) for name in ("pid", "mnt", "net", "user")},
+         mounts=mounts)
+
+
+def fixed_command(argv, seconds, label):
+    emit(label + "_start", argv=argv)
+    read_fd, write_fd = os.pipe2(os.O_CLOEXEC)
+    pid = os.fork()
+    if pid == 0:
+        try:
+            os.dup2(write_fd, 1)
+            os.dup2(write_fd, 2)
+            os.close(read_fd)
+            os.closerange(3, 128)
+            os.execve(argv[0], argv, ENV)
+        finally:
+            os._exit(125)
+    os.close(write_fd)
+    os.set_blocking(read_fd, False)
+    end, output, status, eof = time.monotonic() + seconds, bytearray(), None, False
+    while status is None or not eof:
+        # Any failure ends this launcher; whole-cgroup stop is the supervisor's duty.
+        need(time.monotonic() < end, label + "_TIMEOUT")
+        ready, _, _ = select.select([read_fd] if not eof else [], [], [], 0.02)
+        if ready:
+            chunk = os.read(read_fd, 4096)
+            if chunk:
+                output.extend(chunk)
+                need(len(output) <= 16384, label + "_OUTPUT_BOUND")
+                if label == "native":
+                    warning = b"WARNING: proceeding, even though we could not create PATH aliases:" in output
+                    access = b"Read-only file system" in output or b"Permission denied" in output
+                    if warning or access:
+                        emit("native_stop_evidence", output=bytes(output[-4096:]).decode("utf-8", "replace"))
+                    need(not warning, "CODEX_STARTUP_WRITABLE_STATE_WARNING")
+                    need(not access, "CODEX_STARTUP_ACCESS_OR_WRITE_FAILURE")
+            else:
+                eof = True
+        if status is None:
+            child, value = os.waitpid(pid, os.WNOHANG)
+            if child:
+                status = value
+    os.close(read_fd)
+    emit(label + "_finish", pid=pid, wait_status=status,
+         output=bytes(output).decode("utf-8", "replace"))
+    need(os.WIFEXITED(status) and os.WEXITSTATUS(status) == 0, label + "_NONZERO")
+    return bytes(output)
+
+
+try:
+    admission()
+    help_output = fixed_command(["/usr/bin/bwrap", "--help"], 5, "bwrap_help")
+    need(b"--as-pid-1" in help_output and b"--perms" in help_output, "BWRAP_REQUIRED_FEATURES")
+    # Recheck actual mounts/hashes immediately before the one native invocation.
+    admission()
+    output = fixed_command(NATIVE, 35, "native")
+    need(output.count(b"ZEN53_REPORT_V1\n") == 1 and output.count(b"ZEN53_REPORT_END\n") == 1,
+         "REPORT_MISSING_OR_DUPLICATE")
+    emit("launcher_complete", result="REPORTER_FINISHED_NOT_ISOLATION_ACCEPTANCE")
+except BaseException as error:
+    # Fixed local error identifiers only; no arbitrary process/environment values.
+    code = str(error) if isinstance(error, RuntimeError) else type(error).__name__
+    print(json.dumps({"phase": "stopped", "code": code[:128]}), flush=True)
+    raise SystemExit(1)
+```

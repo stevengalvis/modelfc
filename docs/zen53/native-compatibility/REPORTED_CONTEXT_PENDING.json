@@ -1,0 +1,9 @@
+{
+  "status": "PENDING_TRUSTED_CAPTURE",
+  "source_report": "https://github.com/stevengalvis/modelfc/pull/191#issuecomment-6376606272",
+  "host_owner_reported": [1001, 1001],
+  "restricted_owner_reported": [65534, 65534],
+  "restricted_uid_gid_map_reported": [[0, 0, 1]],
+  "missing": ["authenticated raw capture and boot identity", "stable no-follow descriptor identity", "host and restricted mount IDs and idmap status", "raw overflow UID and GID settings", "host PID 1 namespace anchor", "per-file timestamps, link counts, and alias checks"],
+  "historical_observation_context": "UNKNOWN"
+}

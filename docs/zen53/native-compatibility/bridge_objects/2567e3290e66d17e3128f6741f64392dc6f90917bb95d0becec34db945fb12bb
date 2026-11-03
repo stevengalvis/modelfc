@@ -1,0 +1,11 @@
+default_permissions = "zen53_diagnostic"
+allowed_approval_policies = ["never"]
+
+[allowed_permission_profiles]
+zen53_diagnostic = true
+
+[permissions.zen53_diagnostic.filesystem]
+":root" = "read"
+
+[permissions.zen53_diagnostic.network]
+enabled = false

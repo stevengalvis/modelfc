@@ -1,0 +1,55 @@
+"""Trusted ZEN-53 self-observation reporter; accepts no arguments."""
+import os
+import sys
+
+FIELDS = ("Name", "Pid", "PPid", "Uid", "Gid", "NSpid", "CapInh", "CapPrm",
+          "CapEff", "CapBnd", "CapAmb", "NoNewPrivs", "Seccomp")
+
+
+def text(path, maximum):
+    with open(path, "r", encoding="ascii", errors="strict") as stream:
+        value = stream.read(maximum + 1)
+    if len(value) > maximum:
+        raise ValueError("oversized observation")
+    return value
+
+
+def main():
+    if len(sys.argv) != 1:
+        raise ValueError("arguments forbidden")
+    label = text("/proc/self/attr/current", 4096).strip()
+    if not label or any(ord(c) < 32 or ord(c) > 126 for c in label):
+        raise ValueError("invalid label")
+    status = {}
+    for line in text("/proc/self/status", 16384).splitlines():
+        key, separator, value = line.partition(":")
+        if separator and key in FIELDS:
+            if key in status or not value.strip():
+                raise ValueError("invalid status")
+            status[key] = value.strip()
+    if set(status) != set(FIELDS):
+        raise ValueError("missing status")
+    namespaces = {}
+    for name in ("pid", "mnt", "net", "user"):
+        value = os.readlink("/proc/self/ns/" + name)
+        if not value.startswith(name + ":[") or not value.endswith("]"):
+            raise ValueError("invalid namespace")
+        if not value[len(name) + 2:-1].isdigit():
+            raise ValueError("invalid namespace id")
+        namespaces[name] = value
+    lines = ["ZEN53_REPORT_V1", "apparmor=" + label]
+    lines += ["status." + key + "=" + status[key] for key in FIELDS]
+    lines += ["namespace." + key + "=" + namespaces[key] for key in namespaces]
+    output = "\n".join(lines) + "\nZEN53_REPORT_END\n"
+    if len(output.encode("ascii")) > 8192:
+        raise ValueError("output bound")
+    sys.stdout.write(output)
+    sys.stdout.flush()
+
+
+try:
+    main()
+except BaseException:
+    sys.stderr.write("ZEN53_REPORT_REQUIRED_OBSERVATION_FAILED\n")
+    sys.stderr.flush()
+    raise SystemExit(1)

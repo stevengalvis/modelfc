@@ -8,9 +8,17 @@ Choose one section; follow its links when the task needs more context.
 
 Run from the repository root with the existing development environment's
 `.venv/bin/python`. The commands below use synthetic/local fixtures and quiet
-unittest output; failures still include tracebacks. They do not replace full
-[CI](../.github/workflows/tests.yml), independent review, or exact-SHA OFFLINE
-acceptance. Select additional tests for the actual changed behavior.
+unittest output; failures still include tracebacks. Select additional tests for
+the actual changed behavior.
+
+For routine changes, focused local checks plus full
+[CI](../.github/workflows/tests.yml) are the default gates. Independent AI review
+and manually initiated exact-SHA OFFLINE acceptance are risk-based escalations,
+not routine requirements. Use them for correctness-critical work identified in
+[AGENTS.md](../AGENTS.md) or when a task/runbook explicitly requires them.
+Automated trusted workflows may still run after CI; do not manually duplicate
+those checks unless investigating a failure or performing explicitly authorized
+operator acceptance.
 
 Temporary directories must satisfy existing ownership/path guards. If a sandbox
 rejects its default `/tmp`, set `TMPDIR` to an existing trusted, user-owned
@@ -20,7 +28,8 @@ or alter shared-directory permissions to make a test pass.
 ## Shared lint checks
 
 Use [the lint contract](LINTING.md) for pinned setup, Python/ frontend commands,
-scope and staged rules. Run both gates before handoff; keep formatting separate.
+scope and staged rules. Run the applicable deterministic gates before handoff;
+keep formatting separate.
 
 ## Calendar and forecasting
 
@@ -66,7 +75,8 @@ PYTHONPATH=src .venv/bin/python -B -m unittest -q tests.test_research_performanc
   [`test_test_admission.py`](../tests/test_test_admission.py).
   Broader coverage includes [`test_vps_deploy.py`](../tests/test_vps_deploy.py)
   and [`test_vps_validation.py`](../tests/test_vps_validation.py).
-- Read [trusted PR-head OFFLINE](TRUSTED_OFFLINE_AUTOMATION.md),
+- Deployment/validator trust-boundary changes are correctness-critical. Read
+  [trusted PR-head OFFLINE](TRUSTED_OFFLINE_AUTOMATION.md),
   [merged-release acceptance](RELEASE_OFFLINE_ACCEPTANCE.md) and
   [deployment](../ops/vps/DEPLOY.md) for distinct gates and evidence bindings.
   Preserve pinned identities, fail-closed reports, immutable releases and

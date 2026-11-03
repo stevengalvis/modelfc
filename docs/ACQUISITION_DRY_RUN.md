@@ -107,3 +107,59 @@ calendar/metadata references with native OddsPapi bindings and timestamps. Retai
 the existing budget/lock namespace. No second broad scan is needed. Before runtime
 wiring, explicitly review the differing ordinary/Friday versus T-24h batch windows
 and the existing one-request authorization boundary; neither is silently migrated.
+
+## Supplied-checkpoint orchestration (November 3)
+
+Reconciled against main `3d9d824408993dd45005f71c53695210a7ad4aba` and
+PR #221 head `677152ffcffdc17c57a02bf2d45e889892f298e5`. The four-file
+preview change from #221 applies to this main without a content conflict;
+the older PR branch itself needs integration. Foundations #173 and #198 are
+already merged at `de5cc9b34c65178aa21685ca54f69f18f7c3f053` and
+`b8fdfe6be35ada770d7df412e091cb70608c3768`, respectively; they are not
+pending implementation dependencies.
+
+`modelfc.acquisition_replay.replay` now evaluates an ordered, bounded sequence
+of supplied `Checkpoint(as_of, calendar_raw, calendar_sha256)` values using
+one explicit league selection, one control observation and optional existing
+`Obligation` completions. Every checkpoint must pass the existing calendar and
+budget-observation validation. Invalid later evidence rejects the whole call;
+there are no writes to undo. Equal-time checkpoints are allowed for replay tests.
+
+The scenario admits a batch only when its demand fits the remaining projected
+capacity. Each admitted batch adds one hypothetical reservation and claims all
+its obligations for later checkpoints. A repeated tick therefore adds no demand;
+a new or rescheduled fixture can add demand, and budget-blocked work stays pending.
+This models the coordinator's conservative claim-before-attempt boundary: a claim
+is **not** evidence of success, complete markets, a normalized snapshot, or consumer
+readiness. The nested planner label `ALREADY_COMPLETED` includes these hypothetical
+claims; `claim_semantics` states that distinction explicitly.
+
+Every step retains the underlying observed-capacity preview and separately labels
+projected capacity before/after the hypothetical attempt. The control observation
+is never rewritten. Outside its period, capacity remains unknown and no claim is
+admitted; no monthly rollover or provider reset is inferred. Checkpoints may span
+midweek or five-weekend months, but only explicitly supplied ticks are counted.
+Discovery, metadata, retries, price refreshes and other callers are explicitly
+unestimated, so this is not a total monthly traffic forecast. Replaying with a
+new control observation starts a new scenario, not a durable continuation.
+
+### Reused caller and dependency map
+
+| Boundary | Existing owner | This slice |
+| --- | --- | --- |
+| Calendar IDs, teams and freshness | `guarded_acquisition._calendar` | Reused through preview; no new provider identities |
+| T−21–27h eligibility, canonical five-league batching, kickoff deduplication | `acquisition_planner.plan_acquisition` | Reused at each supplied checkpoint |
+| UTC monthly cap and control validation | `corner_prospective_budget` | Read-only projection of one supplied observation |
+| E1 runner and shared acquisition accounting | `corner_prospective._RequestBudgetGuard`, `acquisition_storage.shared_runner` | Unchanged `prospective/control.json` and `runner.lock` namespace |
+| Durable claims, crash handling, precharge, immutable snapshots | `guarded_acquisition.run_once` and `acquisition_storage` | Unchanged; simulated claims never enter this store |
+| Ordinary/Friday refresh and retries | `early_collection`, `friday_collection`, existing prospective runner | Unchanged; no new observation windows or retries |
+| ZEN-43 actual-run diagnostics | `prospective_run_receipts`, `production_status` | Unchanged; replay output is not published as a genuine completion receipt |
+
+Remaining decisions before runtime integration: obtain the stable installed
+caller/configuration and reviewed native calendar/metadata evidence listed above;
+choose how ordinary/Friday and T−24h collection share obligations; reconcile
+fixture-level E1 versus tournament claims; specify any separately authorized
+recurrence and recovery policy; and map genuine shared-run results into the
+existing ZEN-43 receipt contract. Actual provider allowance/reset and entitlement
+remain unknown. No new ledger, scheduler, dispatcher, model qualification or live
+coverage is delivered by this offline scenario.
