@@ -5,6 +5,39 @@ It covers the local candidate at `b2c29ed20ad7ff03f14051e0d3e173994bae5f74`.
 The visible-mount prototype remains disconnected; the original guard stays
 fail-closed. Preserve the failed fixture, receipts and cleanup uncertainty.
 
+## Follow-up observation: PR 245 comment 6612145413
+
+A fake-input dropped-privilege probe reported successful `CLONE_NEWUSER`, then
+`EACCES` somewhere in its setgroups/UID/GID mapping sequence. It stopped before
+creating a mount namespace or attempting tmpfs. Its precise failing write and
+any alternate path remain unknown; do not treat the result as a pass or failure
+of the storage boundary. The probe did not execute the complete launcher/guard.
+Its report and all previous fixture evidence remain unchanged.
+
+The useful next test is one separately authorized bounded diagnostic session,
+not another full fixture. A fixed probe under the actual dropped UID/GID and
+service constraints should run two independent short-lived child paths: first
+attempt user then mount namespace creation and a 1 MiB/64-inode tmpfs **without**
+mapping or an intervening exec; second record each setgroups, UID-map and GID-map
+write separately before attempting the same capped mount. A new user namespace
+starts without ID mappings but grants capabilities in that namespace; after an
+exec those capabilities may be recalculated. Neither a mapping failure nor a
+successful user unshare alone proves whether the mount/write will succeed.
+Record fixed stage, outcome and errno categories, test one small write and the
+underlying image accounting if mounting succeeds, and stop on uncertainty.
+See [user_namespaces(7)](https://man7.org/linux/man-pages/man7/user_namespaces.7.html).
+Use the root supervisor's bounded report and manager/cgroup cleanup evidence;
+probe output is an observation, not an independent kernel audit. No credentials,
+model, bridge receipt, old fixture, automatic retry or host-wide setting change.
+
+If a capped tmpfs write succeeds, the image is not a hard bound for every possible
+worker write. The practical choices are a reviewed namespace/mount restriction
+that passes an actual Codex nested-tool compatibility test, or an explicit decision
+to use the image as a workspace bound with this exception. If both tested paths
+are denied, retain that result as evidence for this exact host configuration,
+not a proof of all possible routes. In either case, the existing mount guard still
+needs a safe resolution of the independently observed stacked-mount mismatch.
+
 ## What the implementation actually establishes
 
 The service requests `NoNewPrivileges=yes` and invokes `setpriv` with a non-root
