@@ -16,6 +16,11 @@ sanitized report, trusted observer, production check or guard integration.
 The prototype caps mountpoints and checks a monotonic deadline between calls;
 an individual blocking kernel call is not interrupted by that deadline.
 
+`mount_guard_candidate.py` composes this view with the existing guard's mount,
+source identity and working-directory checks in a standalone experiment. It
+does not launch a child or participate in admission. Ignoring a covered entry
+changes the guard's current behavior and is not yet proved equivalent or safe.
+
 These checks reject an ordinary substituted filesystem; they do not authenticate
 procfs against a privileged administrator, prevent replacement and restoration
 between checks, or anchor all reads to the pinned descriptor. Before use, an
@@ -40,6 +45,14 @@ setting is a candidate for a separately reviewed test, not proof by itself, and
 may keep host filesystems busy. Any worker-accessible mount, socket, file
 descriptor or namespace escape capable of writing outside the bounded storage
 is relevant; defending against a malicious host root is not the goal.
+
+Actual integration also needs an immutable, identity-pinned way to load these
+modules: the current guard is executed as a standalone `python3 -I` script, so
+relative imports cannot simply be added or fixed by trusting the working
+directory. Observation descriptors currently close before guard evaluation;
+ordinary host mount propagation can invalidate the view before or after that
+evaluation. A production candidate must make the mount topology stable for the
+worker lifetime and verify its propagation mode, not infer safety from two reads.
 
 Before any integration, independently review the actual kernel observer and
 guard changes, exercise stacked and covered mounts and adversarial aliases in a
