@@ -108,6 +108,23 @@ bind. The manager may construct, cover or stack the alias in a different order;
 the unchanged effective-mount guard must still reject a writable child. This is
 not evidence of service startup, actual worker behavior or prior cleanup.
 
+`candidate_with_evidence_cgroup()` is an unwired follow-up that accepts two
+trusted-operator-normalized records, verifies that distinct units and invocations
+have the same cgroup-v2 device, writable protection flags and a single identical
+safe target/root component, then constructs a mandatory bind for a fresh canonical
+backend unit. It does not read files, authenticate reports, check their hashes,
+or establish source timing. The operator must first verify the two retained
+root-protected reports against their recorded hashes and invocation bindings,
+confirm their boot and independent origin, then normalize only their actual
+effective records; tasks must not supply them.
+If either record does not match the exact expected target/root shape, stop rather
+than adjusting or guessing it. Do not log returned properties publicly: systemd
+properties and process arguments may expose the component to local observers.
+An absent source must cause setup failure, not be made optional or created by
+the helper. Check the actual effective mount and complete guard in one separately
+authorized diagnostic. This function does not prove that the source exists when
+systemd sets up the unit or that a later mount will not cover the bind.
+
 After separate authorization, compare this candidate in one bounded non-model
 systemd diagnostic using fake inputs and an invocation-bound root observer. Check
 all effective mount identities/options and the complete guard, pipes, private

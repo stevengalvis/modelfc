@@ -1,3 +1,4 @@
+import copy
 import unittest
 from unittest.mock import patch
 
@@ -78,6 +79,49 @@ class CandidatePropertiesTest(unittest.TestCase):
                      'modelfc-bounded-' + 'a' * 32 + '.service%h', None):
             with self.subTest(unit=unit), self.assertRaisesRegex(ValueError, 'invalid_candidate_unit'):
                 candidate.candidate_with_unit_cgroup(self.config, **self.args, unit=unit)
+
+    def test_child_bind_derives_same_component_from_two_records(self):
+        records = self.records()
+        unit = SystemdContainment('/safe/evidence', 1003, 1003).unit
+        values = candidate.candidate_with_evidence_cgroup(self.config, **self.args, unit=unit, records=records)
+        path = '/sys/fs/cgroup/system.slice/' + unit + '/synthetic-component'
+        self.assertTrue(any(value.endswith(f' {path}:{path}:rbind') for value in values))
+        self.assertFalse(any(':-' in value or ' -/sys/fs/cgroup/' in value for value in values))
+
+    @staticmethod
+    def records():
+        def record(unit, invocation):
+            root = f'/system.slice/{unit}/synthetic-component'
+            return {'unit': unit, 'invocation': invocation, 'root': root,
+                    'target': '/sys/fs/cgroup' + root, 'device': '0:29', 'type': 'cgroup2',
+                    'options': ['rw', 'nosuid', 'nodev', 'noexec', 'relatime']}
+        return [record('diagnostic-one.service', 'a' * 32), record('diagnostic-two.service', 'b' * 32)]
+
+    def test_bad_or_ambiguous_evidence_blocks(self):
+        cases = []
+        base = self.records()
+        for field, value in (('unit', '../bad.service'), ('invocation', 'A' * 32),
+                             ('device', '0:30'), ('type', 'tmpfs'), ('options', ['rw']),
+                             ('options', ['rw', 'ro', 'nosuid', 'nodev', 'noexec']),
+                             ('options', ['rw', 'nosuid', 'nodev', 'noexec'] + ['x'] * 33),
+                             ('options', ['rw', 'nosuid', 'nodev', 'noexec', 'x' * 65]),
+                             ('root', '/system.slice/diagnostic-one.service/other'),
+                             ('root', '/' + 'x' * 4096),
+                             ('target', '/sys/fs/cgroup/system.slice/diagnostic-one.service/../escape'),
+                             ('target', '/sys/fs/cgroup/system.slice/diagnostic-one.service/a%h')):
+            records = copy.deepcopy(base)
+            records[0][field] = value
+            cases.append(records)
+        cases.extend((base[:1], [base[0], base[0]], [base[0], {**base[1], 'unexpected': True}]))
+        for records in cases:
+            with self.subTest(records=records), self.assertRaisesRegex(ValueError, 'invalid_cgroup_evidence'):
+                candidate.candidate_with_evidence_cgroup(self.config, **self.args,
+                    unit='modelfc-bounded-' + 'a' * 32 + '.service', records=records)
+
+    def test_child_bind_rejects_noncanonical_unit(self):
+        with self.assertRaisesRegex(ValueError, 'invalid_candidate_unit'):
+            candidate.candidate_with_evidence_cgroup(self.config, **self.args,
+                                                    unit='other.service', records=self.records())
 
 
 if __name__ == '__main__':
