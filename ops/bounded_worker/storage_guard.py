@@ -8,6 +8,8 @@ import os
 from pathlib import Path
 import platform
 import re
+import select
+import signal
 import stat
 import sys
 import threading
@@ -45,7 +47,7 @@ def _exact(mounts, path):
     return matches[0]
 
 
-def _effective_mounts():
+def _observe_mounts():
     """Select the mount IDs resolved in this private, trusted-host namespace."""
     import ctypes
     if platform.system() != 'Linux' or platform.machine() not in ('x86_64', 'aarch64'):
@@ -127,6 +129,106 @@ def _effective_mounts():
         if proc_fd is not None:
             os.close(proc_fd)
         os.close(root_fd)
+
+
+_OBSERVATION_TIMEOUT = 8.0
+_OBSERVATION_MAX_RESULT = 16 * 1024 * 1024
+
+
+def _effective_mounts():
+    """Keep potentially blocking filesystem lookups outside the guard process.
+
+    A child stuck in uninterruptible kernel sleep may outlive this timeout; the
+    service cgroup must still be stopped and independently verified empty.
+    """
+    read_fd, write_fd = os.pipe2(os.O_CLOEXEC | os.O_NONBLOCK)
+    try:
+        pid = os.fork()
+    except BaseException:
+        os.close(read_fd)
+        os.close(write_fd)
+        raise
+    if pid == 0:
+        os.close(read_fd)
+        try:
+            payload = json.dumps(_observe_mounts(), separators=(',', ':')).encode('utf-8')
+            if len(payload) > _OBSERVATION_MAX_RESULT:
+                os._exit(1)
+            view = memoryview(payload)
+            deadline = time.monotonic() + _OBSERVATION_TIMEOUT
+            while view:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0 or not select.select([], [write_fd], [], remaining)[1]:
+                    os._exit(1)
+                try:
+                    count = os.write(write_fd, view)
+                except BlockingIOError:
+                    continue
+                if count <= 0:
+                    os._exit(1)
+                view = view[count:]
+            os.close(write_fd)
+            os._exit(0)
+        except BaseException:
+            os._exit(1)
+    os.close(write_fd)
+    reaped = False
+    try:
+        deadline = time.monotonic() + _OBSERVATION_TIMEOUT
+        result = bytearray()
+        eof = False
+        status = None
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise GuardFailure('mount_observation_timeout')
+            if not eof:
+                ready = select.select([read_fd], [], [], min(remaining, 0.05))[0]
+                if ready:
+                    try:
+                        chunk = os.read(read_fd, 65536)
+                    except BlockingIOError:
+                        chunk = None
+                    if chunk == b'':
+                        eof = True
+                    elif chunk:
+                        result.extend(chunk)
+                        if len(result) > _OBSERVATION_MAX_RESULT:
+                            raise GuardFailure('mount_observation_failed')
+            else:
+                time.sleep(min(remaining, 0.01))
+            if status is None:
+                finished, child_status = os.waitpid(pid, os.WNOHANG)
+                if finished == pid:
+                    reaped = True
+                    status = child_status
+            if eof and status is not None:
+                break
+        if not os.WIFEXITED(status) or os.WEXITSTATUS(status) != 0:
+            raise GuardFailure('mount_observation_failed')
+        try:
+            value = json.loads(result)
+        except (ValueError, UnicodeError):
+            raise GuardFailure('mount_observation_failed') from None
+        if type(value) is not list:
+            raise GuardFailure('mount_observation_failed')
+        return value
+    finally:
+        os.close(read_fd)
+        if not reaped:
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            try:
+                reap_until = time.monotonic() + 0.1
+                while time.monotonic() < reap_until:
+                    finished, _ = os.waitpid(pid, os.WNOHANG)
+                    if finished == pid:
+                        break
+                    time.sleep(0.005)
+            except ChildProcessError:
+                pass
 
 
 def verify(expected, mounts, stat_path, stat_vfs=os.statvfs):

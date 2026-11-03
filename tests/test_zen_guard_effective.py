@@ -1,8 +1,11 @@
 import io
 import ctypes
+import os
+import signal
 import stat
 import subprocess
 import sys
+import time
 from pathlib import Path
 from types import SimpleNamespace
 import unittest
@@ -40,7 +43,7 @@ class GuardEffectiveTest(unittest.TestCase):
              patch.object(guard.platform, 'system', return_value='Linux'), \
              patch.object(guard.platform, 'machine', return_value='x86_64'):
             try:
-                return guard._effective_mounts()
+                return guard._observe_mounts()
             finally:
                 close.assert_any_call(100)
                 close.assert_any_call(102)
@@ -64,14 +67,14 @@ class GuardEffectiveTest(unittest.TestCase):
             data = ROOT.replace(b' ro - ', b' ro ' + option + b' - ')
             with self.subTest(option=option), patch('builtins.open', return_value=io.BytesIO(data)):
                 with self.assertRaisesRegex(guard.GuardFailure, 'mount_propagation_unverified'):
-                    guard._effective_mounts()
+                    guard._observe_mounts()
 
     def test_autofs_rejected_without_path_resolution(self):
         data = ROOT + b'8 1 0:8 / /auto rw - autofs systemd rw\n'
         with patch('builtins.open', return_value=io.BytesIO(data)), \
              patch.object(guard.os, 'open') as open_path:
             with self.assertRaisesRegex(guard.GuardFailure, 'mount_observation_failed'):
-                guard._effective_mounts()
+                guard._observe_mounts()
             open_path.assert_not_called()
 
     def test_non_pipe_standard_descriptor_is_rejected(self):
@@ -96,6 +99,42 @@ class GuardEffectiveTest(unittest.TestCase):
         result = subprocess.run([sys.executable, '-I', script, '{}', '--', '/bin/true'],
                                 input=b'', capture_output=True, timeout=10)
         self.assertEqual(result.returncode, 127)
+
+    def test_parent_timeout_kills_stalled_observer_without_exec(self):
+        def stuck():
+            time.sleep(10)
+        start = time.monotonic()
+        with patch.object(guard, '_OBSERVATION_TIMEOUT', 0.2), patch.object(guard, '_observe_mounts', stuck):
+            with self.assertRaisesRegex(guard.GuardFailure, 'mount_observation_timeout'):
+                guard._effective_mounts()
+        self.assertLess(time.monotonic() - start, 3)
+
+    def test_child_failure_is_not_a_success_and_valid_result_round_trips(self):
+        def fail():
+            raise OSError('private error')
+        with patch.object(guard, '_observe_mounts', fail):
+            with self.assertRaisesRegex(guard.GuardFailure, 'mount_observation_failed'):
+                guard._effective_mounts()
+        value = guard._mounts(ROOT.decode())
+        with patch.object(guard, '_observe_mounts', return_value=value):
+            self.assertEqual(guard._effective_mounts(), value)
+
+    def test_malformed_or_oversized_child_output_is_rejected(self):
+        with patch.object(guard, '_observe_mounts', return_value=[]), \
+             patch.object(guard.json, 'dumps', return_value='{'):
+            with self.assertRaisesRegex(guard.GuardFailure, 'mount_observation_failed'):
+                guard._effective_mounts()
+        with patch.object(guard, '_OBSERVATION_MAX_RESULT', 1), \
+             patch.object(guard, '_observe_mounts', return_value=[]):
+            with self.assertRaisesRegex(guard.GuardFailure, 'mount_observation_failed'):
+                guard._effective_mounts()
+
+    def test_killed_child_is_not_a_success(self):
+        def killed():
+            os.kill(os.getpid(), signal.SIGKILL)
+        with patch.object(guard, '_observe_mounts', killed):
+            with self.assertRaisesRegex(guard.GuardFailure, 'mount_observation_failed'):
+                guard._effective_mounts()
 
 
 if __name__ == '__main__':
