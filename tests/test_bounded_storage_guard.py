@@ -166,7 +166,7 @@ class GuardTest(unittest.TestCase):
                  patch.object(storage_guard.os, 'getuid', return_value=0), \
                  patch.object(storage_guard.os, 'geteuid', return_value=0), \
                  patch.object(storage_guard, 'no_extra_descriptors'), \
-                 patch.object(storage_guard.Path, 'read_text', return_value=''), \
+                 patch.object(storage_guard, '_effective_mounts', return_value=[]), \
                  patch.object(storage_guard, 'verify', side_effect=failure), \
                  patch.object(storage_guard.os, 'execv') as execute, \
                  patch.object(storage_guard.os, 'write') as write:
@@ -181,9 +181,8 @@ class GuardTest(unittest.TestCase):
              patch.object(storage_guard.os, 'getuid', return_value=0), \
              patch.object(storage_guard.os, 'geteuid', return_value=0), \
              patch.object(storage_guard, 'no_extra_descriptors'), \
-             patch.object(storage_guard.Path, 'read_text', return_value=''), \
+             patch.object(storage_guard, '_effective_mounts', return_value=mounts), \
              patch.object(storage_guard.json, 'loads', return_value=self.expected), \
-             patch.object(storage_guard, '_mounts', return_value=mounts), \
              patch.object(storage_guard.os, 'stat', side_effect=self.infos.__getitem__), \
              patch.object(storage_guard.os, 'statvfs', side_effect=self.vfs), \
              patch.object(storage_guard.os, 'execv') as execute, \
@@ -200,7 +199,7 @@ class GuardTest(unittest.TestCase):
              patch.object(storage_guard.os, 'getuid', return_value=0), \
              patch.object(storage_guard.os, 'geteuid', return_value=0), \
              patch.object(storage_guard, 'no_extra_descriptors'), \
-             patch.object(storage_guard.Path, 'read_text', return_value=''), \
+             patch.object(storage_guard, '_effective_mounts', return_value=[]), \
              patch.object(storage_guard.os, 'write', side_effect=OSError('closed')), \
              patch.object(storage_guard.os, 'execv') as execute:
             self.assertEqual(storage_guard.main(), 127)
@@ -211,7 +210,7 @@ class GuardTest(unittest.TestCase):
              patch.object(storage_guard.os, 'getuid', return_value=0), \
              patch.object(storage_guard.os, 'geteuid', return_value=0), \
              patch.object(storage_guard, 'no_extra_descriptors'), \
-             patch.object(storage_guard.Path, 'read_text', return_value=''), \
+             patch.object(storage_guard, '_effective_mounts', return_value=[]), \
              patch.object(storage_guard.os, 'execv') as execute, \
              patch.object(storage_guard.os, 'write') as write:
             self.assertEqual(storage_guard.main(), 127)

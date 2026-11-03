@@ -1,7 +1,9 @@
 # Mount visibility model: offline, not an admission check
 
 `mount_visibility_prototype.py` is an isolated pure model; the bridge and
-`storage_guard.py` do not import it. It demonstrates selecting an entry only when
+`storage_guard.py` do not import it. The standalone guard now has a separate,
+self-contained candidate implementation of this approach, pending real-systemd
+acceptance. The model demonstrates selecting an entry only when
 a trusted mountpoint observation reports that entry's mount ID, while retaining
 separately visible aliases. It rejects missing/unknown/inconsistent observations,
 changed snapshots, noncanonical paths, and ambiguous basic inputs. It does not
@@ -46,15 +48,15 @@ may keep host filesystems busy. Any worker-accessible mount, socket, file
 descriptor or namespace escape capable of writing outside the bounded storage
 is relevant; defending against a malicious host root is not the goal.
 
-Actual integration also needs an immutable, identity-pinned way to load these
-modules: the current guard is executed as a standalone `python3 -I` script, so
-relative imports cannot simply be added or fixed by trusting the working
-directory. Observation descriptors currently close before guard evaluation;
+The candidate implements the observation within the standalone `python3 -I`
+guard, avoiding a new import path. The launcher's existing guard identity binds
+file metadata, not a cryptographic digest; exact installation bytes still require
+independent verification. Observation descriptors close before guard evaluation;
 ordinary host mount propagation can invalidate the view before or after that
 evaluation. A production candidate must make the mount topology stable for the
 worker lifetime and verify its propagation mode, not infer safety from two reads.
 
-Before any integration, independently review the actual kernel observer and
+Before any deployment, independently review the actual kernel observer and
 guard changes, exercise stacked and covered mounts and adversarial aliases in a
 disposable real namespace, and test the exact complete systemd service on the
 target host under separate authorization. A passing model or snapshot is not

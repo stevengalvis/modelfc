@@ -6,8 +6,12 @@ reads credential contents. A failed check exits without executing its child.
 import json
 import os
 from pathlib import Path
+import platform
+import re
 import stat
 import sys
+import threading
+import time
 
 
 class GuardFailure(ValueError):
@@ -39,6 +43,90 @@ def _exact(mounts, path):
     if len(matches) != 1:
         raise GuardFailure('unexpected_mount_topology')
     return matches[0]
+
+
+def _effective_mounts():
+    """Select the mount IDs resolved in this private, trusted-host namespace."""
+    import ctypes
+    if platform.system() != 'Linux' or platform.machine() not in ('x86_64', 'aarch64'):
+        raise GuardFailure('unsupported_mount_observation')
+    class OpenHow(ctypes.Structure):
+        _fields_ = [('flags', ctypes.c_uint64), ('mode', ctypes.c_uint64), ('resolve', ctypes.c_uint64)]
+    def snapshot():
+        with open('/proc/thread-self/mountinfo', 'rb') as source:
+            data = source.read(8 * 1024 * 1024 + 1)
+        if len(data) > 8 * 1024 * 1024:
+            raise GuardFailure('invalid_mountinfo')
+        text = data.decode('utf-8')
+        for line in text.splitlines():
+            left, sep, _ = line.partition(' - ')
+            fields = left.split()
+            if (not sep or len(fields) < 6 or any(
+                    field.startswith(('shared:', 'master:', 'propagate_from:')) for field in fields[6:])):
+                raise GuardFailure('mount_propagation_unverified')
+        return data, _mounts(text)
+    deadline = time.monotonic() + 10
+    before_raw, before = snapshot()
+    # Never trigger an automount while inspecting mountpoint paths.
+    if any(m['type'] == 'autofs' for m in before):
+        raise GuardFailure('mount_observation_failed')
+    paths = {m['path'] for m in before}
+    ids = {m['id']: m for m in before}
+    if (not before or len(before) != len(ids) or len(paths) > 4096 or '/' not in paths
+            or any(m['id'] <= 0 for m in before)
+            or any(not p.startswith('/') or p.startswith('//') or len(p) > 4096
+                   or str(Path(p)) != p or '..' in Path(p).parts
+                   or any(ord(c) < 32 or ord(c) == 127 for c in p) for p in paths)):
+        raise GuardFailure('invalid_mountinfo')
+    root_fd = os.open('/', os.O_PATH | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW)
+    proc_fd = None
+    observed = {}
+    try:
+        libc = ctypes.CDLL(None, use_errno=True)
+        proc_fd = os.open('/proc', os.O_PATH | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW)
+        def verify_proc():
+            data = ctypes.create_string_buffer(256)
+            if (libc.fstatfs(proc_fd, ctypes.byref(data)) != 0
+                    or ctypes.cast(data, ctypes.POINTER(ctypes.c_long)).contents.value != 0x9fa0
+                    or os.readlink('thread-self', dir_fd=proc_fd) !=
+                    f'{os.getpid()}/task/{threading.get_native_id()}'):
+                raise GuardFailure('mount_observation_failed')
+            original, current = os.fstat(proc_fd), os.stat('/proc', follow_symlinks=False)
+            if (original.st_dev, original.st_ino) != (current.st_dev, current.st_ino):
+                raise GuardFailure('mount_observation_changed')
+        verify_proc()
+        how = OpenHow(os.O_PATH | os.O_CLOEXEC, 0, 0x10 | 0x04 | 0x02)
+        for path in sorted(paths):
+            if time.monotonic() >= deadline:
+                raise GuardFailure('mount_observation_timeout')
+            fd = libc.syscall(437, root_fd, os.fsencode(path), ctypes.byref(how), ctypes.sizeof(how))
+            if fd < 0:
+                raise GuardFailure('mount_observation_failed')
+            try:
+                with open('/proc/thread-self/fdinfo/' + str(fd), 'rb') as source:
+                    info = source.read(65537)
+                matches = re.findall(rb'^mnt_id:[ \t]*([0-9]{1,10})[ \t]*$', info, re.MULTILINE)
+                if len(info) > 65536 or len(matches) != 1:
+                    raise GuardFailure('mount_observation_failed')
+                observed[path] = int(matches[0])
+            finally:
+                os.close(fd)
+        after_raw, _ = snapshot()
+        verify_proc()
+        if before_raw != after_raw or time.monotonic() >= deadline:
+            raise GuardFailure('mount_observation_changed')
+        for path, identity in observed.items():
+            if identity not in ids:
+                raise GuardFailure('mount_observation_failed')
+            parent = ids[identity]['path']
+            if ((path != parent and Path(parent) not in Path(path).parents)
+                    or observed.get(parent) != identity):
+                raise GuardFailure('mount_observation_failed')
+        return [m for m in before if observed[m['path']] == m['id']]
+    finally:
+        if proc_fd is not None:
+            os.close(proc_fd)
+        os.close(root_fd)
 
 
 def verify(expected, mounts, stat_path, stat_vfs=os.statvfs):
@@ -113,6 +201,9 @@ def verify_cwd(expected, mounts, cwd, fdinfo):
 
 
 def no_extra_descriptors():
+    for number in (0, 1, 2):
+        if not stat.S_ISFIFO(os.fstat(number).st_mode):
+            raise GuardFailure('invalid_standard_descriptor')
     for value in os.listdir('/proc/self/fd'):
         number = int(value)
         if number <= 2:
@@ -135,7 +226,7 @@ def main():
         stage = 'descriptors'
         no_extra_descriptors()
         stage = 'mountinfo'
-        mounts = _mounts(Path('/proc/self/mountinfo').read_text(encoding='utf-8'))
+        mounts = _effective_mounts()
         stage = 'mounts'
         verify(expected, mounts, os.stat)
         stage = 'cwd'
