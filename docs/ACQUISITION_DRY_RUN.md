@@ -163,3 +163,37 @@ recurrence and recovery policy; and map genuine shared-run results into the
 existing ZEN-43 receipt contract. Actual provider allowance/reset and entitlement
 remain unknown. No new ledger, scheduler, dispatcher, model qualification or live
 coverage is delivered by this offline scenario.
+
+## Saved full-time goal-line coverage
+
+`acquisition_coverage.preview_with_totals` attaches saved-price coverage to the
+existing acquisition preview. Supply the same hash-pinned calendar and selection,
+plus the existing `five_league_readiness.SavedQuotes` value. The saved payload and
+metadata pins are verified and normalized **once** through `shared_odds`; no new
+endpoint or collection request is introduced. The report covers each selected
+calendar fixture independently at 1.5, 2.5, 3.5 and 4.5 goals, retaining Over and
+Under quote IDs, decimal/American prices, change timestamps and main/alternate
+classification. Unselected/incidental response fixtures do not become consumers.
+
+`AVAILABLE` means an unambiguous full-time match-total Over/Under pair from one
+market in the supplied FanDuel snapshot, bound to the exact calendar competition,
+fixture, kickoff and ordered provider teams. It is not evidence of current live
+provider availability. A single available side is retained without inventing its
+opposite; `paired_prices` is null unless the entire pair passes. Missing fixtures,
+identity conflicts, missing/unresolved lines, duplicate markets, inactive quotes,
+stale evidence and contradictory prices remain separate reasons. First-half,
+team totals, integer and quarter-lines cannot fill these four requested lines.
+
+The age ceiling follows the existing ZEN-63 offline consumer's 15-minute rule,
+including retrieval and quote-change timestamps; this does **not** change the
+production recommendation freshness gate. Coverage never marks obligations done,
+changes preview demand, reserves capacity, fits models, or publishes results.
+`model=NOT_ASSESSED`, `validated=false`, `live=false` and `recommendation=null`
+remain explicit. Existing ZEN-63 consumer/model/settlement code and its generic
+half-line support are unchanged; four lines are the requested report scope, not
+a new model limit. All tests use synthetic prices; no actual availability is claimed.
+
+Source reconciliation: main `e993a9bd5baa36f52ecf266e2c95d916ad5cdee5` includes
+ZEN-63's PR #199 (`fc08f04d0c949107b7048b7bfc35c405be3c7f0c`). This slice belongs
+to ZEN-70 collection observability; qualification/calibration and live totals
+recommendations remain separate ZEN-63 work.
