@@ -197,3 +197,37 @@ Source reconciliation: main `e993a9bd5baa36f52ecf266e2c95d916ad5cdee5` includes
 ZEN-63's PR #199 (`fc08f04d0c949107b7048b7bfc35c405be3c7f0c`). This slice belongs
 to ZEN-70 collection observability; qualification/calibration and live totals
 recommendations remain separate ZEN-63 work.
+
+## Offline cross-caller admission
+
+`acquisition_admission.assess` adds a conservative scenario assessment to the
+hash-pinned control/calendar preview. It reads existing E1 attempt keys and
+accepts the planner's existing `completed` obligations; it creates no new ledger.
+Any pending E1 fixture with an existing attempt blocks the whole proposed batch
+for review, regardless of attempt outcome or changed kickoff. Attempt keys do not
+prove bookmaker coverage, timing equivalence or successful collection. No league
+is silently removed to make a batch pass. Exact shared obligations continue to
+use the existing planner's deduplication rules.
+
+An explicit `protected_requests` scenario input leaves that many observed credits
+for other callers. Omission means allocation is unknown. For example, with three
+credits remaining and two protected, one shared batch fits; with two remaining it
+does not. Two is an example, not a chosen production allocation: discovery,
+metadata, Friday/weekend rules and additional E1 fixture requests also need budget.
+The report never reserves credits, authenticates inventory completeness/freshness,
+checks real quota, acquires the runtime lock, or authorizes execution.
+
+The existing E1 caller retains DraftKings and FanDuel. Shared tournament batches
+remain FanDuel-only. Corners, BTTS and goal totals can consume retained shared
+snapshots independently; this assessment neither changes their evidence nor marks
+any market available. E1's capture windows and shared EARLY_24H obligations are
+not interchangeable. A separate live integration must reconcile them in both
+caller directions while holding the existing runner lock, recheck at dispatch,
+and define crash/no-retry handling before allowing any new collection.
+
+Disposable-state tests verify the existing E1 lock and shared-runner lock exclude
+each other and both request-guard profiles use the same final monthly credit.
+An interrupted reserved attempt is not refunded. These are local primitive tests,
+not proof of installed permissions, cross-caller runtime deduplication, live
+provider entitlement or a running schedule. No sandbox or VPS is needed to run
+this offline work; live activation remains separately gated.
