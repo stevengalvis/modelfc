@@ -5,9 +5,9 @@ record. Nothing here creates or mounts a filesystem until an operator separately
 executes approved host commands. The fixture must use a second, fresh, disposable
 32 MiB / 512-inode image; it must never point at the planned 1 GiB production
 image, an earlier retained test image, the old workspace, or a real auth file.
-The prior provisioning approval must be confirmed to cover this additional
-fixture image and the exact reviewed fixture artifact before use. If not, obtain
-that approval first. Do not start a model, publish a bridge job, or copy credentials.
+The exact reviewed fixture artifact and its creation helper must be approved
+for transfer before use. The user approved the additional disposable image;
+this document does not itself install or execute the artifact. Do not start a model, publish a bridge job, or copy credentials.
 
 ## Persistent trim exclusion
 
@@ -74,73 +74,107 @@ the image is in use. Recheck after boot or service configuration changes.
 2. Review the exact fixture source and transfer/install that reviewed artifact by
    an authorized process into a root-owned, non-group/other-writable tree. Its
    `storage_guard.py` and `storage_fixture_probe.py` must be alongside the module.
+   Verify the selected Python supports `-P`; the commands use a sanitized
+   environment and safe-path mode so a worker-writable current directory is not
+   searched for privileged Python imports.
    This repository artifact has not been installed on the target host. Record
    the SHA and retain a rollback path. The fixture uses the real launcher and
    systemd backend with a fake worker adapter; it does **not** execute Codex.
-3. Create a fresh root-owned `/srv/modelfc-zen69-fixture-<32 lowercase hex>`
-   directory, mode 0711, only after confirming the entire name did not exist.
-   Under it, a fresh exclusive `fixture.img` must be root-owned 0600, single-link,
-   exactly 33,554,432 bytes, fully allocated, and never a block device. Format
-   only that file with an explicit 512-inode ext4 layout and `nodiscard`, and
-   verify allocation with FIEMAP **after** formatting. A separate mount at `fs`
-   must be the only nested mount under the fixture root, on the selected loop,
-   with `rw,nosuid,nodev,nodiscard`; mount it exactly once. Exclude the fixture
-   mount from trim as above. Do not use or remount the intended production image.
-4. On the fixture filesystem create root-owned `fs/workspaces` mode 0711 and
-   `fs/runtime` with protected ancestors. Outside that mount create `evidence`
-   root-owned mode 0700 and `home` / `home/.codex` owned by the dedicated worker
-   UID/GID, mode 0700. Create only fresh, single-link, worker-owned mode-0600
-   files: `home/.codex/auth.json` containing exactly `zen69-fake-auth` and a
-   newline; `home/.codex/config.toml` containing exactly `zen69-fake-config` and
-   a newline; and `home/outside-sentinel` containing exactly `zen69-outside` and
-   a newline. Use exclusive no-follow creation. These are fake sentinels, not
-   copies or aliases of any real file. The fixture's fake home deliberately
-   replaces the account home only inside this test invocation.
-5. Independently inventory **all** existing production and retained backing-image
-   device/inode pairs, and the protected-file identity pairs including real auth
-   and config metadata, without opening credential contents. Include the actual
-   installed bridge lock path/device/inode, worker username/UID/GID and all protected paths. Another
-   operator/reviewer must attest the inventory is complete and that the pinned
-   lock is the actual bridge lock. Store the non-secret inventory outside the
-   fixture root in a root-owned 0600 file with protected ancestors and record its
-   SHA-256. The code checks the pin and disjointness; it **cannot prove inventory
-   completeness or provenance**. Empty image or protected-file inventories block;
-   never invent an identity to satisfy the fixture. If no honest complete nonempty
-   inventory can be produced, stop and review the fixture design.
+3. Independently record `/srv` device/inode and the **actual** installed bridge
+   lock path/device/inode and dedicated worker username/UID/GID. The current
+   reported lock is `/var/lib/modelfc-bridge-state/bridge.lock`, device 2049,
+   inode 311098, but recheck it rather than treating this report as current.
+   Pin those values in the approved run plan. Keep timers disabled, hold the
+   existing bridge lock for preflight, and verify no worker unit, cgroup or
+   worker-UID process exists. Release the preflight lock before invoking the
+   helper; no other mechanism may start a worker during setup or acceptance.
+4. Under the reviewed root-protected source tree, run the following **once**,
+   substituting independently observed decimal pins and a fresh 32-hex name:
 
-The inventory JSON must have exactly this shape. Each bracketed pair is a pair of
-integer `stat` device and inode values, independently measured and reviewed; do
-not substitute paths or placeholders in a run:
-
-```json
-{"version":1,"protected_images":[[DEVICE,INODE]],"protected_files":[[DEVICE,INODE]],"protected_paths":["/srv/modelfc-bounded","/srv/modelfc-bounded-images","/srv/modelfc-worker-work","/srv/modelfc","/var/lib/modelfc","/etc/modelfc","/root"],"bridge_lock":{"path":"/ACTUAL/STATE/bridge.lock","device":DEVICE,"inode":INODE},"worker":{"username":"zeno-worker","uid":WORKER_UID,"gid":WORKER_GID}}
+```sh
+/usr/bin/env -i PATH=/usr/bin:/bin PYTHONPATH=/PROTECTED/REVIEWED/ROOT \
+  /usr/bin/python3 -P -B -m ops.bounded_worker.storage_fixture_prepare \
+  --fixture-root /srv/modelfc-zen69-fixture-<32-lowercase-hex> \
+  --username zeno-worker --uid 1003 --gid 1003 \
+  --parent-device <srv-device> --parent-inode <srv-inode> \
+  --lock-device <bridge-lock-device> --lock-inode <bridge-lock-inode>
 ```
 
-Additional protected images, files, and paths belong in those arrays. The path
-list above is the minimum, not proof of an exhaustive production inventory.
-Independently record the fixture image and fake-file device/inode identities and
-the unique mount ID for the exact `fs` mount. Write a separate root-owned 0600
-`fixture-manifest.json` directly under the fixture root with this exact shape:
+   The helper pins and opens `/srv`, takes the exact installed bridge lock,
+   checks receipts and worker quiescence, and requires at least 4 GiB plus the
+   image size of available host space and 4,112 free host inodes before creating
+   anything. It uses exclusive `mkdir` and
+   `O_CREAT|O_EXCL|O_NOFOLLOW` relative to directory descriptors. It creates a
+   new root-owned 0711 fixture directory, a new 32 MiB root-owned 0600 image,
+   fake worker-owned 0600 sentinels, a root-private evidence directory and a
+   root-owned 0600 `fixture-creation.json`. It preallocates and checks FIEMAP;
+   immediately after allocation and again after receipt sync it requires at least
+   4 GiB and 4,096 host free inodes. These are point-in-time checks, not reserved
+   host capacity. Before running, the operator must assess the floor against
+   production demand and concurrent writers; the helper cannot prevent unrelated
+   writes. If consumption breaks the floor, it blocks and keeps the partial
+   artifacts. It never formats, mounts, deletes, or adopts an existing path. The three fake
+   file contents are constants in the helper, not copies of real files. It prints
+   the creation-receipt SHA-256. Capture that output in a new protected report;
+   retain partial objects on any failure and do not retry the same root.
+5. Independently review the helper invocation, output, receipt, exact code SHA,
+   `/srv` and bridge-lock pins, root/image/fake-file identities and metadata,
+   and confirm the operator's trusted privileged environment did not replace or
+   move those objects. Pin the reviewed creation-receipt digest separately.
+   This freshness proof depends on trusted privileged operators and an attested
+   execution; the JSON by itself is not cryptographic proof of a syscall. It
+   avoids a whole-host inventory: a genuinely new inode created exclusively in a
+   freshly made protected directory cannot be an existing live image or real
+   credential file. This does not authorize broader access, protect against a
+   malicious privileged administrator, or justify deleting old images.
+6. Only after that review, format **that verified regular image file**, never a
+   block device, as ext4 with 512 inodes and `nodiscard`; verify its inode and
+   FIEMAP allocation again. Add and verify its distinct per-mount trim exclusion
+   as above; attach and mount it once at the helper-created `fs` path with
+   `rw,nosuid,nodev,nodiscard`. Create protected root-owned `fs/workspaces` mode
+   0711 and `fs/runtime`. The helper already made `home`, `.codex`, all fake
+   files, and `evidence`; do not chown, rewrite, replace, or copy anything into
+   those paths. Their creation timestamps are pinned in the receipt.
+7. Write two **new** root-owned 0600, no-follow files with protected ancestors:
+   an operator inventory outside the fixture root, and `fixture-manifest.json`
+   inside it. Record the exact mount ID and verify the selected loop's kernel
+   backing device/inode and worker ACL admission. Empty `known_protected_*`
+   arrays are permitted; include known protected identities as defense in depth,
+   but do not claim they are exhaustive. The known path list is mandatory.
+
+The inventory JSON has this exact shape. Replace placeholders with reviewed
+values; the arrays contain decimal device/inode pairs, not pathnames:
 
 ```json
-{"version":1,"fixture_root":"/srv/modelfc-zen69-fixture-<32 lowercase hex>","image":[DEVICE,INODE],"mount_id":MOUNT_ID,"sources":{"auth":[DEVICE,INODE],"config":[DEVICE,INODE],"sentinel":[DEVICE,INODE]},"inventory_sha256":"64 lowercase hex characters"}
+{"version":2,"creation_sha256":"<reviewed-creation-sha256>","parent":[SRV_DEVICE,SRV_INODE],"known_protected_images":[],"known_protected_files":[],"protected_paths":["/srv/modelfc-bounded","/srv/modelfc-bounded-images","/srv/modelfc-worker-work","/srv/modelfc","/var/lib/modelfc","/etc/modelfc","/root"],"bridge_lock":{"path":"/var/lib/modelfc-bridge-state/bridge.lock","device":LOCK_DEVICE,"inode":LOCK_INODE},"worker":{"username":"zeno-worker","uid":1003,"gid":1003}}
 ```
 
-Review all observed values against the independently retained evidence before
-launch. An overmount at the fixture root, fake home, image, or evidence path, an
-unknown nested mount, a changed image/loop identity, an unsafe worker GID/ACL,
-an unverified loop ACL query, or an unavailable inventory blocks acceptance.
-The fixture validates fake file identities before opening their contents.
+The inventory's SHA-256 is separately recorded. The manifest uses the **image**
+and fake-source device/inode values from the creation receipt, the independently
+observed mount ID, and that inventory digest:
+
+```json
+{"version":2,"fixture_root":"/srv/modelfc-zen69-fixture-<32 lowercase hex>","image":[DEVICE,INODE],"mount_id":MOUNT_ID,"sources":{"auth":[DEVICE,INODE],"config":[DEVICE,INODE],"sentinel":[DEVICE,INODE]},"inventory_sha256":"64 lowercase hex characters"}
+```
+
+Review both files against the receipt and measured mount before launch. The
+fixture verifies the pinned receipt, unchanged `/srv` and fixture root inodes,
+image and fake-file identities, fake-file creation mtime/ctime, worker and lock
+pins, and no overmounts before opening fake contents. It then verifies the kernel
+loop backing identity and ext4 allocation before any checkout or exhaustion.
+Privileged operator attestation and exclusive worker-UID control remain explicit
+assumptions; do not invent or backdate a creation receipt for an existing path.
 
 ## One-shot run and evidence
 
-Once the above artifact, inventory, scope, trim controls and host prerequisites
+Once the above artifact, creation evidence, inventory, scope, trim controls and host prerequisites
 are approved, the operator invokes the protected reviewed source with exact
 values. Substitute the reviewed paths and digest; the example does not create
 any of them:
 
 ```sh
-PYTHONPATH=/PROTECTED/REVIEWED/ROOT /usr/bin/python3 -B -m ops.bounded_worker.storage_fixture \
+/usr/bin/env -i PATH=/usr/bin:/bin PYTHONPATH=/PROTECTED/REVIEWED/ROOT \
+  /usr/bin/python3 -P -B -m ops.bounded_worker.storage_fixture \
   --fixture-root /srv/modelfc-zen69-fixture-<32-lowercase-hex> \
   --username zeno-worker --loop /dev/loopN \
   --inventory /ROOT/PROTECTED/INVENTORY.json --inventory-sha256 <64-lowercase-hex>

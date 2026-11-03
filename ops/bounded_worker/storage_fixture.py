@@ -51,23 +51,26 @@ def load_manifest(root, inventory_path, inventory_sha256):
     if hashlib.sha256(raw).hexdigest() != inventory_sha256:
         raise ValueError('inventory_digest_mismatch')
     inventory = json.loads(raw, object_pairs_hook=_pairs)
-    if (type(inventory) is not dict or set(inventory) != {'version', 'protected_images', 'protected_files', 'protected_paths', 'bridge_lock', 'worker'}
-            or inventory['version'] != 1):
+    if (type(inventory) is not dict or set(inventory) != {'version', 'creation_sha256', 'parent',
+            'known_protected_images', 'known_protected_files', 'protected_paths', 'bridge_lock', 'worker'}
+            or inventory['version'] != 2 or type(inventory['creation_sha256']) is not str
+            or not re.fullmatch(r'[0-9a-f]{64}', inventory['creation_sha256'])):
         raise ValueError('invalid_protected_inventory')
     manifest = protected_json(root / 'fixture-manifest.json')
     if (type(manifest) is not dict or set(manifest) != {'version', 'fixture_root', 'image', 'mount_id',
-            'sources', 'inventory_sha256'} or manifest['version'] != 1
+            'sources', 'inventory_sha256'} or manifest['version'] != 2
             or manifest['fixture_root'] != str(root) or manifest['inventory_sha256'] != inventory_sha256
             or type(manifest['mount_id']) is not int or manifest['mount_id'] <= 0
             or type(manifest['sources']) is not dict or set(manifest['sources']) != {'auth', 'config', 'sentinel'}):
         raise ValueError('invalid_fixture_manifest')
     def identity(value):
         return type(value) is list and len(value) == 2 and all(type(x) is int and x > 0 for x in value)
-    protected = inventory['protected_images']
-    protected_files = inventory['protected_files']
-    if (not identity(manifest['image']) or not all(identity(v) for v in manifest['sources'].values())
-            or type(protected) is not list or not protected or not all(identity(v) for v in protected)
-            or type(protected_files) is not list or not protected_files or not all(identity(v) for v in protected_files)
+    protected = inventory['known_protected_images']
+    protected_files = inventory['known_protected_files']
+    if (not identity(inventory['parent']) or not identity(manifest['image'])
+            or not all(identity(v) for v in manifest['sources'].values())
+            or type(protected) is not list or not all(identity(v) for v in protected)
+            or type(protected_files) is not list or not all(identity(v) for v in protected_files)
             or manifest['image'] in protected or manifest['image'] in protected_files
             or any(value in protected or value in protected_files for value in manifest['sources'].values())
             or manifest['image'] in manifest['sources'].values()
@@ -87,8 +90,7 @@ def load_manifest(root, inventory_path, inventory_sha256):
             raise ValueError('fixture_overlaps_protected_path')
     lock = inventory['bridge_lock']
     if (type(lock) is not dict or set(lock) != {'path', 'device', 'inode'}
-            or type(lock['path']) is not str or not Path(lock['path']).is_absolute()
-            or Path(lock['path']).name != 'bridge.lock'
+            or lock['path'] != '/var/lib/modelfc-bridge-state/bridge.lock'
             or not identity([lock['device'], lock['inode']])):
         raise ValueError('invalid_inventory_lock')
     worker = inventory['worker']
@@ -97,7 +99,30 @@ def load_manifest(root, inventory_path, inventory_sha256):
             or type(worker['uid']) is not int or worker['uid'] <= 0
             or type(worker['gid']) is not int or worker['gid'] <= 0):
         raise ValueError('invalid_inventory_worker')
-    return manifest, lock, worker
+    creation_raw = protected_bytes(root / 'fixture-creation.json', maximum=16384)
+    if hashlib.sha256(creation_raw).hexdigest() != inventory['creation_sha256']:
+        raise ValueError('creation_digest_mismatch')
+    creation = json.loads(creation_raw, object_pairs_hook=_pairs)
+    if (type(creation) is not dict or set(creation) != {'version', 'fixture_root', 'parent', 'root', 'image',
+            'sources', 'uid', 'gid', 'bridge_lock'} or creation['version'] != 1
+            or creation['fixture_root'] != str(root) or creation['parent'] != inventory['parent']
+            or creation['image'] != manifest['image'] or creation['image'][0] != inventory['parent'][0]
+            or creation['uid'] != worker['uid']
+            or creation['gid'] != worker['gid'] or creation['bridge_lock'] != lock
+            or type(creation['sources']) is not dict or set(creation['sources']) != {'auth', 'config', 'sentinel'}):
+        raise ValueError('creation_receipt_mismatch')
+    parent_info, root_info = root.parent.lstat(), root.lstat()
+    if ([parent_info.st_dev, parent_info.st_ino] != inventory['parent']
+            or [root_info.st_dev, root_info.st_ino] != creation['root']
+            or root_info.st_dev != parent_info.st_dev or root_info.st_uid != 0
+            or stat.S_IMODE(root_info.st_mode) != 0o711):
+        raise ValueError('fixture_parent_or_root_changed')
+    for name, value in creation['sources'].items():
+        if (type(value) is not dict or set(value) != {'id', 'mtime_ns', 'ctime_ns'}
+                or value['id'] != manifest['sources'][name] or value['id'][0] != inventory['parent'][0]
+                or type(value['mtime_ns']) is not int or type(value['ctime_ns']) is not int):
+            raise ValueError('creation_source_mismatch')
+    return manifest, lock, worker, creation['sources']
 
 
 def verify_topology(root, mountinfo, mount_id=None):
@@ -113,7 +138,7 @@ def verify_topology(root, mountinfo, mount_id=None):
     return matches[0]['id']
 
 
-def fake_sources(home, uid, expected):
+def fake_sources(home, uid, expected, creation_sources=None):
     if home.name != 'home':
         raise ValueError('invalid_fake_home')
     flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
@@ -138,7 +163,9 @@ def fake_sources(home, uid, expected):
                         info = os.fstat(stream.fileno())
                         if (not stat.S_ISREG(info.st_mode) or info.st_uid != uid or info.st_nlink != 1
                                 or stat.S_IMODE(info.st_mode) != 0o600
-                                or [info.st_dev, info.st_ino] != expected[name] or info.st_size != len(value)):
+                                or [info.st_dev, info.st_ino] != expected[name] or info.st_size != len(value)
+                                or (creation_sources is not None and (info.st_mtime_ns != creation_sources[name]['mtime_ns']
+                                    or info.st_ctime_ns != creation_sources[name]['ctime_ns']))):
                             raise ValueError('fake_source_identity_rejected')
                         data = stream.read(128)
                         after = os.fstat(stream.fileno())
@@ -156,7 +183,7 @@ def fake_sources(home, uid, expected):
         os.close(root_fd)
 
 
-def fixture_configuration(root, account, manifest):
+def fixture_configuration(root, account, manifest, creation_sources):
     image, mount, work, runtime = root / 'fixture.img', root / 'fs', root / 'fs/workspaces', root / 'fs/runtime'
     home, evidence = root / 'home', root / 'evidence'
     image_info = image.lstat()
@@ -165,7 +192,7 @@ def fixture_configuration(root, account, manifest):
     vfs = os.statvfs(mount)
     if image_info.st_size != 32 * 1048576 or vfs.f_files != 512:
         raise ValueError('fixture_volume_limits_rejected')
-    sources = fake_sources(home, account.pw_uid, manifest['sources'])
+    sources = fake_sources(home, account.pw_uid, manifest['sources'], creation_sources)
     storage = StorageConfiguration(str(mount), str(image), str(work), str(runtime), image_info.st_dev,
                                    image_info.st_ino, image_info.st_size, vfs.f_blocks * vfs.f_frsize,
                                    vfs.f_files, 1024, 1, str(home / '.codex/auth.json'), str(home / '.codex/config.toml'))
@@ -453,21 +480,21 @@ def run(root, username, loop, inventory_path, inventory_sha256):
         raise ValueError('root_and_loop_required')
     root = checked_root(str(root))
     observed_mount_id = verify_topology(root, LinuxStorageReader().mountinfo())
-    manifest, lock, expected_worker = load_manifest(root, inventory_path, inventory_sha256)
+    manifest, lock, expected_worker, creation_sources = load_manifest(root, inventory_path, inventory_sha256)
     if observed_mount_id != manifest['mount_id']:
         raise ValueError('fixture_mount_identity_mismatch')
     with hold_bridge_lock(lock):
-        return run_locked(root, username, loop, manifest, expected_worker)
+        return run_locked(root, username, loop, manifest, expected_worker, creation_sources)
 
 
-def run_locked(root, username, loop, manifest, expected_worker):
+def run_locked(root, username, loop, manifest, expected_worker, creation_sources):
     require_no_worker_units()
     account = pwd.getpwnam(username)
     if (username != expected_worker['username'] or account.pw_uid != expected_worker['uid']
             or account.pw_gid != expected_worker['gid'] or account.pw_uid <= 0 or account.pw_gid <= 0):
         raise ValueError('fixture_worker_required')
     require_no_worker_processes(account.pw_uid)
-    config, identity, sources = fixture_configuration(root, account, manifest)
+    config, identity, sources = fixture_configuration(root, account, manifest, creation_sources)
     loop_info = os.stat(loop, follow_symlinks=False)
     if not stat.S_ISBLK(loop_info.st_mode) or f'{os.major(loop_info.st_rdev)}:{os.minor(loop_info.st_rdev)}' != identity['device']:
         raise ValueError('fixture_loop_mismatch')
@@ -505,7 +532,7 @@ def run_locked(root, username, loop, manifest, expected_worker):
     except (OSError, ValueError, TypeError, KeyError):
         final_inspection = False
     try:
-        after = fake_sources(root / 'home', account.pw_uid, manifest['sources'])
+        after = fake_sources(root / 'home', account.pw_uid, manifest['sources'], creation_sources)
         unchanged = sources == after and probe_identity() == pin
     except (OSError, ValueError, TypeError):
         unchanged = False

@@ -14,6 +14,7 @@ from unittest.mock import patch
 
 from ops.bounded_worker import storage_fixture as fixture
 from ops.bounded_worker import storage_fixture_probe as probe
+from ops.bounded_worker import storage_fixture_prepare as prepare
 
 
 class FixtureTests(unittest.TestCase):
@@ -50,6 +51,14 @@ class FixtureTests(unittest.TestCase):
                 info = path.stat()
                 expected[name] = [info.st_dev, info.st_ino]
             self.assertEqual(len(fixture.fake_sources(home, os.getuid(), expected)), 3)
+            fresh = {name: {'mtime_ns': (home / path).stat().st_mtime_ns,
+                            'ctime_ns': (home / path).stat().st_ctime_ns}
+                     for name, path in (('auth', '.codex/auth.json'), ('config', '.codex/config.toml'),
+                                        ('sentinel', 'outside-sentinel'))}
+            self.assertEqual(len(fixture.fake_sources(home, os.getuid(), expected, fresh)), 3)
+            bad_fresh = {**fresh, 'auth': {**fresh['auth'], 'ctime_ns': fresh['auth']['ctime_ns'] + 1}}
+            with self.assertRaisesRegex(ValueError, 'fake_source_identity_rejected'):
+                fixture.fake_sources(home, os.getuid(), expected, bad_fresh)
             wrong = {**expected, 'auth': [expected['auth'][0], expected['auth'][1] + 1]}
             with self.assertRaisesRegex(ValueError, 'fake_source_identity_rejected'):
                 fixture.fake_sources(home, os.getuid(), wrong)
@@ -96,26 +105,119 @@ class FixtureTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'fixture_mount_identity_mismatch'):
             fixture.verify_topology(root, base, 43)
 
-    def test_manifest_requires_pinned_separate_production_inventory(self):
+    def test_manifest_binds_fresh_creation_and_rejects_known_alias(self):
         root = Path('/srv/modelfc-zen69-fixture-' + 'a' * 32)
         paths = ['/srv/modelfc-bounded', '/srv/modelfc-bounded-images', '/srv/modelfc-worker-work',
                  '/srv/modelfc', '/var/lib/modelfc', '/etc/modelfc', '/root']
-        inventory = {'version': 1, 'protected_images': [[1, 2]], 'protected_files': [[1, 3]],
-                     'protected_paths': paths, 'bridge_lock': {'path': '/root/state/bridge.lock', 'device': 7, 'inode': 8},
-                     'worker': {'username': 'worker', 'uid': 1003, 'gid': 1003}}
+        lock = {'path': '/var/lib/modelfc-bridge-state/bridge.lock', 'device': 7, 'inode': 8}
+        worker = {'username': 'worker', 'uid': 1003, 'gid': 1003}
+        sources = {name: {'id': [1, ino], 'mtime_ns': 10, 'ctime_ns': 20}
+                   for name, ino in (('auth', 6), ('config', 7), ('sentinel', 8))}
+        creation = {'version': 1, 'fixture_root': str(root), 'parent': [1, 1], 'root': [1, 2],
+                    'image': [1, 4], 'sources': sources, 'uid': 1003, 'gid': 1003, 'bridge_lock': lock}
+        creation_raw = json.dumps(creation).encode()
+        inventory = {'version': 2, 'creation_sha256': hashlib.sha256(creation_raw).hexdigest(),
+                     'parent': [1, 1], 'known_protected_images': [[1, 3]], 'known_protected_files': [],
+                     'protected_paths': paths, 'bridge_lock': lock, 'worker': worker}
         raw = json.dumps(inventory).encode()
         digest = hashlib.sha256(raw).hexdigest()
-        manifest = {'version': 1, 'fixture_root': str(root), 'image': [3, 4], 'mount_id': 42,
-                    'sources': {'auth': [5, 6], 'config': [5, 7], 'sentinel': [5, 8]},
-                    'inventory_sha256': digest}
-        with patch.object(fixture, 'protected_bytes', return_value=raw), \
-             patch.object(fixture, 'protected_json', return_value=manifest):
-            self.assertEqual(fixture.load_manifest(root, '/root/inventory.json', digest), (manifest, inventory['bridge_lock'], inventory['worker']))
+        manifest = {'version': 2, 'fixture_root': str(root), 'image': [1, 4], 'mount_id': 42,
+                    'sources': {name: value['id'] for name, value in sources.items()}, 'inventory_sha256': digest}
+        def read_bytes(path, **kwargs):
+            return creation_raw if Path(path) == root / 'fixture-creation.json' else raw
+        def lstat(path):
+            if path == root.parent:
+                return SimpleNamespace(st_dev=1, st_ino=1)
+            return SimpleNamespace(st_dev=1, st_ino=2, st_uid=0, st_mode=stat.S_IFDIR | 0o711)
+        with patch.object(fixture, 'protected_bytes', side_effect=read_bytes), \
+             patch.object(fixture, 'protected_json', return_value=manifest), \
+             patch.object(Path, 'lstat', lstat):
+            self.assertEqual(fixture.load_manifest(root, '/root/inventory.json', digest), (manifest, lock, worker, sources))
+            minimal = {**inventory, 'known_protected_images': [], 'known_protected_files': []}
+            minimal_raw = json.dumps(minimal).encode()
+            minimal_digest = hashlib.sha256(minimal_raw).hexdigest()
+            minimal_manifest = {**manifest, 'inventory_sha256': minimal_digest}
+            with patch.object(fixture, 'protected_bytes', side_effect=lambda path, **kw: creation_raw if Path(path).name == 'fixture-creation.json' else minimal_raw), \
+                 patch.object(fixture, 'protected_json', return_value=minimal_manifest):
+                self.assertEqual(fixture.load_manifest(root, '/root/inventory.json', minimal_digest),
+                                 (minimal_manifest, lock, worker, sources))
             with self.assertRaisesRegex(ValueError, 'inventory_digest_mismatch'):
                 fixture.load_manifest(root, '/root/inventory.json', '0' * 64)
-            with patch.object(fixture, 'protected_json', return_value={**manifest, 'image': [1, 2]}):
+            with patch.object(fixture, 'protected_json', return_value={**manifest, 'image': [1, 3]}):
                 with self.assertRaisesRegex(ValueError, 'fixture_identity_rejected'):
                     fixture.load_manifest(root, '/root/inventory.json', digest)
+            with patch.object(fixture, 'protected_bytes', side_effect=lambda path, **kw: b'wrong' if Path(path).name == 'fixture-creation.json' else raw):
+                with self.assertRaisesRegex(ValueError, 'creation_digest_mismatch'):
+                    fixture.load_manifest(root, '/root/inventory.json', digest)
+
+    def test_fresh_preparer_never_adopts_existing_directory(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            parent = Path(temporary)
+            fd = os.open(parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+            try:
+                name = 'modelfc-zen69-fixture-' + 'a' * 32
+                with patch.object(prepare, '_allocated_extents'):
+                    digest = prepare.create_at(fd, name, os.getuid(), os.getgid(), {'device': 1, 'inode': 2})
+                root = parent / name
+                receipt = (root / 'fixture-creation.json').read_bytes()
+                self.assertEqual(hashlib.sha256(receipt).hexdigest(), digest)
+                self.assertEqual((root / 'fixture.img').stat().st_size, 32 * 1048576)
+                before = (root / 'fixture.img').stat()
+                with self.assertRaises(FileExistsError):
+                    prepare.create_at(fd, name, os.getuid(), os.getgid(), {'device': 1, 'inode': 2})
+                self.assertEqual((root / 'fixture.img').stat().st_ino, before.st_ino)
+            finally:
+                os.close(fd)
+
+    def test_fresh_preparer_checks_host_headroom_before_and_after(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            parent = Path(temporary)
+            fd = os.open(parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+            low = SimpleNamespace(f_bavail=1, f_frsize=4096, f_favail=1)
+            enough = SimpleNamespace(f_bavail=2000000, f_frsize=4096, f_favail=5000)
+            try:
+                with patch.object(prepare.os, 'fstatvfs', return_value=low):
+                    with self.assertRaisesRegex(ValueError, 'fixture_host_headroom_insufficient'):
+                        prepare.create_at(fd, 'modelfc-zen69-fixture-' + 'd' * 32, os.getuid(), os.getgid(), {})
+                self.assertEqual(list(parent.iterdir()), [])
+                with patch.object(prepare.os, 'fstatvfs', side_effect=[enough, low]), \
+                     patch.object(prepare, '_allocated_extents'):
+                    with self.assertRaisesRegex(ValueError, 'fixture_host_headroom_insufficient'):
+                        prepare.create_at(fd, 'modelfc-zen69-fixture-' + 'e' * 32, os.getuid(), os.getgid(), {})
+                self.assertTrue((parent / ('modelfc-zen69-fixture-' + 'e' * 32) / 'fixture.img').exists())
+            finally:
+                os.close(fd)
+
+    def test_partial_fresh_creation_is_retained_and_never_adopted(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            parent = Path(temporary)
+            fd = os.open(parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+            name = 'modelfc-zen69-fixture-' + 'c' * 32
+            try:
+                with patch.object(prepare.os, 'posix_fallocate', side_effect=OSError(errno.ENOSPC, 'fixture')):
+                    with self.assertRaises(OSError):
+                        prepare.create_at(fd, name, os.getuid(), os.getgid(), {})
+                self.assertTrue((parent / name / 'fixture.img').exists())
+                with self.assertRaises(FileExistsError):
+                    prepare.create_at(fd, name, os.getuid(), os.getgid(), {})
+            finally:
+                os.close(fd)
+
+    def test_fresh_preparer_rejects_existing_symlink_without_following(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            parent = Path(temporary)
+            target = parent / 'protected'
+            target.mkdir()
+            (target / 'marker').write_text('untouched')
+            name = 'modelfc-zen69-fixture-' + 'b' * 32
+            (parent / name).symlink_to(target, target_is_directory=True)
+            fd = os.open(parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+            try:
+                with self.assertRaises(FileExistsError):
+                    prepare.create_at(fd, name, os.getuid(), os.getgid(), {})
+                self.assertEqual((target / 'marker').read_text(), 'untouched')
+            finally:
+                os.close(fd)
 
     def test_cgroup_view_rejects_missing_mount_or_namespace_mismatch(self):
         with patch.object(Path, 'read_text', return_value='systemd\n'), \
@@ -231,7 +333,7 @@ class FixtureTests(unittest.TestCase):
              patch.object(fixture.launcher, '_read', return_value={'unit': unit}), \
              patch.object(fixture, 'independent_cleanup', return_value=False) as cleanup, \
              patch.object(fixture, 'fake_sources', return_value=sources):
-            result = fixture.run_locked(root, 'worker', '/dev/loop2', manifest, {'username': 'worker', 'uid': 1003, 'gid': 1003})
+            result = fixture.run_locked(root, 'worker', '/dev/loop2', manifest, {'username': 'worker', 'uid': 1003, 'gid': 1003}, {})
             self.assertEqual(result['status'], 'blocked')
             self.assertEqual(result['independent_cleanup'], 'unverified')
             self.assertEqual(result['unit'], unit)
