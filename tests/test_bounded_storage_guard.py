@@ -51,6 +51,25 @@ class GuardTest(unittest.TestCase):
                 mounts[index][field] = value
                 with self.assertRaises(ValueError):
                     storage_guard.verify(self.expected, mounts, self.infos.__getitem__, self.vfs)
+        for changes, vfs in [
+                ({'type': 'ext4'}, self.vfs),
+                ({'options': ['ro', 'nosuid', 'nodev', 'noexec']}, self.vfs),
+                ({'options': ['rw', 'nodev', 'noexec']}, self.vfs),
+                ({'options': ['rw', 'nosuid', 'noexec']}, self.vfs),
+                ({'options': ['rw', 'nosuid', 'nodev']}, self.vfs),
+                ({}, lambda _: SimpleNamespace(f_blocks=2049, f_frsize=4096, f_files=4096)),
+                ({}, lambda _: SimpleNamespace(f_blocks=2048, f_frsize=4096, f_files=4097)),
+                ({}, lambda _: SimpleNamespace(f_blocks=0, f_frsize=4096, f_files=0))]:
+            with self.subTest(changes=changes, vfs=vfs):
+                mounts = [dict(m) for m in self.mounts]
+                next(m for m in mounts if m['path'] == '/dev/shm').update(changes)
+                with self.assertRaisesRegex(ValueError, 'invalid_shared_memory_mount'):
+                    storage_guard.verify(self.expected, mounts, self.infos.__getitem__, vfs)
+        # A typical host /dev/shm can be tmpfs but far larger than the private bound.
+        with self.assertRaisesRegex(ValueError, 'invalid_shared_memory_mount'):
+            storage_guard.verify(self.expected, self.mounts, self.infos.__getitem__,
+                                 lambda _: SimpleNamespace(f_blocks=262144, f_frsize=4096, f_files=524288))
+
         self.infos['/home/w/.codex/auth.json'].st_ino = 999
         with self.assertRaises(ValueError):
             storage_guard.verify(self.expected, self.mounts, self.infos.__getitem__, self.vfs)

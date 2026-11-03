@@ -188,7 +188,7 @@ class StorageAdmissionTests(unittest.TestCase):
                                   runtime='/bound/runtime/job', home='/home/worker')
         self.assertEqual(args, ['--property=ProtectSystem=strict', '--property=PrivateMounts=yes',
                          '--property=ReadOnlyPaths=/dev /sys',
-                         '--property=ReadWritePaths=-/dev/pts -/dev/mqueue /dev/shm',
+                         '--property=ReadWritePaths=-/dev/pts -/dev/mqueue',
                          '--property=BindPaths=/bound/work/job:/bound/work/job '
                          '/bound/runtime/job/codex:/home/worker/.codex '
                          '/bound/runtime/job/tmp:/tmp /bound/runtime/job/var-tmp:/var/tmp',

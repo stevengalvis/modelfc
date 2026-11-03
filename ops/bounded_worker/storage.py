@@ -235,9 +235,11 @@ def service_properties(config, *, work, runtime, home):
         raise ValueError('credential_alias_rejected')
     bindings = ((work, work), (runtime / 'codex', codex_home),
                 (runtime / 'tmp', Path('/tmp')), (runtime / 'var-tmp', Path('/var/tmp')))
+    # Do not add /dev/shm to ReadWritePaths: systemd may discard the
+    # same-destination TemporaryFileSystem entry, including its size limits.
     return ['--property=ProtectSystem=strict', '--property=PrivateMounts=yes',
             '--property=ReadOnlyPaths=/dev /sys',
-            '--property=ReadWritePaths=-/dev/pts -/dev/mqueue /dev/shm',
+            '--property=ReadWritePaths=-/dev/pts -/dev/mqueue',
             '--property=BindPaths=' + ' '.join(str(src) + ':' + str(dest) for src, dest in bindings),
             '--property=BindReadOnlyPaths=' + ' '.join((str(home),
                 config.auth_source + ':' + str(codex_home / 'auth.json'),
