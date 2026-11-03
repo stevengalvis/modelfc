@@ -305,7 +305,7 @@ def untrusted_guard_diagnostic(pipe):
     try:
         os.set_blocking(pipe.fileno(), False)
         data = os.read(pipe.fileno(), 256)
-    except (OSError, ValueError):
+    except (OSError, ValueError, AttributeError):
         return None
     codes = {b'storage_guard:' + stage + b'\n': stage.decode('ascii') for stage in
              (b'arguments', b'expectation', b'descriptors', b'mountinfo', b'mounts', b'cwd', b'exec')}
@@ -330,9 +330,16 @@ class FixtureWorker:
                 json.dumps(list(self.sources[0][:2])), json.dumps(list(self.sources[1][:2]))]
         env = {'HOME': account.pw_dir, 'CODEX_HOME': account.pw_dir + '/.codex',
                'PATH': '/usr/bin:/bin', 'LANG': 'C.UTF-8', 'GIT_TERMINAL_PROMPT': '0', 'GIT_CONFIG_NOSYSTEM': '1'}
-        child = containment.launch(args, cwd=work, env=env, user=account.pw_uid, group=account.pw_gid,
-                                   extra_groups=[], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                   stderr=subprocess.PIPE, start_new_session=True, bufsize=0)
+        try:
+            child = containment.launch(args, cwd=work, env=env, user=account.pw_uid, group=account.pw_gid,
+                                       extra_groups=[], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                       stderr=subprocess.PIPE, start_new_session=True, bufsize=0)
+        except Exception:
+            # A failed launch can still have created a process. The boundary
+            # retains its backend for cleanup; only sample its untrusted pipe.
+            process = getattr(getattr(containment, 'backend', None), 'process', None)
+            self.untrusted_startup_diagnostic = untrusted_guard_diagnostic(getattr(process, 'stderr', None))
+            raise
         try:
             self.probe = read_line(child.stdout)
             required = {'identity_and_privileges_verified', 'auth_write_denied', 'config_write_denied', 'auth_unlink_denied', 'auth_replace_denied',

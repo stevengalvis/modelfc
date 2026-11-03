@@ -41,6 +41,28 @@ class FixtureTests(unittest.TestCase):
             os.close(read_fd)
             os.close(write_fd)
 
+    def test_unconfirmed_launch_records_untrusted_hint_and_reraises(self):
+        read_fd, write_fd = os.pipe()
+        try:
+            os.write(write_fd, b'storage_guard:cwd\n')
+            with os.fdopen(read_fd, 'rb', closefd=False) as pipe:
+                backend = SimpleNamespace(process=SimpleNamespace(stderr=pipe))
+                containment = SimpleNamespace(backend=backend)
+                def fail_launch(*args, **kwargs):
+                    raise RuntimeError('contained_start_unconfirmed')
+                containment.launch = fail_launch
+                worker = fixture.FixtureWorker(SimpleNamespace(pw_uid=1003, pw_gid=1003),
+                                               '/fixture/home', '/dev/loop0', 1, 1,
+                                               [(1, 2), (1, 3)], (1, 2))
+                with patch.object(fixture, 'probe_identity', return_value=(1, 2)), \
+                     patch.object(fixture, 'require_probe_access'):
+                    with self.assertRaisesRegex(RuntimeError, 'contained_start_unconfirmed'):
+                        worker.run(None, '/fixture/work', containment)
+                self.assertEqual(worker.untrusted_startup_diagnostic, 'cwd')
+        finally:
+            os.close(read_fd)
+            os.close(write_fd)
+
     def test_only_explicit_disposable_root_name_is_accepted(self):
         for path in ('/srv/modelfc-bounded', '/tmp/modelfc-zen69-fixture-' + 'a' * 32,
                      '/srv/modelfc-zen69-fixture-' + 'a' * 31):
