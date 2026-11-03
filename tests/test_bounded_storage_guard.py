@@ -40,7 +40,41 @@ class GuardTest(unittest.TestCase):
         return {'path': path, 'device': device, 'type': kind, 'options': options.split(','), 'root': '/', 'super_options': ['rw']}
 
     def test_expected_namespace_passes(self):
-        storage_guard.verify(self.expected, self.mounts, self.infos.__getitem__, self.vfs)
+        # Exercise the parser with a representative namespace, not just a
+        # hand-built list. The real systemd topology is host-dependent.
+        entries = self.mounts + [self.mount('/proc', '0:6', 'proc', 'rw,nosuid,nodev,noexec'),
+                                 self.mount('/dev/pts', '0:9', 'devpts', 'rw,nosuid,noexec'),
+                                 self.mount('/dev/mqueue', '0:10', 'mqueue', 'rw,nosuid,nodev,noexec'),
+                                 self.mount('/sys/fs/cgroup', '0:11', 'cgroup2', 'ro,nosuid,nodev,noexec')]
+        text = ''.join(f"{n} 1 {m['device']} {m['root']} {m['path']} "
+                       f"{','.join(m['options'])} - {m['type']} none "
+                       f"{','.join(m['super_options'])}\n" for n, m in enumerate(entries, 10))
+        mounts = storage_guard._mounts(text)
+        storage_guard.verify(self.expected, mounts, self.infos.__getitem__, self.vfs)
+        # Test the full sequence against changes in each mount category.
+        cases = [('/', 'options', ['rw'], 'host_root_not_readonly'),
+                 ('/home/w', 'options', ['rw'], 'home_not_readonly'),
+                 ('/work', 'type', 'tmpfs', 'bounded_mount_mismatch'),
+                 ('/tmp', 'options', ['ro'], 'bounded_mount_mismatch'),
+                 ('/var/tmp', 'device', '7:3', 'bounded_mount_mismatch'),
+                 ('/home/w/.codex', 'super_options', ['rw', 'discard'], 'bounded_mount_mismatch'),
+                 ('/dev/shm', 'options', ['rw', 'nosuid', 'nodev'], 'invalid_shared_memory_mount'),
+                 ('/home/w/.codex/auth.json', 'options', ['rw'], 'readonly_source_mismatch'),
+                 ('/home/w/.codex/config.toml', 'device', '0:99', 'readonly_source_mismatch'),
+                 ('/dev', 'options', ['rw'], 'device_mount_not_readonly'),
+                 ('/sys', 'options', ['rw'], 'unexpected_writable_mount'),
+                 ('/sys/fs/cgroup', 'options', ['rw'], 'unexpected_writable_mount')]
+        for path, field, value, reason in cases:
+            with self.subTest(path=path, reason=reason):
+                altered = [dict(m) for m in mounts]
+                next(m for m in altered if m['path'] == path)[field] = value
+                with self.assertRaisesRegex(storage_guard.GuardFailure, '^' + reason + '$'):
+                    storage_guard.verify(self.expected, altered, self.infos.__getitem__, self.vfs)
+        for path in ('/run/host-writable', '/dev/unexpected', '/proc/unexpected', '/sys/unexpected'):
+            with self.subTest(path=path), self.assertRaisesRegex(storage_guard.GuardFailure,
+                                                                '^unexpected_writable_mount$'):
+                storage_guard.verify(self.expected, mounts + [self.mount(path, '0:99', 'tmpfs', 'rw')],
+                                     self.infos.__getitem__, self.vfs)
 
     def test_wrong_mount_or_file_fails(self):
         for index, field, value in ((0, 'options', ['rw']), (1, 'options', ['rw']), (3, 'options', ['rw']),
