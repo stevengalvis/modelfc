@@ -18,6 +18,29 @@ from ops.bounded_worker import storage_fixture_prepare as prepare
 
 
 class FixtureTests(unittest.TestCase):
+    def test_worker_access_fails_closed_on_child_failure(self):
+        with patch.object(fixture.os, 'fork', return_value=123), \
+             patch.object(fixture.os, 'waitpid', return_value=(123, 256)):
+            with self.assertRaisesRegex(ValueError, 'fixture_probe_worker_unreadable'):
+                fixture.require_probe_access(1003, 1003)
+
+    def test_worker_access_accepts_only_successful_exit(self):
+        with patch.object(fixture.os, 'fork', return_value=123), \
+             patch.object(fixture.os, 'waitpid', return_value=(123, 0)):
+            fixture.require_probe_access(1003, 1003)
+
+    def test_shared_stderr_is_bounded_and_allowlisted(self):
+        read_fd, write_fd = os.pipe()
+        try:
+            os.write(write_fd, b'storage_guard:mounts\n')
+            with os.fdopen(read_fd, 'rb', closefd=False) as pipe:
+                self.assertEqual(fixture.untrusted_guard_diagnostic(pipe), 'mounts')
+                os.write(write_fd, b'secret\x1b[31m' + b'x' * 300)
+                self.assertIsNone(fixture.untrusted_guard_diagnostic(pipe))
+        finally:
+            os.close(read_fd)
+            os.close(write_fd)
+
     def test_only_explicit_disposable_root_name_is_accepted(self):
         for path in ('/srv/modelfc-bounded', '/tmp/modelfc-zen69-fixture-' + 'a' * 32,
                      '/srv/modelfc-zen69-fixture-' + 'a' * 31):
@@ -311,6 +334,24 @@ class FixtureTests(unittest.TestCase):
             with self.assertRaises(OSError):
                 fixture.require_no_worker_units()
 
+    def test_unreadable_probe_stops_before_checkout(self):
+        root = Path('/srv/modelfc-zen69-fixture-' + 'a' * 32)
+        account = SimpleNamespace(pw_uid=1003, pw_gid=1003, pw_name='worker')
+        config = SimpleNamespace(storage=SimpleNamespace())
+        node = SimpleNamespace(st_mode=stat.S_IFBLK | 0o600, st_rdev=os.makedev(7, 2))
+        with patch.object(fixture, 'require_no_worker_units'), \
+             patch.object(fixture, 'require_no_worker_processes'), \
+             patch.object(fixture.pwd, 'getpwnam', return_value=account), \
+             patch.object(fixture, 'fixture_configuration', return_value=(config, {'device': '7:2'}, [])), \
+             patch.object(fixture.os, 'stat', return_value=node), \
+             patch.object(fixture, 'probe_identity', return_value=(1, 2)), \
+             patch.object(fixture, 'require_probe_access', side_effect=ValueError('fixture_probe_worker_unreadable')), \
+             patch.object(fixture, 'create_checkout') as checkout:
+            with self.assertRaisesRegex(ValueError, 'fixture_probe_worker_unreadable'):
+                fixture.run_locked(root, 'worker', '/dev/loop2', {},
+                                   {'username': 'worker', 'uid': 1003, 'gid': 1003}, {})
+            checkout.assert_not_called()
+
     def test_submission_failure_attempts_independent_reconciliation(self):
         root = Path('/srv/modelfc-zen69-fixture-' + 'a' * 32)
         account = SimpleNamespace(pw_uid=1003, pw_gid=1003, pw_name='worker')
@@ -328,6 +369,7 @@ class FixtureTests(unittest.TestCase):
              patch.object(fixture, 'fixture_configuration', return_value=(config, identity, sources)), \
              patch.object(fixture.os, 'stat', return_value=node), \
              patch.object(fixture, 'probe_identity', return_value=(1, 2)), \
+             patch.object(fixture, 'require_probe_access'), \
              patch.object(fixture, 'create_checkout', return_value='a' * 40), \
              patch.object(fixture.launcher, 'submit', side_effect=RuntimeError('fixture')), \
              patch.object(fixture.launcher, '_read', return_value={'unit': unit}), \

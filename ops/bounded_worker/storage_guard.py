@@ -122,21 +122,33 @@ def no_extra_descriptors():
 
 
 def main():
+    stage = 'arguments'
     try:
         if os.getuid() != 0 or os.geteuid() != 0 or len(sys.argv) < 4 or sys.argv[2] != '--':
             raise ValueError('invalid_guard_arguments')
+        stage = 'expectation'
         expected = json.loads(sys.argv[1])
+        stage = 'descriptors'
         no_extra_descriptors()
+        stage = 'mountinfo'
         mounts = _mounts(Path('/proc/self/mountinfo').read_text(encoding='utf-8'))
+        stage = 'mounts'
         verify(expected, mounts, os.stat)
+        stage = 'cwd'
         fd = os.open('.', os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
         try:
             info = Path('/proc/self/fdinfo/' + str(fd)).read_text(encoding='ascii')
             verify_cwd(expected, mounts, os.getcwd(), info)
         finally:
             os.close(fd)
+        stage = 'exec'
         os.execv(sys.argv[3], sys.argv[3:])
     except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError):
+        # Fixed codes only: stderr is shared with the untrusted worker.
+        try:
+            os.write(2, ('storage_guard:' + stage + '\n').encode('ascii'))
+        except OSError:
+            pass
         return 127
     return 127
 

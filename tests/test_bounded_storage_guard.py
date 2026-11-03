@@ -90,9 +90,11 @@ class GuardTest(unittest.TestCase):
              patch.object(storage_guard.os, 'geteuid', return_value=0), \
              patch.object(storage_guard, 'no_extra_descriptors'), \
              patch.object(storage_guard.Path, 'read_text', return_value=''), \
-             patch.object(storage_guard.os, 'execv') as execute:
+             patch.object(storage_guard.os, 'execv') as execute, \
+             patch.object(storage_guard.os, 'write') as write:
             self.assertEqual(storage_guard.main(), 127)
             execute.assert_not_called()
+            write.assert_called_once_with(2, b'storage_guard:mounts\n')
 
 
 if __name__ == '__main__':

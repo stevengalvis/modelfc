@@ -72,7 +72,7 @@ the image is in use. Recheck after boot or service configuration changes.
    not create a bridge receipt. WAL, hot journal, an oversized DB, missing
    `system.slice`, hidden `/proc`, or an unknown manager view blocks the run.
 2. Review the exact fixture source and transfer/install that reviewed artifact by
-   an authorized process into a root-owned, non-group/other-writable tree. Its
+   an authorized process into a root-owned, non-group/other-writable tree under `/opt`, with every ancestor searchable by the worker UID/GID and the probe readable by that identity. Do not widen `/root` permissions. The fixture checks access after dropping supplementary groups before creating a checkout or launching. Its
    `storage_guard.py` and `storage_fixture_probe.py` must be alongside the module.
    Verify the selected Python supports `-P`; the commands use a sanitized
    environment and safe-path mode so a worker-writable current directory is not
@@ -128,7 +128,7 @@ the image is in use. Recheck after boot or service configuration changes.
    credential file. This does not authorize broader access, protect against a
    malicious privileged administrator, or justify deleting old images.
 6. Only after that review, format **that verified regular image file**, never a
-   block device, as ext4 with 512 inodes and `nodiscard`; verify its inode and
+   block device, as ext4 with 512 inodes and `nodiscard`, using eager initialization (`-E lazy_itable_init=0,lazy_journal_init=0`), as used successfully for the second fixture; verify its inode and
    FIEMAP allocation again. Add and verify its distinct per-mount trim exclusion
    as above; attach and mount it once at the helper-created `fs` path with
    `rw,nosuid,nodev,nodiscard`. Create protected root-owned `fs/workspaces` mode
@@ -180,7 +180,7 @@ any of them:
   --inventory /ROOT/PROTECTED/INVENTORY.json --inventory-sha256 <64-lowercase-hex>
 ```
 
-Capture stdout and exit status to a fresh protected report without overwriting any
+The optional `untrusted_startup_diagnostic` is a bounded fixed-code hint from stderr shared with the worker; it can be forged and does not establish the failure stage. Exit 127 and unverified cleanup remain blocking. Capture stdout and exit status to a fresh protected report without overwriting any
 prior artifact. The program refuses a non-root supervisor, non-fixture root name,
 non-loop path, image other than 32 MiB, filesystem other than 512 inodes, unknown
 identity, unresolved bridge receipts, existing bounded unit/cgroup/worker process,

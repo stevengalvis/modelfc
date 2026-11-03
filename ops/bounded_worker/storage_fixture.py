@@ -282,17 +282,49 @@ def probe_identity():
         os.close(fd)
 
 
+def require_probe_access(uid, gid):
+    """Check actual traversal and open permissions after dropping all groups."""
+    pid = os.fork()
+    if pid == 0:
+        try:
+            os.setgroups([])
+            os.setgid(gid)
+            os.setuid(uid)
+            fd = os.open(PROBE, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+            os.close(fd)
+        except (OSError, ValueError):
+            os._exit(1)
+        os._exit(0)
+    _, status = os.waitpid(pid, 0)
+    if not os.WIFEXITED(status) or os.WEXITSTATUS(status) != 0:
+        raise ValueError('fixture_probe_worker_unreadable')
+
+
+def untrusted_guard_diagnostic(pipe):
+    """Read a bounded hint; worker-shared stderr cannot authenticate its origin."""
+    try:
+        os.set_blocking(pipe.fileno(), False)
+        data = os.read(pipe.fileno(), 256)
+    except (OSError, ValueError):
+        return None
+    codes = {b'storage_guard:' + stage + b'\n': stage.decode('ascii') for stage in
+             (b'arguments', b'expectation', b'descriptors', b'mountinfo', b'mounts', b'cwd', b'exec')}
+    return codes.get(data)
+
+
 class FixtureWorker:
     def __init__(self, account, home, loop, image_bytes, inodes, sources, probe_pin):
         self.account = SimpleNamespace(pw_uid=account.pw_uid, pw_gid=account.pw_gid, pw_dir=str(home))
         self.loop, self.image_bytes, self.inodes, self.sources = loop, image_bytes, inodes, sources
         self.probe = None
+        self.untrusted_startup_diagnostic = None
         self.probe_pin = probe_pin
 
     def run(self, task, work, containment):
         if probe_identity() != self.probe_pin:
             raise ValueError('fixture_probe_changed')
         account = self.account
+        require_probe_access(account.pw_uid, account.pw_gid)
         args = ['/usr/bin/python3', '-I', str(PROBE), str(work), account.pw_dir, self.loop,
                 str(account.pw_uid), str(account.pw_gid), str(self.image_bytes), str(self.inodes),
                 json.dumps(list(self.sources[0][:2])), json.dumps(list(self.sources[1][:2]))]
@@ -315,6 +347,7 @@ class FixtureWorker:
                 raise ValueError('probe_failed')
             return {'status': 'completed', 'errors': [], 'usage': None}
         finally:
+            self.untrusted_startup_diagnostic = untrusted_guard_diagnostic(child.stderr)
             for pipe in (child.stdin, child.stdout, child.stderr):
                 pipe.close()
 
@@ -499,6 +532,9 @@ def run_locked(root, username, loop, manifest, expected_worker, creation_sources
     if not stat.S_ISBLK(loop_info.st_mode) or f'{os.major(loop_info.st_rdev)}:{os.minor(loop_info.st_rdev)}' != identity['device']:
         raise ValueError('fixture_loop_mismatch')
     pin = probe_identity()
+    require_probe_access(account.pw_uid, account.pw_gid)
+    if probe_identity() != pin:
+        raise ValueError('fixture_probe_changed')
     worker = FixtureWorker(account, root / 'home', loop, config.storage.image_bytes,
                            config.storage.filesystem_inodes, sources, pin)
     base = create_checkout(Path(config.workspace_root), identity, account.pw_uid, account.pw_gid, root / 'home')
@@ -541,6 +577,7 @@ def run_locked(root, username, loop, manifest, expected_worker, creation_sources
     return {'status': 'passed' if passed else 'blocked', 'unit': unit, 'result': result,
             'checks': worker.probe.get('checks') if isinstance(worker.probe, dict) else None,
             'measurements': worker.probe.get('measurements') if isinstance(worker.probe, dict) else None,
+            'untrusted_startup_diagnostic': worker.untrusted_startup_diagnostic,
             'independent_cleanup': 'verified' if cleanup else 'unverified',
             'post_cleanup_reinspection': 'verified' if final_inspection else 'unverified',
             'fake_source_content_and_selected_metadata_match': unchanged, 'error_class': error}
