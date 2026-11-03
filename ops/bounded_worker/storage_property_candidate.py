@@ -21,3 +21,13 @@ def candidate(config, *, work, runtime, home):
         raise ValueError('unexpected_baseline_properties')
     return [replacement for item in original
             if (replacement := replacements.get(item, item)) is not None]
+
+
+def candidate_with_api_binds(config, *, work, runtime, home):
+    """Add fixed read-only API self-binds for offline diagnostic review only."""
+    values = candidate(config, work=work, runtime=runtime, home=home)
+    prefix = '--property=BindReadOnlyPaths='
+    if sum(value.startswith(prefix) for value in values) != 1:
+        raise ValueError('unexpected_baseline_properties')
+    api = '/dev:/dev:rbind /run:/run:rbind /sys:/sys:rbind /sys/fs/cgroup:/sys/fs/cgroup:rbind '
+    return [prefix + api + value[len(prefix):] if value.startswith(prefix) else value for value in values]

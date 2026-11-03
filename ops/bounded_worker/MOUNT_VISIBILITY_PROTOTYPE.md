@@ -81,6 +81,20 @@ device, socket, PTY, mqueue and Codex behavior. Read-only device mounts do not
 by themselves prohibit device I/O or access to UNIX sockets. Unknown or writable
 mounts must still block under the existing guard.
 
+The fake-input diagnostic of that first candidate reported 15 effective writable
+entries in `/dev`, `/run` and `/sys`, including a writable cgroup descendant
+beneath a read-only parent. Its private evidence analysis is in PR 246 comment
+6613900396. `candidate_with_api_binds()` is a second **unwired hypothesis**: it
+adds explicit recursive read-only self-binds for `/dev`, `/run`, `/sys`, and
+`/sys/fs/cgroup`, while retaining the existing explicit writable API and bounded
+storage exceptions. The explicit cgroup bind addresses the observed descendant;
+the guard must still check every effective descendant. Prior self-binds produced
+stacks under an older guard; the mount-ID observer now selects an effective mount,
+but the combined configuration has not been tested. Systemd can skip or fail
+submount remounts, so a requested read-only bind is not evidence of an effective
+read-only tree. Read-only `/run` and API mounts can affect dependencies and do
+not themselves block UNIX socket or device I/O.
+
 After separate authorization, compare this candidate in one bounded non-model
 systemd diagnostic using fake inputs and an invocation-bound root observer. Check
 all effective mount identities/options and the complete guard, pipes, private

@@ -36,6 +36,23 @@ class CandidatePropertiesTest(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, 'unexpected_baseline_properties'):
                     candidate.candidate(self.config, **self.args)
 
+    def test_api_bind_candidate_keeps_all_other_properties(self):
+        before = candidate.candidate(self.config, **self.args)
+        after = candidate.candidate_with_api_binds(self.config, **self.args)
+        prefix = '--property=BindReadOnlyPaths='
+        old = next(value for value in before if value.startswith(prefix))
+        new = next(value for value in after if value.startswith(prefix))
+        self.assertEqual(new, prefix + '/dev:/dev:rbind /run:/run:rbind /sys:/sys:rbind '
+                         '/sys/fs/cgroup:/sys/fs/cgroup:rbind ' + old[len(prefix):])
+        self.assertEqual([value for value in after if not value.startswith(prefix)],
+                         [value for value in before if not value.startswith(prefix)])
+
+    def test_api_bind_candidate_blocks_ambiguous_baseline(self):
+        with patch.object(candidate, 'candidate', return_value=['--property=BindReadOnlyPaths=a',
+                                                               '--property=BindReadOnlyPaths=b']):
+            with self.assertRaisesRegex(ValueError, 'unexpected_baseline_properties'):
+                candidate.candidate_with_api_binds(self.config, **self.args)
+
 
 if __name__ == '__main__':
     unittest.main()
