@@ -40,24 +40,45 @@ class SourceContractTests(unittest.TestCase):
             self.assertEqual(metadata['headers'], {'Date': headers['Date']})
             self.assertLessEqual(metadata['requested_at_utc'], metadata['retrieved_at_utc'])
 
+        # E0 uses the previously evidenced direct host; other leagues retain theirs.
+        for league in ('E0', 'SP1', 'I1', 'MLS'):
+            host = 'football-data.co.uk' if league == 'E0' else 'www.football-data.co.uk'
+            url = f'https://{host}/mmz4281/2627/{league}.csv'
+            payload = RAW.replace(b'E1,', (league + ',').encode())
+            response = addinfourl(BytesIO(payload), Message(), url, 200)
+            with self.subTest(league=league), TemporaryDirectory() as root:
+                state = Path(root) / 'refresh'; state.mkdir()
+                config = CornerDataConfig(Path(root), (league,), 14)
+                with patch.object(refresh, 'urlopen', return_value=response) as request:
+                    row = refresh.refresh_league(config, league, date(2026, 10, 19), state,
+                                                 retain_result_evidence=True)
+                request.assert_called_once_with(url, timeout=45)
+                self.assertEqual(row['source'], url)
+                self.assertEqual(row['file_sha256'], hashlib.sha256(payload).hexdigest())
+                self.assertEqual((Path(root) / f'{league}_2627.csv').read_bytes(), payload)
+                # URL correction does not silently expand the E1-only receipt contract.
+                self.assertNotIn('result_evidence', row)
+                self.assertFalse((state / 'result-evidence').exists())
+
     def test_redirects_never_issue_second_get_or_mint_provenance(self):
-        for code in (301, 302, 303, 307, 308):
-            for destination in (LEGACY, 'https://football-data.co.uk/challenge',
-                                'https://unrelated.invalid/E1.csv'):
-                with self.subTest(code=code, destination=destination):
-                    calls = []; metadata = {}
-                    def response(handler, request):
-                        calls.append((request.get_method(), request.full_url))
-                        headers = Message(); headers['Location'] = destination
-                        result = addinfourl(BytesIO(b''), headers, request.full_url, code)
-                        result.msg = 'Redirect'
-                        return result
-                    with patch('urllib.request.HTTPSHandler.https_open', new=response), \
-                         patch('socket.socket.connect', side_effect=AssertionError('network forbidden')):
-                        with self.assertRaisesRegex(HTTPError, 'one GET ceiling'):
-                            refresh.download_csv(URL, metadata=metadata)
-                    self.assertEqual(calls, [('GET', URL)])
-                    self.assertEqual(metadata, {})
+        for source_url in (URL, URL.replace('E1.csv', 'E0.csv')):
+            for code in (301, 302, 303, 307, 308):
+                for destination in (LEGACY, 'https://football-data.co.uk/challenge',
+                                    'https://unrelated.invalid/E1.csv'):
+                    with self.subTest(code=code, destination=destination):
+                        calls = []; metadata = {}
+                        def response(handler, request):
+                            calls.append((request.get_method(), request.full_url))
+                            headers = Message(); headers['Location'] = destination
+                            result = addinfourl(BytesIO(b''), headers, request.full_url, code)
+                            result.msg = 'Redirect'
+                            return result
+                        with patch('urllib.request.HTTPSHandler.https_open', new=response), \
+                             patch('socket.socket.connect', side_effect=AssertionError('network forbidden')):
+                            with self.assertRaisesRegex(HTTPError, 'one GET ceiling'):
+                                refresh.download_csv(source_url, metadata=metadata)
+                        self.assertEqual(calls, [('GET', source_url)])
+                        self.assertEqual(metadata, {})
 
     def test_exact_source_pairs_and_provenance_fail_closed(self):
         metadata = dict(schema_version=1, url=URL, response_url=URL, http_status=200,
