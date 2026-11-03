@@ -178,9 +178,10 @@ class FixtureTests(unittest.TestCase):
         creation = {'version': 1, 'fixture_root': str(root), 'parent': [1, 1], 'root': [1, 2],
                     'image': [1, 4], 'sources': sources, 'uid': 1003, 'gid': 1003, 'bridge_lock': lock}
         creation_raw = json.dumps(creation).encode()
-        inventory = {'version': 2, 'creation_sha256': hashlib.sha256(creation_raw).hexdigest(),
+        inventory = {'version': 3, 'creation_sha256': hashlib.sha256(creation_raw).hexdigest(),
                      'parent': [1, 1], 'known_protected_images': [[1, 3]], 'known_protected_files': [],
-                     'protected_paths': paths, 'bridge_lock': lock, 'worker': worker}
+                     'protected_paths': paths, 'bridge_lock': lock, 'worker': worker,
+                     'cgroup_component': 'synthetic-component'}
         raw = json.dumps(inventory).encode()
         digest = hashlib.sha256(raw).hexdigest()
         manifest = {'version': 2, 'fixture_root': str(root), 'image': [1, 4], 'mount_id': 42,
@@ -194,7 +195,8 @@ class FixtureTests(unittest.TestCase):
         with patch.object(fixture, 'protected_bytes', side_effect=read_bytes), \
              patch.object(fixture, 'protected_json', return_value=manifest), \
              patch.object(Path, 'lstat', lstat):
-            self.assertEqual(fixture.load_manifest(root, '/root/inventory.json', digest), (manifest, lock, worker, sources))
+            self.assertEqual(fixture.load_manifest(root, '/root/inventory.json', digest),
+                             (manifest, lock, worker, sources, 'synthetic-component'))
             minimal = {**inventory, 'known_protected_images': [], 'known_protected_files': []}
             minimal_raw = json.dumps(minimal).encode()
             minimal_digest = hashlib.sha256(minimal_raw).hexdigest()
@@ -202,9 +204,21 @@ class FixtureTests(unittest.TestCase):
             with patch.object(fixture, 'protected_bytes', side_effect=lambda path, **kw: creation_raw if Path(path).name == 'fixture-creation.json' else minimal_raw), \
                  patch.object(fixture, 'protected_json', return_value=minimal_manifest):
                 self.assertEqual(fixture.load_manifest(root, '/root/inventory.json', minimal_digest),
-                                 (minimal_manifest, lock, worker, sources))
+                                 (minimal_manifest, lock, worker, sources, 'synthetic-component'))
             with self.assertRaisesRegex(ValueError, 'inventory_digest_mismatch'):
                 fixture.load_manifest(root, '/root/inventory.json', '0' * 64)
+            for bad in (None, '', '../escape', 'x%h', 'x y'):
+                bad_inventory = {**inventory, 'cgroup_component': bad}
+                bad_raw = json.dumps(bad_inventory).encode()
+                with self.subTest(component=bad), \
+                     patch.object(fixture, 'protected_bytes', return_value=bad_raw), \
+                     self.assertRaisesRegex(ValueError, 'invalid_protected_inventory'):
+                    fixture.load_manifest(root, '/root/inventory.json', hashlib.sha256(bad_raw).hexdigest())
+            for version in (2, 3.0, True):
+                legacy_raw = json.dumps({**inventory, 'version': version}).encode()
+                with self.subTest(version=version), patch.object(fixture, 'protected_bytes', return_value=legacy_raw), \
+                     self.assertRaisesRegex(ValueError, 'invalid_protected_inventory'):
+                    fixture.load_manifest(root, '/root/inventory.json', hashlib.sha256(legacy_raw).hexdigest())
             with patch.object(fixture, 'protected_json', return_value={**manifest, 'image': [1, 3]}):
                 with self.assertRaisesRegex(ValueError, 'fixture_identity_rejected'):
                     fixture.load_manifest(root, '/root/inventory.json', digest)
@@ -388,7 +402,7 @@ class FixtureTests(unittest.TestCase):
              patch.object(fixture, 'create_checkout') as checkout:
             with self.assertRaisesRegex(ValueError, 'fixture_probe_worker_unreadable'):
                 fixture.run_locked(root, 'worker', '/dev/loop2', {},
-                                   {'username': 'worker', 'uid': 1003, 'gid': 1003}, {})
+                                   {'username': 'worker', 'uid': 1003, 'gid': 1003}, {}, 'synthetic-component')
             checkout.assert_not_called()
 
     def test_submission_failure_attempts_independent_reconciliation(self):
@@ -414,7 +428,7 @@ class FixtureTests(unittest.TestCase):
              patch.object(fixture.launcher, '_read', return_value={'unit': unit}), \
              patch.object(fixture, 'independent_cleanup', return_value=False) as cleanup, \
              patch.object(fixture, 'fake_sources', return_value=sources):
-            result = fixture.run_locked(root, 'worker', '/dev/loop2', manifest, {'username': 'worker', 'uid': 1003, 'gid': 1003}, {})
+            result = fixture.run_locked(root, 'worker', '/dev/loop2', manifest, {'username': 'worker', 'uid': 1003, 'gid': 1003}, {}, 'synthetic-component')
             self.assertEqual(result['status'], 'blocked')
             self.assertEqual(result['independent_cleanup'], 'unverified')
             self.assertEqual(result['unit'], unit)

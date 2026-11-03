@@ -1,7 +1,7 @@
 """Offline-only property comparison. Never called by the bridge or launcher."""
 import re
 
-from .storage import service_properties
+from .storage import baseline_properties as service_properties
 
 
 def candidate(config, *, work, runtime, home):

@@ -1,8 +1,12 @@
 import copy
+from pathlib import Path
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
 from ops.bounded_worker import storage_property_candidate as candidate
+from ops.bounded_worker import storage_fixture
+from ops.bounded_worker.storage import service_properties
 from ops.bounded_worker.systemd_backend import SystemdContainment
 from tests import test_bounded_storage as storage_tests
 
@@ -87,6 +91,7 @@ class CandidatePropertiesTest(unittest.TestCase):
         path = '/sys/fs/cgroup/system.slice/' + unit + '/synthetic-component'
         self.assertTrue(any(value.endswith(f' {path}:{path}:rbind') for value in values))
         self.assertFalse(any(':-' in value or ' -/sys/fs/cgroup/' in value for value in values))
+        self.assertEqual(service_properties(self.config, **self.args, unit=unit), values)
 
     @staticmethod
     def records():
@@ -122,6 +127,24 @@ class CandidatePropertiesTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'invalid_candidate_unit'):
             candidate.candidate_with_evidence_cgroup(self.config, **self.args,
                                                     unit='other.service', records=self.records())
+
+    def test_fixture_configuration_uses_same_production_builder(self):
+        root = Path('/srv/modelfc-zen69-fixture-' + 'a' * 32)
+        account = SimpleNamespace(pw_uid=1003, pw_gid=1003, pw_name='worker')
+        info = SimpleNamespace(st_dev=10, st_ino=20, st_size=32 * 1048576)
+        volume = SimpleNamespace(f_files=512, f_blocks=8192, f_frsize=4096)
+        manifest = {'image': [10, 20], 'sources': {}, 'mount_id': 7}
+        with patch.object(Path, 'lstat', return_value=info), \
+             patch.object(storage_fixture.os, 'statvfs', return_value=volume), \
+             patch.object(storage_fixture, 'fake_sources', return_value=[]), \
+             patch.object(storage_fixture, 'admit', return_value={'mount_id': 7}):
+            config, _, _ = storage_fixture.fixture_configuration(root, account, manifest, {},
+                                                                  'synthetic-component')
+        unit = SystemdContainment('/safe/evidence', 1003, 1003).unit
+        props = service_properties(config.storage, work=Path(config.workspace_root) / 'job',
+                                   runtime=Path(config.storage.runtime) / 'job',
+                                   home=root / 'home', unit=unit)
+        self.assertTrue(any('/system.slice/' + unit + '/synthetic-component:' in item for item in props))
 
 
 if __name__ == '__main__':

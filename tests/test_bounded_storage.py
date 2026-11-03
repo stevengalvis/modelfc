@@ -10,7 +10,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-from ops.bounded_worker.storage import LinuxStorageReader, StorageConfiguration, admit, parse_mountinfo, service_properties, source_identity, _allocated_extents
+from ops.bounded_worker.storage import LinuxStorageReader, StorageConfiguration, admit, parse_mountinfo, baseline_properties as service_properties, service_properties as integrated_service_properties, source_identity, _allocated_extents
 from ops.bounded_worker.bridge_executor import Executor
 from ops.bounded_worker import bridge_entry, launcher
 
@@ -45,7 +45,7 @@ class StorageAdmissionTests(unittest.TestCase):
                                            '/bound/runtime', 2049, 99, 100000,
                                            51200, 1000, 1024, 10,
                                            '/home/worker/.codex/auth.json',
-                                           '/home/worker/.codex/config.toml')
+                                           '/home/worker/.codex/config.toml', 'synthetic-component')
         self.reader = Reader()
 
     def test_admits_expected_mount(self):
@@ -198,6 +198,25 @@ class StorageAdmissionTests(unittest.TestCase):
                          '/home/worker/.codex/config.toml:/home/worker/.codex/config.toml',
                          '--property=TemporaryFileSystem=/dev/shm:size=8M,nr_inodes=4096,mode=1777,nodev,nosuid,noexec'])
         self.assertFalse(any('MountImages' in arg for arg in args))
+        unit = 'modelfc-bounded-' + 'a' * 32 + '.service'
+        integrated = integrated_service_properties(self.config, work='/bound/work/job',
+                                                   runtime='/bound/runtime/job', home='/home/worker', unit=unit)
+        self.assertIn('--property=ReadOnlyPaths=/ /proc/sys', integrated)
+        self.assertIn('--property=ReadWritePaths=/proc -/dev/pts -/dev/mqueue', integrated)
+        bind = next(value for value in integrated if value.startswith('--property=BindReadOnlyPaths='))
+        cgroup = '/sys/fs/cgroup/system.slice/' + unit + '/synthetic-component'
+        self.assertIn(f' {cgroup}:{cgroup}:rbind', bind)
+        for path in ('/dev:/dev:rbind', '/run:/run:rbind', '/sys:/sys:rbind',
+                     '/sys/fs/cgroup:/sys/fs/cgroup:rbind'):
+            self.assertIn(path, bind)
+        self.assertIn(args[-1], integrated)
+        for bad in ('..', '../x', 'x/y', '%n', 'x:y', 'x y', '', None):
+            with self.subTest(component=bad), self.assertRaises(ValueError):
+                integrated_service_properties(replace(self.config, cgroup_component=bad),
+                    work='/bound/work/job', runtime='/bound/runtime/job', home='/home/worker', unit=unit)
+        with self.assertRaises(ValueError):
+            integrated_service_properties(self.config, work='/bound/work/job',
+                    runtime='/bound/runtime/job', home='/home/worker', unit='bad.service')
         with self.assertRaises(ValueError):
             service_properties(replace(self.config, auth_source='/safe/alias'),
                                work='/bound/work/job', runtime='/bound/runtime/job', home='/home/worker')
@@ -226,6 +245,12 @@ class StorageAdmissionTests(unittest.TestCase):
             self.assertEqual(bridge_entry._settings('/settings')['storage'], self.config)
         with patch.object(bridge_entry, 'protected_json',
                           return_value={**settings, 'storage': {**asdict(self.config), 'privileged': True}}), \
+             patch.object(bridge_entry, 'protected_dir'):
+            with self.assertRaises(ValueError):
+                bridge_entry._settings('/settings')
+        legacy_storage = asdict(self.config)
+        del legacy_storage['cgroup_component']
+        with patch.object(bridge_entry, 'protected_json', return_value={**settings, 'storage': legacy_storage}), \
              patch.object(bridge_entry, 'protected_dir'):
             with self.assertRaises(ValueError):
                 bridge_entry._settings('/settings')

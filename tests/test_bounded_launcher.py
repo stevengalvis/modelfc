@@ -240,7 +240,8 @@ class StorageLauncherTest(LauncherTest):
         runtime.mkdir()
         storage = StorageConfiguration(self.tmp.name, '/safe/image', str(self.work), str(runtime),
                                        1, 2, 3, 10000, 100, 100, 1,
-                                       '/home/worker/.codex/auth.json', '/home/worker/.codex/config.toml')
+                                       '/home/worker/.codex/auth.json', '/home/worker/.codex/config.toml',
+                                       'synthetic-component')
         config = replace(self.config, storage=storage)
         dev = self.work.stat().st_dev
         identity = {'mount_id': 1, 'device': f'{os.major(dev)}:{os.minor(dev)}', 'image_inode': 2}
@@ -283,6 +284,13 @@ class StorageLauncherTest(LauncherTest):
                                      _backend_factory=StorageBackend, _storage_identity=identity)
             self.assertEqual(result['status'], 'completed')
             self.assertTrue((self.evidence / 'one' / 'storage.json').is_file())
+            storage_record = self.evidence / 'one' / 'storage.json'
+            original = storage_record.read_text()
+            tampered = json.loads(original)
+            tampered['properties_sha256'] = '0' * 64
+            storage_record.write_text(json.dumps(tampered))
+            self.assertEqual(launcher.inspect('one', config, _worker_factory=StorageWorker)['status'], 'blocked')
+            storage_record.write_text(original)
             with patch.object(launcher, 'admit', side_effect=[identity, {**identity, 'mount_id': 2}]):
                 self.assertEqual(launcher.inspect('one', config, _worker_factory=StorageWorker)['status'], 'blocked')
             current[0] = {**identity, 'mount_id': 2}

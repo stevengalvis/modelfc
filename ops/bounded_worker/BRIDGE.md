@@ -163,7 +163,16 @@ The protected settings file may contain a `storage` object matching
 `StorageConfiguration` in `storage.py`; omission retains the existing behavior.
 The operator supplies one already mounted, fully allocated loop-backed ext4 image,
 its exact image and filesystem identities and limits, free byte/inode reserves,
-workspace and runtime directories, and the original worker auth/config paths.
+workspace and runtime directories, the original worker auth/config paths, and a
+single `cgroup_component` from separately authenticated operator evidence. The
+setting is root-protected, not task supplied; its validation does not authenticate
+the prior reports. The backend combines it with its own fresh unit name for a
+mandatory read-only cgroup bind. If the source is absent or the guard sees an
+unexpected writable mount, startup fails closed; no fallback or path creation is
+performed. Verify the selected component against protected evidence for the exact
+host/systemd setup before authorizing use. Configuration and generated properties
+are bound to attempt evidence; old storage records or settings lacking this field
+are not silently migrated and remain blocked for operator review.
 The workspace must equal `workspace_root`; evidence, bridge state and publisher
 storage must remain outside the bounded mount. This code does not create, format,
 mount, resize or remove the image, and does not copy credentials. Admission fails
