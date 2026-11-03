@@ -61,3 +61,31 @@ guard changes, exercise stacked and covered mounts and adversarial aliases in a
 disposable real namespace, and test the exact complete systemd service on the
 target host under separate authorization. A passing model or snapshot is not
 host acceptance. Prior fixture state, unit and cleanup uncertainty are unchanged.
+
+## Offline property candidate for PR 245 diagnostic
+
+`storage_property_candidate.py` builds an **unwired diagnostic candidate**, not a
+change to the bridge. It replaces `ProtectSystem=strict` and explicit `/dev /sys`
+read-only paths with `ReadOnlyPaths=/ /proc/sys`, and explicitly lists `/proc`
+with the existing writable API exceptions. All private-propagation, bounded
+workspace/runtime, credential and shared-memory properties remain as before.
+The original effective-mount guard remains mandatory and unchanged.
+
+The hypothesis is that root-recursive read-only setup without systemd's implicit
+strict-mode `/dev`, `/sys`, `/home`, `/run/user` and `/root` writable exceptions
+will cover the observed classes together; `/proc` remains a deliberate writable
+API exception, with `/proc/sys` read-only. Systemd's mount ordering and explicit
+submount exceptions determine actual behavior. This has not been run in systemd,
+does not establish equivalence or resolve any prior fixture, and can affect proc,
+device, socket, PTY, mqueue and Codex behavior. Read-only device mounts do not
+by themselves prohibit device I/O or access to UNIX sockets. Unknown or writable
+mounts must still block under the existing guard.
+
+After separate authorization, compare this candidate in one bounded non-model
+systemd diagnostic using fake inputs and an invocation-bound root observer. Check
+all effective mount identities/options and the complete guard, pipes, private
+propagation, storage/credential bindings, `/dev/shm` limits, PTY and cgroup
+cleanup. If the guard still blocks, retain a bounded root-protected exact list of
+the remaining effective mount paths, types and relationships; report only
+sanitized categories publicly. No worker, old fixture, receipt, reset, real
+credential or model is required. A diagnostic pass is not Codex acceptance.
