@@ -7,13 +7,19 @@ separately visible aliases. It rejects missing/unknown/inconsistent observations
 changed snapshots, noncanonical paths, and ambiguous basic inputs. It does not
 verify mount permissions, source identities, credentials, cleanup or isolation.
 
-`mount_observer_prototype.py` experimentally holds namespace descriptors, uses
-`openat2` with in-root, no-symlink and no-magic-link resolution, reads the mount ID
-from thread fdinfo and compares mountinfo and namespace identities. Unsupported
+`mount_observer_prototype.py` experimentally holds namespace descriptors, checks
+the `/proc` filesystem type and current-thread identity, uses `openat2` with
+in-root, no-symlink and no-magic-link resolution, reads the mount ID from thread
+fdinfo and compares mountinfo and namespace identities. Unsupported
 platforms or resolution errors block. It returns raw mount records and is not a
 sanitized report, trusted observer, production check or guard integration.
+The prototype caps mountpoints and checks a monotonic deadline between calls;
+an individual blocking kernel call is not interrupted by that deadline.
 
-Before use, an observer must establish trusted procfs and root provenance, keep
+These checks reject an ordinary substituted filesystem; they do not authenticate
+procfs against a privileged administrator, prevent replacement and restoration
+between checks, or anchor all reads to the pinned descriptor. Before use, an
+observer must establish trusted procfs and root provenance, keep
 exclusive ownership of its descriptors (including against other threads), and
 pin the service's mount, user and PID namespaces across observation and use.
 It must bound elapsed time and work, account for path aliases and mount IDs,
@@ -29,6 +35,11 @@ privileged mount changes and competing worker launches controlled throughout the
 entire task; unprivileged namespace creation and capabilities must be addressed
 without breaking required nested tools. Root and other authorized privileged
 administrators remain trusted. If these assumptions cannot be established, block.
+`PrivateMounts=yes` can still receive host mount events. A private propagation
+setting is a candidate for a separately reviewed test, not proof by itself, and
+may keep host filesystems busy. Any worker-accessible mount, socket, file
+descriptor or namespace escape capable of writing outside the bounded storage
+is relevant; defending against a malicious host root is not the goal.
 
 Before any integration, independently review the actual kernel observer and
 guard changes, exercise stacked and covered mounts and adversarial aliases in a

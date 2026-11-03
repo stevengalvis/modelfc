@@ -9,6 +9,20 @@ from ops.bounded_worker import mount_observer_prototype as observer
 
 
 class ObserverTest(unittest.TestCase):
+    def test_real_procfs_check_rejects_nonproc(self):
+        proc_fd = os.open('/proc', observer._O_PATH | os.O_DIRECTORY | os.O_CLOEXEC)
+        try:
+            observer._verify_proc(proc_fd)
+        finally:
+            os.close(proc_fd)
+        with tempfile.TemporaryDirectory() as directory:
+            fd = os.open(directory, observer._O_PATH | os.O_DIRECTORY | os.O_CLOEXEC)
+            try:
+                with self.assertRaises(observer.ObservationBlocked):
+                    observer._verify_proc(fd)
+            finally:
+                os.close(fd)
+
     def test_real_open_beneath_and_mount_id_if_supported(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -36,6 +50,22 @@ class ObserverTest(unittest.TestCase):
                 with self.assertRaises(observer.ObservationBlocked):
                     observer._mount_id(9)
 
+    def test_expired_budget_blocks_and_closes_pins(self):
+        root = b'1 1 8:1 / / ro - ext4 /dev/a rw\n'
+        ns = ((1, 2),) * 3
+        with patch.object(observer.os, 'open', side_effect=[9, 10, 11, 12, 13]), \
+             patch.object(observer.os, 'fstat', return_value=SimpleNamespace(st_dev=1, st_ino=2)), \
+             patch.object(observer.os, 'close') as close, \
+             patch.object(observer, '_verify_proc'), \
+             patch.object(observer, '_namespace_ids', return_value=ns), \
+             patch.object(observer, '_read_bounded', return_value=root), \
+             patch.object(observer.time, 'monotonic', side_effect=[0, observer.MAX_SECONDS]), \
+             patch.object(observer, '_open_in_root') as resolve:
+            with self.assertRaisesRegex(observer.ObservationBlocked, 'observation_timeout'):
+                observer.observe()
+            resolve.assert_not_called()
+            self.assertTrue({9, 10, 11, 12, 13} <= {call.args[0] for call in close.call_args_list})
+
     def test_changes_and_unresolvable_paths_block_and_close_descriptors(self):
         root = b'1 1 8:1 / / ro - ext4 /dev/a rw\n'
         ns = ((1, 2), (1, 2), (1, 2))
@@ -44,9 +74,10 @@ class ObserverTest(unittest.TestCase):
                                                ([root, root], [ns, ((1, 3),) * 3], 1),
                                                ([root], [ns], observer.ObservationBlocked('missing'))):
             with self.subTest(reads=reads, identities=identities), \
-                 patch.object(observer.os, 'open', side_effect=[10, 11, 12, 13]), \
+                 patch.object(observer.os, 'open', side_effect=[9, 10, 11, 12, 13]), \
                  patch.object(observer.os, 'fstat', return_value=SimpleNamespace(st_dev=1, st_ino=2)), \
                  patch.object(observer.os, 'close') as close, \
+                 patch.object(observer, '_verify_proc'), \
                  patch.object(observer, '_namespace_ids', side_effect=identities), \
                  patch.object(observer, '_read_bounded', side_effect=reads), \
                  patch.object(observer, '_open_in_root', side_effect=resolution if isinstance(resolution, Exception)
@@ -57,7 +88,7 @@ class ObserverTest(unittest.TestCase):
                 else:
                     with self.assertRaises(observer.ObservationBlocked):
                         observer.observe()
-                self.assertTrue({10, 11, 12, 13} <= {call.args[0] for call in close.call_args_list})
+                self.assertTrue({9, 10, 11, 12, 13} <= {call.args[0] for call in close.call_args_list})
 
 
 if __name__ == '__main__':

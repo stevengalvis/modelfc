@@ -7,16 +7,21 @@ import ctypes
 import os
 import platform
 import re
+import threading
+import time
 
 from . import mount_visibility_prototype as visibility
 from . import storage_guard
 
 MAX_MOUNTINFO = 8 * 1024 * 1024
 MAX_FDINFO = 65536
+MAX_MOUNTPOINTS = 4096
+MAX_SECONDS = 10
 _O_PATH = 0o10000000
 _RESOLVE_NO_MAGICLINKS = 0x02
 _RESOLVE_NO_SYMLINKS = 0x04
 _RESOLVE_IN_ROOT = 0x10
+_PROC_SUPER_MAGIC = 0x9fa0
 
 
 class ObservationBlocked(ValueError):
@@ -69,6 +74,28 @@ def _fd_id(fd):
     return info.st_dev, info.st_ino
 
 
+def _verify_proc(proc_fd):
+    """Check the pinned proc filesystem and its view of the current thread.
+
+    This does not authenticate proc contents against a malicious host root or
+    prevent later mount changes. Those actors remain outside this prototype.
+    """
+    if platform.system() != 'Linux' or platform.machine() not in ('x86_64', 'aarch64'):
+        raise ObservationBlocked('unsupported_platform')
+    data = ctypes.create_string_buffer(256)
+    libc = ctypes.CDLL(None, use_errno=True)
+    if libc.fstatfs(proc_fd, ctypes.byref(data)) != 0:
+        raise ObservationBlocked('proc_unverified')
+    if ctypes.cast(data, ctypes.POINTER(ctypes.c_long)).contents.value != _PROC_SUPER_MAGIC:
+        raise ObservationBlocked('proc_unverified')
+    expected = f'{os.getpid()}/task/{threading.get_native_id()}'
+    if os.readlink('thread-self', dir_fd=proc_fd) != expected:
+        raise ObservationBlocked('proc_identity_mismatch')
+    info = os.stat('/proc', follow_symlinks=False)
+    if (info.st_dev, info.st_ino) != _fd_id(proc_fd):
+        raise ObservationBlocked('proc_changed')
+
+
 def observe():
     """Return a candidate visibility list, never a safety or admission result.
 
@@ -77,8 +104,12 @@ def observe():
     Any resolution failure aborts. All opened descriptors are closed on return.
     """
     root_fd = None
+    proc_fd = None
     ns_fds = []
     try:
+        deadline = time.monotonic() + MAX_SECONDS
+        proc_fd = os.open('/proc', _O_PATH | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW)
+        _verify_proc(proc_fd)
         for name in ('mnt', 'user', 'pid'):
             ns_fds.append(os.open('/proc/thread-self/ns/' + name, os.O_RDONLY | os.O_CLOEXEC))
         namespace_before = _namespace_ids()
@@ -88,10 +119,12 @@ def observe():
         raw_before = _read_bounded('/proc/thread-self/mountinfo', MAX_MOUNTINFO)
         before = storage_guard._mounts(raw_before.decode('utf-8'))
         paths = {mount['path'] for mount in before}
-        if len(paths) > 65536:
+        if len(paths) > MAX_MOUNTPOINTS:
             raise ObservationBlocked('too_many_mounts')
         observed = {}
         for path in sorted(paths):
+            if time.monotonic() >= deadline:
+                raise ObservationBlocked('observation_timeout')
             fd = _open_in_root(root_fd, path)
             try:
                 observed[path] = _mount_id(fd)
@@ -99,6 +132,9 @@ def observe():
                 os.close(fd)
         raw_after = _read_bounded('/proc/thread-self/mountinfo', MAX_MOUNTINFO)
         namespace_after = _namespace_ids()
+        _verify_proc(proc_fd)
+        if time.monotonic() >= deadline:
+            raise ObservationBlocked('observation_timeout')
         if namespace_before != namespace_after or raw_before != raw_after:
             raise ObservationBlocked('observation_changed')
         after = storage_guard._mounts(raw_after.decode('utf-8'))
@@ -112,3 +148,5 @@ def observe():
             os.close(root_fd)
         for fd in ns_fds:
             os.close(fd)
+        if proc_fd is not None:
+            os.close(proc_fd)
