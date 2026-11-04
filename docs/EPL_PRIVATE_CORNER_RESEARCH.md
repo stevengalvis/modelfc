@@ -119,3 +119,9 @@ study. Before a study could start, separately approve and verify:
 Use synthetic inputs/disposable stores only until those gates are satisfied.
 No provider, production data, credentials, configuration, VPS, public publication,
 model tuning, qualification policy or deployment is changed by this work.
+
+Local continuation: [EPL_RESEARCH_RUNNER.md](EPL_RESEARCH_RUNNER.md) adds bounded
+single-registry coordination and reviewed append-only status/result chains. It
+addresses cross-store duplicate delivery within that registry, not study activation,
+fixed-window scheduling, cross-registry enforcement, recovery or rescheduled
+recapture policy. The approval/environment gates above remain in force.
