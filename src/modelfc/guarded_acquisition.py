@@ -231,7 +231,8 @@ def _prepare(store, entry, sources, frozen, history_calendar=None):
 
 def run_once(*, state_dir, private_dir, calendar_path, metadata_path, data_config_path,
              authorization_path=None, history_calendar_path=None, clock=now, history_loader=load_history_bytes,
-             client_type=OddsPapiTournamentClient, retain_handoff=False, epl_freeze=None):
+             client_type=OddsPapiTournamentClient, retain_handoff=False, epl_freeze=None,
+             epl_one_shot=False):
     """One authorization permits at most one attempt. No caller-selected endpoint/price policy."""
     result = {"status": "DISABLED", "provider_requests": 0, "forecasts": 0, "snapshots": 0,
               "consumers": 0, "reason": None}
@@ -240,6 +241,12 @@ def run_once(*, state_dir, private_dir, calendar_path, metadata_path, data_confi
         require_runtime()
         as_of = utc(clock())
         auth = _authorization(authorization_path, as_of)
+        if epl_one_shot:
+            if (epl_one_shot is not True or auth['enabled_competitions'] != ['E0']
+                    or not isinstance(epl_freeze, dict)
+                    or epl_freeze.get('options', {}).get('next_day') is not True
+                    or 'as_of' in epl_freeze.get('options', {})):
+                raise AcquisitionRejected('EPL_OPERATOR_SCOPE_REJECTED')
         if str(Path(state_dir)) != auth["state_dir"] or str(Path(private_dir)) != auth["private_dir"]:
             raise AcquisitionRejected("AUTHORIZATION_PATH_REJECTED")
         calendar_raw = _local_bytes(calendar_path, 2_000_000)
@@ -272,9 +279,18 @@ def run_once(*, state_dir, private_dir, calendar_path, metadata_path, data_confi
             rollover_if_needed(control_path, control, now=utc(clock()), save=_save)
             if control["period"]["reserved"] >= control["period"]["allowance"]:
                 raise AcquisitionRejected("REQUEST_BUDGET")
+            if epl_one_shot and control['period']['allowance']-control['period']['reserved']-1 < auth['quota_floor']:
+                raise AcquisitionRejected('EPL_SHARED_RESERVE_FLOOR')
             # Construct only after fail-closed preflight. No HTTP in constructor.
             guard = _RequestBudgetGuard(control_path, control, result,
                          allowed_kinds=(TOURNAMENT_KIND,), invocation_limit=1)
+            if epl_one_shot:
+                def check_operator_window():
+                    current = utc(clock())
+                    if (_authorization(authorization_path, current) != auth
+                            or not control['period']['start'] <= current.date().isoformat() < control['period']['end']):
+                        raise AcquisitionRejected('EPL_OPERATOR_WINDOW_CLOSED')
+                guard.calendar_check = check_operator_window
             client = client_type(guard)
             batch = plan.batches[0]
             prepared = {}
@@ -340,6 +356,8 @@ def run_once(*, state_dir, private_dir, calendar_path, metadata_path, data_confi
                         hold_epl("QUALIFICATION_RECHECK_REJECTED")
                         if not has_e1:
                             raise
+            if epl_one_shot and control['period']['allowance']-control['period']['reserved']-1 < auth['quota_floor']:
+                raise AcquisitionRejected('EPL_SHARED_RESERVE_FLOOR')
             guard.reserve(1)
             store.put(_name("reservation", auth["experiment_id"]), {"credits_reserved": 1,
                        "experiment_id": auth["experiment_id"]})
