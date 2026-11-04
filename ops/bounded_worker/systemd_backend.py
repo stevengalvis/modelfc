@@ -37,7 +37,7 @@ class SystemdContainment:
     def configure_storage(self, *, properties, expected, guard_path, revalidate):
         if self.attempted or self.storage is not None or not callable(revalidate):
             raise ValueError('invalid_storage_binding')
-        self.storage = (properties, expected, guard_path, revalidate)
+        self.storage = (tuple(properties), expected, guard_path, revalidate, self.unit)
 
     def bind_attempt(self, evidence):
         if self.attempted or Path(evidence) != self.evidence:
@@ -100,6 +100,8 @@ class SystemdContainment:
         if any(not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', k) for k in env):
             raise ValueError('invalid_contained_environment')
         if self.storage is not None:
+            if self.storage[4] != self.unit:
+                raise ValueError('storage_unit_changed')
             self.storage[3]()
         self._record()
         if not (_CGROUP / 'cgroup.controllers').is_file():

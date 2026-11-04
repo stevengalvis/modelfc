@@ -133,7 +133,8 @@ def inspect(task_id, config, *, _worker_factory=Codex):
         else:
             stored_storage = _read(storage_path)
             if (type(stored_storage) is not dict
-                    or set(stored_storage) != {'identity', 'configuration_sha256', 'guard_expected', 'guard_identity'}
+                    or set(stored_storage) != {'identity', 'configuration_sha256', 'guard_expected', 'guard_identity',
+                                               'unit', 'properties_sha256'}
                     or stored_storage['configuration_sha256'] != hashlib.sha256(
                         _json_bytes(asdict(config.storage))).hexdigest()
                     or stored_storage['identity'] != admit(config.storage, worker_uid=worker.account.pw_uid, worker_gid=worker.account.pw_gid)):
@@ -171,6 +172,13 @@ def inspect(task_id, config, *, _worker_factory=Codex):
             return _blocked(task_id)
         if config.storage is not None and admission.get('task_sha256') != record['task_sha256']:
             return _blocked(task_id)
+        if config.storage is not None:
+            properties = service_properties(config.storage, work=Path(config.storage.workspace) / task_id,
+                                            runtime=Path(config.storage.runtime) / task_id,
+                                            home=worker.account.pw_dir, unit=unit['unit'])
+            if (stored_storage['unit'] != unit['unit'] or stored_storage['properties_sha256'] !=
+                    hashlib.sha256(_json_bytes(properties)).hexdigest()):
+                return _blocked(task_id)
         if result['status'] == 'completed':
             fd = os.open(attempt / 'diff.patch', os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
             with os.fdopen(fd, 'rb') as source:
@@ -218,9 +226,10 @@ def record_storage_admission(task, config, evidence_root, identity):
 def _configure_storage(backend, config, task, work, directory, worker, identity):
     storage = config.storage
     account = worker.account
+    unit = backend.unit
     properties_check = service_properties(storage, work=work,
                                           runtime=Path(storage.runtime) / task.task_id,
-                                          home=account.pw_dir)
+                                          home=account.pw_dir, unit=unit)
     sources = {name: source_identity(path, account.pw_uid) for name, path in
                (('auth', storage.auth_source), ('config', storage.config_source))}
     # Only a root-owned, immutable installation can supply privileged guard code.
@@ -232,7 +241,8 @@ def _configure_storage(backend, config, task, work, directory, worker, identity)
     if (not stat.S_ISREG(guard_info.st_mode) or guard_info.st_uid != 0
             or guard_info.st_nlink != 1 or guard_info.st_mode & 0o022):
         raise ValueError('unprotected_storage_guard')
-    evidence = {'identity': identity,
+    evidence = {'identity': identity, 'unit': unit,
+                'properties_sha256': hashlib.sha256(_json_bytes(properties_check)).hexdigest(),
                 'configuration_sha256': hashlib.sha256(_json_bytes(asdict(storage))).hexdigest()}
     _durable_write(directory / 'storage.json', _json_bytes(evidence))
     if admit(storage, worker_uid=account.pw_uid, worker_gid=account.pw_gid) != identity:
@@ -259,6 +269,10 @@ def _configure_storage(backend, config, task, work, directory, worker, identity)
                                   guard_info.st_mtime_ns, guard_info.st_mode]
     _durable_write(directory / 'storage.json', _json_bytes(evidence))
     def revalidate():
+        if (backend.unit != unit or properties_check != service_properties(
+                storage, work=work, runtime=Path(storage.runtime) / task.task_id,
+                home=account.pw_dir, unit=unit)):
+            raise ValueError('storage_properties_changed')
         if admit(storage, worker_uid=account.pw_uid, worker_gid=account.pw_gid) != identity:
             raise ValueError('storage_identity_changed')
         for name, path in (('auth', storage.auth_source), ('config', storage.config_source)):

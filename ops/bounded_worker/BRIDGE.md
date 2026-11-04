@@ -163,7 +163,16 @@ The protected settings file may contain a `storage` object matching
 `StorageConfiguration` in `storage.py`; omission retains the existing behavior.
 The operator supplies one already mounted, fully allocated loop-backed ext4 image,
 its exact image and filesystem identities and limits, free byte/inode reserves,
-workspace and runtime directories, and the original worker auth/config paths.
+workspace and runtime directories, the original worker auth/config paths, and a
+single `cgroup_component` from separately authenticated operator evidence. The
+setting is root-protected, not task supplied; its validation does not authenticate
+the prior reports. The backend combines it with its own fresh unit name for a
+mandatory read-only cgroup bind. If the source is absent or the guard sees an
+unexpected writable mount, startup fails closed; no fallback or path creation is
+performed. Verify the selected component against protected evidence for the exact
+host/systemd setup before authorizing use. Configuration and generated properties
+are bound to attempt evidence; old storage records or settings lacking this field
+are not silently migrated and remain blocked for operator review.
 The workspace must equal `workspace_root`; evidence, bridge state and publisher
 storage must remain outside the bounded mount. This code does not create, format,
 mount, resize or remove the image, and does not copy credentials. Admission fails
@@ -187,8 +196,23 @@ blocks acceptance and retains evidence. A failed or interrupted attempt is not
 resumed. The bounded runtime directories are retained for operator reconciliation.
 
 `ProtectSystem=strict` does not establish complete API-filesystem, device or IPC
-confinement; the guard permits systemd's `/proc`, `/sys` and `/dev` exceptions and
-rejects unrecognized writable mounts elsewhere. Host provisioning and exact service
+confinement. Storage-enabled services request `/dev` and `/sys` read-only; the guard
+checks effective mount IDs and rejects unrecognized visible writable mounts, including
+`/sys` and its descendants, while allowing only the explicitly listed writable API
+mounts. Ambiguous resolution or non-private propagation blocks. This relies on a
+trusted host administrator, an exclusive worker identity, no inherited file handles
+other than the three pipe streams and the untrusted worker being unable to reveal
+covered mounts. Two specific user-namespace test paths did not reach a mount on one
+host; that is not proof that every route is blocked. They also request private
+mount propagation to prevent host mount events from propagating into the worker
+namespace. This can retain a host filesystem in the service namespace after host
+unmount until the unit exits; verify actual behavior and cleanup on the target
+systemd/kernel before use. This property alone does not validate mount visibility
+or establish the confinement boundary. The guard observes mounts in a child and
+stops waiting after eight seconds, requests child termination and exits 127 on
+failure. A child stuck in uninterruptible kernel sleep may survive that request;
+the service cgroup must still be stopped and independently verified empty before
+any result can be accepted. Host provisioning and exact service
 namespace readback, byte/inode exhaustion, nested tool behavior, integrated coding,
 authentication refresh and interruption acceptance require separately authorized
 host work. The isolated startup fixture is not evidence of production integration.

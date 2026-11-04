@@ -88,6 +88,7 @@ class BoundedWorkerTest(unittest.TestCase):
         raw = b'failed to spawn secret-helper: no such file or directory TOKEN=private'
         self.assertEqual(_stderr_code(raw), 'spawn_failed')
         self.assertEqual(_stderr_code(b'unrelated private diagnostic'), 'stderr_observed')
+        self.assertEqual(_stderr_code(b'storage_guard:mounts:unexpected_writable_mount\n'), 'stderr_observed')
         self.assertNotIn('secret', _stderr_code(raw))
 
     def test_directory_changes_are_out_of_scope(self):

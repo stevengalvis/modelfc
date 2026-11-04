@@ -91,6 +91,18 @@ class BackendTest(unittest.TestCase):
         self.assertTrue(self.backend.verify_empty())
 
     def test_bounded_properties_guard_and_revalidation(self):
+        other = SystemdContainment(self.evidence, 1234, 1234)
+        other.bind_attempt(self.evidence)
+        mutable = ['--property=PrivateMounts=yes']
+        other.configure_storage(properties=mutable, expected={}, guard_path='/safe/guard.py', revalidate=lambda: None)
+        mutable.append('--property=unexpected')
+        self.assertEqual(other.storage[0], ('--property=PrivateMounts=yes',))
+        other.unit = 'modelfc-bounded-' + 'f' * 32 + '.service'
+        with self.assertRaisesRegex(ValueError, 'storage_unit_changed'):
+            other.launch(['/usr/bin/worker'], cwd='/work', env={}, user=1234, group=1234, extra_groups=[],
+                         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                         start_new_session=True, bufsize=0)
+        self.assertEqual(self.commands, [])
         checks = []
         self.backend.configure_storage(properties=['--property=PrivateMounts=yes'],
                                        expected={'fixture': True}, guard_path='/safe/guard.py',
