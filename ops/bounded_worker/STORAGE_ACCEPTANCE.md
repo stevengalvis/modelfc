@@ -146,12 +146,18 @@ The inventory JSON has this exact shape. Replace placeholders with reviewed
 values; the arrays contain decimal device/inode pairs, not pathnames:
 
 ```json
-{"version":2,"creation_sha256":"<reviewed-creation-sha256>","parent":[SRV_DEVICE,SRV_INODE],"known_protected_images":[],"known_protected_files":[],"protected_paths":["/srv/modelfc-bounded","/srv/modelfc-bounded-images","/srv/modelfc-worker-work","/srv/modelfc","/var/lib/modelfc","/etc/modelfc","/root"],"bridge_lock":{"path":"/var/lib/modelfc-bridge-state/bridge.lock","device":LOCK_DEVICE,"inode":LOCK_INODE},"worker":{"username":"zeno-worker","uid":1003,"gid":1003}}
+{"version":3,"creation_sha256":"<reviewed-creation-sha256>","parent":[SRV_DEVICE,SRV_INODE],"known_protected_images":[],"known_protected_files":[],"protected_paths":["/srv/modelfc-bounded","/srv/modelfc-bounded-images","/srv/modelfc-worker-work","/srv/modelfc","/var/lib/modelfc","/etc/modelfc","/root"],"bridge_lock":{"path":"/var/lib/modelfc-bridge-state/bridge.lock","device":LOCK_DEVICE,"inode":LOCK_INODE},"worker":{"username":"zeno-worker","uid":1003,"gid":1003},"cgroup_component":"<reviewed-single-component>"}
 ```
 
 The inventory's SHA-256 is separately recorded. The manifest uses the **image**
 and fake-source device/inode values from the creation receipt, the independently
 observed mount ID, and that inventory digest:
+
+The component is operator-selected from authenticated, retained diagnostic
+evidence for this host, not from a task or a real credential. Validation checks
+the component's shape but does not authenticate its origin. Version-2 inventories
+and storage records without the component do not satisfy this candidate; preserve
+them unchanged for operator review rather than rewriting old evidence.
 
 ```json
 {"version":2,"fixture_root":"/srv/modelfc-zen69-fixture-<32 lowercase hex>","image":[DEVICE,INODE],"mount_id":MOUNT_ID,"sources":{"auth":[DEVICE,INODE],"config":[DEVICE,INODE],"sentinel":[DEVICE,INODE]},"inventory_sha256":"64 lowercase hex characters"}

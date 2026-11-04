@@ -20,7 +20,7 @@ import time
 from types import SimpleNamespace
 
 from . import launcher
-from .storage import LinuxStorageReader, StorageConfiguration, admit, parse_mountinfo
+from .storage import LinuxStorageReader, StorageConfiguration, admit, parse_mountinfo, valid_cgroup_component
 from .bridge_security import protected_bytes, protected_json
 from .bridge_envelope import _pairs
 from .bridge_guard import safe
@@ -52,8 +52,11 @@ def load_manifest(root, inventory_path, inventory_sha256):
         raise ValueError('inventory_digest_mismatch')
     inventory = json.loads(raw, object_pairs_hook=_pairs)
     if (type(inventory) is not dict or set(inventory) != {'version', 'creation_sha256', 'parent',
-            'known_protected_images', 'known_protected_files', 'protected_paths', 'bridge_lock', 'worker'}
-            or inventory['version'] != 2 or type(inventory['creation_sha256']) is not str
+            'known_protected_images', 'known_protected_files', 'protected_paths', 'bridge_lock', 'worker',
+            'cgroup_component'}
+            or type(inventory['version']) is not int or inventory['version'] != 3
+            or not valid_cgroup_component(inventory['cgroup_component'])
+            or type(inventory['creation_sha256']) is not str
             or not re.fullmatch(r'[0-9a-f]{64}', inventory['creation_sha256'])):
         raise ValueError('invalid_protected_inventory')
     manifest = protected_json(root / 'fixture-manifest.json')
@@ -122,7 +125,7 @@ def load_manifest(root, inventory_path, inventory_sha256):
                 or value['id'] != manifest['sources'][name] or value['id'][0] != inventory['parent'][0]
                 or type(value['mtime_ns']) is not int or type(value['ctime_ns']) is not int):
             raise ValueError('creation_source_mismatch')
-    return manifest, lock, worker, creation['sources']
+    return manifest, lock, worker, creation['sources'], inventory['cgroup_component']
 
 
 def verify_topology(root, mountinfo, mount_id=None):
@@ -183,7 +186,7 @@ def fake_sources(home, uid, expected, creation_sources=None):
         os.close(root_fd)
 
 
-def fixture_configuration(root, account, manifest, creation_sources):
+def fixture_configuration(root, account, manifest, creation_sources, cgroup_component):
     image, mount, work, runtime = root / 'fixture.img', root / 'fs', root / 'fs/workspaces', root / 'fs/runtime'
     home, evidence = root / 'home', root / 'evidence'
     image_info = image.lstat()
@@ -195,7 +198,8 @@ def fixture_configuration(root, account, manifest, creation_sources):
     sources = fake_sources(home, account.pw_uid, manifest['sources'], creation_sources)
     storage = StorageConfiguration(str(mount), str(image), str(work), str(runtime), image_info.st_dev,
                                    image_info.st_ino, image_info.st_size, vfs.f_blocks * vfs.f_frsize,
-                                   vfs.f_files, 1024, 1, str(home / '.codex/auth.json'), str(home / '.codex/config.toml'))
+                                   vfs.f_files, 1024, 1, str(home / '.codex/auth.json'),
+                                   str(home / '.codex/config.toml'), cgroup_component)
     config = launcher.Configuration(str(work), str(evidence), account.pw_name, '/usr/bin/python3', '0' * 64,
                                     prepared_baseline=True, storage=storage)
     identity = admit(storage, worker_uid=account.pw_uid, worker_gid=account.pw_gid)
@@ -529,21 +533,21 @@ def run(root, username, loop, inventory_path, inventory_sha256):
         raise ValueError('root_and_loop_required')
     root = checked_root(str(root))
     observed_mount_id = verify_topology(root, LinuxStorageReader().mountinfo())
-    manifest, lock, expected_worker, creation_sources = load_manifest(root, inventory_path, inventory_sha256)
+    manifest, lock, expected_worker, creation_sources, cgroup_component = load_manifest(root, inventory_path, inventory_sha256)
     if observed_mount_id != manifest['mount_id']:
         raise ValueError('fixture_mount_identity_mismatch')
     with hold_bridge_lock(lock):
-        return run_locked(root, username, loop, manifest, expected_worker, creation_sources)
+        return run_locked(root, username, loop, manifest, expected_worker, creation_sources, cgroup_component)
 
 
-def run_locked(root, username, loop, manifest, expected_worker, creation_sources):
+def run_locked(root, username, loop, manifest, expected_worker, creation_sources, cgroup_component):
     require_no_worker_units()
     account = pwd.getpwnam(username)
     if (username != expected_worker['username'] or account.pw_uid != expected_worker['uid']
             or account.pw_gid != expected_worker['gid'] or account.pw_uid <= 0 or account.pw_gid <= 0):
         raise ValueError('fixture_worker_required')
     require_no_worker_processes(account.pw_uid)
-    config, identity, sources = fixture_configuration(root, account, manifest, creation_sources)
+    config, identity, sources = fixture_configuration(root, account, manifest, creation_sources, cgroup_component)
     loop_info = os.stat(loop, follow_symlinks=False)
     if not stat.S_ISBLK(loop_info.st_mode) or f'{os.major(loop_info.st_rdev)}:{os.minor(loop_info.st_rdev)}' != identity['device']:
         raise ValueError('fixture_loop_mismatch')

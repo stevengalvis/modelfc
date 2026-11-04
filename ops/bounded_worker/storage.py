@@ -13,6 +13,11 @@ import stat
 import struct
 
 
+def valid_cgroup_component(value):
+    return (type(value) is str and re.fullmatch(r'[A-Za-z0-9_.-]{1,255}', value) is not None
+            and value not in ('.', '..'))
+
+
 @dataclass(frozen=True)
 class StorageConfiguration:
     mount: str
@@ -28,8 +33,11 @@ class StorageConfiguration:
     reserve_inodes: int
     auth_source: str
     config_source: str
+    cgroup_component: str | None = None
 
     def validate(self):
+        if not valid_cgroup_component(self.cgroup_component):
+            raise ValueError('invalid_cgroup_component')
         paths = [Path(p) for p in (self.mount, self.image, self.workspace, self.runtime,
                                    self.auth_source, self.config_source)]
         for raw, path in zip((self.mount, self.image, self.workspace, self.runtime,
@@ -220,7 +228,7 @@ def admit(config, *, reader=None, worker_uid=None, worker_gid=None):
             'filesystem_inodes': vfs.f_files}
 
 
-def service_properties(config, *, work, runtime, home):
+def baseline_properties(config, *, work, runtime, home):
     """Build fixed systemd properties for validated, operator-selected paths."""
     config.validate()
     work, runtime, home = map(Path, (work, runtime, home))
@@ -246,6 +254,41 @@ def service_properties(config, *, work, runtime, home):
                 config.auth_source + ':' + str(codex_home / 'auth.json'),
                 config.config_source + ':' + str(codex_home / 'config.toml'))),
             '--property=TemporaryFileSystem=/dev/shm:size=8M,nr_inodes=4096,mode=1777,nodev,nosuid,noexec']
+
+
+def service_properties(config, *, work, runtime, home, unit):
+    """Generate the reviewed unit-bound storage properties; task data is excluded."""
+    if type(unit) is not str or not re.fullmatch(r'modelfc-bounded-[0-9a-f]{32}\.service', unit):
+        raise ValueError('invalid_containment_unit')
+    values = baseline_properties(config, work=work, runtime=runtime, home=home)
+    path = '/sys/fs/cgroup/system.slice/' + unit + '/' + config.cgroup_component
+    bind = ('/dev:/dev:rbind /run:/run:rbind /sys:/sys:rbind '
+            '/sys/fs/cgroup:/sys/fs/cgroup:rbind ')
+    replacements = {
+        '--property=ProtectSystem=strict': '--property=ReadOnlyPaths=/ /proc/sys',
+        '--property=ReadOnlyPaths=/dev /sys': None,
+        '--property=ReadWritePaths=-/dev/pts -/dev/mqueue':
+            '--property=ReadWritePaths=/proc -/dev/pts -/dev/mqueue',
+    }
+    prefix = '--property=BindReadOnlyPaths='
+    fixed = ('--property=PrivateMounts=yes', '--property=MountFlags=private')
+    dynamic = ('--property=BindPaths=', '--property=BindReadOnlyPaths=', '--property=TemporaryFileSystem=')
+    if (len(values) != 8 or any(values.count(key) != 1 for key in (*replacements, *fixed))
+            or any(sum(value.startswith(prefix) for value in values) != 1 for prefix in dynamic)):
+        raise ValueError('invalid_storage_properties')
+    if sum(value.startswith(prefix) for value in values) != 1:
+        raise ValueError('invalid_storage_properties')
+    output = []
+    for value in values:
+        if value.startswith(prefix):
+            output.append(prefix + bind + value[len(prefix):] + f' {path}:{path}:rbind')
+        elif value in replacements:
+            replacement = replacements[value]
+            if replacement is not None:
+                output.append(replacement)
+        else:
+            output.append(value)
+    return output
 
 
 def source_identity(path, uid):
