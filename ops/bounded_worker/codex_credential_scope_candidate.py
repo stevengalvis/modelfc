@@ -3,6 +3,7 @@
 The operator must substantiate completeness and alias resolution separately;
 this parser cannot discover unknown credential stores or authenticate claims.
 """
+import errno
 import hashlib
 import json
 import os
@@ -18,7 +19,7 @@ TEST_ACCOUNT = 'modelfc-containment-test'
 
 
 def load_scope(scope_path, scope_sha256, evidence_path, account, production_account, *,
-               _read=protected_bytes, _lstat=os.lstat, _boottime=None, _bootid=None):
+               _read=protected_bytes, _lstat=os.lstat, _getxattr=os.getxattr, _boottime=None, _bootid=None):
     """Validate protected metadata only; never open or read credential stores."""
     if (type(scope_sha256) is not str or not re.fullmatch(r'[0-9a-f]{64}', scope_sha256)
             or account.pw_name != TEST_ACCOUNT or account.pw_uid <= 0 or account.pw_gid <= 0
@@ -33,13 +34,31 @@ def load_scope(scope_path, scope_sha256, evidence_path, account, production_acco
         info = _lstat(component)
         if not stat.S_ISDIR(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o022:
             raise ValueError('test_home_unverified')
+    def checked_home():
+        info = _lstat(test_home)
+        if not stat.S_ISDIR(info.st_mode) or info.st_uid != 0 or stat.S_IMODE(info.st_mode) != 0o700:
+            raise ValueError('test_home_unverified')
+        try:
+            _getxattr(test_home, 'system.posix_acl_access', follow_symlinks=False)
+        except OSError as exc:
+            if exc.errno != errno.ENODATA:
+                raise ValueError('test_home_acl_unverified') from exc
+        else:
+            raise ValueError('test_home_acl_unverified')
+        pin = (info.st_dev, info.st_ino, info.st_uid, info.st_gid, stat.S_IMODE(info.st_mode), info.st_ctime_ns)
+        after = _lstat(test_home)
+        if (not stat.S_ISDIR(after.st_mode) or
+                (after.st_dev, after.st_ino, after.st_uid, after.st_gid,
+                 stat.S_IMODE(after.st_mode), after.st_ctime_ns) != pin):
+            raise ValueError('credential_scope_identity_changed')
+        return pin
+
     try:
         _lstat(test_home)
     except FileNotFoundError:
-        pass
+        home_pin = None
     else:
-        # A fresh no-home test account avoids inspecting any existing home data.
-        raise ValueError('test_home_not_absent')
+        home_pin = checked_home()
     raw = _read(scope_path, maximum=16384)
     if hashlib.sha256(raw).hexdigest() != scope_sha256:
         raise ValueError('credential_scope_hash_mismatch')
@@ -91,6 +110,20 @@ def load_scope(scope_path, scope_sha256, evidence_path, account, production_acco
                     item['uid'], item['gid'], item['mode'], item['ctime_ns'])):
             raise ValueError('credential_scope_identity_changed')
         paths.append(item['path'])
-    if len(set(paths)) != len(paths) or production_account.pw_dir not in paths:
+    if (len(set(paths)) != len(paths) or production_account.pw_dir not in paths
+            or (home_pin is not None and test_home not in paths)):
         raise ValueError('credential_scope_incomplete')
+    if home_pin is not None:
+        item = stores[paths.index(test_home)]
+        if home_pin != (item['device'], item['inode'], item['uid'], item['gid'], item['mode'], item['ctime_ns']):
+            raise ValueError('credential_scope_identity_changed')
+        if checked_home() != home_pin:
+            raise ValueError('credential_scope_identity_changed')
+    else:
+        try:
+            _lstat(test_home)
+        except FileNotFoundError:
+            pass
+        else:
+            raise ValueError('test_home_unverified')
     return tuple(paths)

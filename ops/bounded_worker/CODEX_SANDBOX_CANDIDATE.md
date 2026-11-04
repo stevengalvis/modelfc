@@ -65,7 +65,11 @@ metadata-only evidence. The scope lists the real worker home and every
 operator-identified credential-bearing directory by device, inode, owner, mode
 and change time. It must attest complete scope, resolved aliases, absence of
 other same-UID processes and cleared keyrings, bound to the current boot and a
-recent observation. The test account's configured home must be absent. Hashes
+recent observation. The test account's configured home must be absent, or be a
+root-owned mode-0700 directory with protected ancestors and no extended access
+ACL. If present it must be included with pinned metadata in the scope, so the
+dropped-identity gate checks it along with the other stores. Unsupported or
+uncertain ACL metadata blocks the test. No home entries are listed or read. Hashes
 bind those assertions; the code cannot
 establish their truth, discover an unknown store, or prove alias absence. An
 unknown, unreviewed or incomplete scope must block the diagnostic. No credential
