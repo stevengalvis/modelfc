@@ -51,10 +51,49 @@ make the test pass.
 These changes do not block every filesystem-path UNIX socket relay or prove
 production network behavior. A residual socket-risk decision must be explicit;
 real credentials must be inaccessible. The gate does not inventory sockets and
-no socket communication is tested. The profile is not
+no socket communication is tested. Unless separately authorized, conduct at most
+one normal case; an interrupted case requires its own authorization. The profile is not
 established equivalent to app-server. Before any host execution, review the exact
 binary, fake auth schema, socket-relay assumptions, supervisor and artifacts, and
 verify the current protected binary/helper pins.
+
+## Credential scope and test identity
+
+The diagnostic requires the existing `modelfc-containment-test` account, a
+different UID from `zeno-worker`, and a root-protected hash-pinned scope and
+metadata-only evidence. The scope lists the real worker home and every
+operator-identified credential-bearing directory by device, inode, owner, mode
+and change time. It must attest complete scope, resolved aliases, absence of
+other same-UID processes and cleared keyrings, bound to the current boot and a
+recent observation. The test account's configured home must be absent. Hashes
+bind those assertions; the code cannot
+establish their truth, discover an unknown store, or prove alias absence. An
+unknown, unreviewed or incomplete scope must block the diagnostic. No credential
+contents are read by the validator.
+
+Before release the fixed gate checks its real/effective/saved/filesystem UID
+and GID, empty supplementary groups, zero capabilities, no-new-privileges and
+pipe descriptors. Linux `faccessat2` read, write and search checks, with a
+successful search control, must each return `EACCES` for every scoped directory.
+The gate also attempts to open each scoped directory without following the final
+symlink; it reads no directory entries or credential contents, closes any
+unexpectedly opened descriptor and blocks. Unsupported calls, unexpected errors,
+accessible stores or a changed scope block release. The test account
+has different UID/ACL semantics from the production worker. The candidate and
+operator scope have not been validated on the host.
+
+The protected scope JSON has exactly these fields (placeholders are not valid
+inputs):
+
+```json
+{"version":1,"test_username":"modelfc-containment-test","test_uid":983,"test_gid":983,"production_uid":1003,"stores":[{"path":"/home/zeno-worker","device":1,"inode":1,"uid":1003,"gid":1003,"mode":448,"ctime_ns":1}],"complete":true,"aliases_resolved":true,"same_uid_processes_absent":true,"keyrings_clear":true,"evidence_sha256":"<sha256>","boot_id":"<boot-id>","observed_boottime_ns":1}
+```
+
+UIDs, GIDs, path, inode, mode and clock values are examples only; independently
+verify them. Store the scope and evidence as separate root-protected files,
+pin both hashes, and pass the scope path/hash and evidence path to `run_candidate`.
+The evidence must substantiate the assertions without containing credential
+contents. A stale, wrong-boot or changed scope blocks the diagnostic.
 
 ## Unwired credential isolation experiment
 

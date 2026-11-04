@@ -9,7 +9,7 @@ import tempfile
 import tomllib
 from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from ops.bounded_worker import codex_sandbox_supervisor_candidate as supervisor
 from ops.bounded_worker import codex_sandbox_fixture_candidate as fixture_candidate
@@ -142,11 +142,12 @@ class SupervisorTests(unittest.TestCase):
 
     def test_run_candidate_requires_both_launcher_and_supervisor_acceptance(self):
         root = Path('/srv/modelfc-zen69-fixture-' + 'a' * 32)
-        account = SimpleNamespace(pw_name='worker', pw_uid=1003, pw_gid=1003)
+        account = SimpleNamespace(pw_name=supervisor.TEST_ACCOUNT, pw_uid=983, pw_gid=983)
+        production_account = SimpleNamespace(pw_name='zeno-worker', pw_uid=1003, pw_gid=1003, pw_dir='/home/zeno-worker')
         config = launcher.Configuration(str(root / 'fs/workspaces'), str(root / 'evidence'),
-                                        'worker', '/usr/bin/python3', '0' * 64)
+                                        supervisor.TEST_ACCOUNT, '/usr/bin/python3', '0' * 64)
         manifest = {'mount_id': 8, 'sources': {}}
-        expected = {'username': 'worker', 'uid': 1003, 'gid': 1003}
+        expected = {'username': supervisor.TEST_ACCOUNT, 'uid': 983, 'gid': 983}
         before = {'fixture.txt': ('file', 0o600, 'sha')}
         after = {**before, '.agents': ('dir', 0o700), '.aws': ('dir', 0o700), '.codex': ('dir', 0o700)}
         baseline = {'status': 'verified', 'directories': {name: [] for name in ('.agents', '.aws', '.codex')}}
@@ -158,7 +159,11 @@ class SupervisorTests(unittest.TestCase):
         state = {'network': True, 'cleanup': True, 'sources': True, 'inspection': True,
                  'unit': True, 'record': True, 'launch_error': False, 'reinspect': True,
                  'binary': True, 'baseline': True, 'supervisor': True, 'network_record': True,
-                 'network_observation': True, 'run_observation': True}
+                 'network_observation': True, 'run_observation': True, 'scope': True}
+        scope_calls = [0]
+        def load_scope(*args):
+            scope_calls[0] += 1
+            return ('/root',) if state['scope'] or scope_calls[0] == 1 else ('/changed',)
         lock_counts = {'entered': 0, 'exited': 0}
         @contextlib.contextmanager
         def hold(_):
@@ -190,6 +195,8 @@ class SupervisorTests(unittest.TestCase):
                 return {'unit': unit if state['run_observation'] else 'other'}
             if path.name == 'diagnostic-gate-observed.json':
                 return {'unit': unit, 'invocation': 'a' * 32}
+            if path.name == 'codex-credential-scope.json':
+                return {'version': 1, 'scope_sha256': 'd' * 64, 'test_uid': 983, 'test_gid': 983}
             return baseline if state['baseline'] else {'status': 'unverified'}
         def protected(path, **kwargs):
             return b'receipt' if path.name == 'fixture-creation.json' else (record if state['record'] else b'changed')
@@ -198,27 +205,33 @@ class SupervisorTests(unittest.TestCase):
             calls = iter([(1,), (1,) if state['binary'] else (2,)])
             return SimpleNamespace(_binary=lambda: next(calls))
         def exercise():
-            args = (root, 'worker', '/dev/loop1', '/root/inventory', 'b' * 64, '/opt/codex', 'c' * 64, 'normal')
-            self.assertEqual(supervisor.run_candidate(*args)['status'], 'passed')
+            args = (root, supervisor.TEST_ACCOUNT, '/dev/loop1', '/root/inventory', 'b' * 64, '/opt/codex', 'c' * 64, 'normal')
+            options = {'credential_scope_path': '/root/scope', 'credential_scope_sha256': 'd' * 64,
+                       'scope_evidence_path': '/root/evidence'}
+            self.assertEqual(supervisor.run_candidate(*args, **options)['status'], 'passed')
             result['status'] = 'timeout'
-            self.assertEqual(supervisor.run_candidate(*args[:-1], 'interrupted')['status'], 'passed')
+            scope_calls[0] = 0
+            self.assertEqual(supervisor.run_candidate(*args[:-1], 'interrupted', **options)['status'], 'passed')
             result['status'] = 'completed'
             for key in state:
                 with self.subTest(key=key):
                     state[key] = not state[key]
-                    self.assertEqual(supervisor.run_candidate(*args)['status'], 'blocked')
+                    scope_calls[0] = 0
+                    self.assertEqual(supervisor.run_candidate(*args, **options)['status'], 'blocked')
                     state[key] = not state[key]
-            self.assertEqual(lock_counts, {'entered': 16, 'exited': 16})
-        with patch.object(supervisor.os, 'getuid', return_value=0), \
-             patch.object(supervisor.os, 'geteuid', return_value=0), \
-             patch.object(supervisor.os, 'stat', return_value=SimpleNamespace(st_mode=stat.S_IFBLK, st_rdev=os.makedev(7, 1))), \
+            self.assertEqual(lock_counts, {'entered': 17, 'exited': 17})
+        with patch.multiple(supervisor.os, getuid=Mock(return_value=0), geteuid=Mock(return_value=0),
+             stat=Mock(return_value=SimpleNamespace(st_mode=stat.S_IFBLK, st_rdev=os.makedev(7, 1)))), \
              patch.object(supervisor.storage_fixture, 'checked_root', return_value=root), \
              patch.object(supervisor.storage_fixture, 'verify_topology', return_value=8), \
              patch.object(supervisor.storage_fixture, 'load_manifest', return_value=(manifest, {}, expected, {}, 'component')), \
              patch.object(supervisor.storage_fixture, 'hold_bridge_lock', side_effect=hold), \
              patch.object(supervisor.storage_fixture, 'require_no_worker_units'), \
              patch.object(supervisor.storage_fixture, 'require_no_worker_processes'), \
-             patch.object(supervisor.pwd, 'getpwnam', return_value=account), \
+             patch.multiple(supervisor.pwd,
+                getpwnam=Mock(side_effect=lambda name: account if name == supervisor.TEST_ACCOUNT else production_account),
+                getpwall=Mock(return_value=[account, production_account])), \
+             patch.multiple(supervisor, load_scope=Mock(side_effect=load_scope), protected_dir=Mock(), _retain_exclusive=Mock()), \
              patch.object(supervisor.storage_fixture, 'fixture_configuration', return_value=(config, {'device': '7:1'}, ['fake'])), \
              patch.object(supervisor.storage_fixture, 'fake_sources', side_effect=lambda *a, **k: ['fake' if state['sources'] else 'changed']), \
              patch.object(supervisor.storage_fixture, 'create_checkout', return_value='a' * 40), \
@@ -301,7 +314,7 @@ class SupervisorTests(unittest.TestCase):
         baseline = {'status': 'verified', 'directories': {k: [] for k in ('.agents', '.aws', '.codex')}}
         result = {'status': 'completed', 'task_id': 'zen69-fixture'}
         checks = dict(cleanup=True, sources_match=True, input_record_verified=True,
-                      network_fence_verified=True, private_run_verified=True, gate_verified=True,
+                      credential_scope_verified=True, network_fence_verified=True, private_run_verified=True, gate_verified=True,
                       binary_verified=True, observed_unit_matches=True)
         self.assertTrue(supervisor.accepted_case('normal', result, result, baseline, before, after, **checks))
         self.assertFalse(supervisor.accepted_case('interrupted', result, result, baseline, before, after, **checks))

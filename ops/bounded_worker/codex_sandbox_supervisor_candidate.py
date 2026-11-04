@@ -15,8 +15,9 @@ from dataclasses import replace
 from types import SimpleNamespace
 
 from . import launcher, storage_fixture
-from .bridge_security import protected_bytes
+from .bridge_security import protected_bytes, protected_dir
 from .codex import Codex
+from .codex_credential_scope_candidate import TEST_ACCOUNT, load_scope
 from .codex_sandbox_fixture_candidate import CandidateWorker, GATE_ARG, PROBE_ARG
 from .storage import LinuxStorageReader
 from .storage_fixture import cgroup_view_verified, independent_cleanup
@@ -131,8 +132,9 @@ class DiagnosticContainment(SystemdContainment):
 
 class PreparedProbeWorker:
     """Connect a fixed probe to the backend actually selected by the launcher."""
-    def __init__(self, pinned_binary, account, mode):
+    def __init__(self, pinned_binary, account, mode, credential_paths, revalidate_scope):
         self.pinned_binary, self.account, self.mode = pinned_binary, account, mode
+        self.credential_paths, self.revalidate_scope = credential_paths, revalidate_scope
         self.worker = None
         self.supervisor = None
 
@@ -142,7 +144,8 @@ class PreparedProbeWorker:
             raise ValueError('diagnostic_backend_required')
         self.backend = backend
         self.supervisor = FencedProbeSupervisor(backend, self.account.pw_uid, self.mode)
-        self.worker = CandidateWorker(self.pinned_binary, self.account, self.mode, self.supervisor)
+        self.worker = CandidateWorker(self.pinned_binary, self.account, self.mode, self.supervisor,
+                                      self.credential_paths, self.revalidate_scope)
         return self.worker.run(task, work, boundary)
 
 
@@ -183,7 +186,7 @@ def verify_fake_input_record(raw, creation_sha256, digest):
 
 
 def accepted_case(mode, result, inspected, baseline, before, after, *, cleanup, sources_match,
-                  input_record_verified, network_fence_verified, private_run_verified, gate_verified,
+                  input_record_verified, credential_scope_verified, network_fence_verified, private_run_verified, gate_verified,
                   binary_verified, observed_unit_matches):
     """Fail closed unless launcher, independent and fixture checks all agree."""
     if (mode not in ('normal', 'interrupted') or type(result) is not dict or result != inspected
@@ -191,7 +194,7 @@ def accepted_case(mode, result, inspected, baseline, before, after, *, cleanup, 
             or type(baseline) is not dict or set(baseline) != {'status', 'directories'}
             or baseline['status'] != 'verified' or type(baseline['directories']) is not dict
             or type(before) is not dict or type(after) is not dict
-            or not all(value is True for value in (cleanup, sources_match, input_record_verified,
+            or not all(value is True for value in (cleanup, sources_match, input_record_verified, credential_scope_verified,
                 network_fence_verified, private_run_verified, gate_verified, binary_verified, observed_unit_matches))):
         return False
     names = {'.agents', '.aws', '.codex'}
@@ -469,7 +472,8 @@ class FencedProbeSupervisor(ProbeSupervisor):
         return identity
 
 
-def run_candidate(root, username, loop, inventory_path, inventory_sha256, executable, executable_sha256, mode):
+def run_candidate(root, username, loop, inventory_path, inventory_sha256, executable, executable_sha256, mode, *,
+                  credential_scope_path, credential_scope_sha256, scope_evidence_path):
     """Run exactly one reviewed fake fixture; no model, retries or publication.
 
     This is an offline candidate, not an approved host procedure. PrivateNetwork
@@ -488,10 +492,18 @@ def run_candidate(root, username, loop, inventory_path, inventory_sha256, execut
     with storage_fixture.hold_bridge_lock(lock):
         storage_fixture.require_no_worker_units()
         account = pwd.getpwnam(username)
-        if (username != expected_worker['username'] or account.pw_uid != expected_worker['uid']
+        if (username != TEST_ACCOUNT or username != expected_worker['username'] or account.pw_uid != expected_worker['uid']
                 or account.pw_gid != expected_worker['gid'] or account.pw_uid <= 0 or account.pw_gid <= 0):
             raise ValueError('fixture_worker_required')
+        production_account = pwd.getpwnam('zeno-worker')
+        if [item.pw_name for item in pwd.getpwall() if item.pw_uid == account.pw_uid] != [TEST_ACCOUNT]:
+            raise ValueError('fixture_worker_uid_not_unique')
         storage_fixture.require_no_worker_processes(account.pw_uid)
+        storage_fixture.require_no_worker_processes(production_account.pw_uid)
+        def revalidate_scope():
+            return load_scope(credential_scope_path, credential_scope_sha256, scope_evidence_path,
+                              account, production_account)
+        credential_paths = revalidate_scope()
         config, identity, sources = storage_fixture.fixture_configuration(
             root, account, manifest, creation_sources, component, _auth=FAKE_AUTH, _config=FAKE_CONFIG)
         loop_info = os.stat(loop, follow_symlinks=False)
@@ -503,13 +515,17 @@ def run_candidate(root, username, loop, inventory_path, inventory_sha256, execut
         config = replace(config, executable=executable, executable_sha256=executable_sha256)
         creation_sha = hashlib.sha256(protected_bytes(root / 'fixture-creation.json', maximum=16384)).hexdigest()
         input_digest = retain_fake_input_record(root / 'evidence', creation_sha)
+        protected_dir(root / 'evidence', mode=0o700)
+        scope_record = {'version': 1, 'scope_sha256': credential_scope_sha256,
+                        'test_uid': account.pw_uid, 'test_gid': account.pw_gid}
+        _retain_exclusive(root / 'evidence', 'codex-credential-scope.json', scope_record)
         base = storage_fixture.create_checkout(Path(config.workspace_root), identity, account.pw_uid,
                                                account.pw_gid, root / 'home')
         work = Path(config.workspace_root) / storage_fixture.TASK_ID
         before = _snapshot(work)
         task = Task(storage_fixture.TASK_ID, 'stevengalvis/modelfc', base, 'no-model sandbox fixture', ('fixture.txt',))
         fake_account = SimpleNamespace(pw_uid=account.pw_uid, pw_gid=account.pw_gid, pw_dir=str(root / 'home'))
-        worker = PreparedProbeWorker(binary, fake_account, mode)
+        worker = PreparedProbeWorker(binary, fake_account, mode, credential_paths, revalidate_scope)
         result = inspected = None
         error = None
         try:
@@ -518,7 +534,7 @@ def run_candidate(root, username, loop, inventory_path, inventory_sha256, execut
             inspected = launcher.inspect(task.task_id, config, _worker_factory=lambda *_: worker)
         except Exception as exc:
             error = type(exc).__name__
-        cleanup = final_inspection = sources_match = record_ok = binary_ok = unit_ok = network_ok = run_ok = gate_ok = False
+        cleanup = final_inspection = sources_match = record_ok = scope_ok = binary_ok = unit_ok = network_ok = run_ok = gate_ok = False
         baseline, after = None, None
         try:
             control = worker.supervisor
@@ -545,6 +561,8 @@ def run_candidate(root, username, loop, inventory_path, inventory_sha256, execut
                 manifest['sources'], creation_sources, _auth=FAKE_AUTH, _config=FAKE_CONFIG)
             record_ok = verify_fake_input_record(protected_bytes(root / 'evidence/codex-fixture-inputs.json'),
                                                  creation_sha, input_digest)
+            scope_ok = (launcher._read(root / 'evidence/codex-credential-scope.json') == scope_record
+                        and revalidate_scope() == credential_paths)
             binary_ok = binary._binary() == binary_pin
             baseline = launcher._read(Path(config.evidence_root) / task.task_id / 'attempt/baseline.json')
             after = _snapshot(work)
@@ -558,7 +576,8 @@ def run_candidate(root, username, loop, inventory_path, inventory_sha256, execut
                         pipe.close()
         passed = (error is None and final_inspection and accepted_case(
             mode, result, inspected, baseline, before, after, cleanup=cleanup, sources_match=sources_match,
-            input_record_verified=record_ok, network_fence_verified=network_ok, private_run_verified=run_ok,
+            input_record_verified=record_ok, credential_scope_verified=scope_ok,
+            network_fence_verified=network_ok, private_run_verified=run_ok,
             gate_verified=gate_ok, binary_verified=binary_ok,
             observed_unit_matches=unit_ok))
         return {'status': 'passed' if passed else 'blocked', 'mode': mode, 'result': result,
