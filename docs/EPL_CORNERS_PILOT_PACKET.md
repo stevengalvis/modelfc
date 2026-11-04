@@ -39,10 +39,13 @@ information available at historical kickoff. Bootstrap draws retain dates within
 seasons but do not address adjacent-date dependence, refitting or multiple correlated
 comparisons. No odds-based edge, returns or prospective qualification is established.
 
-## Fixed calibration follow-up, ready locally but actual results missing
+## Fixed calibration follow-up completed; qualification remains separate
 
-The real paired rows remain private on the VPS; none were available in the cloud
-workspace. `pl_corner_calibration` reads the already-produced comparison JSON,
+The real paired rows remain private on the VPS. Per the ZEN-74 update posted at
+03:38 UTC on 4 November, actual calibration completed successfully and all 72
+groups were checked. It is not missing and must not be rerun for this task.
+The following command documents the completed procedure, not a new run request.
+`pl_corner_calibration` reads the already-produced comparison JSON,
 without CSV access, model execution, fitting or network access. Run only in a
 separately authorized private offline job using a reviewed exact source commit:
 
@@ -93,7 +96,7 @@ Before activation, fill and approve every item below. Blank/unknown means HOLD:
 
 | Gate / owner | Evidence still required |
 |---|---|
-| Qualification / ZEN-74 | Actual fixed-bin report; independent decision; exact model and evaluation pins, existing policy, effective/expiry times. The model pin must be the canonical fingerprint of `pl_corner_capture`'s implementation map expected by `pl_product_source.freeze`, not the comparison-script hash. No allowlist write here. |
+| Qualification / ZEN-74 | Review of the completed fixed-bin report; independent decision; exact model and evaluation pins, existing policy, effective/expiry times. The model pin must be the canonical fingerprint of `pl_corner_capture`'s implementation map expected by `pl_product_source.freeze`, not the comparison-script hash. No allowlist write here. |
 | Fixture window / ZEN-73, ZEN-75 | Authentic fresh E0 calendar bytes and receipt, exact ordered-team/provider identities, kickoffs, completeness, postponements, selected day and timezone. Latest inspected operational calendar was E1-only; prior-matchweek audit remains incomplete. No future fixture/date is invented in this packet. |
 | Current history / ZEN-73 | Latest report says authorized Nov4 refresh on installed d5cfba7 succeeded: 90 matches through Nov2, SHA c429b75f681dc7aaec5641a23320402409530b4b01a9f147bb7e386fe508159b. This supersedes the old 302/stale finding, but freshness/completeness and receipt bindings must be rechecked for the chosen pilot day. The Oct23 research snapshots are not live inputs. |
 | Actual runtime / ZEN-70 | Installed release and effective callers/leagues/timers, exact shared lock/budget namespace, cross-caller reservation/dedup/crash behavior and genuine acceptance. Offline PR248/planning code is not proof of installed coordination. |
@@ -121,3 +124,7 @@ inferred from this small pilot. Independent owner records continue, hold or disa
 Rollback means disabling only the separately approved pilot configuration through
 the reviewed operator path, retaining evidence and leaving existing E1 services,
 accounting and historical records intact. This document performs no such action.
+
+The separate proposed private observational study is described in
+[EPL_PRIVATE_CORNER_RESEARCH.md](EPL_PRIVATE_CORNER_RESEARCH.md). It has no odds,
+public recommendations or qualification bypass and does not activate this priced pilot.
