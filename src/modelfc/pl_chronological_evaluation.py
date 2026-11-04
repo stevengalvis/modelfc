@@ -1,7 +1,7 @@
 """Opt-in retrospective EPL diagnostics on five pinned saved seasons; no activation."""
 import argparse
 from dataclasses import asdict
-from datetime import date
+from datetime import date, timedelta
 import hashlib
 import json
 import math
@@ -10,10 +10,11 @@ from zoneinfo import ZoneInfo
 
 from modelfc.acquisition_planner import utc
 from modelfc.btts_model import MIN_HISTORY, arithmetic_rates, btts_probabilities
-from modelfc.corner_probability_evaluation import evaluate_corner_probabilities, summarize
+from modelfc.corner_probability_evaluation import evaluate_corner_probabilities, summarize, ProbabilityReport, LineOutcome
 from modelfc.goal_totals import GoalAggregates
 from modelfc.history_coverage import validated_sources, timestamp, MAX_SOURCE_BYTES
-from modelfc.matches import TeamCornerObservation, Venue
+from modelfc.matches import TeamCornerObservation, UpcomingFixture, Venue
+from modelfc.corner_forecasts import predict_corner_fixture
 from modelfc.oddspapi_market_inventory import _read_regular
 
 MODEL = 'venue-opponent-negative-binomial'
@@ -29,11 +30,50 @@ def _score(rows):
             'log_loss': None if infinite else math.fsum(losses)/len(rows), 'infinite_losses': infinite}
 
 
-def _btts(records):
+def _cutoff(day, next_day):
+    if type(next_day) is not bool:
+        raise ValueError('NEXT_DAY_OPTION_REJECTED')
+    return day - timedelta(days=1) if next_day else day
+
+
+def _corner_report(observations, *, start_date=None, end_date=None, next_day=False):
+    """Next-day mode reuses the deployed fixture model on the earlier cutoff.
+
+    Historical scoring labels stay on their actual fixture date. This is not a
+    reconstruction of input availability or pre-kickoff durable capture.
+    """
+    _cutoff(date(2026, 1, 2), next_day)
+    if not next_day:
+        return evaluate_corner_probabilities(observations, model=MODEL, lines=LINES,
+            min_history=100, min_venue_history=5, smoothing_matches=5,
+            start_date=start_date, end_date=end_date)
+    ordered=sorted(observations,key=lambda r:(r.match_date,r.team,r.venue.value))
+    pairs={(r.match_date,r.team,r.opponent,r.venue):r for r in ordered}
+    outcomes=[];eligible=0;count=0
+    for home in ordered:
+        if home.venue is not Venue.HOME or (start_date and home.match_date<start_date) or (end_date and home.match_date>end_date):
+            continue
+        count+=1
+        prior=[r for r in ordered if r.match_date<_cutoff(home.match_date,True)]
+        if (len(prior)<100 or sum(r.team==home.team and r.venue is Venue.HOME for r in prior)<5
+                or sum(r.team==home.opponent and r.venue is Venue.AWAY for r in prior)<5):
+            continue
+        away=pairs[home.match_date,home.opponent,home.team,Venue.AWAY]
+        prediction=predict_corner_fixture(prior,UpcomingFixture(home.match_date,home.team,home.opponent),
+            home_lines=LINES,away_lines=LINES,model=MODEL,min_history=100,min_venue_history=5,smoothing_matches=5)
+        eligible+=1
+        for observation,team in ((home,prediction.home),(away,prediction.away)):
+            outcomes.extend(LineOutcome(observation,p.line,p.over,p.under) for p in team.lines)
+    if not outcomes:
+        raise ValueError('no eligible fixtures in scoring window; check history and coverage')
+    return ProbabilityReport(MODEL,LINES,100,5,5,count,eligible,tuple(outcomes))
+
+
+def _btts(records, *, next_day=False):
     homes = sorted((r for r in records if r.venue is Venue.HOME), key=lambda r: r.fixture_key)
     scored = []
     for target in homes:
-        prior = [r for r in records if r.match_date < target.match_date]
+        prior = [r for r in records if r.match_date < _cutoff(target.match_date,next_day)]
         history = [r for r in prior if r.venue is Venue.HOME]
         if len(history) < MIN_HISTORY or any(not any(r.team == t for r in prior)
                                             for t in (target.team, target.opponent)):
@@ -50,10 +90,11 @@ def _btts(records):
     return scored
 
 
-def evaluate(sources, *, season_year, as_of, enabled=False):
+def evaluate(sources, *, season_year, as_of, enabled=False, next_day=False):
     if not enabled:
         return {'state': 'DISABLED', 'provider_requests': 0, 'live_activation': False}
     now = utc(as_of)
+    _cutoff(now.date(),next_day)
     if type(season_year) is not int or not 2004 <= season_year <= 2098:
         raise ValueError('SEASON_REJECTED')
     required = {f'E0_{y%100:02d}{(y+1)%100:02d}.csv' for y in range(season_year-4, season_year+1)}
@@ -70,7 +111,7 @@ def evaluate(sources, *, season_year, as_of, enabled=False):
     observations = [TeamCornerObservation(r.match_date, r.team, r.opponent, r.venue,
         r.corners_for, r.corners_against) for r in corners if r.match_date < before
         and r.corners_for is not None and r.corners_against is not None]
-    btts = _btts(goals)
+    btts = _btts(goals,next_day=next_day)
     seasons = []
     for year in range(season_year-4, season_year+1):
         start, end = date(year, 7, 1), date(year+1, 6, 30)
@@ -78,9 +119,7 @@ def evaluate(sources, *, season_year, as_of, enabled=False):
         cohort = [r for r in btts if start <= r[0].match_date <= end]
         complete = sum(r.venue is Venue.HOME and start <= r.match_date <= end for r in observations)
         try:
-            report = evaluate_corner_probabilities(observations, model=MODEL, lines=LINES,
-                min_history=100, min_venue_history=5, smoothing_matches=5,
-                start_date=start, end_date=end)
+            report = _corner_report(observations,start_date=start,end_date=end,next_day=next_day)
             metrics = {str(line): asdict(summarize(o for o in report.outcomes if o.line == line)) for line in LINES}
             for metric in metrics.values():
                 metric['infinite_log_loss'] = not math.isfinite(metric['log_loss'])
@@ -108,7 +147,8 @@ def evaluate(sources, *, season_year, as_of, enabled=False):
         'corner_source_receipts': sorted(corner_provenance,key=lambda p:p['filename']),
         'implementation_sha256': pins, 'seasons': seasons,
         'newest_season_separately_reported': f'{season_year}/{season_year+1}',
-        'training_policy': 'EXPANDING_SUPPLIED_FIVE_SEASONS_STRICTLY_BEFORE_TARGET_DATE',
+        'training_policy': ('EXPANDING_SUPPLIED_FIVE_SEASONS_STRICTLY_BEFORE_TARGET_MINUS_ONE_DAY' if next_day
+                            else 'EXPANDING_SUPPLIED_FIVE_SEASONS_STRICTLY_BEFORE_TARGET_DATE'),
         'corner_model': MODEL, 'corner_lines': list(LINES),
         'btts_model': 'team-opponent-arithmetic-poisson-btts',
         'calendar_completeness': 'NOT_ASSESSED', 'historical_availability': 'NOT_ESTABLISHED',
@@ -121,6 +161,7 @@ def main():
     parser.add_argument('--enable-offline-evaluation', action='store_true')
     parser.add_argument('--season-year', type=int)
     parser.add_argument('--as-of')
+    parser.add_argument('--next-day', action='store_true', help='Train strictly before target date minus one London calendar day')
     parser.add_argument('--source', action='append', nargs=3, default=[], metavar=('CSV','SHA256','RETRIEVED_AT'))
     args = parser.parse_args()
     try:
@@ -130,7 +171,7 @@ def main():
             if len(args.source) != 5:
                 raise ValueError('FIVE_SEASONS_REQUIRED')
             sources = [(Path(p).name, _read_regular(Path(p), MAX_SOURCE_BYTES, 'SOURCE_READ_REJECTED'), pin, timestamp(t)) for p,pin,t in args.source]
-            result = evaluate(sources, season_year=args.season_year, as_of=timestamp(args.as_of), enabled=True)
+            result = evaluate(sources, season_year=args.season_year, as_of=timestamp(args.as_of), enabled=True, next_day=args.next_day)
         print(json.dumps(result, sort_keys=True, allow_nan=False))
     except (ValueError, TypeError, OSError, KeyError):
         parser.exit(2, 'EPL_EVALUATION_REJECTED\n')
