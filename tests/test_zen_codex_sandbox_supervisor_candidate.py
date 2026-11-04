@@ -15,9 +15,81 @@ from ops.bounded_worker import codex_sandbox_supervisor_candidate as supervisor
 from ops.bounded_worker import storage_fixture
 from ops.bounded_worker import storage_fixture_prepare
 from ops.bounded_worker import launcher
+from ops.bounded_worker.storage import StorageConfiguration, service_properties
 
 
 class SupervisorTests(unittest.TestCase):
+    def test_private_run_preserves_real_generated_storage_properties(self):
+        cfg = StorageConfiguration('/bound', '/secure/image', '/bound/work', '/bound/runtime',
+            2049, 99, 100000, 51200, 1000, 1024, 10, '/home/worker/.codex/auth.json',
+            '/home/worker/.codex/config.toml', 'synthetic-component')
+        original = service_properties(cfg, work='/bound/work/test', runtime='/bound/runtime/test',
+                                      home='/home/worker', unit='modelfc-bounded-' + 'a' * 32 + '.service')
+        output = supervisor.private_run_properties(original)
+        expected = [value.replace(' /run:/run:rbind', '') for value in original] + [supervisor.RUN_PROPERTY]
+        self.assertEqual(output, expected)
+        self.assertTrue(any(value.startswith('--property=TemporaryFileSystem=/dev/shm:') for value in output))
+
+    def test_private_run_replaces_only_expected_bind_and_rejects_conflicts(self):
+        source = ['--property=ReadOnlyPaths=/ /proc/sys', '--property=PrivateMounts=yes',
+                  '--property=MountFlags=private', '--property=ReadWritePaths=/proc -/dev/pts -/dev/mqueue',
+                  '--property=BindReadOnlyPaths=/dev:/dev:rbind /run:/run:rbind /sys:/sys:rbind /fixture',
+                  '--property=BindPaths=/fixture/tmp:/tmp',
+                  '--property=TemporaryFileSystem=/dev/shm:size=8M']
+        output = supervisor.private_run_properties(source)
+        self.assertEqual(source[0], output[0])
+        self.assertEqual(output[1:4], source[1:4])
+        self.assertEqual(output[4], '--property=BindReadOnlyPaths=/dev:/dev:rbind /sys:/sys:rbind /fixture')
+        self.assertEqual(output[5:7], source[5:7])
+        self.assertEqual(output[-1], supervisor.RUN_PROPERTY)
+        for invalid in (source[:1], source + ['--property=BindPaths=/other:/run/alias'],
+                        source + ['--property=TemporaryFileSystem=/run:ro'],
+                        source + ['--property=ReadWritePaths=/run/foo'],
+                        [*source[:4], source[4] + ' /run:/run:rbind', *source[5:]],
+                        source + ['--property=BindPaths=/run:/run:rbind']):
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                supervisor.private_run_properties(invalid)
+
+    def test_private_run_requires_resolved_empty_readonly_tmpfs(self):
+        unit = 'modelfc-bounded-' + 'a' * 32 + '.service'
+        network = {'unit': unit, 'main_pid': 1234, 'starttime': 42, 'invocation': 'b' * 32}
+        process = ('1234 (codex) S ' + '0 ' * 18 + '42\n').encode()
+        mount = {'id': 97, 'path': '/run', 'root': '/', 'type': 'tmpfs',
+                 'options': ['ro', 'nosuid', 'nodev', 'noexec']}
+        def reader(path, maximum):
+            if path.name == 'stat':
+                return process
+            if path.name == 'mountinfo':
+                return b'mountinfo'
+            return b'pos:\t0\nmnt_id:\t97\n'
+        with patch.object(supervisor, '_read', side_effect=reader), \
+             patch.object(supervisor, '_mounts', return_value=[mount]), \
+             patch.object(supervisor.os, 'open', return_value=71), patch.object(supervisor.os, 'close'), \
+             patch.object(supervisor.os, 'listdir', return_value=[]), \
+             patch.object(supervisor.os, 'fstatvfs', return_value=SimpleNamespace(
+                 f_flag=os.ST_RDONLY, f_blocks=256, f_frsize=4096, f_files=1024)):
+            self.assertEqual(supervisor.verify_private_run(unit, network)['mount_id'], 97)
+            mount['options'] = ['rw']
+            with self.assertRaisesRegex(ValueError, 'mount_unverified'):
+                supervisor.verify_private_run(unit, network)
+            mount['options'] = ['ro', 'nosuid', 'nodev', 'noexec']
+            for flag in ('nosuid', 'nodev', 'noexec'):
+                mount['options'].remove(flag)
+                with self.assertRaisesRegex(ValueError, 'mount_unverified'):
+                    supervisor.verify_private_run(unit, network)
+                mount['options'].append(flag)
+            with patch.object(supervisor.os, 'fstatvfs', return_value=SimpleNamespace(
+                    f_flag=os.ST_RDONLY, f_blocks=257, f_frsize=4096, f_files=1024)), \
+                    self.assertRaisesRegex(ValueError, 'mount_unverified'):
+                supervisor.verify_private_run(unit, network)
+            with patch.object(supervisor.os, 'fstatvfs', return_value=SimpleNamespace(
+                    f_flag=os.ST_RDONLY, f_blocks=256, f_frsize=4096, f_files=1025)), \
+                    self.assertRaisesRegex(ValueError, 'mount_unverified'):
+                supervisor.verify_private_run(unit, network)
+            with patch.object(supervisor.os, 'listdir', return_value=['unexpected']), \
+                    self.assertRaisesRegex(ValueError, 'not_empty'):
+                supervisor.verify_private_run(unit, network)
+
     def test_run_candidate_requires_both_launcher_and_supervisor_acceptance(self):
         root = Path('/srv/modelfc-zen69-fixture-' + 'a' * 32)
         account = SimpleNamespace(pw_name='worker', pw_uid=1003, pw_gid=1003)
@@ -36,7 +108,7 @@ class SupervisorTests(unittest.TestCase):
         state = {'network': True, 'cleanup': True, 'sources': True, 'inspection': True,
                  'unit': True, 'record': True, 'launch_error': False, 'reinspect': True,
                  'binary': True, 'baseline': True, 'supervisor': True, 'network_record': True,
-                 'network_observation': True}
+                 'network_observation': True, 'run_observation': True}
         lock_counts = {'entered': 0, 'exited': 0}
         @contextlib.contextmanager
         def hold(_):
@@ -51,7 +123,7 @@ class SupervisorTests(unittest.TestCase):
                                                 cleanup_verified=lambda: state['cleanup'])
             if not state['supervisor']:
                 worker.supervisor = None
-            worker.backend = SimpleNamespace(unit=unit, network_observation={'unit': unit})
+            worker.backend = SimpleNamespace(unit=unit, network_observation={'unit': unit}, run_observation={'unit': unit})
             if state['launch_error']:
                 raise ValueError('after_launch')
             return result
@@ -59,9 +131,12 @@ class SupervisorTests(unittest.TestCase):
             if path.name == 'containment.json':
                 return {'unit': unit if state['unit'] else 'other'}
             if path.name == 'diagnostic-network.json':
-                return {'unit': unit, 'extra_property': supervisor.NETWORK_PROPERTY if state['network_record'] else 'changed'}
+                return {'unit': unit, 'extra_property': supervisor.NETWORK_PROPERTY if state['network_record'] else 'changed',
+                        'removed_bind': supervisor.RUN_BIND, 'added_property': supervisor.RUN_PROPERTY}
             if path.name == 'diagnostic-network-observed.json':
                 return {'unit': unit if state['network_observation'] else 'other'}
+            if path.name == 'diagnostic-run-observed.json':
+                return {'unit': unit if state['run_observation'] else 'other'}
             return baseline if state['baseline'] else {'status': 'unverified'}
         def protected(path, **kwargs):
             return b'receipt' if path.name == 'fixture-creation.json' else (record if state['record'] else b'changed')
@@ -80,7 +155,7 @@ class SupervisorTests(unittest.TestCase):
                     state[key] = not state[key]
                     self.assertEqual(supervisor.run_candidate(*args)['status'], 'blocked')
                     state[key] = not state[key]
-            self.assertEqual(lock_counts, {'entered': 15, 'exited': 15})
+            self.assertEqual(lock_counts, {'entered': 16, 'exited': 16})
         with patch.object(supervisor.os, 'getuid', return_value=0), \
              patch.object(supervisor.os, 'geteuid', return_value=0), \
              patch.object(supervisor.os, 'stat', return_value=SimpleNamespace(st_mode=stat.S_IFBLK, st_rdev=os.makedev(7, 1))), \
@@ -109,12 +184,20 @@ class SupervisorTests(unittest.TestCase):
             root = Path(temporary)
             (root / 'reservation.json').write_text('{}')
             backend = supervisor.DiagnosticContainment(root, 1003, 1003)
-            backend.configure_storage(properties=['--property=ReadOnlyPaths=/'], expected={},
+            backend.configure_storage(properties=['--property=ReadOnlyPaths=/ /proc/sys',
+                '--property=PrivateMounts=yes', '--property=MountFlags=private',
+                '--property=ReadWritePaths=/proc -/dev/pts -/dev/mqueue',
+                '--property=BindPaths=/fixture/tmp:/tmp',
+                '--property=BindReadOnlyPaths=/dev:/dev:rbind /run:/run:rbind /sys:/sys:rbind /fixture',
+                '--property=TemporaryFileSystem=/dev/shm:size=8M'], expected={},
                                       guard_path='/opt/guard', revalidate=lambda: None)
             self.assertIn(supervisor.NETWORK_PROPERTY, backend.storage[0])
+            self.assertIn(supervisor.RUN_PROPERTY, backend.storage[0])
+            self.assertFalse(any(supervisor.RUN_BIND in value for value in backend.storage[0]))
             backend._record()
             record = json.loads((root / 'diagnostic-network.json').read_text())
-            self.assertEqual(record, {'unit': backend.unit, 'extra_property': supervisor.NETWORK_PROPERTY})
+            self.assertEqual(record, {'unit': backend.unit, 'extra_property': supervisor.NETWORK_PROPERTY,
+                                      'removed_bind': supervisor.RUN_BIND, 'added_property': supervisor.RUN_PROPERTY})
             with self.assertRaises(FileExistsError):
                 backend._record()
 
@@ -165,7 +248,8 @@ class SupervisorTests(unittest.TestCase):
         baseline = {'status': 'verified', 'directories': {k: [] for k in ('.agents', '.aws', '.codex')}}
         result = {'status': 'completed', 'task_id': 'zen69-fixture'}
         checks = dict(cleanup=True, sources_match=True, input_record_verified=True,
-                      network_fence_verified=True, binary_verified=True, observed_unit_matches=True)
+                      network_fence_verified=True, private_run_verified=True,
+                      binary_verified=True, observed_unit_matches=True)
         self.assertTrue(supervisor.accepted_case('normal', result, result, baseline, before, after, **checks))
         self.assertFalse(supervisor.accepted_case('interrupted', result, result, baseline, before, after, **checks))
         for key in checks:

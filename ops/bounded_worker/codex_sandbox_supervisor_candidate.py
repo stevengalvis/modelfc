@@ -20,6 +20,7 @@ from .codex import Codex
 from .codex_sandbox_fixture_candidate import CandidateWorker, PROBE_ARG
 from .storage import LinuxStorageReader
 from .storage_fixture import cgroup_view_verified, independent_cleanup
+from .storage_guard import _mounts
 from .storage_fixture_prepare import prepare
 from .systemd_backend import SystemdContainment
 from .task import Task, _snapshot
@@ -28,6 +29,48 @@ FAKE_AUTH = b'{}\n'
 FAKE_CONFIG = b'# disposable no-model fixture\n'
 FAKE_INPUT_VERSION = 1
 NETWORK_PROPERTY = '--property=PrivateNetwork=yes'
+RUN_PROPERTY = '--property=TemporaryFileSystem=/run:ro,nosuid,nodev,noexec,size=1M,nr_inodes=1024,mode=0755'
+RUN_BIND = '/run:/run:rbind'
+
+
+def private_run_properties(properties):
+    """Replace only the reviewed host /run self-bind; reject ambiguous maps."""
+    if type(properties) not in (list, tuple) or any(type(value) is not str for value in properties):
+        raise ValueError('invalid_diagnostic_properties')
+    prefixes = ('--property=BindReadOnlyPaths=', '--property=BindPaths=')
+    fixed = ('--property=PrivateMounts=yes', '--property=MountFlags=private',
+             '--property=ReadOnlyPaths=/ /proc/sys', '--property=ReadWritePaths=/proc -/dev/pts -/dev/mqueue')
+    dynamic = (*prefixes, '--property=TemporaryFileSystem=')
+    if (len(properties) != 7 or any(properties.count(item) != 1 for item in fixed)
+            or any(sum(value.startswith(prefix) for value in properties) != 1 for prefix in dynamic)):
+        raise ValueError('invalid_diagnostic_properties')
+    read_only = [value for value in properties if value.startswith(prefixes[0])]
+    if len(read_only) != 1:
+        raise ValueError('invalid_run_bind')
+    tokens = read_only[0][len(prefixes[0]):].split(' ')
+    if not tokens or '' in tokens or tokens.count(RUN_BIND) != 1:
+        raise ValueError('invalid_run_bind')
+    for value in properties:
+        if value.startswith('--property=TemporaryFileSystem='):
+            for token in value[len('--property=TemporaryFileSystem='):].split():
+                if token.split(':', 1)[0] in ('/run', '-/run') or token.split(':', 1)[0].startswith(('/run/', '-/run/')):
+                    raise ValueError('conflicting_run_mount')
+        for prefix in prefixes:
+            if value.startswith(prefix):
+                for token in value[len(prefix):].split():
+                    if token == RUN_BIND:
+                        if prefix != prefixes[0] or value != read_only[0]:
+                            raise ValueError('conflicting_run_mount')
+                        continue
+                    if any(part in ('/run', '-/run') or part.startswith(('/run/', '-/run/'))
+                           for part in token.split(':')[:2]):
+                        raise ValueError('conflicting_run_mount')
+        if value.startswith(('--property=ReadWritePaths=', '--property=InaccessiblePaths=')):
+            if any(part in ('/run', '-/run') or part.startswith(('/run/', '-/run/'))
+                   for part in value.split('=', 2)[2].split()):
+                raise ValueError('conflicting_run_mount')
+    replacement = prefixes[0] + ' '.join(token for token in tokens if token != RUN_BIND)
+    return [replacement if value == read_only[0] else value for value in properties] + [RUN_PROPERTY]
 
 
 def _retain_exclusive(evidence, name, value):
@@ -51,24 +94,29 @@ class DiagnosticContainment(SystemdContainment):
     def __init__(self, evidence, uid, gid):
         super().__init__(evidence, uid, gid)
         self.network_observation = None
+        self.run_observation = None
 
     def configure_storage(self, *, properties, expected, guard_path, revalidate):
         if any(value.startswith('--property=PrivateNetwork=') for value in properties):
             raise ValueError('network_property_conflict')
-        super().configure_storage(properties=[*properties, NETWORK_PROPERTY], expected=expected,
+        super().configure_storage(properties=[*private_run_properties(properties), NETWORK_PROPERTY], expected=expected,
                                   guard_path=guard_path, revalidate=revalidate)
 
     def _record(self):
         super()._record()
         _retain_exclusive(self.evidence, 'diagnostic-network.json',
-                          {'unit': self.unit, 'extra_property': NETWORK_PROPERTY})
+                          {'unit': self.unit, 'extra_property': NETWORK_PROPERTY,
+                           'removed_bind': RUN_BIND, 'added_property': RUN_PROPERTY})
 
     def launch(self, *args, **kwargs):
-        if self.storage is None or self.storage[0].count(NETWORK_PROPERTY) != 1:
+        if (self.storage is None or self.storage[0].count(NETWORK_PROPERTY) != 1
+                or self.storage[0].count(RUN_PROPERTY) != 1):
             raise ValueError('network_fence_missing')
         child = super().launch(*args, **kwargs)
         self.network_observation = verify_private_network(self.unit)
         _retain_exclusive(self.evidence, 'diagnostic-network-observed.json', self.network_observation)
+        self.run_observation = verify_private_run(self.unit, self.network_observation)
+        _retain_exclusive(self.evidence, 'diagnostic-run-observed.json', self.run_observation)
         return child
 
 
@@ -126,7 +174,8 @@ def verify_fake_input_record(raw, creation_sha256, digest):
 
 
 def accepted_case(mode, result, inspected, baseline, before, after, *, cleanup, sources_match,
-                  input_record_verified, network_fence_verified, binary_verified, observed_unit_matches):
+                  input_record_verified, network_fence_verified, private_run_verified,
+                  binary_verified, observed_unit_matches):
     """Fail closed unless launcher, independent and fixture checks all agree."""
     if (mode not in ('normal', 'interrupted') or type(result) is not dict or result != inspected
             or result.get('status') != ('completed' if mode == 'normal' else 'timeout')
@@ -134,13 +183,51 @@ def accepted_case(mode, result, inspected, baseline, before, after, *, cleanup, 
             or baseline['status'] != 'verified' or type(baseline['directories']) is not dict
             or type(before) is not dict or type(after) is not dict
             or not all(value is True for value in (cleanup, sources_match, input_record_verified,
-                                                     network_fence_verified, binary_verified, observed_unit_matches))):
+                network_fence_verified, private_run_verified, binary_verified, observed_unit_matches))):
         return False
     names = {'.agents', '.aws', '.codex'}
     if (set(baseline['directories']) != names or not names <= set(after) or names & set(before)
             or any(any(k.startswith(name + '/') for name in names) for k in after)):
         return False
     return before == {key: value for key, value in after.items() if key not in names}
+
+
+def verify_private_run(unit, network, *, _proc_root=Path('/proc')):
+    """Observe the resolved /run mount of the already verified service PID."""
+    if (type(network) is not dict or network.get('unit') != unit
+            or type(network.get('main_pid')) is not int or network['main_pid'] <= 1):
+        raise ValueError('private_run_process_unverified')
+    path = _proc_root / str(network['main_pid'])
+    before = _read(path / 'stat', 8192).decode('ascii').rsplit(')', 1)[1].split()
+    if len(before) < 20 or before[0] in ('Z', 'X') or int(before[19]) != network.get('starttime'):
+        raise ValueError('private_run_process_changed')
+    mountinfo = _mounts(_read(path / 'mountinfo', 8 * 1024 * 1024).decode('utf-8'))
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+    fd = os.open(path / 'root/run', flags)
+    try:
+        if os.listdir(fd):
+            raise ValueError('private_run_not_empty')
+        fdinfo = _read(_proc_root / 'self/fdinfo' / str(fd), 4096).decode('ascii').splitlines()
+        ids = [line.split(':', 1)[1].strip() for line in fdinfo if line.startswith('mnt_id:')]
+        if len(ids) != 1 or not ids[0].isdigit():
+            raise ValueError('private_run_mount_unverified')
+        candidates = [item for item in mountinfo if item['id'] == int(ids[0])]
+        vfs = os.fstatvfs(fd)
+        if (len(candidates) != 1 or candidates[0]['path'] != '/run' or candidates[0]['type'] != 'tmpfs'
+                or candidates[0]['root'] != '/'
+                or not {'ro', 'nosuid', 'nodev', 'noexec'} <= set(candidates[0]['options'])
+                or 'rw' in candidates[0]['options'] or not vfs.f_flag & os.ST_RDONLY
+                or not 0 < vfs.f_blocks * vfs.f_frsize <= 1048576
+                or not 0 < vfs.f_files <= 1024):
+            raise ValueError('private_run_mount_unverified')
+        mount_id = int(ids[0])
+    finally:
+        os.close(fd)
+    after = _read(path / 'stat', 8192).decode('ascii').rsplit(')', 1)[1].split()
+    if len(after) < 20 or after[0] in ('Z', 'X') or before[19] != after[19]:
+        raise ValueError('private_run_process_changed')
+    return {'unit': unit, 'invocation': network['invocation'], 'main_pid': network['main_pid'],
+            'starttime': network['starttime'], 'mount_id': mount_id}
 
 
 def verify_private_network(unit, *, _proc_root=Path('/proc'), _run=subprocess.run):
@@ -327,7 +414,9 @@ class FencedProbeSupervisor(ProbeSupervisor):
 
     def observe(self, local_pid):
         if (self.backend.network_observation is None
-                or verify_private_network(self.unit) != self.backend.network_observation):
+                or verify_private_network(self.unit) != self.backend.network_observation
+                or self.backend.run_observation is None
+                or verify_private_run(self.unit, self.backend.network_observation) != self.backend.run_observation):
             raise ValueError('network_fence_changed')
         identity = super().observe(local_pid)
         self.network_verified = True
@@ -383,7 +472,7 @@ def run_candidate(root, username, loop, inventory_path, inventory_sha256, execut
             inspected = launcher.inspect(task.task_id, config, _worker_factory=lambda *_: worker)
         except Exception as exc:
             error = type(exc).__name__
-        cleanup = final_inspection = sources_match = record_ok = binary_ok = unit_ok = network_ok = False
+        cleanup = final_inspection = sources_match = record_ok = binary_ok = unit_ok = network_ok = run_ok = False
         baseline, after = None, None
         try:
             control = worker.supervisor
@@ -393,10 +482,14 @@ def run_candidate(root, username, loop, inventory_path, inventory_sha256, execut
             unit_ok = control is not None and unit_file.get('unit') == control.unit == worker.backend.unit
             network_record = launcher._read(Path(config.evidence_root) / task.task_id / 'attempt/diagnostic-network.json')
             network_observed = launcher._read(Path(config.evidence_root) / task.task_id / 'attempt/diagnostic-network-observed.json')
+            run_observed = launcher._read(Path(config.evidence_root) / task.task_id / 'attempt/diagnostic-run-observed.json')
             network_ok = (control is not None and control.network_verified is True
-                          and network_record == {'unit': control.unit, 'extra_property': NETWORK_PROPERTY}
+                          and network_record == {'unit': control.unit, 'extra_property': NETWORK_PROPERTY,
+                                                 'removed_bind': RUN_BIND, 'added_property': RUN_PROPERTY}
                           and type(network_observed) is dict and network_observed.get('unit') == control.unit
                           and network_observed == worker.backend.network_observation)
+            run_ok = (control is not None and type(run_observed) is dict and run_observed.get('unit') == control.unit
+                      and run_observed == worker.backend.run_observation)
             sources_match = sources == storage_fixture.fake_sources(root / 'home', account.pw_uid,
                 manifest['sources'], creation_sources, _auth=FAKE_AUTH, _config=FAKE_CONFIG)
             record_ok = verify_fake_input_record(protected_bytes(root / 'evidence/codex-fixture-inputs.json'),
@@ -414,7 +507,8 @@ def run_candidate(root, username, loop, inventory_path, inventory_sha256, execut
                         pipe.close()
         passed = (error is None and final_inspection and accepted_case(
             mode, result, inspected, baseline, before, after, cleanup=cleanup, sources_match=sources_match,
-            input_record_verified=record_ok, network_fence_verified=network_ok, binary_verified=binary_ok,
+            input_record_verified=record_ok, network_fence_verified=network_ok, private_run_verified=run_ok,
+            binary_verified=binary_ok,
             observed_unit_matches=unit_ok))
         return {'status': 'passed' if passed else 'blocked', 'mode': mode, 'result': result,
                 'independent_cleanup': 'verified' if cleanup else 'unverified',

@@ -32,9 +32,17 @@ The candidate omits managed configuration: the pinned CLI can perform cloud
 configuration bootstrap when it is included. It adds `PrivateNetwork=yes` only
 to the test unit, records that property separately from the production storage
 properties hash, and checks the live unit's manager and network namespace views.
-This changes the diagnostic environment and does not block filesystem-path UNIX
-socket relays or prove production network behavior. A separately verified trusted
-host must not expose an accessible relay; no network or socket communication is
-tested. The profile is not established equivalent to app-server. Before any host
-execution, review the exact binary, fake auth schema, socket-relay assumptions,
-supervisor and artifacts, and verify the current protected binary/helper pins.
+The diagnostic also substitutes an empty read-only `/run` tmpfs for the host
+`/run` bind and separately records and checks its resolved mount ID and flags.
+Repeated tmpfs settings must preserve the existing `/dev/shm`; the unchanged guard
+still validates it. Neither change has been tested on the host, and an empty
+`/run` may break Codex or a required helper. Do not bind host sockets back in to
+make the test pass.
+
+These changes do not block every filesystem-path UNIX socket relay or prove
+production network behavior. The user condition that accessible relays be
+resolved before the fixture remains in force, including paths and aliases outside
+`/run`; no network or socket communication is tested. The profile is not
+established equivalent to app-server. Before any host execution, review the exact
+binary, fake auth schema, socket-relay assumptions, supervisor and artifacts, and
+verify the current protected binary/helper pins.
