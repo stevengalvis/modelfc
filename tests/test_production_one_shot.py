@@ -35,6 +35,32 @@ class ProductionOneShotTest(unittest.TestCase):
             with self.subTest(raw=raw), self.assertRaises(ValueError):
                 candidate._trim_service(lambda *_a, **_k: raw, '/usr/bin/systemctl', '/usr/sbin/fstrim')
 
+    def test_trim_service_accepts_only_pinned_binary_and_recorded_fixed_flags(self):
+        template = ('LoadState=loaded\nActiveState=inactive\nJob=\n'
+                    'ExecStart={{ path={path} ; argv[]={path} --listed-in '
+                    '/etc/fstab:/proc/self/mountinfo{suffix} ; ignore_errors=no ; }}\n')
+        calls = []
+
+        def runner_for(path, suffix):
+            def runner(argv, **_kwargs):
+                calls.append(argv)
+                return template.format(path=path, suffix=suffix).encode()
+            return runner
+
+        with patch.object(candidate.os.path, 'samefile', return_value=True):
+            for path in ('/usr/sbin/fstrim', '/sbin/fstrim'):
+                for suffix in ('', ' --verbose --quiet-unsupported'):
+                    candidate._trim_service(runner_for(path, suffix), '/usr/bin/systemctl', '/usr/sbin/fstrim')
+            for suffix in (' --quiet-unsupported', ' --verbose --quiet-unsupported --all', ' --verbose --help'):
+                with self.assertRaises(ValueError):
+                    candidate._trim_service(runner_for('/sbin/fstrim', suffix), '/usr/bin/systemctl', '/usr/sbin/fstrim')
+            with self.assertRaises(ValueError):
+                candidate._trim_service(runner_for('/tmp/fstrim', ''), '/usr/bin/systemctl', '/usr/sbin/fstrim')
+        with patch.object(candidate.os.path, 'samefile', return_value=False):
+            with self.assertRaises(ValueError):
+                candidate._trim_service(runner_for('/sbin/fstrim', ''), '/usr/bin/systemctl', '/usr/sbin/fstrim')
+        self.assertTrue(all('--all' in call for call in calls))
+
     def test_parser_rejects_unknown_and_duplicate_rows(self):
         image = '/srv/modelfc-bounded-images/worker-' + 'a' * 32 + '.img'
         target = '/srv/modelfc-bounded-' + 'a' * 32

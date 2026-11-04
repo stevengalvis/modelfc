@@ -74,6 +74,7 @@ class ProductionImageStageTest(unittest.TestCase):
             with self.subTest(job=job), patch.object(stage.subprocess, 'run', return_value=result) as run:
                 stage.require_bridge_paused()
                 self.assertEqual(run.call_count, 6)
+                self.assertTrue(all('--all' in call.args[0] for call in run.call_args_list))
 
     def test_allocation_failure_retains_intent_and_never_certifies(self):
         original = os.fstat

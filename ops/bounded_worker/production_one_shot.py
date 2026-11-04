@@ -279,7 +279,7 @@ def _not_on_device(runner, stat_tool, paths, forbidden_device):
 
 
 def _trim_service(runner, systemctl, fstrim):
-    raw = runner([systemctl, 'show', '--no-pager',
+    raw = runner([systemctl, 'show', '--all', '--no-pager',
                   '--property=LoadState,ActiveState,Job,ExecStart', 'fstrim.service'], timeout=5)
     fields = {}
     for line in raw.decode('utf-8', 'strict').splitlines():
@@ -294,9 +294,16 @@ def _trim_service(runner, systemctl, fstrim):
         argv = shlex.split(argv_match[0]) if len(argv_match) == 1 else []
     except ValueError:
         argv = []
+    paths = ('/usr/sbin/fstrim', '/sbin/fstrim')
+    binary = path_match[0] if len(path_match) == 1 else ''
+    try:
+        same_binary = binary in paths and os.path.samefile(binary, fstrim)
+    except OSError:
+        same_binary = False
+    fixed = [binary, '--listed-in', '/etc/fstab:/proc/self/mountinfo']
     if (fields.get('LoadState') != 'loaded' or fields.get('ActiveState') != 'inactive'
-            or fields.get('Job') not in ('', '0') or path_match != [fstrim]
-            or argv != [fstrim, '--listed-in', '/etc/fstab:/proc/self/mountinfo']):
+            or fields.get('Job') not in ('', '0') or not same_binary
+            or argv not in (fixed, fixed + ['--verbose', '--quiet-unsupported'])):
         raise ValueError('trim_service_unverified')
 
 
@@ -418,7 +425,7 @@ def prepare(identifier, uid, gid, parent_pin, srv_pin, lock_pin, loop, component
                         raise ValueError('fstab_identity_changed')
                 finally:
                     os.close(fd)
-            trim_args = [tools['fstrim'], '--dry-run', '--verbose', '--listed-in']
+            trim_args = [tools['fstrim'], '--dry-run', '--verbose', '--quiet-unsupported', '--listed-in']
             baseline = {_canonical(runner, tools['realpath'], path) for path in
                         _outputs(runner(trim_args + ['/etc/fstab:/proc/self/mountinfo'], timeout=30))}
             validator = _parser(runner, tools['findmnt'], tools['realpath'], str(image), str(mountpoint), loop)

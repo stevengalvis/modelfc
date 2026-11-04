@@ -56,7 +56,7 @@ def _space(parent_fd, required_bytes, required_inodes):
 
 def require_bridge_paused():
     for unit in _UNITS:
-        result = subprocess.run(['/usr/bin/systemctl', 'show', '--no-pager',
+        result = subprocess.run(['/usr/bin/systemctl', 'show', '--all', '--no-pager',
                                  '--property=LoadState,ActiveState,UnitFileState,Job', unit],
                                 env={'PATH': '/usr/bin:/bin', 'LC_ALL': 'C'},
                                 stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
