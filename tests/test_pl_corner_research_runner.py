@@ -28,9 +28,13 @@ class ResearchRunnerTests(unittest.TestCase):
         self.stack.enter_context(patch.object(capture,'now',return_value=NOW))
         self.stack.enter_context(patch('socket.socket',side_effect=AssertionError('network')))
 
+    def authority(self):
+        info=self.registry.stat()
+        return runner.RegistryAuthority(str(self.registry),info.st_dev,info.st_ino,info.st_uid)
+
     def run_capture(self, operation='one', store=None):
         raw,options=self.data.options();options.pop('as_of')
-        return runner.run_once(self.registry,store or self.a,raw,operation_id=operation,enabled=True,
+        return runner.run_once(self.registry,store or self.a,raw,operation_id=operation,authority=self.authority(),enabled=True,
                                sources=self.data.sources,**options)
 
     def frozen(self):
@@ -45,7 +49,7 @@ class ResearchRunnerTests(unittest.TestCase):
                         source_sha256=source,previous=previous,reason=reason)
         return runner.record_evidence(self.registry,operation_id='one',fixture_id=identity['provider_fixture_id'],
             raw=raw,source_sha256=source,kind=kind,reviewed_transition_sha256=reviewed or fingerprint(encoded(transition)),
-            previous=previous,reason=reason,calendar_options=options,enabled=True)
+            previous=previous,reason=reason,calendar_options=options,authority=self.authority(),enabled=True)
 
     def result(self, home=5, away=3):
         identity,_=self.frozen();at=NOW+timedelta(hours=7);self.clock.return_value=at
@@ -56,7 +60,7 @@ class ResearchRunnerTests(unittest.TestCase):
 
     def inspect(self):
         identity,_=self.frozen()
-        return runner.inspect_fixture(self.registry,operation_id='one',fixture_id=identity['provider_fixture_id'])
+        return runner.inspect_fixture(self.registry,operation_id='one',fixture_id=identity['provider_fixture_id'],authority=self.authority())
 
     def test_disabled_without_io_and_duplicate_across_stores(self):
         self.assertEqual(runner.run_once('/missing','/missing',None,operation_id='x')['state'],'DISABLED')

@@ -129,3 +129,9 @@ claim of external authenticity. Result receipts retain their normalized source d
 
 The existing replay semantics and every production qualification/publication gate
 remain unchanged. This local implementation is a review artifact only.
+
+The subsequent [bounded deployability review](EPL_RESEARCH_DEPLOYABILITY_REVIEW.md)
+requires pinned `RegistryAuthority` configuration for enabled calls and inspection,
+and adds read-only `reconcile_operation`. Its artifact recognition does not clear
+pending intents or change study eligibility. Authority is operator-configured;
+never automatically enroll a replacement directory on restart.
