@@ -39,11 +39,15 @@ class LoaderTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'loader_selector_ambiguous'):
             self.transform(raw + f'x = {path!r}\n'.encode())
 
-    def test_actual_pinned_tree_contains_valid_empty_blob(self):
-        listing = subprocess.check_output(['git', 'ls-tree', '-r', '-z', '--full-tree', candidate.TARGET])
-        entries = candidate._tree_entries(listing)
+    def test_checked_out_tree_contains_valid_empty_blob(self):
         name = 'docs/zen53/native-compatibility/recovery/objects/' + hashlib.sha256(b'').hexdigest()
-        self.assertEqual(entries[name][1], candidate._blob_sha(b''))
+        listing = subprocess.check_output(['git', 'ls-tree', '-z', 'HEAD', '--', name])
+        self.assertEqual(listing, f'100644 blob {candidate._blob_sha(b"")}\t{name}\0'.encode())
+
+    def test_tree_parser_accepts_empty_blob(self):
+        oid = candidate._blob_sha(b'')
+        listing = b''.join(f'100644 blob {oid}\tfile-{i}\0'.encode() for i in range(875))
+        self.assertEqual(candidate._tree_entries(listing)['file-0'], (0o644, oid))
 
 
 class BoundedChildTests(unittest.TestCase):
