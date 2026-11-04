@@ -50,6 +50,8 @@ def prepare(private_dir, state, *, experiment, forecast_id, binding, approved_co
         receipt=store.get(name('receipt',experiment));row=store.get(name('handoff',experiment))
         product.require(receipt is not None and receipt['status']=='RECORDED' and row is not None,
                         'EPL_HANDOFF_INCOMPLETE')
+        product.require(receipt.get('league_results',{}).get('E0',{}).get('status') != 'HELD',
+                        'EPL_HANDOFF_HELD')
         product.require(receipt.get('handoff_sha256')==fingerprint(encoded(row)), 'EPL_HANDOFF_PIN_REJECTED')
         product.require(row['version']==1 and row['experiment_id']==experiment)
         session=store.get(name('session',experiment));reservation=store.get(name('reservation',experiment))

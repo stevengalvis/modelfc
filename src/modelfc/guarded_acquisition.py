@@ -231,7 +231,7 @@ def _prepare(store, entry, sources, frozen, history_calendar=None):
 
 def run_once(*, state_dir, private_dir, calendar_path, metadata_path, data_config_path,
              authorization_path=None, history_calendar_path=None, clock=now, history_loader=load_history_bytes,
-             client_type=OddsPapiTournamentClient, retain_handoff=False):
+             client_type=OddsPapiTournamentClient, retain_handoff=False, epl_freeze=None):
     """One authorization permits at most one attempt. No caller-selected endpoint/price policy."""
     result = {"status": "DISABLED", "provider_requests": 0, "forecasts": 0, "snapshots": 0,
               "consumers": 0, "reason": None}
@@ -303,6 +303,43 @@ def run_once(*, state_dir, private_dir, calendar_path, metadata_path, data_confi
             # never automatic repetition of uncertain requests, even under new authorization.
             store.put(session_key, {"experiment_id": auth["experiment_id"], "status": "CLAIMED",
                       "obligations": [_obligation(o.fixture) for o in batch.obligations]})
+            frozen = None
+            epl_entries = {o.fixture.fixture_id: entries[o.fixture.fixture_id]
+                           for o in batch.obligations if o.fixture.competition == "E0"}
+            has_e1 = any(o.fixture.competition == "E1" for o in batch.obligations)
+            def hold_epl(reason):
+                result.pop("epl_dispatch_sha256", None)
+                result.setdefault("league_results", {})["E0"] = {"status": "HELD", "reason": reason}
+            if epl_freeze is not None and epl_entries:
+                from modelfc import pl_acquisition_dispatch as epl_dispatch
+                try:
+                    frozen = epl_dispatch.freeze(store, state_dir, auth["experiment_id"], epl_entries, epl_freeze)
+                    result["epl_dispatch_sha256"] = fingerprint(encoded(frozen))
+                    result["forecasts"] += len(frozen["forecasts"])
+                    result["league_results"] = {"E0": {"status": "PREPARED", "reason": None}}
+                except (OSError, ValueError, KeyError, TypeError, AttributeError):
+                    frozen = None
+                    hold_epl("FREEZE_REJECTED")
+                    if not has_e1:
+                        raise
+                # Shared authorization and collection windows still bind the entire
+                # request. An EPL delay never permits stale Championship dispatch.
+                dispatch_time = utc(clock())
+                if _authorization(authorization_path, dispatch_time) != auth:
+                    raise AcquisitionRejected("AUTHORIZATION_CHANGED")
+                _calendar(calendar_raw, dispatch_time, auth["enabled_competitions"])
+                fresh_plan = plan_acquisition(calendar, as_of=dispatch_time, completed=completed,
+                                             leagues=configured_leagues(auth["enabled_competitions"]))
+                if fresh_plan.batches != plan.batches or dispatch_time-as_of > MAX_CALENDAR_AGE:
+                    raise AcquisitionRejected("WINDOW_CHANGED")
+                if frozen is not None:
+                    try:
+                        epl_dispatch.validate(state_dir, frozen, epl_freeze["approved_contracts"])
+                    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+                        frozen = None
+                        hold_epl("QUALIFICATION_RECHECK_REJECTED")
+                        if not has_e1:
+                            raise
             guard.reserve(1)
             store.put(_name("reservation", auth["experiment_id"]), {"credits_reserved": 1,
                        "experiment_id": auth["experiment_id"]})
@@ -319,6 +356,17 @@ def run_once(*, state_dir, private_dir, calendar_path, metadata_path, data_confi
                 observed = utc(retrieved.retrieved_at)
                 if observed > utc(clock()) or observed <= as_of:
                     raise AcquisitionRejected("OBSERVATION_TIME_REJECTED")
+                if frozen is not None:
+                    from modelfc import pl_product_source
+                    try:
+                        if any(_timestamp(pl_product_source._get(state_dir, row["forecast_id"])["recorded_at"]) >= observed
+                               for row in frozen["forecasts"]):
+                            raise AcquisitionRejected("EPL_OBSERVATION_BEFORE_FREEZE")
+                    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+                        frozen = None
+                        hold_epl("OBSERVATION_TIME_REJECTED")
+                        if not has_e1:
+                            raise
                 payload_sha = fingerprint(retrieved.payload)
                 store.put(_name("payload", payload_sha), {"sha256": payload_sha,
                     "retrieved_at": observed.isoformat(), "http_status": 200,
@@ -346,9 +394,14 @@ def run_once(*, state_dir, private_dir, calendar_path, metadata_path, data_confi
                         store.put(_name("consumer", {"forecast_id": forecast.forecast_id,
                                   "observation_id": snapshot.observation_id}), record)
                         result["consumers"] += 1
-                if retain_handoff is True:
+                if retain_handoff is True or (epl_freeze is not None and epl_entries):
                     from modelfc.pl_acquisition_handoff import retain
                     result["handoff_sha256"] = retain(store, auth["experiment_id"], snapshot, metadata)
+                if "league_results" in result:
+                    if has_e1:
+                        result["league_results"]["E1"] = {"status": "RECORDED", "reason": None}
+                    if frozen is not None:
+                        result["league_results"]["E0"] = {"status": "RECORDED", "reason": None}
                 result["status"] = "RECORDED"
             except (OSError, ValueError, KeyError, TypeError, AttributeError):
                 result.update(status="REJECTED", reason="SNAPSHOT_PROCESSING_REJECTED")

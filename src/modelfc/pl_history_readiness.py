@@ -26,13 +26,17 @@ def assess(raw, *, sources=(), enabled=False, **options):
     if enabled is not True:
         return result
     result['state'] = 'BLOCKED'
+    next_day = options.pop('next_day', False)
     calendar_report = readiness(raw, **options)
     result['calendar'] = calendar_report
     if calendar_report['validity'] != 'VALID':
         return result
     try:
         observed = utc(options['as_of'])
-        day = options['selected_day']
+        fixture_day = options['selected_day']
+        day = observed.astimezone(ZoneInfo('Europe/London')).date() if next_day is True else fixture_day
+        if type(next_day) is not bool or (next_day and fixture_day != day + timedelta(days=1)):
+            raise ValueError('scope')
         year = options['season_year']
         if day != observed.astimezone(ZoneInfo('Europe/London')).date():
             raise ValueError('scope')
@@ -88,7 +92,7 @@ def assess(raw, *, sources=(), enabled=False, **options):
             and not result['missing_season_sources'] and result['calendar_completeness'] == 'MATCHED_BEFORE_DAY'
             and latest is not None and (day-latest).days <= 14 and len(complete) >= 100)
         for match in calendar.matches:
-            if match.day != day:
+            if match.day != fixture_day:
                 continue
             eligible = (global_ok and match.status in {'TIMED', 'SCHEDULED'} and match.kickoff > observed
                         and by_name[match.home]['home_eligible'] and by_name[match.away]['away_eligible'])
