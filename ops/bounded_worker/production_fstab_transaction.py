@@ -31,7 +31,7 @@ def _pin(info):
             info.st_nlink, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
 
 
-def append_entry(etc_fd, identifier, *, validate, before_replace=None):
+def append_entry(etc_fd, identifier, *, validate, expected_before_sha256=None, before_replace=None):
     """Install one exact entry with unchanged-original and trusted-parser checks.
 
     ``validate`` must be a fixed trusted parser in the future root-only caller;
@@ -53,6 +53,9 @@ def append_entry(etc_fd, identifier, *, validate, before_replace=None):
                 or initial.st_nlink != 1 or initial.st_mode & 0o022 or os.listxattr(fd)):
             raise ValueError('fstab_unprotected')
         original = _read(fd)
+        if (expected_before_sha256 is not None
+                and hashlib.sha256(original).hexdigest() != expected_before_sha256):
+            raise ValueError('fstab_preflight_changed')
         if not original or not original.endswith(b'\n'):
             raise ValueError('fstab_missing_final_newline')
         if len(original) + len(line) > MAX_FSTAB:

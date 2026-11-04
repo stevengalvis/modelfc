@@ -51,6 +51,13 @@ class ProductionFstabTransactionTest(unittest.TestCase):
         self.assertEqual(self.fstab.read_bytes(), self.original)
         self.assertEqual(sorted(p.name for p in self.path.iterdir()), ['fstab'])
 
+    def test_changed_preflight_digest_blocks_before_writing(self):
+        with self.assertRaisesRegex(ValueError, 'preflight_changed'):
+            transaction.append_entry(self.fd, self.identifier, validate=self.accepted,
+                                     expected_before_sha256='0' * 64)
+        self.assertEqual(self.fstab.read_bytes(), self.original)
+        self.assertEqual(sorted(p.name for p in self.path.iterdir()), ['fstab'])
+
     def test_rejects_missing_newline_and_untrusted_parser(self):
         self.fstab.write_bytes(self.original.rstrip())
         with self.assertRaisesRegex(ValueError, 'newline'):

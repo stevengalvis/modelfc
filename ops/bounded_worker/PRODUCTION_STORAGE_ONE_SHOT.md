@@ -1,11 +1,10 @@
 # One-time 1 GiB storage preparation — review candidate
 
-This is an **offline design for review**, not an executable runbook,
-authorization or a claim that its command sequence has been tested on the host.
-The trusted wrapper described below does not exist yet; do not ask an operator
-to invent it or execute this design. Do not execute it
-until the exact source, commands, host prerequisites and privileged operation
-have received separate approval. It prepares an image only; it does not change
+This is an **offline source-tested candidate**, not authorization or a claim
+that the sequence has been tested on the host. The fixed-purpose entrypoint is
+`ops.bounded_worker.production_one_shot`; do not execute it until the exact
+source, commands, host prerequisites and privileged operation receive separate
+approval and independent review. It prepares an image only; it does not change
 bridge settings, start a worker, invoke Codex, enable timers, or certify the
 credential boundary. Preserve every historical fixture and trim entry.
 
@@ -15,16 +14,20 @@ credential boundary. Preserve every historical fixture and trim entry.
   with Python `-P -B` and all imported `ops.bounded_worker` modules resolving to
   that tree. Verify source hashes and every protected ancestor first. The local
   candidate commit and this document are not installed by a main deployment.
-- Existing protected `/srv/modelfc-bounded-images` directory and `/srv` parent;
-  pin their device/inode and permissions. The directory must have no unresolved
-  production-stage marker. Never rename or reuse an existing fixture/image.
-  If the image parent is absent, stop: creating it is a separate unimplemented
-  preparation step, not permission to adopt an unknown path.
+- Pin protected `/srv` device/inode and permissions. If the protected
+  `/srv/modelfc-bounded-images` directory already exists, independently pin its
+  device/inode and require no unresolved production-stage marker. If absent,
+  pass parent pins `0,0`: the entrypoint creates it exclusively under the lock
+  after writing a private intent. The image parent must be on the same device
+  as `/srv`; a separate image-parent filesystem blocks. An unexpected existing path blocks; never
+  rename or reuse an existing fixture or image.
 - Generate a fresh 32-lowercase-hex identifier `ID`, with image
   `/srv/modelfc-bounded-images/worker-ID.img` and new mountpoint
   `/srv/modelfc-bounded-ID`. Treat `ID` as fixed local operator input, never
   task or network data. Require no prior image, mountpoint, matching fstab entry,
-  or overlapping mount. Record the exact paths and independent `lstat` results.
+  or overlapping mount. The entrypoint requires the manager mount namespace
+  and rejects same-device mounts that expose the `/srv` subtree through an
+  alias. Record the exact paths and independent `lstat` results.
 - Resolve actual worker UID/GID, exact bridge lock device/inode, manager boot
   ID, and the cgroup component from the retained authenticated host evidence.
   Check the installed bridge release/settings without reading token contents;
@@ -39,16 +42,22 @@ credential boundary. Preserve every historical fixture and trim entry.
 
 ## Locked allocation and pinned objects
 
-Use one root-owned, private operator process and sanitized environment. Open the
-protected image parent and the real pinned lock without following symlinks. Call
-`hold_bridge_lock` with its independently measured path/device/inode; while it is
-held call `require_bridge_paused`, `require_no_worker_units`, and
-`require_no_worker_processes` for the exact worker UID. Then call
-`production_image_stage.create_image(parent_fd, image_basename,
-parent_pin=(device,inode), lock_pin=(device,inode))` **inside that same lock**.
-Do not invoke the stage CLI while an outer process holds the lock: its `prepare`
-would attempt a second nonblocking flock and fail. Its persistent global marker
-intentionally prevents another attempt even after success; do not remove it.
+A separately approved operator invokes the verified protected artifact once,
+using independently measured numeric pins and a selected verified-free loop:
+
+```sh
+/usr/bin/env -i PATH=/usr/bin:/bin PYTHONPATH=/opt/REVIEWED-SOURCE \
+  /usr/bin/python3 -P -B -m ops.bounded_worker.production_one_shot \
+  --id ID --uid UID --gid GID --parent-device PARENT_DEV --parent-inode PARENT_INO \
+  --srv-device SRV_DEV --srv-inode SRV_INO --lock-device LOCK_DEV --lock-inode LOCK_INO \
+  --loop /dev/loopN --component AUTHENTICATED_COMPONENT
+```
+
+Replace the placeholders only with the checked values; parent pins are both zero
+only when the exact image-parent path is absent. The entrypoint acquires the
+pinned lock once and calls `create_image` within it. Do not wrap it in another
+flock, which would cause its nonblocking acquisition to fail. It leaves the
+persistent global marker even after success; do not remove it.
 
 Capture the successful return and receipt digest in a new root-only report and
 fsync it. The `*.allocated.json` receipt says `capacity_pending`; it alone does
@@ -60,21 +69,23 @@ exact size and device/inode with both the receipt and the named path. Recheck
 FIEMAP via `_allocated_extents`, the parent path identity, and absence of mounts
 over image or mountpoint. A disagreement stops without deleting anything.
 
-The following phases require the **same operator hold**, and should remain under
-the pinned bridge flock. Before each mutation, repeat paused/job, worker-unit,
+The entrypoint performs the following phases under the **same operator hold**
+and pinned bridge flock. Before each mutation, repeat paused/job, worker-unit,
 worker-process, image/parent and mountpoint identity checks. Record and fsync an
 exclusive root-only intent containing phase, pins and fixed argv before calling
 each external utility; record observed completion separately. Never interpret a
 timeout, interrupted operator or missing output as nonexecution. On any such
 event stop, retain image, marker, fstab, loop and evidence, and do not retry or
-perform automatic rollback.
+perform automatic rollback. The wrapper may release its flock on exit while an
+uninterruptible child survives: the operator must maintain external launch, trim
+and privileged-writer exclusion until the uncertain operation is reconciled.
 
 ## Format, attach, mount
 
 Only a fresh, unformatted regular image descriptor from the previous step is
 eligible. Verify the installed root-controlled tools and supported options;
-if any option or descriptor path is unsupported, stop. A trusted wrapper must
-pass the image descriptor with `pass_fds` and use the literal per-child target
+if any option or descriptor path is unsupported, it stops. The entrypoint
+passes the image descriptor with `pass_fds` and uses the literal per-child target
 `/proc/self/fd/<image-fd>` (not a re-resolved pathname). Use these argument
 vectors, with no shell, bounded timeouts, sanitized environment, and captured
 bounded output:
@@ -110,7 +121,9 @@ single-link file with no group/other write, and record its exact bytes, stat
 identity, SHA-256, mode, owner and group in protected evidence. Reject any
 extended attributes or ACLs for this one-time procedure rather than silently
 discarding them. Check it is nonempty, ends with a newline, is parseable, and contains no
-duplicate image or mountpoint. Reject missing final newline rather than joining
+duplicate image or mountpoint. The bounded parser evaluates filesystem tags,
+canonicalizes path sources and targets, and blocks unresolved entries or aliases
+of the image, selected loop, or target; unknown syntax blocks preparation. Reject missing final newline rather than joining
 the new entry to the last existing line. Append exactly one newline-terminated line:
 
 ```text
@@ -131,7 +144,7 @@ entries. On any uncertainty stop with the on-disk result unresolved.
 
 Only after the exact persistent exclusion is installed and verified, and the
 trusted hold has excluded active or queued conflicting trim, mount with
-`/usr/bin/mount -t ext4 -o rw,nosuid,nodev,nodiscard /dev/loop<N>
+`/usr/bin/mount -i -c -t ext4 -o rw,nosuid,nodev,nodiscard /dev/loop<N>
 /proc/self/fd/<mountpoint-fd>`, passing the mountpoint descriptor. The retained pre-mount fd still names the covered directory: recheck its pinned
 identity before mounting, then verify the separately observed named mount root,
 a single ext4 root mount, matching loop backing identity,
@@ -140,8 +153,10 @@ utility does not support the fd path, stop; do not substitute an unchecked path.
 Exclusively create root-owned `workspaces` 0711 and `runtime` 0711 under the
 verified mount, pin and fsync them. Confirm they are on its device.
 
-Run only the actual listed-in service's fstrim dry-run and require this mount
-to be omitted while previously eligible targets remain eligible. In a separate
+Run only the actual listed-in service's fstrim dry-run and require this mount,
+including a canonicalized path alias, to be omitted while previously eligible targets remain eligible.
+For every selected path, the entrypoint also checks its effective device and
+rejects the prepared loop device even if the path has a different spelling. In a separate
 root-private temporary fstab-format file, list only the verified loop and
 mountpoint without the exclusion and run the same dry-run options against that
 file: require it selects this mount. If either result is unclear, stop; never
@@ -168,3 +183,8 @@ does not authorize configuration, activation, a real Codex run, cleanup, or a
 claim that real credentials are isolated. If an approved operation stops partway,
 report the last durable intent, observed state and exact unknowns privately;
 do not delete or reset anything to make the procedure repeatable.
+
+Offline validation covers synthetic success and fault paths plus an unprivileged
+real `findmnt` parser fixture. It does not establish target-host systemctl output,
+mkfs/losetup/mount fd compatibility, trim behavior, privileged side effects, or
+reaping of uninterruptible processes. Any mismatch blocks; no pathname fallback.
