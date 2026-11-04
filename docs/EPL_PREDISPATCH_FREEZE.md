@@ -44,10 +44,21 @@ coverage or automatic rescheduling policy is introduced.
 
 ## Failure and acceptance boundaries
 
-A durable batch claim precedes EPL work. Any freeze, binding, mapping persistence,
-window or qualification failure holds the attempt; no reservation/request occurs.
+A durable batch claim precedes EPL work. EPL-only freeze, binding, mapping
+persistence or qualification failures hold that attempt without a request. In a
+mixed batch with prepared Championship forecasts, handled EPL failures mark E0
+HELD and allow E1 to continue with the same single authorized tournament request
+and reservation. The request still covers the original authorized tournament set;
+EPL prices can be retained as inventory but no EPL handoff is permitted. Both the
+dispatch handoff and lower-level PR253 handoff reject held EPL evidence. The final
+receipt records separate E0/E1 outcomes; no alternative quota ledger is created.
 Partial forecasts retain their original evidence, with no automatic regeneration.
-For mixed-league batches this holds other leagues too; it is not an EPL-only claim.
+Championship-only batches ignore the EPL configuration and use the existing path.
+
+Shared authorization/window expiry, shared storage failure, or an actual process
+crash still stops the invocation and retains the shared non-retryable claim. This
+is handled-failure isolation, not an independent process/resource boundary. No
+claim is released and no second request is silently split off for recovery.
 Duplicate delivery, including a new experiment ID for the same claimed obligations,
 does not repeat collection. After reservation, failures retain the existing
 non-retryable request boundary. Incomplete receipts cannot hand off observations.
@@ -82,8 +93,8 @@ state with sockets/DNS denied and only transport/clock/host ownership simulated:
   offer. This enters the existing observe stage directly: it does not establish a
   second collector window or override the collector's deduplication policy.
   A stale quote also prevents publication.
-- Mapping mismatch, authorization expiry during freezing and interrupted partial
-  durability all prevent reservation, dispatch, handoff and publication. A new
+- In EPL-only acceptance, mapping mismatch, authorization expiry during freezing
+  and interrupted partial durability prevent reservation, dispatch, handoff and publication. A new
   experiment ID with valid authorization still cannot replay the claimed batch.
 
 The six end-to-end cases plus the thirteen dispatch/date-contract cases pass.
@@ -91,3 +102,17 @@ This is simulated transport and local publication/settlement only. It is not
 real provider acceptance, scientific qualification, deployment, prospective study
 activation, live public publication, or an operational approval. No production
 source change was required by this acceptance pass.
+
+
+## Mixed-batch Championship continuity
+
+`tests.test_pl_mixed_isolation` verifies mixed success, EPL mapping/qualification/
+partial-write/quote-order failures with successful E1 consumers, unchanged E1-only
+behavior, and shared authorization/storage/process/receipt interruption boundaries.
+Each completed mixed invocation has one reservation, one original tournament
+request and two E1 consumer records. EPL failures are explicit `league_results.E0`
+HELD outcomes, with no usable EPL dispatch pin. Repeating under another experiment
+ID cannot dispatch again. Post-request receipt uncertainty remains incomplete,
+even when E1 consumers were already durably saved. These tests use only synthetic
+inputs and disposable state, and do not demonstrate process-crash availability or
+independent resource isolation.
