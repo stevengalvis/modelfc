@@ -452,6 +452,15 @@ cannot block tests. At most 4 MiB/20,000 events are accepted; individual records
 are capped at 1024 bytes. No descriptions, parameters, tracebacks or raw pipe
 payloads are retained. The existing 4096-byte final report ceiling is unchanged.
 
+The source-name inventory is separately capped at 8192 identifiers (4096 declared
+test methods, each with and without the `tests.` prefix). The former 4096-name
+cap excluded later test files as the suite grew beyond 2048 declarations. Source
+parsing remains limited to 256 files and 1 MiB per file, skips symlinks, and never
+executes source. Names beyond the cap remain unrecognized; diagnostics flag them
+as truncated instead of accepting arbitrary process output. The eight-ID output
+limit, name grammar/length checks and report byte ceiling are unchanged. This
+source change does not update an already installed trusted controller.
+
 These candidate-process observations are supplemental, not trusted attestations
 or proof that the last test caused a timeout. Timing adds small overhead. Normal
 parent-handled timeout preserves accepted progress; OOM, service-wide kill or
