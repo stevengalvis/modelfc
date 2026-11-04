@@ -14,16 +14,20 @@ interrupted terminal signal was not retained. PR 233 comment 6565547327
 explains CLI and app-server helper-grant differences. No historical cleanup or
 new-system acceptance follows from those reports.
 
-Before any host proposal, a separate reviewed supervisor must: provision fresh
-disposable fixtures; provide valid syntactic fake config and fake auth with
-creation-receipt identity and content checks; invoke this worker through the
-unchanged storage launcher and prepared baseline; bound its output and timeout;
-and bind independently observed host process identity to the unit/cgroup before
-interruption. The nested process may use a PID namespace, and checking the
-`systemd-run` client alone is not proof that the probe is alive. Independently
-verify cleanup and snapshots after both normal and interrupted cases. Preserve
-evidence and keep all bridge services paused. The existing storage fixture's
-fake config is deliberately not valid TOML and cannot be silently replaced.
+The candidate adds a fresh-fixture preparer with valid TOML and JSON literals,
+using the existing lock, admission, creation receipt and source-identity checks.
+Its input-version constant is not recorded in the durable receipt; literal
+content is checked against the reviewed source. Syntax does not prove Codex
+accepts the fake auth schema. Earlier fixtures are never rewritten.
+
+The candidate's supervisor helpers bind an untrusted namespace-local PID to a
+unique host process in the exact cgroup using UID, command, executable, PID
+namespace and start time. They provide independent cleanup verification, but
+do not yet orchestrate a complete run. Before any host proposal, a reviewed
+orchestrator must invoke these helpers through the storage launcher and prepared
+baseline, retain bounded output, and verify cleanup and snapshots after normal
+and interrupted cases. Checking the `systemd-run` client alone is not proof
+that the probe is alive. Preserve evidence and keep the bridge paused.
 
 The candidate omits managed configuration: the pinned CLI can perform cloud
 configuration bootstrap when it is included, and the current outer unit does

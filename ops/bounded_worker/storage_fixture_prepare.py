@@ -50,7 +50,7 @@ def _new_fake(parent, name, value, uid, gid):
         os.close(fd)
 
 
-def create_at(parent_fd, name, uid, gid, lock):
+def create_at(parent_fd, name, uid, gid, lock, *, _auth=AUTH, _config=CONFIG):
     """Create fresh objects relative to an already protected, pinned parent fd."""
     parent = os.fstat(parent_fd)
     capacity = os.fstatvfs(parent_fd)
@@ -86,8 +86,8 @@ def create_at(parent_fd, name, uid, gid, lock):
         try:
             codex_fd = _new_dir(home_fd, '.codex', 0o700, uid, gid)
             try:
-                auth = _new_fake(codex_fd, 'auth.json', AUTH, uid, gid)
-                config = _new_fake(codex_fd, 'config.toml', CONFIG, uid, gid)
+                auth = _new_fake(codex_fd, 'auth.json', _auth, uid, gid)
+                config = _new_fake(codex_fd, 'config.toml', _config, uid, gid)
                 os.fsync(codex_fd)
             finally:
                 os.close(codex_fd)
@@ -119,7 +119,7 @@ def create_at(parent_fd, name, uid, gid, lock):
         os.close(root_fd)
 
 
-def prepare(root, username, uid, gid, parent_device, parent_inode, lock_device, lock_inode):
+def prepare(root, username, uid, gid, parent_device, parent_inode, lock_device, lock_inode, *, _auth=AUTH, _config=CONFIG):
     if (os.getuid() != 0 or os.geteuid() != 0
             or not re.fullmatch(r'/srv/modelfc-zen69-fixture-[0-9a-f]{32}', root)):
         raise ValueError('fixture_creation_not_authorized')
@@ -139,7 +139,7 @@ def prepare(root, username, uid, gid, parent_device, parent_inode, lock_device, 
         with hold_bridge_lock(lock):
             require_no_worker_units()
             require_no_worker_processes(uid)
-            digest = create_at(parent_fd, Path(root).name, uid, gid, lock)
+            digest = create_at(parent_fd, Path(root).name, uid, gid, lock, _auth=_auth, _config=_config)
         return {'status': 'created', 'fixture_root': root, 'creation_sha256': digest}
     finally:
         os.close(parent_fd)

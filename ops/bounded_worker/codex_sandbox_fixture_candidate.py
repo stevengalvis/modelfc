@@ -25,10 +25,11 @@ for name in (".agents", ".aws", ".codex"):
     else:
         os.close(fd)
         raise RuntimeError("unexpected_write")
-print(json.dumps({"checks":"writable_workspace_and_readonly_metadata"}), flush=True)
-if sys.argv[1] == "interrupted":
-    os.read(0, 1)
+print(json.dumps({"checks":"writable_workspace_and_readonly_metadata", "local_pid":os.getpid()}), flush=True)
+if os.read(0, 1) != b"x":
+    raise RuntimeError("probe_not_released")
 '''
+PROBE_ARG = 'exec(bytes.fromhex("' + PROBE.encode('ascii').hex() + '"))'
 
 
 def command(executable, work, home, mode):
@@ -60,17 +61,24 @@ def command(executable, work, home, mode):
     # Managed configuration is intentionally omitted pending a reviewed,
     # credential-free network boundary for CLI configuration bootstrap.
     return args + ['--enable', 'code_mode_host', 'sandbox', '--permission-profile', 'pilot',
-                   '-C', work, '--', '/usr/bin/python3', '-I', '-S', '-B', '-c', PROBE, mode]
+                   '-C', work, '--', '/usr/bin/python3', '-I', '-S', '-B', '-c', PROBE_ARG, mode]
 
 
 class CandidateWorker:
     """Worker adapter only; a separately reviewed supervisor must verify cleanup."""
-    def __init__(self, pinned_binary, account, mode):
+    def __init__(self, pinned_binary, account, mode, supervisor):
+        if not callable(getattr(supervisor, 'observe', None)):
+            raise ValueError('live_probe_observer_required')
         self.pinned_binary, self.account, self.mode = pinned_binary, account, mode
+        self.supervisor = supervisor
         self.child = None
+        self.identity = None
 
     def run(self, task, work, containment):
         del task
+        if (getattr(getattr(containment, 'backend', None), 'unit', None) != self.supervisor.unit
+                or self.supervisor.uid != self.account.pw_uid or self.supervisor.mode != self.mode):
+            raise ValueError('probe_supervisor_binding_mismatch')
         pinned = self.pinned_binary._binary()
         executable = str(self.pinned_binary.executable)
         home = self.account.pw_dir
@@ -87,10 +95,17 @@ class CandidateWorker:
         if pinned != self.pinned_binary._binary():
             raise ValueError('probe_binary_changed')
         report = read_line(self.child.stdout)
-        if (type(report) is not dict or set(report) != {'checks'}
-                or report['checks'] != 'writable_workspace_and_readonly_metadata'):
+        if (type(report) is not dict or set(report) != {'checks', 'local_pid'}
+                or report['checks'] != 'writable_workspace_and_readonly_metadata'
+                or type(report['local_pid']) is not int or report['local_pid'] <= 0):
             raise ValueError('invalid_probe_report')
+        self.identity = self.supervisor.observe(report['local_pid'])
+        if (type(self.identity) is not tuple or len(self.identity) != 4
+                or any(type(value) is not int or value <= 0 for value in self.identity)):
+            raise ValueError('probe_identity_unverified')
         if self.mode == 'normal':
+            self.child.stdin.write(b'x')
+            self.child.stdin.flush()
             if self.child.wait(timeout=10) != 0:
                 raise ValueError('probe_exit_failed')
             if pinned != self.pinned_binary._binary():
@@ -98,6 +113,8 @@ class CandidateWorker:
             return {'status': 'completed', 'errors': [], 'usage': None}
         if self.child.poll() is not None:
             raise ValueError('probe_not_running')
+        if self.supervisor.observe(report['local_pid']) != self.identity:
+            raise ValueError('probe_identity_changed')
         if pinned != self.pinned_binary._binary():
             raise ValueError('probe_binary_changed')
         return {'status': 'timeout', 'errors': [], 'usage': None}
