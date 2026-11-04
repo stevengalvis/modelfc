@@ -141,7 +141,7 @@ def verify_topology(root, mountinfo, mount_id=None):
     return matches[0]['id']
 
 
-def fake_sources(home, uid, expected, creation_sources=None):
+def fake_sources(home, uid, expected, creation_sources=None, *, _auth=AUTH, _config=CONFIG):
     if home.name != 'home':
         raise ValueError('invalid_fake_home')
     flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
@@ -158,8 +158,8 @@ def fake_sources(home, uid, expected, creation_sources=None):
                 if info.st_uid != uid or stat.S_IMODE(info.st_mode) != 0o700:
                     raise ValueError('invalid_fake_home')
                 results = []
-                for name, parent, filename, value in (('auth', codex_fd, 'auth.json', AUTH),
-                                                       ('config', codex_fd, 'config.toml', CONFIG),
+                for name, parent, filename, value in (('auth', codex_fd, 'auth.json', _auth),
+                                                       ('config', codex_fd, 'config.toml', _config),
                                                        ('sentinel', home_fd, 'outside-sentinel', b'zen69-outside\n')):
                     fd = os.open(filename, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent)
                     with os.fdopen(fd, 'rb') as stream:
@@ -186,7 +186,7 @@ def fake_sources(home, uid, expected, creation_sources=None):
         os.close(root_fd)
 
 
-def fixture_configuration(root, account, manifest, creation_sources, cgroup_component):
+def fixture_configuration(root, account, manifest, creation_sources, cgroup_component, *, _auth=AUTH, _config=CONFIG):
     image, mount, work, runtime = root / 'fixture.img', root / 'fs', root / 'fs/workspaces', root / 'fs/runtime'
     home, evidence = root / 'home', root / 'evidence'
     image_info = image.lstat()
@@ -195,7 +195,7 @@ def fixture_configuration(root, account, manifest, creation_sources, cgroup_comp
     vfs = os.statvfs(mount)
     if image_info.st_size != 32 * 1048576 or vfs.f_files != 512:
         raise ValueError('fixture_volume_limits_rejected')
-    sources = fake_sources(home, account.pw_uid, manifest['sources'], creation_sources)
+    sources = fake_sources(home, account.pw_uid, manifest['sources'], creation_sources, _auth=_auth, _config=_config)
     storage = StorageConfiguration(str(mount), str(image), str(work), str(runtime), image_info.st_dev,
                                    image_info.st_ino, image_info.st_size, vfs.f_blocks * vfs.f_frsize,
                                    vfs.f_files, 1024, 1, str(home / '.codex/auth.json'),
