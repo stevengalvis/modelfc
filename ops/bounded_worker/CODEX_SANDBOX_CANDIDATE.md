@@ -1,7 +1,7 @@
 # Unwired no-model sandbox candidate
 
-This offline candidate has no command-line entrypoint and is **not ready for a
-host run**. It proposes a fixed direct `codex sandbox` command and a test worker for the
+This offline candidate now has a test-only normal-case command-line entrypoint,
+but it is **not yet validated for a host run**. It proposes a fixed direct `codex sandbox` command and a test worker for the
 existing launcher. It does not start an app-server, request a model, or prove
 app-server/code-mode behavior. Its probe output is worker-shared and untrusted.
 
@@ -58,6 +58,14 @@ binary, fake auth schema, socket-relay assumptions, supervisor and artifacts, an
 verify the current protected binary/helper pins.
 
 ## Credential scope and test identity
+
+The adapter `ops.bounded_worker.codex_sandbox_candidate_cli` exposes only
+`prepare` and `run-normal`; both require explicit pins and delegate to the
+existing functions. It does not create a credential scope, provision or mount a
+filesystem, or validate host prerequisites. Invoke it only from an independently
+verified root-protected package and clean environment, following the host
+acceptance runbook. It prints a bounded result and performs no automatic retry.
+The real host checks and operator-held admission remain essential.
 
 The diagnostic requires the existing `modelfc-containment-test` account, a
 different UID from `zeno-worker`, and a root-protected hash-pinned scope and

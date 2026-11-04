@@ -1,7 +1,7 @@
 """Offline candidate for credential-free sandbox acceptance.
 
-No command-line entrypoint or host acceptance is supplied. The test-only private
-network does not block pathname UNIX socket relays; see the candidate notes.
+Host acceptance has not been established. The test-only private network does
+not block pathname UNIX socket relays; see the candidate notes.
 """
 import hashlib
 import json
