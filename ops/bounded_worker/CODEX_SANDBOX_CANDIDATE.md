@@ -49,10 +49,23 @@ still validates it. Neither change has been tested on the host, and an empty
 make the test pass.
 
 These changes do not block every filesystem-path UNIX socket relay or prove
-production network behavior. The user condition that accessible relays be
-resolved before the fixture remains in force, including paths and aliases outside
-`/run`; the gate does not perform that inventory and no network or socket
-communication is tested. The profile is not
+production network behavior. A residual socket-risk decision must be explicit;
+real credentials must be inaccessible. The gate does not inventory sockets and
+no socket communication is tested. The profile is not
 established equivalent to app-server. Before any host execution, review the exact
 binary, fake auth schema, socket-relay assumptions, supervisor and artifacts, and
 verify the current protected binary/helper pins.
+
+## Unwired credential isolation experiment
+
+`codex_credential_isolation_candidate.py` proposes a mode-000, bounded,
+read-only tmpfs over a canonical `/home/<worker>` path, plus a metadata-only
+observer for that mount in a waiting gate's namespace. It does not list the
+home contents and requires the resolved mount ID to verify as a bounded tmpfs. It is
+**not wired into the service or gate** and is not a credential-isolation proof.
+Before integration, a trusted operator must establish the actual account home,
+credential locations outside it, and accessible hard-link, bind-mount,
+process-descriptor or other aliases without reading credential contents. If that
+scope or worker privilege/descriptor state cannot be established, Codex must
+not be released. A test-only home mask cannot establish that unknown credentials
+or aliases elsewhere are inaccessible.
