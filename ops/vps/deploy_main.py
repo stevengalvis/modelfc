@@ -45,6 +45,8 @@ TEST_OUTPUT = REPORTS / "test-result.json"
 TEST_STDERR_LIMIT = 65536
 DIAGNOSTIC_LIMIT = 4096
 DIAGNOSTIC_IDS = 8
+# Two accepted module spellings per declaration; bounded separately from output.
+TEST_IDENTIFIER_LIMIT = 8192
 TEST_ID = re.compile(r"(?:tests\.)?test_[A-Za-z0-9_]+\.[A-Za-z_][A-Za-z0-9_]*\.test[A-Za-z0-9_]*\Z")
 ACQUISITION = Path("/run/modelfc-acquisition")
 MOUNT_HELPER = Path("/opt/modelfc-deploy/acquisition_mount.py")
@@ -1706,7 +1708,7 @@ def test_identifiers(release):
                     name = f"{path.stem}.{cls.name}.{method.name}"
                     if len(name) <= 154 and TEST_ID.fullmatch(name):
                         names.update((name, "tests." + name))
-                        if len(names) >= 4096:
+                        if len(names) >= TEST_IDENTIFIER_LIMIT:
                             return names
     return names
 

@@ -2144,6 +2144,41 @@ class TestFailureDiagnosticsTest(unittest.TestCase):
                 self.assertFalse(value["truncated"])
                 self.assertTrue(deploy.valid_test_diagnostics(value, self.allowed))
 
+    def test_identifier_inventory_covers_growth_without_expanding_report(self):
+        source = self.release / "tests/test_growth.py"
+        source.write_text("class Growth:\n" + "".join(
+            f"    def test_case_{i}(self): pass\n" for i in range(2500)))
+        allowed = deploy.test_identifiers(self.release)
+        name = "test_growth.Growth.test_case_2499"
+        self.assertIn(name, allowed)
+        self.assertIn("tests." + name, allowed)
+        text = f"FAIL: test_case_2499 ({name})\n"
+        text += "ERROR: test_secret (test_growth.Growth.test_secret) token=secret\n"
+        result = deploy.test_diagnostics(text, "FAILED (failures=1, errors=1)", allowed, False)
+        self.assertEqual(result["test_ids"], [name])
+        self.assertTrue(result["truncated"])
+        self.assertNotIn("secret", json.dumps(result))
+        self.assertTrue(deploy.valid_test_diagnostics(result, allowed))
+        self.assertLess(len(json.dumps(result)), deploy.DIAGNOSTIC_LIMIT)
+        self.assertEqual(deploy.DIAGNOSTIC_IDS, 8)
+        self.assertEqual(deploy.DIAGNOSTIC_LIMIT, 4096)
+
+    def test_identifier_inventory_still_has_hard_bound_without_executing_source(self):
+        count = deploy.TEST_IDENTIFIER_LIMIT // 2
+        (self.release / "tests/test_a_growth.py").write_text(
+            "raise RuntimeError('must not execute source')\nclass Growth:\n" + "".join(
+                f"    def test_case_{i}(self): pass\n" for i in range(count + 1)))
+        allowed = deploy.test_identifiers(self.release)
+        self.assertEqual(len(allowed), deploy.TEST_IDENTIFIER_LIMIT)
+        self.assertIn(f"test_a_growth.Growth.test_case_{count-1}", allowed)
+        self.assertIn(f"tests.test_a_growth.Growth.test_case_{count-1}", allowed)
+        name = f"test_a_growth.Growth.test_case_{count}"
+        self.assertNotIn(name, allowed)
+        result = deploy.test_diagnostics(f"FAIL: test_case_{count} ({name})", None, allowed, False)
+        self.assertEqual(result["test_ids"], [])
+        self.assertTrue(result["truncated"])
+        self.assertTrue(deploy.valid_test_diagnostics(result, allowed))
+
     def test_real_phase5_diagnostic_identifies_all_four_test_context_failures(self):
         names = ["test_vps_deploy.RuntimeReleaseProvenanceTest." + name for name in (
             "test_development_checkout_retains_git_fallback",
