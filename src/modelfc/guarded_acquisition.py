@@ -231,7 +231,7 @@ def _prepare(store, entry, sources, frozen, history_calendar=None):
 
 def run_once(*, state_dir, private_dir, calendar_path, metadata_path, data_config_path,
              authorization_path=None, history_calendar_path=None, clock=now, history_loader=load_history_bytes,
-             client_type=OddsPapiTournamentClient):
+             client_type=OddsPapiTournamentClient, retain_handoff=False):
     """One authorization permits at most one attempt. No caller-selected endpoint/price policy."""
     result = {"status": "DISABLED", "provider_requests": 0, "forecasts": 0, "snapshots": 0,
               "consumers": 0, "reason": None}
@@ -346,6 +346,9 @@ def run_once(*, state_dir, private_dir, calendar_path, metadata_path, data_confi
                         store.put(_name("consumer", {"forecast_id": forecast.forecast_id,
                                   "observation_id": snapshot.observation_id}), record)
                         result["consumers"] += 1
+                if retain_handoff is True:
+                    from modelfc.pl_acquisition_handoff import retain
+                    result["handoff_sha256"] = retain(store, auth["experiment_id"], snapshot, metadata)
                 result["status"] = "RECORDED"
             except (OSError, ValueError, KeyError, TypeError, AttributeError):
                 result.update(status="REJECTED", reason="SNAPSHOT_PROCESSING_REJECTED")
