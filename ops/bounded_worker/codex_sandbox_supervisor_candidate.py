@@ -17,7 +17,7 @@ from types import SimpleNamespace
 from . import launcher, storage_fixture
 from .bridge_security import protected_bytes
 from .codex import Codex
-from .codex_sandbox_fixture_candidate import CandidateWorker, PROBE_ARG
+from .codex_sandbox_fixture_candidate import CandidateWorker, GATE_ARG, PROBE_ARG
 from .storage import LinuxStorageReader
 from .storage_fixture import cgroup_view_verified, independent_cleanup
 from .storage_guard import _mounts
@@ -95,6 +95,7 @@ class DiagnosticContainment(SystemdContainment):
         super().__init__(evidence, uid, gid)
         self.network_observation = None
         self.run_observation = None
+        self.gate_observation = None
 
     def configure_storage(self, *, properties, expected, guard_path, revalidate):
         if any(value.startswith('--property=PrivateNetwork=') for value in properties):
@@ -112,12 +113,20 @@ class DiagnosticContainment(SystemdContainment):
         if (self.storage is None or self.storage[0].count(NETWORK_PROPERTY) != 1
                 or self.storage[0].count(RUN_PROPERTY) != 1):
             raise ValueError('network_fence_missing')
-        child = super().launch(*args, **kwargs)
+        return super().launch(*args, **kwargs)
+
+    def verify_gate(self, gated_args):
         self.network_observation = verify_private_network(self.unit)
-        _retain_exclusive(self.evidence, 'diagnostic-network-observed.json', self.network_observation)
+        gate_identity = bind_live_gate(self.unit, self.uid, gated_args, self.network_observation)
         self.run_observation = verify_private_run(self.unit, self.network_observation)
+        if (verify_private_network(self.unit) != self.network_observation
+                or bind_live_gate(self.unit, self.uid, gated_args, self.network_observation) != gate_identity):
+            raise ValueError('pre_exec_identity_changed')
+        _retain_exclusive(self.evidence, 'diagnostic-network-observed.json', self.network_observation)
         _retain_exclusive(self.evidence, 'diagnostic-run-observed.json', self.run_observation)
-        return child
+        _retain_exclusive(self.evidence, 'diagnostic-gate-observed.json', gate_identity)
+        self.gate_observation = gate_identity
+        return True
 
 
 class PreparedProbeWorker:
@@ -174,7 +183,7 @@ def verify_fake_input_record(raw, creation_sha256, digest):
 
 
 def accepted_case(mode, result, inspected, baseline, before, after, *, cleanup, sources_match,
-                  input_record_verified, network_fence_verified, private_run_verified,
+                  input_record_verified, network_fence_verified, private_run_verified, gate_verified,
                   binary_verified, observed_unit_matches):
     """Fail closed unless launcher, independent and fixture checks all agree."""
     if (mode not in ('normal', 'interrupted') or type(result) is not dict or result != inspected
@@ -183,7 +192,7 @@ def accepted_case(mode, result, inspected, baseline, before, after, *, cleanup, 
             or baseline['status'] != 'verified' or type(baseline['directories']) is not dict
             or type(before) is not dict or type(after) is not dict
             or not all(value is True for value in (cleanup, sources_match, input_record_verified,
-                network_fence_verified, private_run_verified, binary_verified, observed_unit_matches))):
+                network_fence_verified, private_run_verified, gate_verified, binary_verified, observed_unit_matches))):
         return False
     names = {'.agents', '.aws', '.codex'}
     if (set(baseline['directories']) != names or not names <= set(after) or names & set(before)
@@ -228,6 +237,43 @@ def verify_private_run(unit, network, *, _proc_root=Path('/proc')):
         raise ValueError('private_run_process_changed')
     return {'unit': unit, 'invocation': network['invocation'], 'main_pid': network['main_pid'],
             'starttime': network['starttime'], 'mount_id': mount_id}
+
+
+def bind_live_gate(unit, uid, gated_args, network, *, _proc_root=Path('/proc'), _python=Path('/usr/bin/python3')):
+    """Bind the fixed waiting gate to the live manager PID before release."""
+    fixed = ['/usr/bin/python3', '-I', '-S', '-B', '-c', GATE_ARG]
+    if (type(gated_args) is not list or len(gated_args) != 7 or gated_args[:6] != fixed
+            or type(gated_args[6]) is not str or len(gated_args[6]) > 16384
+            or type(uid) is not int or uid <= 0 or type(network) is not dict
+            or network.get('unit') != unit or type(network.get('main_pid')) is not int
+            or network['main_pid'] <= 1):
+        raise ValueError('pre_exec_gate_identity_unverified')
+    path = _proc_root / str(network['main_pid'])
+    before = _read(path / 'stat', 8192).decode('ascii').rsplit(')', 1)[1].split()
+    if len(before) < 20 or before[0] in ('Z', 'X') or int(before[19]) != network.get('starttime'):
+        raise ValueError('pre_exec_gate_identity_unverified')
+    status = _read(path / 'status', 16384).decode('ascii').splitlines()
+    uids = [line.split(':', 1)[1].split() for line in status if line.startswith('Uid:')]
+    if (len(uids) != 1 or len(uids[0]) != 4
+            or any(not value.isdigit() or int(value) != uid for value in uids[0])):
+        raise ValueError('pre_exec_gate_identity_unverified')
+    groups = _read(path / 'cgroup', 8192).decode('ascii').splitlines()
+    group = '0::/system.slice/' + unit
+    if len(groups) != 1 or not (groups[0] == group or groups[0].startswith(group + '/')):
+        raise ValueError('pre_exec_gate_identity_unverified')
+    expected = _python.stat()
+    actual = os.stat(path / 'exe')
+    if (not stat.S_ISREG(expected.st_mode) or expected.st_uid != 0 or expected.st_mode & 0o022
+            or (expected.st_dev, expected.st_ino) != (actual.st_dev, actual.st_ino)):
+        raise ValueError('pre_exec_gate_identity_unverified')
+    cmdline = _read(path / 'cmdline', 32768)
+    if cmdline != b'\0'.join(value.encode('utf-8') for value in gated_args) + b'\0':
+        raise ValueError('pre_exec_gate_identity_unverified')
+    after = _read(path / 'stat', 8192).decode('ascii').rsplit(')', 1)[1].split()
+    if len(after) < 20 or after[0] in ('Z', 'X') or after[19] != before[19]:
+        raise ValueError('pre_exec_gate_identity_unverified')
+    return {'unit': unit, 'invocation': network['invocation'], 'main_pid': network['main_pid'],
+            'starttime': network['starttime'], 'executable': [expected.st_dev, expected.st_ino]}
 
 
 def verify_private_network(unit, *, _proc_root=Path('/proc'), _run=subprocess.run):
@@ -472,7 +518,7 @@ def run_candidate(root, username, loop, inventory_path, inventory_sha256, execut
             inspected = launcher.inspect(task.task_id, config, _worker_factory=lambda *_: worker)
         except Exception as exc:
             error = type(exc).__name__
-        cleanup = final_inspection = sources_match = record_ok = binary_ok = unit_ok = network_ok = run_ok = False
+        cleanup = final_inspection = sources_match = record_ok = binary_ok = unit_ok = network_ok = run_ok = gate_ok = False
         baseline, after = None, None
         try:
             control = worker.supervisor
@@ -483,6 +529,7 @@ def run_candidate(root, username, loop, inventory_path, inventory_sha256, execut
             network_record = launcher._read(Path(config.evidence_root) / task.task_id / 'attempt/diagnostic-network.json')
             network_observed = launcher._read(Path(config.evidence_root) / task.task_id / 'attempt/diagnostic-network-observed.json')
             run_observed = launcher._read(Path(config.evidence_root) / task.task_id / 'attempt/diagnostic-run-observed.json')
+            gate_observed = launcher._read(Path(config.evidence_root) / task.task_id / 'attempt/diagnostic-gate-observed.json')
             network_ok = (control is not None and control.network_verified is True
                           and network_record == {'unit': control.unit, 'extra_property': NETWORK_PROPERTY,
                                                  'removed_bind': RUN_BIND, 'added_property': RUN_PROPERTY}
@@ -490,6 +537,10 @@ def run_candidate(root, username, loop, inventory_path, inventory_sha256, execut
                           and network_observed == worker.backend.network_observation)
             run_ok = (control is not None and type(run_observed) is dict and run_observed.get('unit') == control.unit
                       and run_observed == worker.backend.run_observation)
+            gate_ok = (control is not None and type(gate_observed) is dict and gate_observed.get('unit') == control.unit
+                       and gate_observed == worker.backend.gate_observation
+                       and type(network_observed) is dict
+                       and gate_observed.get('invocation') == network_observed.get('invocation'))
             sources_match = sources == storage_fixture.fake_sources(root / 'home', account.pw_uid,
                 manifest['sources'], creation_sources, _auth=FAKE_AUTH, _config=FAKE_CONFIG)
             record_ok = verify_fake_input_record(protected_bytes(root / 'evidence/codex-fixture-inputs.json'),
@@ -508,7 +559,7 @@ def run_candidate(root, username, loop, inventory_path, inventory_sha256, execut
         passed = (error is None and final_inspection and accepted_case(
             mode, result, inspected, baseline, before, after, cleanup=cleanup, sources_match=sources_match,
             input_record_verified=record_ok, network_fence_verified=network_ok, private_run_verified=run_ok,
-            binary_verified=binary_ok,
+            gate_verified=gate_ok, binary_verified=binary_ok,
             observed_unit_matches=unit_ok))
         return {'status': 'passed' if passed else 'blocked', 'mode': mode, 'result': result,
                 'independent_cleanup': 'verified' if cleanup else 'unverified',

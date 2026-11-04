@@ -12,6 +12,7 @@ import unittest
 from unittest.mock import patch
 
 from ops.bounded_worker import codex_sandbox_supervisor_candidate as supervisor
+from ops.bounded_worker import codex_sandbox_fixture_candidate as fixture_candidate
 from ops.bounded_worker import storage_fixture
 from ops.bounded_worker import storage_fixture_prepare
 from ops.bounded_worker import launcher
@@ -19,6 +20,55 @@ from ops.bounded_worker.storage import StorageConfiguration, service_properties
 
 
 class SupervisorTests(unittest.TestCase):
+    def test_gate_identity_requires_exact_unit_uid_binary_and_argv(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            proc = root / 'proc'
+            pid = proc / '1234'
+            pid.mkdir(parents=True)
+            python = root / 'python'
+            python.write_bytes(b'fixture')
+            info = python.stat()
+            fake_python = SimpleNamespace(stat=lambda: SimpleNamespace(st_dev=info.st_dev, st_ino=info.st_ino,
+                st_mode=stat.S_IFREG | 0o755, st_uid=0))
+            unit = 'modelfc-bounded-' + 'a' * 32 + '.service'
+            network = {'unit': unit, 'main_pid': 1234, 'starttime': 42, 'invocation': 'b' * 32}
+            args = ['/usr/bin/python3', '-I', '-S', '-B', '-c', fixture_candidate.GATE_ARG, '["/opt/codex"]']
+            (pid / 'stat').write_text('1234 (python) S ' + '0 ' * 18 + '42\n')
+            (pid / 'status').write_text('Uid:\t1003\t1003\t1003\t1003\n')
+            (pid / 'cgroup').write_text('0::/system.slice/' + unit + '\n')
+            (pid / 'exe').symlink_to(python)
+            (pid / 'cmdline').write_bytes(b'\0'.join(value.encode() for value in args) + b'\0')
+            value = supervisor.bind_live_gate(unit, 1003, args, network, _proc_root=proc, _python=fake_python)
+            self.assertEqual(value['main_pid'], 1234)
+            (pid / 'cmdline').write_bytes(b'other\0')
+            with self.assertRaisesRegex(ValueError, 'gate_identity_unverified'):
+                supervisor.bind_live_gate(unit, 1003, args, network, _proc_root=proc, _python=fake_python)
+            (pid / 'status').write_text('Uid:\t0\t0\t0\t0\n')
+            with self.assertRaisesRegex(ValueError, 'gate_identity_unverified'):
+                supervisor.bind_live_gate(unit, 1003, args, network, _proc_root=proc, _python=fake_python)
+
+    def test_gate_verifier_rechecks_live_state_before_recording(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            backend = supervisor.DiagnosticContainment(Path(temporary), 1003, 1003)
+            network = {'unit': backend.unit, 'main_pid': 1234, 'starttime': 42, 'invocation': 'a' * 32}
+            gate = {'unit': backend.unit, 'main_pid': 1234}
+            run = {'unit': backend.unit, 'mount_id': 55}
+            with patch.object(supervisor, 'verify_private_network', return_value=network), \
+                 patch.object(supervisor, 'bind_live_gate', return_value=gate), \
+                 patch.object(supervisor, 'verify_private_run', return_value=run):
+                self.assertTrue(backend.verify_gate(['fixed']))
+            self.assertEqual(json.loads((Path(temporary) / 'diagnostic-gate-observed.json').read_text()), gate)
+        with tempfile.TemporaryDirectory() as temporary:
+            backend = supervisor.DiagnosticContainment(Path(temporary), 1003, 1003)
+            network = {'unit': backend.unit, 'main_pid': 1234, 'starttime': 42, 'invocation': 'a' * 32}
+            with patch.object(supervisor, 'verify_private_network', side_effect=[network, {**network, 'main_pid': 999}]), \
+                 patch.object(supervisor, 'bind_live_gate', return_value={}), \
+                 patch.object(supervisor, 'verify_private_run', return_value={}):
+                with self.assertRaisesRegex(ValueError, 'identity_changed'):
+                    backend.verify_gate(['fixed'])
+            self.assertFalse((Path(temporary) / 'diagnostic-gate-observed.json').exists())
+
     def test_private_run_preserves_real_generated_storage_properties(self):
         cfg = StorageConfiguration('/bound', '/secure/image', '/bound/work', '/bound/runtime',
             2049, 99, 100000, 51200, 1000, 1024, 10, '/home/worker/.codex/auth.json',
@@ -123,7 +173,8 @@ class SupervisorTests(unittest.TestCase):
                                                 cleanup_verified=lambda: state['cleanup'])
             if not state['supervisor']:
                 worker.supervisor = None
-            worker.backend = SimpleNamespace(unit=unit, network_observation={'unit': unit}, run_observation={'unit': unit})
+            worker.backend = SimpleNamespace(unit=unit, network_observation={'unit': unit, 'invocation': 'a' * 32},
+                                             run_observation={'unit': unit}, gate_observation={'unit': unit, 'invocation': 'a' * 32})
             if state['launch_error']:
                 raise ValueError('after_launch')
             return result
@@ -134,9 +185,11 @@ class SupervisorTests(unittest.TestCase):
                 return {'unit': unit, 'extra_property': supervisor.NETWORK_PROPERTY if state['network_record'] else 'changed',
                         'removed_bind': supervisor.RUN_BIND, 'added_property': supervisor.RUN_PROPERTY}
             if path.name == 'diagnostic-network-observed.json':
-                return {'unit': unit if state['network_observation'] else 'other'}
+                return {'unit': unit if state['network_observation'] else 'other', 'invocation': 'a' * 32}
             if path.name == 'diagnostic-run-observed.json':
                 return {'unit': unit if state['run_observation'] else 'other'}
+            if path.name == 'diagnostic-gate-observed.json':
+                return {'unit': unit, 'invocation': 'a' * 32}
             return baseline if state['baseline'] else {'status': 'unverified'}
         def protected(path, **kwargs):
             return b'receipt' if path.name == 'fixture-creation.json' else (record if state['record'] else b'changed')
@@ -248,7 +301,7 @@ class SupervisorTests(unittest.TestCase):
         baseline = {'status': 'verified', 'directories': {k: [] for k in ('.agents', '.aws', '.codex')}}
         result = {'status': 'completed', 'task_id': 'zen69-fixture'}
         checks = dict(cleanup=True, sources_match=True, input_record_verified=True,
-                      network_fence_verified=True, private_run_verified=True,
+                      network_fence_verified=True, private_run_verified=True, gate_verified=True,
                       binary_verified=True, observed_unit_matches=True)
         self.assertTrue(supervisor.accepted_case('normal', result, result, baseline, before, after, **checks))
         self.assertFalse(supervisor.accepted_case('interrupted', result, result, baseline, before, after, **checks))

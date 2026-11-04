@@ -28,6 +28,15 @@ unchanged snapshots for one case. The code and its offline mocks do not establis
 real CLI, systemd or kernel behavior. Checking the `systemd-run` client alone is
 not proof that the probe is alive. Preserve evidence and keep the bridge paused.
 
+For this diagnostic only, a fixed post-guard, post-drop gate waits for a single
+supervisor release byte before executing Codex. The supervisor binds the live
+gate to the manager PID, UID, cgroup, executable, exact arguments, start time
+and invocation, checks the private network and `/run`, rechecks the gate, and
+durably records its observations before releasing it. Missing, malformed, timed
+out or changed state blocks release and uses the existing containment cleanup.
+The service's `Type=exec` active state alone is not gate readiness. This ordering
+has only offline coverage; actual systemd pipe and namespace behavior is unknown.
+
 The candidate omits managed configuration: the pinned CLI can perform cloud
 configuration bootstrap when it is included. It adds `PrivateNetwork=yes` only
 to the test unit, records that property separately from the production storage
@@ -42,7 +51,8 @@ make the test pass.
 These changes do not block every filesystem-path UNIX socket relay or prove
 production network behavior. The user condition that accessible relays be
 resolved before the fixture remains in force, including paths and aliases outside
-`/run`; no network or socket communication is tested. The profile is not
+`/run`; the gate does not perform that inventory and no network or socket
+communication is tested. The profile is not
 established equivalent to app-server. Before any host execution, review the exact
 binary, fake auth schema, socket-relay assumptions, supervisor and artifacts, and
 verify the current protected binary/helper pins.
