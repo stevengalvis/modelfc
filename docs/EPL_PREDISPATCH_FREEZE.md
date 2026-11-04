@@ -64,3 +64,30 @@ exercise freeze → synthetic/saved transport → retained handoff → observe �
 publication/settlement with exact fixture result corrections. Any live collection,
 publication configuration, runtime scheduling, quota allocation or qualification
 approval needs its own authorization. BTTS remains outside this dispatch slice.
+
+## Synthetic end-to-end acceptance
+
+`tests.test_pl_dispatch_acceptance` runs the actual local stages in disposable
+state with sockets/DNS denied and only transport/clock/host ownership simulated:
+
+- Approved synthetic contract → eight next-day freezes → one shared reservation
+  and simulated request → pinned receipt/handoff → one eligible HOME OVER 4.5
+  observation → one immutable local publication. Repeat delivery/publication
+  creates neither another request nor another publication.
+- Missing final corner statistics remain PENDING. Explicit current-tip corrections
+  append WIN then LOSS, retain original offer/price and forecast/quote bytes, and
+  preserve prior PENDING/WIN as-of reads. Unparented or stale-parent corrections
+  and results for a different fixture are rejected.
+- A newer supplied saved observation with missing odds suppresses the older usable
+  offer. This enters the existing observe stage directly: it does not establish a
+  second collector window or override the collector's deduplication policy.
+  A stale quote also prevents publication.
+- Mapping mismatch, authorization expiry during freezing and interrupted partial
+  durability all prevent reservation, dispatch, handoff and publication. A new
+  experiment ID with valid authorization still cannot replay the claimed batch.
+
+The six end-to-end cases plus the thirteen dispatch/date-contract cases pass.
+This is simulated transport and local publication/settlement only. It is not
+real provider acceptance, scientific qualification, deployment, prospective study
+activation, live public publication, or an operational approval. No production
+source change was required by this acceptance pass.
