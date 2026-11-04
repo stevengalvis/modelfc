@@ -1,8 +1,7 @@
 # Unwired no-model sandbox candidate
 
-This offline candidate has no operator entrypoint and is **not ready for a host
-run**. It neither implements fixture preparation nor supplies acceptance evidence.
-It proposes a fixed direct `codex sandbox` command and a test worker for the
+This offline candidate has no command-line entrypoint and is **not ready for a
+host run**. It proposes a fixed direct `codex sandbox` command and a test worker for the
 existing launcher. It does not start an app-server, request a model, or prove
 app-server/code-mode behavior. Its probe output is worker-shared and untrusted.
 
@@ -16,23 +15,26 @@ new-system acceptance follows from those reports.
 
 The candidate adds a fresh-fixture preparer with valid TOML and JSON literals,
 using the existing lock, admission, creation receipt and source-identity checks.
-Its input-version constant is not recorded in the durable receipt; literal
-content is checked against the reviewed source. Syntax does not prove Codex
+Before launch it retains a separate exclusive root-owned record binding its
+input-version constant, the expected content hashes and the original creation
+receipt digest. Syntax does not prove Codex
 accepts the fake auth schema. Earlier fixtures are never rewritten.
 
 The candidate's supervisor helpers bind an untrusted namespace-local PID to a
 unique host process in the exact cgroup using UID, command, executable, PID
-namespace and start time. They provide independent cleanup verification, but
-do not yet orchestrate a complete run. Before any host proposal, a reviewed
-orchestrator must invoke these helpers through the storage launcher and prepared
-baseline, retain bounded output, and verify cleanup and snapshots after normal
-and interrupted cases. Checking the `systemd-run` client alone is not proof
-that the probe is alive. Preserve evidence and keep the bridge paused.
+namespace and start time. `run_candidate` invokes the existing storage launcher
+with the prepared baseline and requires independent cleanup, reinspection and
+unchanged snapshots for one case. The code and its offline mocks do not establish
+real CLI, systemd or kernel behavior. Checking the `systemd-run` client alone is
+not proof that the probe is alive. Preserve evidence and keep the bridge paused.
 
 The candidate omits managed configuration: the pinned CLI can perform cloud
-configuration bootstrap when it is included, and the current outer unit does
-not establish network isolation for that bootstrap. Thus its effective profile
-is not verified equivalent to app-server and configured child network denial is
-not proof of actual network behavior. Review the exact binary's source and
-resolve the no-network and configuration gates before any host execution. The
-operator must independently verify the current protected binary and helper pins.
+configuration bootstrap when it is included. It adds `PrivateNetwork=yes` only
+to the test unit, records that property separately from the production storage
+properties hash, and checks the live unit's manager and network namespace views.
+This changes the diagnostic environment and does not block filesystem-path UNIX
+socket relays or prove production network behavior. A separately verified trusted
+host must not expose an accessible relay; no network or socket communication is
+tested. The profile is not established equivalent to app-server. Before any host
+execution, review the exact binary, fake auth schema, socket-relay assumptions,
+supervisor and artifacts, and verify the current protected binary/helper pins.
