@@ -10,11 +10,10 @@ import random
 from zoneinfo import ZoneInfo
 
 from modelfc.acquisition_planner import utc
-from modelfc.corner_probability_evaluation import evaluate_corner_probabilities
 from modelfc.history_coverage import validated_sources, timestamp, MAX_SOURCE_BYTES
 from modelfc.matches import TeamCornerObservation, Venue
 from modelfc.oddspapi_market_inventory import _read_regular
-from modelfc.pl_chronological_evaluation import evaluate, _btts, MODEL, LINES
+from modelfc.pl_chronological_evaluation import evaluate, _btts, _corner_report, _cutoff, LINES
 
 
 def _loss(p, y, metric, under=None):
@@ -86,10 +85,10 @@ def paired_summary(rows, *, resamples=2000, seed=20261104):
     return result
 
 
-def compare(sources, *, season_year, as_of, resamples=2000, seed=20261104):
+def compare(sources, *, season_year, as_of, resamples=2000, seed=20261104, next_day=False):
     # Preserve the original report and every validation gate; no historic receipt
     # is reinterpreted as proof of information available at historical kickoff.
-    base = evaluate(sources,season_year=season_year,as_of=as_of,enabled=True)
+    base = evaluate(sources,season_year=season_year,as_of=as_of,enabled=True,next_day=next_day)
     before = utc(as_of).astimezone(ZoneInfo('Europe/London')).date()
     goals,_ = validated_sources('E0',sources,before=before,observed_at=as_of,
         enforce_seasons=True,validation_scope='GOALS')
@@ -100,14 +99,13 @@ def compare(sources, *, season_year, as_of, resamples=2000, seed=20261104):
         for r in corners if r.match_date < before and r.corners_for is not None and r.corners_against is not None]
     corner_rows = []
     try:
-        outcomes = evaluate_corner_probabilities(observations,model=MODEL,lines=LINES,
-            min_history=100,min_venue_history=5,smoothing_matches=5).outcomes
+        outcomes = _corner_report(observations,next_day=next_day).outcomes
     except ValueError as exc:
         if str(exc) != 'no eligible fixtures in scoring window; check history and coverage': raise
         outcomes = ()
     for item in outcomes:
         r = item.observation
-        prior = [p for p in observations if p.match_date < r.match_date and p.venue is r.venue]
+        prior = [p for p in observations if p.match_date < _cutoff(r.match_date,next_day) and p.venue is r.venue]
         if not prior: raise ValueError('BASELINE_HISTORY_MISSING')
         year = r.match_date.year if r.match_date.month >= 7 else r.match_date.year-1
         home,away = (r.team,r.opponent) if r.venue is Venue.HOME else (r.opponent,r.team)
@@ -116,7 +114,7 @@ def compare(sources, *, season_year, as_of, resamples=2000, seed=20261104):
             'model':item.over_probability,'model_under':item.under_probability,'baseline':sum(p.corners_for > item.line for p in prior)/len(prior),
             'outcome':item.over_happened})
     btts_rows = [{'season':r.season,'date':r.match_date.isoformat(),'home':r.team,'away':r.opponent,
-        'venue':'fixture','line':None,'model':p,'baseline':b,'outcome':y} for r,p,b,y in _btts(goals)]
+        'venue':'fixture','line':None,'model':p,'baseline':b,'outcome':y} for r,p,b,y in _btts(goals,next_day=next_day)]
     def summaries(rows):
         return {'pooled':paired_summary(rows,resamples=resamples,seed=seed),
             'seasons':{s['season']:paired_summary([r for r in rows if r['season']==s['season']],
@@ -139,6 +137,7 @@ def main():
     parser.add_argument('--enable-offline-comparison',action='store_true')
     parser.add_argument('--season-year',type=int)
     parser.add_argument('--as-of')
+    parser.add_argument('--next-day',action='store_true',help='Use the deployed next-day training cutoff for model and baseline')
     parser.add_argument('--source',action='append',nargs=3,default=[])
     args=parser.parse_args()
     try:
@@ -148,7 +147,7 @@ def main():
             if len(args.source)!=5: raise ValueError('FIVE_SEASONS_REQUIRED')
             sources=[(Path(p).name,_read_regular(Path(p),MAX_SOURCE_BYTES,'SOURCE_READ_REJECTED'),pin,timestamp(t))
                      for p,pin,t in args.source]
-            result=compare(sources,season_year=args.season_year,as_of=timestamp(args.as_of))
+            result=compare(sources,season_year=args.season_year,as_of=timestamp(args.as_of),next_day=args.next_day)
         print(json.dumps(result,sort_keys=True,allow_nan=False))
     except (ValueError,TypeError,OSError,KeyError):
         parser.exit(2,'EPL_COMPARISON_REJECTED\n')
