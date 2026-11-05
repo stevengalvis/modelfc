@@ -28,6 +28,9 @@ COMMENT = '''id body archivedAt editedAt updatedAt createdAt
  issue { id }
 '''
 READ = 'query($issue:String!,$comment:String!){' + DESTINATION + 'comment(id:$comment){' + COMMENT + '}}'
+POLL = 'query($issue:String!){' + DESTINATION + '''
+ channel:issue(id:$issue) { id comments(last:100) { pageInfo { hasPreviousPage } nodes {
+''' + COMMENT + '}}}}'
 CHECK = 'query($issue:String!){' + DESTINATION + '}'
 POST = '''mutation($issue:String!,$body:String!){
  commentCreate(input:{issueId:$issue,body:$body}) {
@@ -53,7 +56,7 @@ class LinearAPI:
 
     def call(self, query, variables):
         # Only trusted fixed query constants reach this internal boundary.
-        if query not in (READ, CHECK, POST):
+        if query not in (READ, CHECK, POST, POLL):
             raise ValueError('unsupported_query')
         request = HTTPRequest('https://api.linear.app/graphql',
                               data=json.dumps({'query': query, 'variables': variables}).encode(),
@@ -127,8 +130,37 @@ class LinearReader:
         policy = self.destination.policy
         data = self.api.call(READ, {'issue': policy.issue, 'comment': comment})
         self.destination.check(data)
+        return self._parse(data.get('comment'), comment)
+
+    def candidates(self):
+        data = self.api.call(POLL, {'issue': self.destination.policy.issue})
+        self.destination.check(data)
         try:
-            value = data['comment']
+            channel = data['channel']
+            connection = channel['comments']
+            nodes = connection['nodes']
+            if (channel['id'] != self.destination.policy.issue
+                    or connection['pageInfo']['hasPreviousPage'] is not False
+                    or type(nodes) is not list or len(nodes) > 100):
+                raise ValueError('incomplete_channel')
+            result, seen = [], set()
+            for value in nodes:
+                ident = _id(value['id'])
+                if ident in seen:
+                    raise ValueError('duplicate_comment')
+                seen.add(ident)
+                try:
+                    result.append(self._parse(value, ident))
+                except ValueError:
+                    # Ineligible authors/prose never authorize a diagnostic.
+                    continue
+            return result
+        except (KeyError, TypeError, AttributeError):
+            raise ValueError('invalid_channel') from None
+
+    def _parse(self, value, comment):
+        policy = self.destination.policy
+        try:
             user = value['user']
             if (value['id'] != comment or value['issue']['id'] != policy.issue
                     or value['archivedAt'] is not None

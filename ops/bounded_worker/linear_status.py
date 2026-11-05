@@ -146,10 +146,48 @@ def initialize(db):
     db.execute('PRAGMA synchronous=FULL')
     db.execute('CREATE TABLE requests (job TEXT PRIMARY KEY, comment TEXT UNIQUE NOT NULL, '
                'binding TEXT NOT NULL, phase TEXT NOT NULL, report TEXT)')
+    db.execute('CREATE TABLE deliveries (job TEXT PRIMARY KEY, comment TEXT UNIQUE NOT NULL, '
+               'issue TEXT NOT NULL, actor TEXT NOT NULL, report_sha256 TEXT NOT NULL)')
     db.commit()
 
 
-def once(db, request, policy, reader, diagnostic, sink, clock, *, approval=None, authorization=None):
+def uuid_text(value):
+    return type(value) is str and re.fullmatch(
+        r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}', value) is not None
+
+
+def receipt_rows(db, *, require_delivery_id=False, delivery_destination=None):
+    """Called inside a transaction before I/O; None means uncertain/corrupt state."""
+    try:
+        rows = db.execute('SELECT job,comment,binding,phase,report FROM requests').fetchall()
+        for job, comment, digest, phase, report in rows:
+            if (type(job) is not str or not re.fullmatch(r'[a-z0-9][a-z0-9_-]{0,63}', job)
+                    or type(comment) is not str or not 1 <= len(comment) <= 200
+                    or type(digest) is not str or not re.fullmatch(r'[a-f0-9]{64}', digest)
+                    or phase != 'posted' or report not in REPORTS):
+                return None
+        delivered = db.execute('SELECT job,comment,issue,actor,report_sha256 FROM deliveries').fetchall()
+        reports = {row[0]: row[4] for row in rows}
+        seen = set()
+        for job, comment, issue, actor, digest in delivered:
+            if (job not in reports or job in seen or not all(uuid_text(v) for v in (comment, issue, actor))
+                    or digest != hashlib.sha256(reports[job].encode()).hexdigest()
+                    or (delivery_destination is not None and (issue, actor) != delivery_destination)):
+                return None
+            seen.add(job)
+        if db.execute("SELECT 1 FROM sqlite_master WHERE name='status_cadence'").fetchone():
+            cadence = db.execute('SELECT slot,next FROM status_cadence').fetchall()
+            if (len(cadence) > 1 or any(slot != 1 or type(next_at) is not int or next_at < 0
+                                      for slot, next_at in cadence)):
+                return None
+        if require_delivery_id and seen != set(reports):
+            return None
+        return rows
+    except Exception:
+        return None
+
+
+def once(db, request, policy, reader, diagnostic, sink, clock, *, approval=None, authorization=None, require_delivery_id=False):
     """One attempt using trusted adapters; returns only fixed outcomes.
 
     reader.fetch(comment) -> freshly authenticated Request
@@ -173,14 +211,11 @@ def once(db, request, policy, reader, diagnostic, sink, clock, *, approval=None,
     try:
         db.execute('PRAGMA synchronous=FULL')
         db.execute('BEGIN IMMEDIATE')
-        rows = db.execute('SELECT job,comment,binding,phase,report FROM requests').fetchall()
-        for old_job, comment, old_digest, phase, report in rows:
-            if (type(old_job) is not str or not re.fullmatch(r'[a-z0-9][a-z0-9_-]{0,63}', old_job)
-                    or type(comment) is not str or not 1 <= len(comment) <= 200
-                    or type(old_digest) is not str or not re.fullmatch(r'[a-f0-9]{64}', old_digest)
-                    or phase != 'posted' or report not in REPORTS):
-                db.rollback()
-                return 'blocked'
+        rows = receipt_rows(db, require_delivery_id=require_delivery_id,
+                            delivery_destination=(policy.issue, sink.destination.viewer_id) if require_delivery_id else None)
+        if rows is None:
+            db.rollback()
+            return 'blocked'
         collisions = [row for row in rows if row[0] == job or row[1] == request.comment]
         if collisions:
             db.rollback()
@@ -219,6 +254,13 @@ def once(db, request, policy, reader, diagnostic, sink, clock, *, approval=None,
         db.commit()
         if sink.post(policy.issue, report) is not True:
             return 'blocked'
+        if require_delivery_id:
+            comment_id = sink.last_comment_id
+            actor_id = sink.destination.viewer_id
+            if not uuid_text(comment_id) or not uuid_text(actor_id):
+                return 'blocked'
+            db.execute('INSERT INTO deliveries VALUES (?,?,?,?,?)',
+                       (job, comment_id, policy.issue, actor_id, hashlib.sha256(report.encode()).hexdigest()))
         db.execute('UPDATE requests SET phase=? WHERE job=?', ('posted', job))
         db.commit()
         return 'failed_reported' if report == FAILURE else 'reported'

@@ -3,6 +3,7 @@
 Owner: current preparation agent. Initial base main `0e0bc35`; prepared 2026-11-05.
 This is locally tested source, not an installed or accepted live connection.
 No credentials, host configuration, active grant, scheduler or CLI is supplied.
+An explicitly called one-shot integration function is available; imports are inert.
 No VPS command, Linear request/mutation, activation, push or deployment ran during
 preparation. Existing coding bridge and sandbox boundaries are unchanged; historical
 pilot reports do not establish current host state or coding acceptance.
@@ -88,15 +89,18 @@ deleting receipts to force a retry is not recovery.
 synchronous connection without a surrounding transaction. Protect its directory,
 files and ancestors outside the checkout and coding storage using existing bridge
 path/ownership/lock safeguards in the eventual entry point. Directory fsync,
-process custody and scheduler/backoff integration remain caller duties. Never use
-the coding receipt database. Cadence is lazily added only in this diagnostic DB.
+process custody and scheduling remain operator duties. The one-shot run function
+now enforces protected files/ancestors, fsyncs new file/directory entries and holds
+a nonblocking global file lock. Never use the coding receipt database. Cadence
+and poll tables are lazily added only in this diagnostic DB.
 
 ## Authenticated Linear adapters
 
 `linear_transport.py` provides LinearAPI, Destination, LinearReader and LinearSink.
 Construction/import does no I/O; no polling loop or event listener is installed.
-The caller supplies a comment UUID to `reader.fetch`; autonomous comment discovery
-and scheduling remain unwired. A webhook, if added later, is only a wake-up.
+The bounded candidates() call discovers comments in the pinned issue, and fetch()
+rereads exact comment UUIDs. Scheduling is external and inactive. A webhook, if
+added later, is only a wake-up.
 
 Destination pins workspace/team/issue, credential viewer and an exact tuple of
 approved team members (at most 100). Every reader fetch and sink preflight checks
@@ -111,9 +115,12 @@ no redirects, ten-second deadlines, bounded responses and no automatic retries.
 GraphQL errors or partial data block even on HTTP 200. No response/error text
 escapes its transport errors. Sink input must be a fixed allowlisted report and
 the pinned issue. Success requires matching mutation success/body/parent/author
-and a valid returned comment UUID; `last_comment_id` retains that confirmation for
-private caller evidence. Persist it in the eventual integration. The sink must be
-called through the durable dispatcher; it does not independently deduplicate writes.
+and a valid returned comment UUID. The integrated dispatcher persists that UUID,
+issue, posting actor and report SHA-256 in a private deliveries row joined to the
+job receipt, atomically with phase=posted. Missing, mismatched or corrupt delivery
+evidence blocks subsequent polls. A write/commit failure leaves post_pending and
+never automatically resends. The sink must be called through the durable
+dispatcher; it does not independently deduplicate writes.
 
 ## Documentation evidence and credential requirements
 
@@ -183,6 +190,57 @@ not fall back to a standing grant or an unedited marker. No approval writer exis
 The original strict unedited-only mode remains for fixtures/previous callers; the
 Linear reader never asserts the unverified history it would need.
 
+## Complete one-shot integration (inactive)
+
+`linear_poll.run(settings_path)` assembles the trusted adapters, opens the private
+state, polls once and returns a fixed outcome. It performs live HTTP/host work if
+explicitly invoked with valid production configuration; it was NOT invoked against
+production during preparation. There is no CLI, daemon, timer or automatic retry.
+The settings file is root-owned 0600 with protected ancestors and has exactly:
+
+| Field | Required value |
+| --- | --- |
+| version, enabled | integer 1 and literal true; no enabled default |
+| state_root | existing protected root-owned 0700 dedicated directory |
+| host_policy, grant | protected host-policy and standing-grant paths |
+| policy | workspace/team/issue/actor IDs as above |
+| members | exact approved team-member UUID list |
+| reader_viewer, sink_viewer | credential viewer UUIDs, both in members |
+| reader_token_file, sink_token_file | protected token-file paths |
+| reader_oauth, sink_oauth | explicit booleans selecting header format |
+
+Settings, host/grant files and tokens must be outside state_root and separately
+kept outside coding/checkout roots. The entry creates only linear.lock and
+linear.sqlite inside the already provisioned state directory. New DB creation is
+exclusive; existing files must be root-owned single-link regular 0600 files with
+no symlinks. A partial initialization remains blocked, not silently recreated.
+Older prototype databases without delivery evidence are not migrated; no live
+installation is known to exist. Never delete receipts to bypass an uncertain state.
+
+Each invocation first checks the standing grant and all durable receipt evidence.
+A poll reservation is committed before API access, with a minimum 60-second gap.
+Known read failures back off exponentially up to one hour. A process interruption
+leaves phase=polling and requires operator reconciliation rather than automatic
+restart. Pending diagnostics, pending sends or malformed state block before HTTP.
+The file lock prevents overlapping run() calls; poll_once also checks the durable
+poll reservation for fixture/direct-caller concurrency.
+
+One poll fetches at most the last 100 issue comments in one bounded response, then
+executes at most one new eligible request. It skips ineligible comments and exact
+duplicates/collisions without rerunning them; any new execution or uncertainty ends
+the poll. More historical comments (hasPreviousPage=true), duplicate IDs or an
+incomplete response block: no pagination loops, silent truncation or unbounded
+backfill. This intentionally small pilot channel has a finite capacity. Moving to
+another dedicated issue requires an operator policy update, never automatic scope
+expansion or comment deletion.
+
+The integrated path requires durable returned-comment evidence. Only a confirmed
+send and successful SQLite commit mark the job posted. If the send succeeded but
+evidence could not commit, retain post_pending and inspect Linear manually during
+separately authorized reconciliation. A matching existing comment alone does not
+automatically reset state. The generic legacy once() fixture path still supports
+boolean-only sinks; it is not used by run()/poll_once().
+
 ## Remaining setup and user action
 
 The user has authorized preparation and asked to avoid repeated routine approval.
@@ -193,12 +251,13 @@ facts. Resolve these read-only where authorized; ask only if a real preference o
 permission is missing. Do not infer installation or activation authorization from
 this preparation task. Credential provisioning, protected state/service setup and
 live read/write acceptance remain separate, currently unperformed actions.
-Unattended polling/scheduling is not wired. Real Codex credential isolation and
+One-shot polling is wired and tested offline; scheduling remains inactive. Real
+Codex credential isolation and
 coding/PR acceptance remain separate unresolved work.
 
 ## Offline checks
 
-`PYTHONPATH=src .venv/bin/python -B -m unittest -q tests.test_linear_status tests.test_linear_transport tests.test_service_status`
+`PYTHONPATH=src .venv/bin/python -B -m unittest -q tests.test_linear_poll tests.test_linear_status tests.test_linear_transport tests.test_service_status`
 
 Fixtures use synthetic IDs, mocked HTTP and local child processes; no systemctl or
 Linear API calls occur. Passing tests proves local behavior only. Keep private
