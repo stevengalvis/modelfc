@@ -1055,3 +1055,41 @@ installation, deployment, provider call, or merge is authorized by this correcti
 The inherited cleanup assurance caveat remains: its stop return is ignored and
 only the test-unit cgroup is checked, so a passing cleanup step is not full proof
 that the synthetic API cgroup was emptied.
+
+### Inherited test identifiers in failure diagnostics
+
+The bounded source inventory also follows literal same-file class bases (at most
+64 classes per concrete class). This recognizes unittest's subclass-qualified
+names for inherited test methods without importing or executing candidate code.
+External/dynamic bases remain unrecognized; existing file, byte, identifier and
+report caps are unchanged. An unrecognized progress ID invalidates timing
+aggregation, but the pipe continues draining: a frozen progress count does not
+identify a hanging test or explain a timeout. This source fix does not install a
+controller, extend the 600-second deadline or authorize another test attempt.
+
+
+### Failure diagnostics exported to GitHub (ZEN-77)
+
+The optional `failure_diagnostics` field is emitted only for a failed test attempt,
+from that attempt's validated SHA/release-bound result, never by rereading a previous
+failure file. It carries fixed classifications, explicitly known/unknown final
+counts, source-allowlisted test identifiers, and bounded progress observations.
+The export keeps at most four failure identifiers and four slowest completed-test
+pairs, marking truncation; the entire SSH/artifact report retains its 4096-byte cap.
+The workflow and default-branch deployment observer reject unknown fields, invalid
+nested values, and diagnostics attached to success. Existing reports without this
+field remain supported. The existing run/attempt artifact binding is unchanged.
+
+GitHub's existing deployment status artifact and step summary report an unknown
+total as UNKNOWN. Comment rendering supports the same fields, but this change
+does not enable automatic PR comments. A last
+verbose test-start line is an observation, not proof of the timeout's cause; an
+incomplete progress stream may be stale. No raw output, exception text, private
+paths, or release-directory names are exported. These observations never authorize
+promotion, retry tests, remove host coverage, or change the 600-second deadline.
+
+Source changes alone do not update the protected installed controller. Export and
+inherited-test progress recognition require a separately authorized controller
+installation; the workflow and default-branch observer must also contain the new
+schema. Older combinations fail closed or omit optional diagnostics. This change
+does not explain or fix the underlying PR258 timeout, nor backfill its old artifact.
