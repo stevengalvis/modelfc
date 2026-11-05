@@ -105,6 +105,13 @@ class LinearStatusTests(unittest.TestCase):
         self.assertEqual(self.run_once(), 'failed_reported')
         self.sink.post.assert_called_once_with('issue-fixture', status.FAILURE)
 
+    def test_uncertain_diagnostic_blocks_without_reporting(self):
+        self.diagnostic.status.side_effect = status.DiagnosticUncertain('fixture')
+        self.assertEqual(self.run_once(), 'blocked')
+        self.assertEqual(self.run_once(), 'blocked')
+        self.diagnostic.status.assert_called_once()
+        self.sink.post.assert_not_called()
+
     def test_uncertain_delivery_not_repeated(self):
         self.sink.post.side_effect = TimeoutError('secret-fixture')
         self.assertEqual(self.run_once(), 'blocked')

@@ -7,6 +7,10 @@ import re
 from .bridge_envelope import _pairs
 
 
+class DiagnosticUncertain(RuntimeError):
+    """The diagnostic could not prove its local process has stopped."""
+
+
 @dataclass(frozen=True)
 class Policy:
     workspace: str
@@ -128,6 +132,8 @@ def once(db, request, policy, reader, diagnostic, sink, clock):
             return 'blocked'
         try:
             report = summarize(diagnostic.status())
+        except DiagnosticUncertain:
+            return 'blocked'
         except Exception:
             report = FAILURE
         fresh = reader.fetch(request.comment)
