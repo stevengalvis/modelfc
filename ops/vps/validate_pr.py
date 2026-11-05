@@ -2,6 +2,7 @@
 import argparse
 import base64
 from contextlib import contextmanager, nullcontext
+from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta, timezone
 import fcntl
 import hashlib
@@ -653,6 +654,234 @@ def service_command(run, repository, pr, sha, mode="offline", *, release=False):
             "--sha", sha, "--mode", mode]
 
 
+# Prepared mechanism only: main() supplies no admission policy or host reader.
+# No CLI/config/environment activation path exists. See OFFLINE_ADMISSION.md.
+@dataclass(frozen=True)
+class AdmissionBudgets:
+    wait_seconds: int
+    poll_seconds: int
+    query_seconds: int
+    wrapper_seconds: int
+    ssh_seconds: int
+    job_seconds: int
+
+    def validate(self):
+        if (any(type(v) is not int or v <= 0 for v in asdict(self).values())
+                or self.poll_seconds > self.wait_seconds
+                or self.query_seconds > self.wait_seconds
+                # Preserve existing execution/cleanup and transport margins.
+                or self.wrapper_seconds < self.wait_seconds + 360 + 30
+                or self.ssh_seconds < self.wrapper_seconds + 30
+                or self.job_seconds < self.ssh_seconds + 300):
+            raise Failure('INVALID_CONFIGURATION')
+
+
+@dataclass(frozen=True)
+class AdmissionUnit:
+    manager: str
+    name: str
+
+    def validate(self, suffix):
+        # No implicit system/user-manager substitution; a host adapter must
+        # resolve and authenticate these reviewed identities without new grants.
+        if (type(self.manager) is not str or not re.fullmatch(r'system|user:[0-9]+', self.manager)
+                or type(self.name) is not str
+                or not re.fullmatch(r'[A-Za-z0-9_@.-]+\.' + suffix, self.name)):
+            raise Failure('INVALID_CONFIGURATION')
+
+
+@dataclass(frozen=True)
+class AdmissionPolicy:
+    timers: tuple[AdmissionUnit, ...]
+    conflicting_services: tuple[AdmissionUnit, ...]
+    clearance_seconds: int
+    minimum_available_memory_bytes: int
+    minimum_available_disk_bytes: int
+    disk_path: str
+    memory_pressure_metric: str
+    maximum_memory_pressure_ppm: int
+    budgets: AdmissionBudgets
+
+    def validate(self):
+        if type(self.budgets) is not AdmissionBudgets:
+            raise Failure('INVALID_CONFIGURATION')
+        self.budgets.validate()
+        for units, suffix in ((self.timers, 'timer'), (self.conflicting_services, 'service')):
+            if type(units) is not tuple or not units:
+                raise Failure('INVALID_CONFIGURATION')
+            for unit in units:
+                if type(unit) is not AdmissionUnit:
+                    raise Failure('INVALID_CONFIGURATION')
+                unit.validate(suffix)
+            if len(set(units)) != len(units):
+                raise Failure('INVALID_CONFIGURATION')
+        if (any(type(v) is not int or v <= 0 for v in
+                (self.clearance_seconds, self.minimum_available_memory_bytes,
+                 self.minimum_available_disk_bytes))
+                or self.clearance_seconds < 360
+                or type(self.maximum_memory_pressure_ppm) is not int
+                or not 0 <= self.maximum_memory_pressure_ppm <= 1_000_000
+                or type(self.memory_pressure_metric) is not str
+                or self.memory_pressure_metric not in {'some.avg10', 'full.avg10'}
+                or type(self.disk_path) is not str or not self.disk_path.startswith('/')
+                or '\x00' in self.disk_path or '..' in self.disk_path.split('/')):
+            raise Failure('INVALID_CONFIGURATION')
+
+    def digest(self):
+        self.validate()
+        return hashlib.sha256(json.dumps(asdict(self), sort_keys=True,
+                                         separators=(',', ':')).encode()).hexdigest()
+
+
+@dataclass(frozen=True)
+class AdmissionBinding:
+    repository: str
+    pr: int
+    sha: str
+    installation_sha256: str
+    policy_sha256: str
+
+
+@dataclass(frozen=True)
+class AdmissionSnapshot:
+    observed_ns: int
+    # Exact policy order; timer timestamps must share the monotonic clock domain.
+    timers: tuple[tuple[AdmissionUnit, int], ...]  # all enabled/loaded/known
+    services: tuple[tuple[AdmissionUnit, bool], ...]  # active_or_pending, all known
+    available_memory_bytes: int
+    available_disk_bytes: int
+    memory_pressure_ppm: int  # explicitly defined by the future reviewed adapter
+
+    def wait_needed(self, policy, queried_ns, now_ns):
+        invalid = Failure('EXECUTION_ERROR')
+        if (type(self.observed_ns) is not int
+                or not queried_ns <= self.observed_ns <= now_ns
+                or type(self.timers) is not tuple or type(self.services) is not tuple
+                or len(self.timers) != len(policy.timers)
+                or len(self.services) != len(policy.conflicting_services)):
+            raise invalid
+        waiting = False
+        for item, expected in zip(self.timers, policy.timers):
+            if (type(item) is not tuple or len(item) != 2
+                    or type(item[0]) is not AdmissionUnit or item[0] != expected
+                    or type(item[1]) is not int or item[1] <= 0):
+                raise invalid
+            # A due/past timer is a known conflict, never a quiet window.
+            waiting |= item[1] - now_ns <= policy.clearance_seconds * 1_000_000_000
+        for item, expected in zip(self.services, policy.conflicting_services):
+            if (type(item) is not tuple or len(item) != 2
+                    or type(item[0]) is not AdmissionUnit or item[0] != expected
+                    or type(item[1]) is not bool):
+                raise invalid
+            waiting |= item[1]
+        if (any(type(v) is not int or v < 0 for v in
+                (self.available_memory_bytes, self.available_disk_bytes, self.memory_pressure_ppm))
+                or self.memory_pressure_ppm > 1_000_000):
+            raise invalid
+        return (waiting or self.available_memory_bytes < policy.minimum_available_memory_bytes
+                or self.available_disk_bytes < policy.minimum_available_disk_bytes
+                or self.memory_pressure_ppm > policy.maximum_memory_pressure_ppm)
+
+
+@dataclass(frozen=True)
+class AdmissionRequest:
+    policy: AdmissionPolicy
+    binding: AdmissionBinding
+    observe: object
+    revalidate: object
+
+
+def wait_for_offline_admission(request, *, clock=time.monotonic_ns, sleep=time.sleep):
+    """Pure pre-execution gate. Callbacks are trusted, bounded, read-only adapters.
+
+    No locks, state files, service/container execution, report publication or retry
+    occurs here. Unknown observations stop; only typed measured contention waits.
+    """
+    if (type(request) is not AdmissionRequest or type(request.policy) is not AdmissionPolicy
+            or type(request.binding) is not AdmissionBinding
+            or not callable(request.observe) or not callable(request.revalidate)):
+        raise Failure('INVALID_CONFIGURATION')
+    policy, binding = request.policy, request.binding
+    if type(binding.repository) is not str or type(binding.sha) is not str:
+        raise Failure('INVALID_CONFIGURATION')
+    request_identity(binding.repository, binding.pr, binding.sha)
+    if (type(binding.installation_sha256) is not str
+            or not re.fullmatch('[0-9a-f]{64}', binding.installation_sha256)
+            or binding.policy_sha256 != policy.digest()):
+        raise Failure('INVALID_CONFIGURATION')
+    previous = None
+
+    def now():
+        nonlocal previous
+        value = clock()
+        if type(value) is not int or value < 0 or (previous is not None and value < previous):
+            raise Failure('EXECUTION_ERROR')
+        previous = value
+        return value
+
+    deadline = now() + policy.budgets.wait_seconds * 1_000_000_000
+
+    def remaining():
+        left = deadline - now()
+        if left <= 0:
+            # Existing report contract: no execution happened; no auto retry.
+            raise Failure('BUSY')
+        return left
+
+    def query(callback, *args):
+        started = now()
+        limit = min(remaining(), policy.budgets.query_seconds * 1_000_000_000)
+        try:
+            result = callback(*args, timeout_ns=limit)
+        except Failure:
+            raise
+        except Exception:
+            raise Failure('EXECUTION_ERROR') from None
+        ended = now()
+        remaining()
+        if ended - started > limit:
+            raise Failure('EXECUTION_ERROR')
+        return result, started, ended
+
+    def check():
+        current, _, _ = query(request.revalidate, binding)
+        if type(current) is not AdmissionBinding or current != binding:
+            raise Failure('WRONG_SHA' if type(current) is AdmissionBinding
+                          and current.sha != binding.sha else 'INVALID_CONFIGURATION')
+        snapshot, started, ended = query(request.observe, policy)
+        if type(snapshot) is not AdmissionSnapshot:
+            raise Failure('EXECUTION_ERROR')
+        return snapshot.wait_needed(policy, started, ended)
+
+    while True:
+        if not check():
+            # Recheck identity AND observations after an apparent clear window.
+            # A final race is a terminal stop, not another admission cycle.
+            if check():
+                raise Failure('BUSY')
+            remaining()
+            return
+        delay = min(policy.budgets.poll_seconds * 1_000_000_000, remaining())
+        before = now()
+        sleep(delay / 1_000_000_000)
+        if now() <= before:
+            raise Failure('EXECUTION_ERROR')
+
+
+def invoke_service(run, repository, pr, sha, mode='offline', *, release=False,
+                   admission=None, clock=time.monotonic_ns, sleep=time.sleep):
+    """Existing request boundary; admission remains absent in every installed path."""
+    if admission is not None:
+        if (mode != 'offline' or release or type(admission) is not AdmissionRequest
+                or type(admission.binding) is not AdmissionBinding
+                or (admission.binding.repository, admission.binding.pr, admission.binding.sha)
+                   != (repository, pr, sha)):
+            raise Failure('INVALID_CONFIGURATION')
+        wait_for_offline_admission(admission, clock=clock, sleep=sleep)
+    # Keep execution and cleanup ceilings intact. Never loop around this call.
+    return command(service_command(run, repository, pr, sha, mode, release=release), timeout=360)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--repository")
@@ -706,8 +935,8 @@ def main():
         else:
             run = RUNS / uuid.uuid4().hex
             try:
-                raw = command(service_command(run, args.repository, args.pr, args.sha, args.mode,
-                                              release=args.release), timeout=360)
+                raw = invoke_service(run, args.repository, args.pr, args.sha, args.mode,
+                                     release=args.release)
                 secret = (Path(config["provider_key_file"]).read_text().strip()
                           if args.mode == "live" else "")
                 token = Path(config["github_token_file"]).read_text().strip()
