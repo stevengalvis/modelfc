@@ -65,6 +65,27 @@ class FailureExportTests(unittest.TestCase):
         self.assertIn('not a proven culprit', body)
         self.assertIn(NAME, body)
 
+    def test_missing_progress_is_explicit_without_invented_counts(self):
+        value = report()
+        del value['failure_diagnostics']['progress']
+        _, accepted = self.transport(value)
+        self.assertEqual(accepted, value)
+        body = observer.failure_summary(accepted)
+        self.assertIn('Progress observations: UNAVAILABLE (not supplied)', body)
+        self.assertIn('completed count and stream completeness UNKNOWN', body)
+        self.assertNotIn('Observed completed tests:', body)
+        self.assertNotIn('stream complete: False', body)
+        self.assertIn('Final test count: UNKNOWN', body)
+
+    def test_null_progress_is_invalid_not_missing_or_zero(self):
+        value = report()
+        value['failure_diagnostics']['progress'] = None
+        sanitized, accepted = self.transport(value)
+        self.assertNotIn('failure_diagnostics', sanitized)
+        self.assertNotIn('failure_diagnostics', accepted)
+        self.assertEqual(accepted['status'], 'FAIL')
+        self.assertFalse(observer.valid_public_failure(value))
+
     def test_old_failure_report_stays_compatible(self):
         value = report()
         del value['failure_diagnostics']

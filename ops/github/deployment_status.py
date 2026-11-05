@@ -428,6 +428,8 @@ def diagnostic_summary(value):
                       "` at " + str(progress["last_progress_us"]) + " microseconds",
                       "Slowest observed completed tests (microseconds): " +
                       ", ".join("`" + n + "`: " + str(t) for n, t in progress["slowest"])])
+    else:
+        lines.append("Progress observations: UNAVAILABLE (not supplied); completed count and stream completeness UNKNOWN")
     return "\n\n" + "\n\n".join(lines) + "\n"
 
 

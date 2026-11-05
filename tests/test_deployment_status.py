@@ -723,6 +723,22 @@ class DeploymentStatusTests(unittest.TestCase):
         self.assertIn("not a proven culprit", body)
         self.assertEqual(self.api.writes, [])
 
+    def test_default_summary_labels_missing_progress_without_fabricating_zero(self):
+        value = report("TESTS_FAILED")
+        value.update(tests_status="FAIL", tests_run=0)
+        value["failure_diagnostics"] = dict(classification="TIMEOUT", count_known=False,
+            tests_run=None, failures=None, errors=None, test_ids=[], truncated=True,
+            last_test_id=None)
+        self.file.write_text(json.dumps(value))
+        self.api.run["conclusion"] = "failure"
+        self.api.jobs[-1]["conclusion"] = "failure"
+        code, result, body = self.durable_main(publish_comments=None)
+        self.assertEqual(code, 0)
+        self.assertNotIn("progress", result["deployment"]["failure_diagnostics"])
+        self.assertIn("Progress observations: UNAVAILABLE (not supplied)", body)
+        self.assertNotIn("Observed completed tests:", body)
+        self.assertEqual(self.api.writes, [])
+
     def test_entrypoint_defaults_to_no_comment_publication(self):
         self.api.pages = lambda path: self.fail("PR/comment lookup attempted")
         code, result, body = self.durable_main(publish_comments=None)
