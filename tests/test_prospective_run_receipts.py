@@ -177,7 +177,7 @@ class ReceiptTests(unittest.TestCase):
         self.assertEqual(filtered['counts']['publication_records'], 2)
         self.assertEqual(filtered, report(self.state, day=NOW.date(), now=NOW,
                           competition='E1', provider='oddspapi', market='BTTS'))
-        self.assertTrue(all(r['instrumentation'] == 'UNSUPPORTED_BY_IMPLEMENTATION'
+        self.assertTrue(all(r['instrumentation'] == 'SAVED_INPUT_DECISIONS_ONLY'
                             for r in result['support'] if r['competition'] == 'E0'))
 
     def test_legacy_forecast_unknown_and_new_forecast_hash_checked(self):

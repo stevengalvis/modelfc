@@ -180,7 +180,7 @@ def publish_locked(state_dir, *, include_btts=True, independent=False, diagnosti
                 chosen[identity] = (value, forecast_at, strategy, None)
             if epl_approved_contracts:
                 from modelfc.pl_product_source import select as select_epl
-                for key, (value, forecast_at, evidence) in select_epl(state, selection_time, approved_contracts=epl_approved_contracts, strategy=strategy).items():
+                for key, (value, forecast_at, evidence) in select_epl(state, selection_time, approved_contracts=epl_approved_contracts, strategy=strategy, diagnostics=diagnostics).items():
                     if strategy == "higher_probability" and value["model_probability"] < .65:
                         continue
                     identity = strategies.publication_identity(value, strategy) if independent else key

@@ -61,6 +61,29 @@ REASONS.update({
     'PUBLICATION_WINDOW_CLOSED': ('publication', 'NOT_ELIGIBLE', 'NONE'),
 })
 
+REASONS.update({
+    'EPL_QUOTES_NOT_OBSERVED': ('odds', 'NOT_ATTEMPTED', 'MISSING_ODDS'),
+    'EPL_QUOTE_PAIR_REJECTED': ('odds', 'NOT_ELIGIBLE', 'UNKNOWN'),
+    'EPL_QUOTE_STALE_OR_UNDATED': ('odds', 'NOT_ELIGIBLE', 'STALE_EVIDENCE'),
+    'EPL_QUOTE_CHRONOLOGY_REJECTED': ('odds', 'NOT_ELIGIBLE', 'UNKNOWN'),
+    'EPL_QUOTE_IDENTITY_REJECTED': ('odds', 'NOT_ELIGIBLE', 'IDENTITY_UNRESOLVED'),
+    'EPL_QUOTE_REVIEW': ('odds', 'FAILED', 'UNKNOWN'),
+})
+
+
+def epl_quote_reason(error):
+    """Exact producer codes only; never persist exception messages or payloads."""
+    code = error.args[0] if len(error.args) == 1 and type(error.args[0]) is str else None
+    groups = {
+        'EPL_QUOTE_PAIR_REJECTED': {'BTTS_PAIR_REJECTED', 'CORNER_PAIR_REJECTED'},
+        'EPL_QUOTE_STALE_OR_UNDATED': {'QUOTE_STALE_OR_UNDATED', 'CORNER_QUOTE_STALE', 'CORNER_QUOTE_UNDATED'},
+        'EPL_QUOTE_CHRONOLOGY_REJECTED': {'QUOTE_CHRONOLOGY', 'CORNER_QUOTE_CHRONOLOGY', 'EPL_QUOTE_BEFORE_FREEZE'},
+        'EPL_QUOTE_IDENTITY_REJECTED': {'BINDING_REJECTED', 'IDENTITY_CONTRADICTION',
+            'FIXTURE_MISSING_OR_AMBIGUOUS', 'CORNER_BINDING_REJECTED', 'CORNER_QUOTE_IDENTITY_REJECTED'},
+    }
+    return next((reason for reason, codes in groups.items() if code in codes), 'EPL_QUOTE_REVIEW')
+
+
 FIELDS = {'fixture_id', 'provider', 'competition', 'market', 'stage', 'outcome',
           'category', 'reason', 'observed_at_utc', 'evidence_hash'}
 
@@ -203,6 +226,7 @@ def report(state, *, day, fixture_id=None, competition=None, market=None, provid
                     raise receipts.ReceiptError('invalid receipt file')
                 records.append(receipts.read_record(Path(entry.path), now=now))
     records.extend(_forecast_receipts(state, day=day, now=now))
+    records.extend(_epl_receipts(state, day=day, now=now))
     records.sort(key=lambda r: (r['completed_at_utc'], r['run_id']))
     if len({r['run_id'] for r in records}) != len(records):
         raise receipts.ReceiptError('duplicate receipt identity')
@@ -237,7 +261,7 @@ def report(state, *, day, fixture_id=None, competition=None, market=None, provid
             'count_scope': 'OBSERVED_EVENTS_ONLY' if known else 'UNKNOWN',
             'coverage': 'SHARED_PIPELINE_V1',
             'support': [{'competition': league, 'market': model,
-                         'instrumentation': 'SUPPORTED' if league == 'E1' else 'UNSUPPORTED_BY_IMPLEMENTATION',
+                         'instrumentation': 'SUPPORTED' if league == 'E1' else 'SAVED_INPUT_DECISIONS_ONLY',
                          'production_collection': 'NOT_ASSERTED'}
                         for league in ('E1', 'E0') for model in ('CORNER_TEAM_TOTAL', 'BTTS')],
             'evidence_state': 'RECEIPTS_PRESENT' if records else 'UNKNOWN',
@@ -348,6 +372,62 @@ def _forecast_receipts(state, *, day, now):
                 if diagnostics is not None:
                     normalized['fixture_diagnostics'] = diagnostics
                 records.append(normalized)
+    return records
+
+
+def _epl_receipts(state, *, day, now):
+    """Read completed decision snapshots, never infer causes from raw EPL stores.
+
+    Legacy completions and pending intents have no diagnostic coverage. No raw
+    payload, contract, operation ID, filesystem path or arbitrary reason is output.
+    """
+    from modelfc import prospective_run_receipts as receipts
+    from modelfc import pl_saved_orchestration as runner
+    from modelfc.acquisition_storage import fingerprint, encoded, directory as checked_directory
+    from itertools import islice
+    directory = Path(state) / runner.DIRECTORY
+    if directory.is_symlink():
+        raise receipts.ReceiptError('invalid EPL receipt directory')
+    if not directory.exists():
+        return []
+    os.close(checked_directory(directory))
+    paths = list(islice(directory.iterdir(), 2001))
+    if len(paths) > 2000:
+        raise receipts.ReceiptError('EPL receipt directory limit exceeded')
+    records = []
+    for path in paths:
+        if (path.is_symlink() or not path.is_file() or path.stat().st_size > 65536
+                or not re.fullmatch(r'[a-zA-Z0-9_-]{1,80}\.(intent|done)\.json', path.name)):
+            raise receipts.ReceiptError('invalid EPL receipt file')
+        if not path.name.endswith('.done.json'):
+            continue
+        row = runner._read(path)
+        if 'fixture_diagnostics' not in row:
+            continue  # Historical operations cannot acquire retrospective explanations.
+        if set(row) != {'request', 'result', 'diagnostic_started_at',
+                        'diagnostic_completed_at', 'fixture_diagnostics'}:
+            raise receipts.ReceiptError('invalid EPL completion')
+        intent_path = path.with_name(path.name.removesuffix('.done.json') + '.intent.json')
+        intent = runner._read(intent_path)
+        if (set(intent) != {'request', 'stage'} or intent['stage'] != 'publish'
+                or intent['request'] != row['request']):
+            raise receipts.ReceiptError('invalid EPL intent binding')
+        start = receipts._timestamp(row['diagnostic_started_at'])
+        end = receipts._timestamp(row['diagnostic_completed_at'])
+        diagnostics = row['fixture_diagnostics']
+        validate_diagnostics(diagnostics, start=start, end=end)
+        result = row['result']
+        if (end > now or not re.fullmatch('[0-9a-f]{64}', row['request'])
+                or set(result) != {'stage', 'value', 'provider_requests'}
+                or result['stage'] != 'publish' or type(result['value']) is not int or result['value'] < 0
+                or result['provider_requests'] != 0
+                or any(e['competition'] != 'E0' for e in diagnostics['events'])):
+            raise receipts.ReceiptError('invalid EPL completion')
+        if end.date() == day:
+            records.append(dict(run_id=fingerprint(encoded(['EPL_DECISION', path.name, row['request']])),
+                record_hash=fingerprint(encoded(row)), completed_at_utc=end.isoformat(),
+                time_basis='COMPLETED', summary={'status': 'RECORDED', 'reasons': []},
+                fixture_diagnostics=diagnostics))
     return records
 
 
