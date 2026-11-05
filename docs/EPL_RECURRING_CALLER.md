@@ -81,7 +81,10 @@ as_of, endpoints, transport substitutions, an alternative competition, model
 parameters, arbitrary execution or fabricated qualification. Existing product
 approval and implementation pins, whole-day eligibility, actual-clock durable
 freeze, 21–27h timing, original quote timestamps and unavailable pairs remain gates.
-Capture ends at retained handoff; result status is not publication or settlement.
+Without the optional delivery object, capture ends at retained handoff. With it,
+the caller also observes saved quotes and may publish when explicitly authorized;
+inspect the separate delivery and settlement results rather than treating
+`RECORDED` capture status as completion of the full chain.
 
 ## Regular end-to-end operation: implemented versus missing
 
@@ -97,11 +100,11 @@ Still required for unattended operation:
    feed. Unknown inputs stay HOLD rather than being invented by a timer.
 2. An independent exact model/evaluation qualification decision and explicit scope
    for priced publication. Acceptance of uncertainty is not a fabricated contract.
-3. Separately reviewed downstream caller wiring: use `pl_acquisition_dispatch.handoff`
-   for each team/line, existing `pl_saved_orchestration` observe/publish operations,
-   and authentic fixture-bound final receipts for result/correction operations.
-   Preserve missing/PENDING and original prices; never reconstruct forecasts after
-   kickoff. These contracts already exist but are not automatically invoked here.
+3. Operational acceptance of the optional delivery layer below: verify every
+   team/line observation, authorized publication and authentic fixture-bound
+   result/correction through the installed caller. The wiring exists in source;
+   its synthetic tests do not establish live acceptance. Preserve missing/PENDING
+   and original prices; never reconstruct forecasts after kickoff.
 4. Exact installed-launcher opt-in, writable private-store boundary, runtime total
    deadline/admission and provider permissions. The existing service denies the
    old `/run/modelfc-acquisition` location; select an explicitly approved protected

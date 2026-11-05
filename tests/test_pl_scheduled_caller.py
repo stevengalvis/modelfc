@@ -136,8 +136,16 @@ class ScheduleTests(TestCase):
     def test_delivery_policy_connects_validated_capture_and_pending_settlement(self):
         self.capture_manifest(deliver=True)
 
-    def capture_manifest(self, deliver=False):
-        d=dispatch_fixtures.DispatchTests();d.setUp();self.addCleanup(d.doCleanups)
+    def test_scheduled_publication_settlement_and_replay_preserve_prices(self):
+        self.capture_manifest(deliver=True, full_chain=True)
+
+    def capture_manifest(self, deliver=False, full_chain=False):
+        if full_chain:
+            from tests.test_pl_dispatch_acceptance import EndToEndAcceptance
+            acceptance=EndToEndAcceptance();acceptance.setUp();self.addCleanup(acceptance.doCleanups)
+            d=acceptance.f
+        else:
+            d=dispatch_fixtures.DispatchTests();d.setUp();self.addCleanup(d.doCleanups)
         a=d.a
         # Use the capture fixture's synthetic real history, calendar and approval.
         def file(name,raw):
@@ -154,7 +162,7 @@ class ScheduleTests(TestCase):
             from tests import test_pl_regular_delivery as delivery_fixtures
             helper=delivery_fixtures.DeliveryTests()
             helper.f=d;helper.a=a;helper.cfg=cfg;helper.prepare()
-            config['delivery']=dict(publish=False,settle=True,approved_contracts=list(cfg['approved_contracts']))
+            config['delivery']=dict(publish=full_chain,settle=True,approved_contracts=list(cfg['approved_contracts']))
         path=a.root/'schedule.json';write(path,config)
         auth={'path':str(a.auth_path),'sha256':fingerprint(a.auth_path.read_bytes())}
         write(a.root/(day+'.json'),dict(version=1,day=day,phase='capture',authorization=auth,
@@ -168,10 +176,41 @@ class ScheduleTests(TestCase):
             self.assertEqual(result['status'],'RECORDED',result)
             if deliver:
                 self.assertEqual(result['delivery']['observations'],64)
-                self.assertIsNone(result['delivery']['publication_result'])
+                if full_chain:
+                    self.assertGreater(result['delivery']['publication_result'],0)
+                else:
+                    self.assertIsNone(result['delivery']['publication_result'])
                 self.assertEqual(result['settlement']['status'],'PENDING')
             self.assertEqual(d.handoff()['state'],'PREPARED')
             self.assertEqual(scheduled.tick(schedule_path=path,state_dir=a.state)['status'],'ALREADY_CLAIMED')
+            if full_chain:
+                from modelfc import pl_product_source as product, pick_strategies
+                from modelfc.history_coverage import timestamp
+                acceptance.forecast=d.handoff()['inputs']['forecast_id']
+                def publications():
+                    report=pick_strategies.read(a.state,competition='E0',scope='history',limit=20)
+                    return [r for r in report['publications']
+                            if r['epl_evidence']['forecast_id']==acceptance.forecast
+                            and r['offer']['team_side']=='HOME']
+                before=publications()
+                self.assertTrue(before)
+                self.assertTrue(all(r['result']=='PENDING' for r in before))
+                originals={p:p.read_bytes() for p in a.private.iterdir()}
+                _,identity=product._frozen(a.state,acceptance.forecast)
+                a.instant=timestamp(identity['kickoff_utc'])+timedelta(hours=3)
+                original=b'synthetic scheduled final receipt'
+                raw,_=acceptance.result(home_corners=6,away_corners=3,source_sha256=fingerprint(original))
+                write(a.root/'results.json',dict(version=1,qualifications=[freeze['approval']],entries=[dict(
+                    forecast_id=acceptance.forecast,receipt=file('final.json',raw),
+                    original=file('original-final.json',original),supersedes=None,reason=None)]))
+                settled=scheduled.tick(schedule_path=path,state_dir=a.state)
+                self.assertEqual(settled['status'],'NOT_SCHEDULED')
+                self.assertEqual(settled['settlement']['outcomes'][0]['status'],'RECORDED')
+                self.assertEqual(scheduled.tick(schedule_path=path,state_dir=a.state),settled)
+                after=publications()
+                self.assertTrue(all(r['result']=='WIN' for r in after))
+                self.assertEqual([r['offer'] for r in before],[r['offer'] for r in after])
+                self.assertEqual(originals,{p:p.read_bytes() for p in a.private.iterdir()})
         self.assertEqual((a.reserved(),len(a.calls)),(1,1))
 
 
