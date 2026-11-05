@@ -119,3 +119,80 @@ metadata, Friday/ordinary observations and unresolved attempts first; fit E0 wit
 both provider capacity and local cap. No numeric live allocation is invented here.
 Commission one day end to end, then approve the recurring plan/expiry; commissioning
 is evidence for rollout, not the intended permanent service scope.
+
+## Optional saved-input delivery and result reconciliation
+
+The separate regular-delivery layer adds an optional monthly `delivery` object:
+`{"publish": false, "settle": false, "approved_contracts": ["<approved qualification SHA256>"]}`.
+Absence preserves capture-only behavior. Neither flag confers qualification.
+The immutable monthly contract pins these choices before any result mutation;
+changing them requires deliberate operator reconciliation, not editing a running plan.
+
+With this object present, daily capture also requires `preparation_sha256`, the
+original preparation authorization hash. The reviewed native calendar must match
+all retained discovery fixture IDs, participant IDs/names, kickoffs and original
+retrieval time. Metadata must equal the retained original response bytes. The
+independent football-data calendar/history check must pass and its complete day's
+fixtures must bind one-to-one to that native cohort. This validates the handoff;
+it does not download, normalize or certify authentic data. A trusted operator
+must still prepare the independent calendar, mappings, original history receipts,
+qualification and protected daily manifest. Missing or ambiguous bindings hold.
+
+Successful capture immediately hands all four team lines, both sides, to existing
+saved observation operations. Each missing quote remains an explicit observation.
+Selection uses the newest original response cohort and ranks lines within it;
+it never revives an older response because a newer line is unavailable. Explicit
+`publish: true` invokes existing E0 publication rules only after delivery completes.
+This is publication authority and must be approved separately before use. Partial
+delivery leaves the scheduled claim and any incomplete operation intent held;
+there is no automatic uncertain retry, new provider request or regenerated forecast.
+
+With `settle: true`, each existing tick reads a protected `results.json` in
+`input_dir`, including days without a new capture. Its exact shape is:
+
+```json
+{
+  "version": 1,
+  "qualifications": [{"path": "/protected/qualification.json", "sha256": "<pin>"}],
+  "entries": [{
+    "forecast_id": "<frozen forecast record hash>",
+    "receipt": {"path": "/protected/normalized-final.json", "sha256": "<pin>"},
+    "original": {"path": "/protected/original-result.json", "sha256": "<pin>"},
+    "supersedes": null,
+    "reason": null
+  }]
+}
+```
+
+At most 32 entries are processed per tick. Null receipt/original means PENDING;
+a missing queue is PENDING. Each normalized receipt must pass the existing exact
+fixture, final status, regulation period and chronology contracts. Its source hash
+must equal the retained original bytes. **Byte linkage does not prove the
+normalizer's statistics:** the protected reviewed queue remains an operator trust
+boundary. No result provider or unreviewed normalization is introduced. Corrections
+name the exact prior result hash and reviewed reason; originals, forecasts and
+published odds remain immutable. Existing result projections expose settlement
+without a new publication. Repeated exact entries are idempotent, while an
+uncertain operation holds subsequent work. Retain unresolved/missing cases in the
+queue; do not guess results or remove evidence to force completion.
+
+Settlement remains bounded by the monthly schedule expiry and existing E1-first
+launcher gate. Expired plans do not continue processing results automatically;
+operators must explicitly authorize the next plan and carry outstanding fixtures
+and their qualification references forward. This initial contract supports one
+qualification pin per monthly plan. Multiple qualification generations require a
+separately reviewed extension or explicit existing saved-stage operation.
+
+Before regular operation: approve the actual qualification and publication scope,
+monthly days/ceiling/E1 reserve/expiry, authentic input and result preparation owner,
+protected authoritative paths, and launcher opt-in. No numerical values or current
+inputs are supplied by this implementation. No timer, provider endpoint, ledger,
+production gate or E1 publication path is added or changed by the delivery layer.
+
+The existing saved-stage operation store has a 2,000-file limit. Every operation
+uses an immutable intent and completion file: an eight-fixture day produces 64
+observations (128 files), plus publication and result operations. Roughly fifteen
+such days can exhaust an empty store sooner with corrections or other operations.
+The limit remains fail-closed; this patch does not authorize deletion, rollover or
+indefinite unattended operation. Retention/capacity acceptance is an outstanding
+steady-state operational requirement, separate from this bounded connection.

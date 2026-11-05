@@ -3,6 +3,7 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 from modelfc import guarded_acquisition as acquisition, pl_operator_once as operator
+from modelfc import pl_regular_delivery as delivery
 from modelfc.acquisition_storage import encoded, fingerprint, private_store, shared_runner
 from modelfc.corner_prospective_budget import month_bounds
 from modelfc.history_coverage import timestamp, MAX_SOURCE_BYTES
@@ -31,7 +32,7 @@ def _pinned(reference, limit):
 
 def _config(path, state_dir):
     raw=_protected(path);c=_json(raw)
-    _require(type(c) is dict and set(c)=={'version','enabled','state_dir','private_dir',
+    _require(type(c) is dict and set(c)-{'delivery'}=={'version','enabled','state_dir','private_dir',
         'input_dir','period_start','period_end','expires_at','request_ceiling','e1_reserve','days'})
     _require(type(c['version']) is int and c['version']==1 and type(c['enabled']) is bool)
     _require(c['state_dir']==str(state_dir))
@@ -47,6 +48,11 @@ def _config(path, state_dir):
     # reservations. No independent mutable monthly accounting is introduced.
     _require(type(c['request_ceiling']) is int and 3*len(c['days'])<=c['request_ceiling']<=180)
     _require(type(c['e1_reserve']) is int and 1<=c['e1_reserve']<180)
+    if 'delivery' in c:
+        d=c['delivery']
+        _require(type(d) is dict and set(d)=={'publish','settle','approved_contracts'}
+                 and type(d['publish']) is bool and type(d['settle']) is bool
+                 and type(d['approved_contracts']) is list and len(d['approved_contracts'])==1)
     at=_now();expiry=timestamp(c['expires_at'])
     _require(start<=at.date()<end and at<expiry<=datetime.combine(end,datetime.min.time(),timezone.utc))
     return c,fingerprint(raw)
@@ -91,14 +97,33 @@ def tick(*, schedule_path=None, state_dir=None, data_config_path=None):
     if schedule_path is None:
         return {'status':'DISABLED','provider_requests':0}
     result={'status':'HOLD','provider_requests':0}
+    settlement=None
+    def finish(value):
+        if settlement is not None:value['settlement']=settlement
+        return value
     try:
         acquisition.require_runtime()
         c,pin=_config(schedule_path,state_dir)
         if not c['enabled']:
             return {'status':'DISABLED','provider_requests':0}
+        with shared_runner(state_dir),private_store(c['private_dir']) as store:
+            _require(_config(schedule_path,state_dir)==(c,pin))
+            store.put(acquisition._name('eplschedulecontract',c['period_start']),
+                      {'schedule_sha256':pin})
+        if c.get('delivery',{}).get('settle'):
+            try:
+                queue=_json(_protected(Path(c['input_dir'])/'results.json'))
+                _require(type(queue) is dict and set(queue)=={'version','qualifications','entries'}
+                         and type(queue['version']) is int and queue['version']==1
+                         and type(queue['qualifications']) is list and len(queue['qualifications'])==1)
+                qualifications=[_pinned(q,4096) for q in queue['qualifications']]
+                settlement=delivery.reconcile(state_dir,qualifications=qualifications,
+                    approved_contracts=c['delivery']['approved_contracts'],entries=queue['entries'],read_pinned=_pinned)
+            except FileNotFoundError:
+                settlement={'status':'PENDING','reason':'RESULT_INPUTS_MISSING','provider_requests':0}
         day=_now().astimezone(operator.LONDON).date()+timedelta(days=1)
         if day.isoformat() not in c['days']:
-            return {'status':'NOT_SCHEDULED','provider_requests':0}
+            return finish({'status':'NOT_SCHEDULED','provider_requests':0})
         path=Path(c['input_dir'])/(day.isoformat()+'.json')
         raw=_protected(path);m=_json(raw)
         _require(type(m) is dict and set(m)=={'version','day','phase','authorization','capture'})
@@ -117,7 +142,7 @@ def tick(*, schedule_path=None, state_dir=None, data_config_path=None):
                                             authorization_sha256=m['authorization']['sha256'])
         else:
             capture=m['capture']
-            _require(type(capture) is dict and set(capture)=={'calendar','metadata','freeze'})
+            _require(type(capture) is dict and set(capture)-{'preparation_sha256'}=={'calendar','metadata','freeze'})
             _require(auth['enabled_competitions']==['E0'])
             _require(acquisition._authorization(m['authorization']['path'],_now(),
                      m['authorization']['sha256'])==auth)
@@ -129,8 +154,15 @@ def tick(*, schedule_path=None, state_dir=None, data_config_path=None):
             # day claim. No prices or model are evaluated by this timing check.
             window=_window(entries,_now())
             if window is not None:
-                return {'status':window,'provider_requests':0}
+                return finish({'status':window,'provider_requests':0})
             freeze=_freeze(capture['freeze'],day)
+            if 'delivery' in c:
+                _require(freeze['approved_contracts']==tuple(c['delivery']['approved_contracts'])
+                         and 'preparation_sha256' in capture)
+                delivery.validate_preparation(c['private_dir'],day=day,
+                    authorization_sha256=capture['preparation_sha256'],
+                    calendar_raw=_pinned(capture['calendar'],2_000_000),
+                    metadata_raw=_pinned(capture['metadata'],8*1024*1024),freeze=freeze)
             invoke=lambda:operator.capture(enabled=True,state_dir=state_dir,private_dir=c['private_dir'],
                 calendar_path=capture['calendar']['path'],metadata_path=capture['metadata']['path'],
                 data_config_path=data_config_path,authorization_path=m['authorization']['path'],epl_freeze=freeze,
@@ -146,15 +178,19 @@ def tick(*, schedule_path=None, state_dir=None, data_config_path=None):
             store.put(acquisition._name('eplschedulecontract',c['period_start']),
                       {'schedule_sha256':pin})
             if store.get(key) is not None:
-                return {'status':'ALREADY_CLAIMED','provider_requests':0}
+                return finish({'status':'ALREADY_CLAIMED','provider_requests':0})
             store.put(key,{'schedule_sha256':pin,'input_sha256':fingerprint(raw),'claimed_at':_now().isoformat()})
         # Release the same runner lock before the existing operator acquires it.
         # If E1 wins the race, this day/phase remains held rather than retrying.
         result=invoke()
+        if m['phase']=='capture' and result['status']=='RECORDED' and 'delivery' in c:
+            result['delivery']=delivery.deliver(state_dir,c['private_dir'],experiment=auth['experiment_id'],
+                qualification=freeze['approval_raw'],approved_contracts=c['delivery']['approved_contracts'],
+                publish=c['delivery']['publish'])
         with shared_runner(state_dir),private_store(c['private_dir']) as store:
             store.put(acquisition._name('eplscheduledresult',key),dict(result=result,
                 completed_at=_now().isoformat(),schedule_sha256=pin))
-        return result
+        return finish(result)
     except (ValueError,OSError,KeyError,TypeError,AttributeError):
-        return {'status':'HOLD','provider_requests':result.get('provider_requests',0),
-                'reason':'SCHEDULE_INPUT_OR_COMPLETION_REJECTED'}
+        return finish({'status':'HOLD','provider_requests':result.get('provider_requests',0),
+                'reason':'SCHEDULE_INPUT_OR_COMPLETION_REJECTED'})

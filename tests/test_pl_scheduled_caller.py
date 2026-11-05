@@ -52,6 +52,19 @@ class ScheduleTests(TestCase):
         self.config['days']=[self.day];self.sync();(self.inputs/(self.day+'.json')).unlink()
         self.assertEqual(self.tick()['status'],'HOLD');self.assertEqual(self.p.calls,[])
 
+    def test_result_queue_runs_on_non_capture_day_but_month_edits_cannot_mutate(self):
+        self.config['days']=[(self.f.instant.date()+timedelta(days=2)).isoformat()]
+        self.config['delivery']=dict(publish=False,settle=True,approved_contracts=['a'*64])
+        qualification=write(self.inputs/'qualification.json',{'synthetic':'not a real qualification'})
+        write(self.inputs/'results.json',dict(version=1,qualifications=[qualification],entries=[]))
+        self.sync()
+        with patch.object(scheduled.delivery,'reconcile',return_value={'status':'RECONCILED'}) as reconcile:
+            value=self.tick();self.assertEqual(value['status'],'NOT_SCHEDULED')
+            self.assertEqual(value['settlement']['status'],'RECONCILED');reconcile.assert_called_once()
+            self.config['delivery']['publish']=True;self.sync()
+            self.assertEqual(self.tick()['status'],'HOLD');reconcile.assert_called_once()
+        self.assertEqual(self.p.calls,[])
+
     def test_month_ceiling_reserve_expiry_and_auth_pin_fail_closed(self):
         original=dict(self.config)
         for changes in ({'request_ceiling':2},{'e1_reserve':21},{'expires_at':self.f.instant.isoformat()},
@@ -118,6 +131,12 @@ class ScheduleTests(TestCase):
         self.assertEqual(scheduled._window({'a':entry(28),'b':entry(21)},at),'WINDOW_UNAVAILABLE')
 
     def test_capture_manifest_uses_existing_real_coordinator_and_no_repeat(self):
+        self.capture_manifest()
+
+    def test_delivery_policy_connects_validated_capture_and_pending_settlement(self):
+        self.capture_manifest(deliver=True)
+
+    def capture_manifest(self, deliver=False):
         d=dispatch_fixtures.DispatchTests();d.setUp();self.addCleanup(d.doCleanups)
         a=d.a
         # Use the capture fixture's synthetic real history, calendar and approval.
@@ -131,16 +150,26 @@ class ScheduleTests(TestCase):
         for name,raw,pin,at in cfg['sources']:
             freeze['sources'].append({'file':file(name,raw),'retrieved_at':at.isoformat()})
         config=dict(self.config,state_dir=str(a.state),private_dir=str(a.private),input_dir=str(a.root),days=[day])
+        if deliver:
+            from tests import test_pl_regular_delivery as delivery_fixtures
+            helper=delivery_fixtures.DeliveryTests()
+            helper.f=d;helper.a=a;helper.cfg=cfg;helper.prepare()
+            config['delivery']=dict(publish=False,settle=True,approved_contracts=list(cfg['approved_contracts']))
         path=a.root/'schedule.json';write(path,config)
         auth={'path':str(a.auth_path),'sha256':fingerprint(a.auth_path.read_bytes())}
         write(a.root/(day+'.json'),dict(version=1,day=day,phase='capture',authorization=auth,
             capture=dict(calendar={'path':str(a.calendar_path),'sha256':a.auth['calendar_sha256']},
-                         metadata={'path':str(a.metadata_path),'sha256':a.auth['metadata_sha256']},freeze=freeze)))
+                         metadata={'path':str(a.metadata_path),'sha256':a.auth['metadata_sha256']},freeze=freeze,
+                         **({'preparation_sha256':helper.pin} if deliver else {}))))
         real=scheduled.acquisition.run_once
         def invoke(**kwargs):return real(**kwargs,clock=lambda:a.instant,client_type=a.client_type)
         with patch.object(scheduled,'_now',side_effect=lambda:a.instant),patch.object(scheduled.acquisition,'run_once',side_effect=invoke):
             result=scheduled.tick(schedule_path=path,state_dir=a.state,data_config_path=a.root/'unused')
             self.assertEqual(result['status'],'RECORDED',result)
+            if deliver:
+                self.assertEqual(result['delivery']['observations'],64)
+                self.assertIsNone(result['delivery']['publication_result'])
+                self.assertEqual(result['settlement']['status'],'PENDING')
             self.assertEqual(d.handoff()['state'],'PREPARED')
             self.assertEqual(scheduled.tick(schedule_path=path,state_dir=a.state)['status'],'ALREADY_CLAIMED')
         self.assertEqual((a.reserved(),len(a.calls)),(1,1))

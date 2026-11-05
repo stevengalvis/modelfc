@@ -224,12 +224,23 @@ def select(state, at, *, approved_contracts=(), strategy="best_value"):
         key=tuple(i.values())+(r['data']['qualification']['market'],)
         order=(timestamp(r['recorded_at']),r['record_hash'])
         if key not in forecasts or order>forecasts[key][0]: forecasts[key]=(order,r['record_hash'])
-    latest={}
+    cohorts={};observations=[]
     for o in _inventory(state,'observation'):
         r,i=_frozen(state,o['data']['forecast_id'])
         key=tuple(i.values())+(r['data']['qualification']['market'],)
         if timestamp(o['recorded_at'])>at or forecasts.get(key,(None,None))[1]!=r['record_hash']: continue
         key+=(o['data']['team_side'],)
+        d=o['data']
+        cohort=(d['retrieved_at'],d['payload_sha256'],d['metadata_sha256'],d['binding'])
+        order=(timestamp(d['retrieved_at']),timestamp(o['recorded_at']),o['record_hash'])
+        if key not in cohorts or order>cohorts[key][0]:cohorts[key]=(order,cohort)
+        observations.append((key,cohort,o))
+    latest={}
+    for key,cohort,o in observations:
+        if cohorts[key][1]!=cohort:continue
+        # Lines share one original response; a missing line must not hide another
+        # line, and a newer response must suppress every older response's prices.
+        key+=(o['data']['line'],)
         order=(timestamp(o['recorded_at']),o['record_hash'])
         if key not in latest or order>latest[key][0]:latest[key]=(order,o)
     from modelfc.published_recommendations import _identity
