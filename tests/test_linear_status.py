@@ -38,6 +38,53 @@ class LinearStatusTests(unittest.TestCase):
         return status.once(self.db, request or self.request, self.policy, self.reader,
                            self.diagnostic, self.sink, self.clock, approval=approval)
 
+    def standing_fixture(self):
+        self.request = replace(self.request, unedited=None)
+        self.reader.fetch.return_value = self.request
+        record = dict(version=1, enabled=True, operation='service-status',
+                      scope_sha256='a' * 64, expires=10000, **self.policy.__dict__)
+        return status.StatusGrant('/fixture/standing-policy.json'), record
+
+    def test_standing_grant_needs_no_per_request_approval(self):
+        grant, record = self.standing_fixture()
+        with patch.object(status, 'protected_json', return_value=record) as read:
+            self.assertEqual(status.once(self.db, self.request, self.policy, self.reader,
+                                        self.diagnostic, self.sink, self.clock, authorization=grant), 'reported')
+            self.assertEqual(read.call_count, 3)
+            self.assertEqual(self.run_once(approval=grant), 'duplicate')
+        self.diagnostic.status.assert_called_once()
+
+    def test_standing_grant_is_narrow_and_revocable(self):
+        grant, record = self.standing_fixture()
+        for change in ({'enabled': False}, {'actor': 'other'}, {'issue': 'other'},
+                       {'scope_sha256': 'b' * 64}, {'operation': 'restart'}, {'expires': 1000}):
+            with patch.object(status, 'protected_json', return_value=dict(record, **change)):
+                self.assertEqual(self.run_once(approval=grant), 'rejected')
+        with patch.object(status, 'protected_json', return_value=record):
+            self.assertEqual(self.run_once(replace(self.request, body=body(expires=5000)), grant), 'rejected')
+        self.diagnostic.status.assert_not_called()
+
+    def test_standing_grant_durable_rate_limit(self):
+        grant, record = self.standing_fixture()
+        with patch.object(status, 'protected_json', return_value=record):
+            self.assertEqual(self.run_once(approval=grant), 'reported')
+            self.request = replace(self.request, comment='second', body=body(job_id='second'))
+            self.reader.fetch.return_value = self.request
+            self.db.close()
+            self.db = sqlite3.connect(self.path)
+            self.assertEqual(self.run_once(approval=grant), 'backoff')
+            self.clock.return_value = 1060
+            self.assertEqual(self.run_once(approval=grant), 'reported')
+        self.assertEqual(self.diagnostic.status.call_count, 2)
+
+    def test_standing_grant_rechecks_and_rejects_other_authors(self):
+        grant, record = self.standing_fixture()
+        with patch.object(status, 'protected_json', return_value=record):
+            self.assertEqual(self.run_once(replace(self.request, actor='third-party'), grant), 'rejected')
+            self.reader.fetch.return_value = replace(self.request, body=body(job_id='changed'))
+            self.assertEqual(self.run_once(approval=grant), 'blocked')
+        self.diagnostic.status.assert_not_called()
+
     def approval_fixture(self):
         self.request = replace(self.request, unedited=None)
         self.reader.fetch.return_value = self.request

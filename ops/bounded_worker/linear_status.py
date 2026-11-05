@@ -55,6 +55,30 @@ class ContentApproval:
             raise ValueError('content_not_approved')
 
 
+class StatusGrant:
+    """Standing app policy for one fixed status capability; no per-request prompt.
+
+    Installed only under the user's existing authorization by a trusted operator.
+    Does not grant OS permissions, credentials, deployment or coding authority.
+    """
+    def __init__(self, path):
+        self.path = path
+
+    def check(self, request, request_expires, now, scope):
+        record = protected_json(self.path)
+        expected = {'version', 'enabled', 'operation', 'workspace', 'team', 'issue',
+                    'actor', 'scope_sha256', 'expires'}
+        if (type(record) is not dict or set(record) != expected
+                or type(record['version']) is not int or record['version'] != 1
+                or record['enabled'] is not True or record['operation'] != 'service-status'
+                or any(record[k] != getattr(request, k) for k in ('workspace', 'team', 'issue', 'actor'))
+                or type(scope) is not str or not re.fullmatch(r'[a-f0-9]{64}', scope)
+                or record['scope_sha256'] != scope
+                or type(record['expires']) is not int or now >= record['expires']
+                or not now < request_expires <= min(now + 3600, record['expires'])):
+            raise ValueError('status_not_authorized')
+
+
 def validate(request, policy, now, approval=None, scope=None):
     if (type(request) is not Request or type(policy) is not Policy
             or type(now) is not int
@@ -79,7 +103,7 @@ def validate(request, policy, now, approval=None, scope=None):
             or type(obj['expires']) is not int or not now < obj['expires'] <= now + 86400):
         raise ValueError('invalid_request')
     if approval is not None:
-        if type(approval) is not ContentApproval:
+        if type(approval) not in (ContentApproval, StatusGrant):
             raise ValueError('invalid_approval')
         approval.check(request, obj['expires'], now, scope)
     elif request.unedited is not True:
@@ -125,7 +149,7 @@ def initialize(db):
     db.commit()
 
 
-def once(db, request, policy, reader, diagnostic, sink, clock, *, approval=None):
+def once(db, request, policy, reader, diagnostic, sink, clock, *, approval=None, authorization=None):
     """One attempt using trusted adapters; returns only fixed outcomes.
 
     reader.fetch(comment) -> freshly authenticated Request
@@ -133,6 +157,10 @@ def once(db, request, policy, reader, diagnostic, sink, clock, *, approval=None)
     sink.post(issue, report) -> literal True only on confirmed private delivery
     A crash leaves a blocking receipt; uncertain diagnostics/posts are not retried.
     """
+    if approval is not None and authorization is not None:
+        return 'rejected'
+    approval = authorization if authorization is not None else approval
+
     def checked(value):
         scope = diagnostic.approval_scope if approval is not None else None
         return validate(value, policy, int(clock()), approval, scope)
@@ -158,6 +186,19 @@ def once(db, request, policy, reader, diagnostic, sink, clock, *, approval=None)
             db.rollback()
             return ('duplicate' if len(collisions) == 1 and collisions[0][:3] ==
                     (job, request.comment, digest) else 'collision_rejected')
+        if type(approval) is StatusGrant:
+            db.execute('CREATE TABLE IF NOT EXISTS status_cadence '
+                       '(slot INTEGER PRIMARY KEY CHECK(slot=1), next INTEGER NOT NULL)')
+            cadence = db.execute('SELECT slot,next FROM status_cadence').fetchall()
+            now = int(clock())
+            if (len(cadence) > 1 or any(slot != 1 or type(next_at) is not int or next_at < 0
+                                       for slot, next_at in cadence)):
+                db.rollback()
+                return 'blocked'
+            if cadence and now < cadence[0][1]:
+                db.rollback()
+                return 'backoff'
+            db.execute('INSERT OR REPLACE INTO status_cadence VALUES (1,?)', (now + 60,))
         db.execute('INSERT INTO requests VALUES (?,?,?,?,NULL)',
                    (job, request.comment, digest, 'reserved'))
         db.commit()
