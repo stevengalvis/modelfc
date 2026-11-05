@@ -11,7 +11,7 @@ from .linear_status import Policy, Request, REPORTS
 
 DESTINATION = '''
  organization { id }
- viewer { id active organization { id } }
+ viewer { id active admin organization { id } }
  issue(id:$issue) {
    id archivedAt inheritsSharedAccess
    sharedAccess { isShared sharedWithCount viewerHasOnlySharedAccess }
@@ -38,6 +38,35 @@ POST = '''mutation($issue:String!,$body:String!){
  }
 }'''
 
+# Linear documents this as all workspace users. Include disabled/archived accounts
+# so reactivation and membership changes cannot be hidden by a default filter.
+AUDIENCE = """
+ workspaceUsers: users(first:100,includeDisabled:true,includeArchived:true) {
+   pageInfo { hasNextPage }
+   nodes { id active admin owner guest app canAccessAnyPublicTeam archivedAt organization { id } }
+ }
+"""
+PUBLIC_QUERIES = {query: query.replace(DESTINATION, DESTINATION + AUDIENCE)
+                  for query in (READ, CHECK, POLL)}
+ROSTER_FIELDS = {'id', 'active', 'admin', 'owner', 'guest', 'app',
+                 'canAccessAnyPublicTeam', 'archivedAt'}
+
+
+def _roster(rows):
+    if type(rows) is not list or not 1 <= len(rows) <= 100:
+        raise ValueError('invalid_workspace_roster')
+    result = {}
+    for row in rows:
+        if (type(row) is not dict or set(row) != ROSTER_FIELDS
+                or any(type(row[k]) is not bool for k in ROSTER_FIELDS - {'id', 'archivedAt'})
+                or (row['archivedAt'] is not None and type(row['archivedAt']) is not str)):
+            raise ValueError('invalid_workspace_roster')
+        ident = _id(row['id'])
+        if ident in result:
+            raise ValueError('duplicate_workspace_user')
+        result[ident] = dict(row)
+    return result
+
 
 def _id(value):
     if type(value) is not str or not re.fullmatch(r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}', value):
@@ -56,7 +85,7 @@ class LinearAPI:
 
     def call(self, query, variables):
         # Only trusted fixed query constants reach this internal boundary.
-        if query not in (READ, CHECK, POST, POLL):
+        if query not in (READ, CHECK, POST, POLL, *PUBLIC_QUERIES.values()):
             raise ValueError('unsupported_query')
         request = HTTPRequest('https://api.linear.app/graphql',
                               data=json.dumps({'query': query, 'variables': variables}).encode(),
@@ -81,7 +110,7 @@ class LinearAPI:
 
 
 class Destination:
-    def __init__(self, policy, viewer_id, member_ids):
+    def __init__(self, policy, viewer_id, member_ids, *, audience=None):
         if type(policy) is not Policy:
             raise ValueError('invalid_policy')
         for value in (policy.workspace, policy.team, policy.issue, policy.actor, viewer_id):
@@ -93,10 +122,44 @@ class Destination:
         for value in member_ids:
             _id(value)
         self.policy, self.viewer_id, self.member_ids = policy, viewer_id, frozenset(member_ids)
+        self.visibility, self.workspace_users = 'private', None
+        if audience is not None:
+            if (type(audience) is not dict
+                    or set(audience) != {'visibility', 'workspace_users'}
+                    or audience['visibility'] != 'public'):
+                raise ValueError('invalid_audience_policy')
+            self.workspace_users = _roster(audience['workspace_users'])
+            if (not set(member_ids) <= set(self.workspace_users)
+                    or any(not self.workspace_users[i]['active'] for i in member_ids)
+                    or self.workspace_users[policy.actor]['app']
+                    or not self.workspace_users[viewer_id]['admin']):
+                raise ValueError('invalid_audience_identity')
+            self.visibility = 'public'
+
+    def query(self, query):
+        return PUBLIC_QUERIES[query] if self.visibility == 'public' else query
+
+    def _check_workspace(self, data):
+        if self.visibility != 'public':
+            return
+        connection = data['workspaceUsers']
+        nodes = connection['nodes']
+        if (data['viewer']['admin'] is not True
+                or connection['pageInfo']['hasNextPage'] is not False
+                or type(nodes) is not list or len(nodes) > 100):
+            raise ValueError('incomplete_workspace_audience')
+        roster = []
+        for node in nodes:
+            if node['organization']['id'] != self.policy.workspace:
+                raise ValueError('workspace_user_mismatch')
+            roster.append({key: node[key] for key in ROSTER_FIELDS})
+        if _roster(roster) != self.workspace_users:
+            raise ValueError('workspace_audience_changed')
 
     def check(self, data):
         try:
             policy = self.policy
+            self._check_workspace(data)
             viewer, issue = data['viewer'], data['issue']
             team, shared = issue['team'], issue['sharedAccess']
             members = team['members']
@@ -110,7 +173,7 @@ class Destination:
                     or type(shared['sharedWithCount']) is not int or shared['sharedWithCount'] != 0
                     or shared['viewerHasOnlySharedAccess'] is not False
                     or team['id'] != policy.team or team['archivedAt'] is not None
-                    or team['organization']['id'] != policy.workspace or team['visibility'] != 'private'
+                    or team['organization']['id'] != policy.workspace or team['visibility'] != self.visibility
                     or team['parent'] is not None
                     or members['pageInfo']['hasNextPage'] is not False
                     or type(nodes) is not list or len(nodes) != len(self.member_ids)
@@ -128,12 +191,12 @@ class LinearReader:
     def fetch(self, comment):
         _id(comment)
         policy = self.destination.policy
-        data = self.api.call(READ, {'issue': policy.issue, 'comment': comment})
+        data = self.api.call(self.destination.query(READ), {'issue': policy.issue, 'comment': comment})
         self.destination.check(data)
         return self._parse(data.get('comment'), comment)
 
     def candidates(self):
-        data = self.api.call(POLL, {'issue': self.destination.policy.issue})
+        data = self.api.call(self.destination.query(POLL), {'issue': self.destination.policy.issue})
         self.destination.check(data)
         try:
             channel = data['channel']
@@ -189,7 +252,7 @@ class LinearSink:
         self.last_comment_id = None
         if issue != self.destination.policy.issue or type(report) is not str or report not in REPORTS:
             raise ValueError('invalid_report')
-        self.destination.check(self.api.call(CHECK, {'issue': issue}))
+        self.destination.check(self.api.call(self.destination.query(CHECK), {'issue': issue}))
         data = self.api.call(POST, {'issue': issue, 'body': report})
         try:
             result = data['commentCreate']

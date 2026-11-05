@@ -11,7 +11,9 @@ pilot reports do not establish current host state or coding acceptance.
 ## Routine checks without repeated approval
 
 The recommended path is a protected **standing application policy** granting one
-fixed read-only service-status capability. It represents the user's existing
+fixed read-only service-status capability. Free-plan workspaces can use the
+explicit workspace-visible audience mode below; no paid/private team is required.
+The policy represents the user's existing
 scope authorization; it does not itself confer user consent, OS permissions,
 credentials, installation rights or authority for coding, restart or deployment.
 An operator may configure it only within already authorized scope. Do not turn an
@@ -102,13 +104,15 @@ The bounded candidates() call discovers comments in the pinned issue, and fetch(
 rereads exact comment UUIDs. Scheduling is external and inactive. A webhook, if
 added later, is only a wake-up.
 
-Destination pins workspace/team/issue, credential viewer and an exact tuple of
-approved team members (at most 100). Every reader fetch and sink preflight checks
-private team visibility, current exact active membership, unarchived issue/team,
-no inherited issue sharing, no shared users, and no shared-only viewer access.
-Unknown fields, pagination or changed membership fail closed. Only a simple
-private-team setup is supported; public/restricted/hierarchical exceptions are
-not silently accepted. An immutable issue ID alone does not prove privacy.
+Destination pins workspace/team/issue, credential viewer and exact approved team
+members (at most 100). Every reader fetch and sink preflight checks the configured
+visibility, current exact active team membership, unarchived issue/team, no parent
+team, no inherited issue sharing, no shared users and no shared-only viewer access.
+The default remains private-team mode. Explicit workspace-public mode adds the
+full workspace audience checks below; it is never selected implicitly. Unknown
+fields, pagination or changed membership fail closed. An issue ID alone does not
+prove privacy, and a team membership list alone cannot establish a public team's
+audience.
 
 The transport uses only the fixed HTTPS GraphQL endpoint, TLS verification,
 no redirects, ten-second deadlines, bounded responses and no automatic retries.
@@ -153,6 +157,59 @@ worker and state roots and inaccessible to coding agents. Load them only in the
 transport process, never in diagnostic subprocesses. Never paste tokens in chat
 or public artifacts. Verify plain canonical JSON survives Linear's serialization;
 do not normalize malformed bodies into commands.
+
+## Free-plan workspace-visible audience
+
+[Linear's team documentation](https://linear.app/docs/teams) says public teams are
+visible to workspace members, including people outside that team. This means
+workspace-visible, not published on the internet. Private teams require Business
+or Enterprise. [Member documentation](https://linear.app/docs/members-roles) says
+Free-plan human members have admin privileges. A small personally controlled
+workspace can use the existing public team for this fixed status-only capability;
+creating or paying for a private team is not required by this implementation.
+
+The operator must explicitly add an audience object to protected settings with
+exactly visibility="public" and workspace_users=<approved roster>. Each roster
+entry contains exactly id, active, admin, owner, guest, app,
+canAccessAnyPublicTeam and archivedAt. All flags are booleans; archivedAt is null
+or the exact returned string. Use authenticated raw API facts, not display names
+or inferred app classification. No real production roster is committed here.
+
+The query uses the schema's all-workspace users connection with first:100,
+includeDisabled:true and includeArchived:true. It rejects pagination, duplicate
+IDs, unknown/missing role flags or wrong organization IDs. The complete returned
+roster must match protected configuration exactly, including app accounts,
+disabled accounts and their roles. The requesting actor must be a non-app user;
+the credential viewer must be an active admin in the approved roster. This checks
+the viewer's existing role; it does not require an API key with Admin scope.
+Both team membership and the entire workspace roster are rechecked on polling,
+exact request reads, and immediately before a result write. Changes stop further
+work; they never automatically expand the allowlist or change visibility mode.
+
+Before acceptance, verify that the intended team-restricted Read/Create-comments
+key exposes the complete all-workspace roster (compare with the workspace admin
+members view) and all required issue-sharing fields. The ChatGPT connector's
+member list alone does not prove that the VPS key can do so. Missing fields or
+access errors block, with no fallback to a partial/team-only roster. If completeness
+cannot be established for the selected credential, this mode cannot be accepted;
+do not silently widen credentials or treat a filtered response as complete.
+
+**Visibility limitation:** a roster check is not an access-control mechanism.
+A newly invited member can read already-posted issue history, even though their
+addition blocks future reports. An audience change after the final check can
+also race with a post. Administrators and installed integrations may have broader
+access; inventory their permissions as part of audience acceptance. The user
+must be comfortable with those limits for the fixed two-state report and canonical
+request metadata. This mode does not promise durable confidentiality from future
+workspace members, private separation from other current workspace members, or
+exclusive access by one human. It must not be used for raw server logs, private
+configuration, secrets, personal data, free-form diagnostic output or coding
+results. Moving to richer diagnostics requires a separate audience/access design.
+
+This change requires no team creation, visibility change, subscription upgrade,
+credential creation or activation. Choose one existing or separately authorized
+dedicated issue in the existing team; pin that exact UUID and keep issue sharing
+disabled. Scope and state checks otherwise remain unchanged.
 
 ## Fixed host adapter
 
@@ -208,6 +265,7 @@ The settings file is root-owned 0600 with protected ancestors and has exactly:
 | reader_viewer, sink_viewer | credential viewer UUIDs, both in members |
 | reader_token_file, sink_token_file | protected token-file paths |
 | reader_oauth, sink_oauth | explicit booleans selecting header format |
+| audience (optional) | omit for private-team mode; explicit workspace roster policy below for free-plan mode |
 
 Settings, host/grant files and tokens must be outside state_root and separately
 kept outside coding/checkout roots. The entry creates only linear.lock and
@@ -245,7 +303,7 @@ boolean-only sinks; it is not used by run()/poll_once().
 
 The user has authorized preparation and asked to avoid repeated routine approval.
 No additional per-check prompt is part of the standing-policy design. Before live
-use, the operator still needs the actual requesting actor and private destination,
+use, the operator still needs the actual requesting actor and approved destination/audience,
 approved member IDs, credential viewer IDs, grant lifetime and current host/service
 facts. Resolve these read-only where authorized; ask only if a real preference or
 permission is missing. Do not infer installation or activation authorization from
@@ -257,7 +315,7 @@ coding/PR acceptance remain separate unresolved work.
 
 ## Offline checks
 
-`PYTHONPATH=src .venv/bin/python -B -m unittest -q tests.test_linear_poll tests.test_linear_status tests.test_linear_transport tests.test_service_status`
+`PYTHONPATH=src .venv/bin/python -B -m unittest -q tests.test_linear_workspace_audience tests.test_linear_poll tests.test_linear_status tests.test_linear_transport tests.test_service_status`
 
 Fixtures use synthetic IDs, mocked HTTP and local child processes; no systemctl or
 Linear API calls occur. Passing tests proves local behavior only. Keep private

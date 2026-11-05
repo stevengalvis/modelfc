@@ -91,7 +91,7 @@ def run(settings_path, *, clock=time.time):
         required = {'version', 'enabled', 'state_root', 'host_policy', 'grant', 'policy',
                     'members', 'reader_viewer', 'sink_viewer', 'reader_token_file',
                     'sink_token_file', 'reader_oauth', 'sink_oauth'}
-        if (type(config) is not dict or set(config) != required
+        if (type(config) is not dict or set(config) not in (required, required | {'audience'})
                 or type(config['version']) is not int or config['version'] != 1
                 or config['enabled'] is not True or type(config['policy']) is not dict
                 or set(config['policy']) != {'workspace', 'team', 'issue', 'actor'}
@@ -103,8 +103,8 @@ def run(settings_path, *, clock=time.time):
         disjoint(settings_path, root)
         policy = Policy(**config['policy'])
         members = tuple(config['members'])
-        reader_destination = Destination(policy, config['reader_viewer'], members)
-        sink_destination = Destination(policy, config['sink_viewer'], members)
+        reader_destination = Destination(policy, config['reader_viewer'], members, audience=config.get('audience'))
+        sink_destination = Destination(policy, config['sink_viewer'], members, audience=config.get('audience'))
         diagnostic, grant = ServiceStatus(config['host_policy']), StatusGrant(config['grant'])
         # Credential loading never triggers a network request.
         reader_api = LinearAPI(protected_bytes(config['reader_token_file'], 8192).decode().strip(),
