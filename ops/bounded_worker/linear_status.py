@@ -5,6 +5,7 @@ import json
 import re
 
 from .bridge_envelope import _pairs
+from .bridge_security import protected_json
 
 
 class DiagnosticUncertain(RuntimeError):
@@ -27,18 +28,41 @@ class Request:
     issue: str
     actor: str
     comment: str
-    # Trusted adapter must positively establish no edits, including edit/revert.
-    unedited: bool
+    # True requires verified edit history; unknown may use separate content approval.
+    unedited: bool | None
 
 
-def validate(request, policy, now):
+class ContentApproval:
+    """Read-only operator approval; never constructed from a comment-supplied path.
+
+    The operator records this only after explicit approval of the bound request.
+    A digest alone is not authorization. No approval writer is provided here.
+    """
+    def __init__(self, path):
+        self.path = path
+
+    def check(self, request, request_expires, now, scope):
+        record = protected_json(self.path)
+        if (type(record) is not dict
+                or set(record) != {'version', 'request_sha256', 'scope_sha256', 'expires'}
+                or type(record['version']) is not int or record['version'] != 1
+                or type(record['request_sha256']) is not str
+                or record['request_sha256'] != binding(request)
+                or type(scope) is not str or not re.fullmatch(r'[a-f0-9]{64}', scope)
+                or record['scope_sha256'] != scope
+                or type(record['expires']) is not int
+                or not now < record['expires'] <= request_expires):
+            raise ValueError('content_not_approved')
+
+
+def validate(request, policy, now, approval=None, scope=None):
     if (type(request) is not Request or type(policy) is not Policy
             or type(now) is not int
             or any(type(v) is not str or not 1 <= len(v) <= 200 for v in
                    (policy.workspace, policy.team, policy.issue, policy.actor, request.comment))
             or (request.workspace, request.team, request.issue, request.actor) !=
                (policy.workspace, policy.team, policy.issue, policy.actor)
-            or request.unedited is not True):
+            or (request.unedited is not None and type(request.unedited) is not bool)):
         raise ValueError('invalid_provenance')
     if type(request.body) is not bytes or len(request.body) > 1024:
         raise ValueError('invalid_body')
@@ -54,6 +78,12 @@ def validate(request, policy, now):
             or obj['operation'] != 'service-status'
             or type(obj['expires']) is not int or not now < obj['expires'] <= now + 86400):
         raise ValueError('invalid_request')
+    if approval is not None:
+        if type(approval) is not ContentApproval:
+            raise ValueError('invalid_approval')
+        approval.check(request, obj['expires'], now, scope)
+    elif request.unedited is not True:
+        raise ValueError('edit_integrity_unknown')
     return obj['job_id']
 
 
@@ -95,7 +125,7 @@ def initialize(db):
     db.commit()
 
 
-def once(db, request, policy, reader, diagnostic, sink, clock):
+def once(db, request, policy, reader, diagnostic, sink, clock, *, approval=None):
     """One attempt using trusted adapters; returns only fixed outcomes.
 
     reader.fetch(comment) -> freshly authenticated Request
@@ -103,10 +133,14 @@ def once(db, request, policy, reader, diagnostic, sink, clock):
     sink.post(issue, report) -> literal True only on confirmed private delivery
     A crash leaves a blocking receipt; uncertain diagnostics/posts are not retried.
     """
+    def checked(value):
+        scope = diagnostic.approval_scope if approval is not None else None
+        return validate(value, policy, int(clock()), approval, scope)
+
     try:
-        job = validate(request, policy, int(clock()))
+        job = checked(request)
         digest = binding(request)
-    except (ValueError, TypeError):
+    except (ValueError, TypeError, OSError, AttributeError):
         return 'rejected'
     try:
         db.execute('PRAGMA synchronous=FULL')
@@ -128,7 +162,7 @@ def once(db, request, policy, reader, diagnostic, sink, clock):
                    (job, request.comment, digest, 'reserved'))
         db.commit()
         fresh = reader.fetch(request.comment)
-        if fresh != request or validate(fresh, policy, int(clock())) != job:
+        if fresh != request or checked(fresh) != job:
             return 'blocked'
         try:
             report = summarize(diagnostic.status())
@@ -137,7 +171,7 @@ def once(db, request, policy, reader, diagnostic, sink, clock):
         except Exception:
             report = FAILURE
         fresh = reader.fetch(request.comment)
-        if fresh != request or validate(fresh, policy, int(clock())) != job:
+        if fresh != request or checked(fresh) != job:
             return 'blocked'
         db.execute('UPDATE requests SET phase=?,report=? WHERE job=?',
                    ('post_pending', report, job))

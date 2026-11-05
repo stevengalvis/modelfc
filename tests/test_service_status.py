@@ -14,6 +14,12 @@ class ServiceStatusTests(unittest.TestCase):
         with patch.object(service, 'protected_json', return_value=policy or POLICY):
             return service.ServiceStatus('/fixture/policy')
 
+    def test_approval_scope_binds_host_and_service(self):
+        scope = self.adapter().approval_scope
+        self.assertEqual(scope, self.adapter().approval_scope)
+        self.assertNotEqual(scope, self.adapter(dict(POLICY, unit='other.service')).approval_scope)
+        self.assertNotEqual(scope, self.adapter(dict(POLICY, machine_id='2' * 32)).approval_scope)
+
     def test_fixed_invocation_and_host_binding(self):
         adapter = self.adapter()
         with patch.object(service, '_host_matches') as host, patch.object(service, '_read', return_value=GOOD) as read:

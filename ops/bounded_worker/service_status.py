@@ -1,4 +1,6 @@
 """Fixed local system-manager read; inactive until given protected host policy."""
+import hashlib
+import json
 import os
 from pathlib import Path
 import re
@@ -103,6 +105,12 @@ class ServiceStatus:
                 or policy['machine_id'] == '0' * 32):
             raise ValueError('invalid_host_policy')
         self._unit, self._machine_id = policy['unit'], policy['machine_id']
+
+    @property
+    def approval_scope(self):
+        # Changes to the fixed command's meaning require a new operation version.
+        value = ['local-system-service-status-v1', self._machine_id, self._unit]
+        return hashlib.sha256(json.dumps(value, separators=(',', ':')).encode()).hexdigest()
 
     def status(self):
         _host_matches(self._machine_id)

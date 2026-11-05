@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from dataclasses import replace
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from ops.bounded_worker import linear_status as status
 
@@ -28,14 +28,112 @@ class LinearStatusTests(unittest.TestCase):
         self.reader = Mock()
         self.reader.fetch.return_value = self.request
         self.diagnostic = Mock()
+        self.diagnostic.approval_scope = 'a' * 64
         self.diagnostic.status.return_value = {'LoadState': 'loaded', 'ActiveState': 'inactive'}
         self.sink = Mock()
         self.sink.post.return_value = True
         self.clock = Mock(return_value=1000)
 
-    def run_once(self, request=None):
+    def run_once(self, request=None, approval=None):
         return status.once(self.db, request or self.request, self.policy, self.reader,
-                           self.diagnostic, self.sink, self.clock)
+                           self.diagnostic, self.sink, self.clock, approval=approval)
+
+    def approval_fixture(self):
+        self.request = replace(self.request, unedited=None)
+        self.reader.fetch.return_value = self.request
+        record = {'version': 1, 'request_sha256': status.binding(self.request), 'scope_sha256': 'a' * 64, 'expires': 1050}
+        return status.ContentApproval('/fixture/operator-approval.json'), record
+
+    def test_exact_content_approval_replaces_unknown_edit_history(self):
+        approval, record = self.approval_fixture()
+        with patch.object(status, 'protected_json', return_value=record) as read:
+            self.assertEqual(self.run_once(approval=approval), 'reported')
+            self.assertEqual(read.call_count, 3)
+            self.assertEqual(self.run_once(approval=approval), 'duplicate')
+        self.diagnostic.status.assert_called_once()
+
+    def test_prior_edit_does_not_change_explicit_content_authority(self):
+        approval, record = self.approval_fixture()
+        self.request = replace(self.request, unedited=False)
+        self.reader.fetch.return_value = self.request
+        with patch.object(status, 'protected_json', return_value=record):
+            self.assertEqual(self.run_once(approval=approval), 'reported')
+
+    def test_approval_binds_every_identity_and_exact_content(self):
+        approval, record = self.approval_fixture()
+        with patch.object(status, 'protected_json', return_value=record):
+            for field in ('workspace', 'team', 'issue', 'actor', 'comment'):
+                changed = replace(self.request, **{field: 'different'})
+                policy = replace(self.policy, **{field: 'different'}) if field != 'comment' else self.policy
+                with self.subTest(field=field), self.assertRaises(ValueError):
+                    status.validate(changed, policy, 1000, approval, 'a' * 64)
+            self.assertEqual(self.run_once(replace(self.request, body=body(expires=1099)), approval), 'rejected')
+        self.reader.fetch.assert_not_called()
+
+    def test_approval_not_auto_granted_by_hash_or_unedited_marker(self):
+        approval, record = self.approval_fixture()
+        for altered in (dict(record, request_sha256='0' * 64), dict(record, expires=1000),
+                        dict(record, expires=1200), dict(record, version=True),
+                        dict(record, expires=True), dict(record, extra=True), dict(record, scope_sha256='b' * 64)):
+            with self.subTest(record=altered), patch.object(status, 'protected_json', return_value=altered):
+                self.assertEqual(self.run_once(approval=approval), 'rejected')
+                self.assertEqual(self.run_once(replace(self.request, unedited=True), approval), 'rejected')
+        self.assertEqual(self.run_once(approval=record), 'rejected')
+        self.diagnostic.status.assert_not_called()
+
+    def test_missing_or_unprotected_approval_rejects(self):
+        approval, _ = self.approval_fixture()
+        for error in (FileNotFoundError(), ValueError('unprotected_file')):
+            with patch.object(status, 'protected_json', side_effect=error):
+                self.assertEqual(self.run_once(approval=approval), 'rejected')
+        self.reader.fetch.assert_not_called()
+
+    def test_different_diagnostic_scope_rejected_before_io(self):
+        approval, record = self.approval_fixture()
+        self.diagnostic.approval_scope = 'b' * 64
+        with patch.object(status, 'protected_json', return_value=record):
+            self.assertEqual(self.run_once(approval=approval), 'rejected')
+        self.reader.fetch.assert_not_called()
+        self.diagnostic.status.assert_not_called()
+
+    def test_scope_changes_during_refetch_block_diagnostic(self):
+        approval, record = self.approval_fixture()
+        def fetch(_):
+            self.diagnostic.approval_scope = 'b' * 64
+            return self.request
+        self.reader.fetch.side_effect = fetch
+        with patch.object(status, 'protected_json', return_value=record):
+            self.assertEqual(self.run_once(approval=approval), 'blocked')
+        self.diagnostic.status.assert_not_called()
+        self.sink.post.assert_not_called()
+
+    def test_approval_removed_before_diagnostic_blocks(self):
+        approval, record = self.approval_fixture()
+        with patch.object(status, 'protected_json', side_effect=[record, FileNotFoundError()]):
+            self.assertEqual(self.run_once(approval=approval), 'blocked')
+        self.diagnostic.status.assert_not_called()
+        self.sink.post.assert_not_called()
+
+    def test_approval_revoked_before_delivery_blocks(self):
+        approval, record = self.approval_fixture()
+        with patch.object(status, 'protected_json', side_effect=[record, record, FileNotFoundError()]):
+            self.assertEqual(self.run_once(approval=approval), 'blocked')
+        self.diagnostic.status.assert_called_once()
+        self.sink.post.assert_not_called()
+
+    def test_approval_expiry_during_diagnostic_blocks(self):
+        approval, record = self.approval_fixture()
+        self.clock.side_effect = [1000, 1000, 1050]
+        with patch.object(status, 'protected_json', return_value=record):
+            self.assertEqual(self.run_once(approval=approval), 'blocked')
+        self.sink.post.assert_not_called()
+
+    def test_approved_request_changed_before_diagnostic_blocks(self):
+        approval, record = self.approval_fixture()
+        self.reader.fetch.return_value = replace(self.request, body=body(job_id='changed'))
+        with patch.object(status, 'protected_json', return_value=record):
+            self.assertEqual(self.run_once(approval=approval), 'blocked')
+        self.diagnostic.status.assert_not_called()
 
     def test_report_and_durable_duplicate(self):
         self.assertEqual(self.run_once(), 'reported')
