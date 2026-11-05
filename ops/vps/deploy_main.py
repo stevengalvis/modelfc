@@ -66,9 +66,10 @@ REASONS = {"OK", "ALREADY_CURRENT", "SUPERSEDED", "INVALID_REQUEST", "DEPLOYMENT
 
 
 class Failure(Exception):
-    def __init__(self, code, tests_run=0):
+    def __init__(self, code, tests_run=0, failure_diagnostics=None):
         self.code = code if code in REASONS else "INTERNAL_ERROR"
         self.tests_run = tests_run
+        self.failure_diagnostics = failure_diagnostics
         super().__init__(self.code)
 
 
@@ -1258,7 +1259,8 @@ def tests(release, sha, *, request=REQUEST, output=TEST_OUTPUT, service=SERVICE,
                 if len(json.dumps(record).encode("ascii")) + 1 > DIAGNOSTIC_LIMIT:
                     raise Failure("STATE_BOUNDARY_FAILED")
                 write_json(request.parent / "last-test-failure.json", record)
-            raise Failure("TESTS_FAILED", value["tests_run"])
+            raise Failure("TESTS_FAILED", value["tests_run"],
+                          public_failure_diagnostics(value.get("diagnostics"), value["tests_run"]))
         if not service_ok:
             raise Failure("STATE_BOUNDARY_FAILED")
         return value["tests_run"]
@@ -1451,6 +1453,8 @@ def deploy(sha, *, root=ROOT, releases=RELEASES, current=CURRENT, control=CONTRO
         if error.code == "TESTS_FAILED":
             value["tests_status"] = "FAIL"
             value["tests_run"] = error.tests_run
+            if error.failure_diagnostics is not None:
+                value["failure_diagnostics"] = error.failure_diagnostics
     except Exception:
         value.update(status="FAIL", reason="INTERNAL_ERROR")
     finally:
@@ -1465,6 +1469,8 @@ def deploy(sha, *, root=ROOT, releases=RELEASES, current=CURRENT, control=CONTRO
                     shutil.rmtree(candidate)
             except (OSError, Failure):
                 value.update(status="FAIL", reason="INTERNAL_ERROR")
+    if value["reason"] != "TESTS_FAILED":
+        value.pop("failure_diagnostics", None)
     return value
 
 
@@ -1783,6 +1789,23 @@ def valid_test_diagnostics(value, allowed):
             and len(set(value["test_ids"])) == len(value["test_ids"]))
 
 
+def public_failure_diagnostics(diagnostic, tests_run):
+    """Project already source-validated evidence; never read a previous attempt's file."""
+    if not diagnostic or "classification" not in diagnostic:
+        return None  # Older installed harnesses cannot supply this version of evidence.
+    value = json.loads(json.dumps(diagnostic))
+    value["tests_run"] = tests_run if value["count_known"] else None
+    value["truncated"] |= len(value["test_ids"]) > 4
+    value["test_ids"] = value["test_ids"][:4]
+    if "progress" in value:
+        value["truncated"] |= len(value["progress"]["slowest"]) > 4
+        value["progress"]["slowest"] = value["progress"]["slowest"][:4]
+    # Leave ample space for the fixed report fields inside the unchanged 4096 cap.
+    if len(json.dumps(value).encode("ascii")) > 3000:
+        return None
+    return value
+
+
 def run_tests():
     """Fixed systemd entrypoint; PR code is only invoked as the test subprocess."""
     value = {"sha": "", "release_id": "", "tests_status": "FAIL", "tests_run": 0,
@@ -1860,7 +1883,10 @@ def main():
     requested = os.environ.get("SSH_ORIGINAL_COMMAND", "")
     match = re.fullmatch(r"deploy stevengalvis/modelfc ([0-9a-f]{40})", requested)
     value = deploy(match.group(1) if match else "")
-    print(json.dumps({field: value[field] for field in FIELDS}, sort_keys=True))
+    public = {field: value[field] for field in FIELDS}
+    if "failure_diagnostics" in value:
+        public["failure_diagnostics"] = value["failure_diagnostics"]
+    print(json.dumps(public, sort_keys=True))
     return 0  # The workflow validates this one fixed-field report.
 
 

@@ -662,7 +662,8 @@ class FreshReleaseTest(unittest.TestCase):
         previous = os.readlink(self.current)
         request = self.control / "test-request.json"
         output = self.control / "reports/test-result.json"
-        diagnostics = {"failures":0,"errors":0,"test_ids":[],"truncated":False}
+        diagnostics = {"failures":0,"errors":0,"test_ids":[],"truncated":False,
+                       "classification":"TIMEOUT", "count_known":False, "last_test_id":None}
         def report(*args):
             value = json.loads(request.read_text())
             output.write_text(json.dumps(dict(sha=value["sha"], release_id=value["release_id"],
@@ -674,8 +675,21 @@ class FreshReleaseTest(unittest.TestCase):
         self.assertEqual((result["status"], result["reason"], result["promotion_status"]),
                          ("FAIL", "TESTS_FAILED", "NOT_ATTEMPTED"))
         self.assertEqual(os.readlink(self.current), previous)
+        self.assertEqual(result["failure_diagnostics"]["classification"], "TIMEOUT")
+        self.assertIsNone(result["failure_diagnostics"]["tests_run"])
         self.assertTrue((self.control / "last-test-failure.json").is_file())
         self.assertEqual(self.run_deploy(self.b)["promotion_status"], "PROMOTED")
+
+    def test_cleanup_failure_drops_optional_test_evidence_preserving_original_reason(self):
+        self.run_deploy(self.a)
+        info = dict(classification="TIMEOUT", count_known=False, tests_run=None,
+                    failures=None, errors=None, test_ids=[], truncated=False, last_test_id=None)
+        with patch.object(deploy, "tests", side_effect=deploy.Failure("TESTS_FAILED", 0, info)), \
+             patch.object(deploy.shutil, "rmtree", side_effect=OSError("private error")):
+            result = self.run_deploy(self.b)
+        self.assertEqual(result["reason"], "INTERNAL_ERROR")
+        self.assertNotIn("failure_diagnostics", result)
+        self.assertEqual(result["promotion_status"], "NOT_ATTEMPTED")
 
     def test_older_main_event_superseded_without_switching(self):
         self.run_deploy(self.b)
