@@ -2135,6 +2135,30 @@ class TestFailureDiagnosticsTest(unittest.TestCase):
         text = "\n".join(f"{kind}: {name.rsplit('.', 1)[-1]} ({name})" for kind,name in zip(kinds,names))
         return deploy.test_diagnostics(text, "FAILED (failures=1, errors=1)", self.allowed, False)
 
+    def test_inherited_source_methods_keep_progress_observable_without_execution(self):
+        source = self.release / "tests/test_inherited.py"
+        source.write_text("raise RuntimeError('must not execute')\n"
+            "class Base:\n    def test_inherited(self): pass\n"
+            "class Child(Base): pass\nclass Grandchild(Child): pass\n"
+            "class Unknown(imported.Base): pass\n"
+            "class CycleA(CycleB): pass\nclass CycleB(CycleA): pass\n")
+        allowed = deploy.test_identifiers(self.release)
+        ids = ['test_inherited.Child.test_inherited', 'test_inherited.Grandchild.test_inherited']
+        self.assertTrue(set(ids) <= allowed)
+        self.assertFalse(any('.Unknown.' in name for name in allowed))
+        progress = deploy.TestProgress(allowed)
+        for index, name in enumerate(ids):
+            for offset, kind in enumerate(('start', 'finish')):
+                sequence = 2*index+offset+1
+                progress.feed((json.dumps([sequence, kind, name, sequence])+"\n").encode())
+        progress.feed((json.dumps([5, 'end', '', 5])+"\n").encode())
+        self.assertTrue(progress.snapshot()['complete'])
+        self.assertEqual(progress.snapshot()['observed_completed'], 2)
+        diagnostic = deploy.extended_diagnostics('FAIL: test_inherited ('+ids[0]+')',
+            None, allowed, False, 'TIMEOUT', False)
+        self.assertEqual(diagnostic['test_ids'], ids[:1])
+        self.assertTrue(deploy.valid_test_diagnostics(diagnostic, allowed))
+
     def test_failure_and_error_identifiers_and_summary_counts(self):
         for kind in ("FAIL", "ERROR"):
             with self.subTest(kind=kind):

@@ -1055,3 +1055,14 @@ installation, deployment, provider call, or merge is authorized by this correcti
 The inherited cleanup assurance caveat remains: its stop return is ignored and
 only the test-unit cgroup is checked, so a passing cleanup step is not full proof
 that the synthetic API cgroup was emptied.
+
+### Inherited test identifiers in failure diagnostics
+
+The bounded source inventory also follows literal same-file class bases (at most
+64 classes per concrete class). This recognizes unittest's subclass-qualified
+names for inherited test methods without importing or executing candidate code.
+External/dynamic bases remain unrecognized; existing file, byte, identifier and
+report caps are unchanged. An unrecognized progress ID invalidates timing
+aggregation, but the pipe continues draining: a frozen progress count does not
+identify a hanging test or explain a timeout. This source fix does not install a
+controller, extend the 600-second deadline or authorize another test attempt.

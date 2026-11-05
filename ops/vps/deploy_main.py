@@ -1700,16 +1700,26 @@ def test_identifiers(release):
             tree = ast.parse(data)
         except (OSError, SyntaxError, ValueError):
             continue
-        for cls in tree.body:
-            if not isinstance(cls, ast.ClassDef):
-                continue
-            for method in cls.body:
-                if isinstance(method, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                    name = f"{path.stem}.{cls.name}.{method.name}"
-                    if len(name) <= 154 and TEST_ID.fullmatch(name):
-                        names.update((name, "tests." + name))
-                        if len(names) >= TEST_IDENTIFIER_LIMIT:
-                            return names
+        classes = {node.name: node for node in tree.body if isinstance(node, ast.ClassDef)}
+        for cls in classes.values():
+            # unittest reports inherited methods under the concrete subclass.
+            # Follow only literal same-file bases, never imports or evaluated code.
+            pending, seen = [cls.name], set()
+            while pending and len(seen) < 64:
+                current = pending.pop()
+                if current in seen or current not in classes:
+                    continue
+                seen.add(current)
+                node = classes[current]
+                for method in node.body:
+                    if isinstance(method, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                        name = f"{path.stem}.{cls.name}.{method.name}"
+                        if len(name) <= 154 and TEST_ID.fullmatch(name):
+                            names.update((name, "tests." + name))
+                            if len(names) >= TEST_IDENTIFIER_LIMIT:
+                                return names
+                pending.extend(base.id for base in node.bases if isinstance(base, ast.Name)
+                               and base.id in classes and base.id not in seen)
     return names
 
 
