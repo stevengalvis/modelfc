@@ -234,6 +234,65 @@ outer service needs a finite deadline and no automatic restart. Do not add sudo 
 polkit privileges automatically; the selected account must already have approved
 read access. No host checks or commands ran during this preparation.
 
+## Proposed first-pilot service and storage contract
+
+Select `modelfc-corner-api.service` for the first pilot. The repository defines
+this existing application service in `deploy/modelfc-corner-api.service`, and
+`ops/vps/DEPLOY.md` uses it for API admission checks. This is a proposed target,
+not evidence that it is installed, healthy or running on the intended host.
+Confirm its exact identity locally before writing the host policy; do not start,
+restart, install or substitute a service to make preflight pass. A loaded but
+inactive/failed service is a valid status result, not permission to repair it.
+A missing or masked target blocks initial acceptance pending operator review.
+The generic adapter retains no default: only protected configuration selects it.
+
+Use these **proposed installation locations**, not discovered host facts:
+
+| Purpose | Proposed location | Required protection |
+| --- | --- | --- |
+| Settings | `/etc/modelfc-linear-status/settings.json` | root-owned regular single-link 0600 |
+| Host policy | `/etc/modelfc-linear-status/host.json` | same; exact unit and locally verified machine ID |
+| Standing grant | `/etc/modelfc-linear-status/grant.json` | same; finite explicit expiry and host/service scope digest |
+| Personal key | `/etc/modelfc-linear-status/credentials/linear.key` | same; both token-file settings may reference this one key |
+| Durable state | `/var/lib/modelfc-linear-status` | dedicated root-owned 0700 directory |
+| Reviewed runtime | `/opt/modelfc-linear-status/releases/<reviewed-commit-sha>` | root-owned tree, no group/other writes, no symlinks or hard-linked files |
+
+The configuration directory, its credentials subdirectory and the runtime's
+`/opt/modelfc-linear-status` parent must be root-owned 0700. All ancestors must be
+real root-owned directories without group/other write permission. Config, key,
+state and runtime must not overlap application data, deployment scratch space,
+checkout or coding-runner storage. No ACL may grant another identity access;
+check ACLs, bind mounts, container mounts, backups and process privileges locally.
+Root ownership alone does not isolate these files from a coding runner with root,
+sudo or equivalent host/mount access. That runner must not have such access before
+coexistence is accepted. Do not weaken these permissions or add sudo/polkit grants.
+
+The existing entry point requires effective root; this proposal does not claim
+an unprivileged service can run it. Its reviewed Python runtime/imports must be
+protected and independent of writable checkouts and deployment release switches.
+The prepared [launcher and installation/acceptance plan](linear_pilot/INSTALL.md)
+use isolated Python, a clean environment, umask 0077, a finite outer deadline and
+no automatic restart. They remain uninstalled and inactive. Do not run the library from an untrusted
+working directory or import path as root.
+
+`linear.lock`, `linear.sqlite` and any SQLite sidecars belong only in the dedicated
+state directory; the entry point creates the first two on its first authorized
+run. Preserve receipts across upgrades, keep the directory on persistent local
+storage, and confirm free space and backup access privately. Missing directories
+mean **not provisioned**, not an invitation to create them during preflight.
+Existing paths with different ownership, contents, links, mounts or consumers
+mean **conflict requiring review**; do not reuse or overwrite them automatically.
+
+A read-only preflight can now inspect these exact locations (or their nearest
+existing ancestors) and the exact selected unit. Check `/etc/machine-id` and
+`/usr/bin/systemctl` protections required by the adapter; retain the actual machine
+ID privately. Inspect unit identity and access boundaries locally without printing
+unit contents, environment, credentials or logs. Report only: target verified or
+blocked; storage absent/compatible/conflicting; isolation verified or unknown;
+and the remaining prerequisite. Existence and permissions are not evidence of
+working Linear credentials, complete audience visibility or successful delivery.
+Do not invoke `run()` as a preflight: it can create state, contact Linear and post.
+
 ## Explicit approval remains available
 
 For work requiring a concrete one-request approval, use ContentApproval through
@@ -315,7 +374,7 @@ coding/PR acceptance remain separate unresolved work.
 
 ## Offline checks
 
-`PYTHONPATH=src .venv/bin/python -B -m unittest -q tests.test_linear_workspace_audience tests.test_linear_poll tests.test_linear_status tests.test_linear_transport tests.test_service_status`
+`PYTHONPATH=src .venv/bin/python -B -m unittest -q tests.test_linear_workspace_audience tests.test_linear_poll tests.test_linear_status tests.test_linear_transport tests.test_service_status tests.test_linear_pilot_launch`
 
 Fixtures use synthetic IDs, mocked HTTP and local child processes; no systemctl or
 Linear API calls occur. Passing tests proves local behavior only. Keep private
