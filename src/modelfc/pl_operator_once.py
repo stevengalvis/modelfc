@@ -89,7 +89,7 @@ def _midnight(day):
     return datetime.combine(day, datetime.min.time(), LONDON).astimezone(timezone.utc).isoformat().replace('+00:00','Z')
 
 
-def prepare(*, authorization_path=None, enabled=False):
+def prepare(*, authorization_path=None, enabled=False, authorization_sha256=None):
     """Retain raw identity/metadata evidence only; never declare it reviewed/fresh."""
     result = {'status':'DISABLED', 'provider_requests':0}
     if enabled is not True:
@@ -97,6 +97,7 @@ def prepare(*, authorization_path=None, enabled=False):
     try:
         acquisition.require_runtime()
         a, pin = _authorization(authorization_path)
+        _require(authorization_sha256 is None or authorization_sha256==pin,'AUTHORIZATION_CHANGED')
         day = date.fromisoformat(a['selected_day'])
         with shared_runner(a['state_dir']) as control_path, private_store(a['private_dir']) as store:
             control = _load(control_path)
@@ -144,7 +145,8 @@ def prepare(*, authorization_path=None, enabled=False):
 
 
 def capture(*, enabled=False, state_dir=None, private_dir=None, calendar_path=None,
-            metadata_path=None, data_config_path=None, authorization_path=None, epl_freeze=None):
+            metadata_path=None, data_config_path=None, authorization_path=None, epl_freeze=None,
+            authorization_sha256=None):
     """Explicit operator handoff after separate review of authentic preparation.
 
     epl_freeze is the existing trusted saved-input contract; it must contain an
@@ -155,4 +157,4 @@ def capture(*, enabled=False, state_dir=None, private_dir=None, calendar_path=No
     return acquisition.run_once(state_dir=state_dir, private_dir=private_dir,
         calendar_path=calendar_path, metadata_path=metadata_path, data_config_path=data_config_path,
         authorization_path=authorization_path, epl_freeze=epl_freeze,
-        retain_handoff=True, epl_one_shot=True)
+        retain_handoff=True, epl_one_shot=True, authorization_sha256=authorization_sha256)
