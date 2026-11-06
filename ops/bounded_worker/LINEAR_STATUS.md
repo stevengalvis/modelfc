@@ -293,6 +293,75 @@ and the remaining prerequisite. Existence and permissions are not evidence of
 working Linear credentials, complete audience visibility or successful delivery.
 Do not invoke `run()` as a preflight: it can create state, contact Linear and post.
 
+## Incremental service-health capability (not activated)
+
+The optional protected settings field `operation="service-health"` selects
+`ServiceHealth`. Omitted or `service-status` preserves the accepted status path,
+its scope hash and request/report format. The grant must explicitly name the same
+operation and use the health adapter's distinct `approval_scope`; a status grant
+cannot authorize health. Canonical requests use `operation="service-health"`.
+Only one capability is selected per configured invocation; this is not an
+arbitrary-command router. No new key, coding sandbox or transport is introduced.
+
+The same bounded systemctl read adds only Result, ExecMainCode, ExecMainStatus and
+NRestarts to LoadState/ActiveState. Known values produce, for example:
+
+`Service health: loaded, failed; result=exit-code; exit=nonzero; restarts=2.`
+
+The report contains only allowlisted states/results/exit classifications and a
+bounded unsigned restart count. Unknown, missing, duplicate or extra properties
+produce the existing fixed unavailable report. Raw output never reaches Linear.
+The health output needs audience acceptance as a modest expansion beyond the two
+state values; the previous status-only grant does not supply that acceptance.
+
+Result is systemd's recorded service result, not proof of application health.
+The main-process exit classification may describe a previous execution; zero
+code/status is classified as not-recorded, not success. A nonzero exit can be
+considered successful by unit policy. Restart count is the manager's NRestarts
+counter, not lifetime crashes. These fields are observations, not a causal
+diagnosis or authorization to restart. See official
+[service result definitions](https://freedesktop.org/software/systemd/man/latest/systemd.exec.html)
+and [service exit policy](https://freedesktop.org/software/systemd/man/latest/systemd.service.html).
+
+The dispatcher, request rereads, lock, receipts, rate limit, sink verification and
+uncertain-execution behavior are reused. Existing status receipts remain readable;
+no schema migration or reset is needed. An older binary that does not recognize a
+health report will block on those receipts: do not delete evidence to downgrade.
+No model is called for either fixed capability, including empty polls.
+
+### Unattended preparation and real remaining integration work
+
+Read-only connector inspection establishes an authenticated human connection and
+existing mailbox comments with that human author and no on-behalf-of identity.
+This does not prove how a new dot-created comment populates bot/external/sync
+fields. The next authorized acceptance should originate one request through dot
+and verify its actual metadata with the existing reader, then correlate the
+confirmed delivery receipt. Do not weaken author checks to make it pass.
+
+The connector exposes comment and notification reads, but those tools do not by
+themselves wake dot. [Linear supports Comment webhooks](https://linear.app/developers/webhooks);
+that does not establish that the current dot integration subscribes to them.
+Prefer a supported existing notification/event route after verifying it. If none
+is available, explicitly choose a bounded scheduled pending-result check on dot's
+side; do not build a public webhook receiver merely for this incremental check.
+VPS polling and dot notification are separate mechanisms with separate cadence
+and model costs. No webhook, automation, timer or grant was created here.
+
+Current intake remains one page of at most 100 comments, at most one new execution
+per poll, with durable 60-second cadence and backoff. It deliberately blocks on
+older history, so it is suitable only for a bounded pilot, not indefinite use.
+Uncertain execution/delivery or corrupt receipts still blocks the entire channel;
+at-most-once attempts trade availability for avoiding duplicate execution. A
+timeout must not trigger another model/diagnostic attempt. Keep this behavior for
+the next acceptance; cursor intake and per-job reconciliation are separate small
+follow-ups before sustained unattended service, not part of this health change.
+
+Next: review and authorize deployment of this increment, explicitly bind the health
+grant/audience, verify one dot-authored request and result-return route, then approve
+a bounded polling window. Reuse installed isolation and credentials when unchanged.
+The broader investigation agent and existing GitHub PR worker remain later adapters;
+the broker must never expose its Linear/GitHub credentials to the coding worker.
+
 ## Explicit approval remains available
 
 For work requiring a concrete one-request approval, use ContentApproval through
@@ -324,6 +393,7 @@ The settings file is root-owned 0600 with protected ancestors and has exactly:
 | reader_viewer, sink_viewer | credential viewer UUIDs, both in members |
 | reader_token_file, sink_token_file | protected token-file paths |
 | reader_oauth, sink_oauth | explicit booleans selecting header format |
+| operation (optional) | service-status by default; service-health requires its own grant/scope |
 | audience (optional) | omit for private-team mode; explicit workspace roster policy below for free-plan mode |
 
 Settings, host/grant files and tokens must be outside state_root and separately
@@ -374,7 +444,7 @@ coding/PR acceptance remain separate unresolved work.
 
 ## Offline checks
 
-`PYTHONPATH=src .venv/bin/python -B -m unittest -q tests.test_linear_workspace_audience tests.test_linear_poll tests.test_linear_status tests.test_linear_transport tests.test_service_status tests.test_linear_pilot_launch`
+`PYTHONPATH=src .venv/bin/python -B -m unittest -q tests.test_linear_workspace_audience tests.test_linear_poll tests.test_linear_status tests.test_linear_transport tests.test_service_status tests.test_service_health tests.test_linear_pilot_launch`
 
 Fixtures use synthetic IDs, mocked HTTP and local child processes; no systemctl or
 Linear API calls occur. Passing tests proves local behavior only. Keep private

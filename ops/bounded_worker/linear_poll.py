@@ -9,13 +9,13 @@ import time
 from .bridge_security import disjoint, protected_bytes, protected_dir, protected_json
 from .linear_status import Policy, Request, StatusGrant, initialize, once, receipt_rows
 from .linear_transport import Destination, LinearAPI, LinearReader, LinearSink
-from .service_status import ServiceStatus
+from .service_status import ServiceStatus, ServiceHealth
 
 
-def poll_once(db, policy, reader, diagnostic, sink, grant, clock=time.time):
+def poll_once(db, policy, reader, diagnostic, sink, grant, clock=time.time, *, operation="service-status"):
     """At most one bounded page and one new diagnostic; durable poll reservation."""
     try:
-        if type(grant) is not StatusGrant:
+        if type(grant) is not StatusGrant or grant.operation != operation:
             return 'blocked'
         # Validate standing configuration before even polling untrusted text.
         probe = Request(b'', policy.workspace, policy.team, policy.issue, policy.actor, '', None)
@@ -49,7 +49,7 @@ def poll_once(db, policy, reader, diagnostic, sink, grant, clock=time.time):
                 raise ValueError('invalid_page')
             for request in candidates:
                 result = once(db, request, policy, reader, diagnostic, sink, clock,
-                              authorization=grant, require_delivery_id=True)
+                              authorization=grant, require_delivery_id=True, operation=operation)
                 if result in ('rejected', 'duplicate', 'collision_rejected'):
                     continue
                 break
@@ -91,7 +91,7 @@ def run(settings_path, *, clock=time.time):
         required = {'version', 'enabled', 'state_root', 'host_policy', 'grant', 'policy',
                     'members', 'reader_viewer', 'sink_viewer', 'reader_token_file',
                     'sink_token_file', 'reader_oauth', 'sink_oauth'}
-        if (type(config) is not dict or set(config) not in (required, required | {'audience'})
+        if (type(config) is not dict or not required <= set(config) <= required | {'audience', 'operation'}
                 or type(config['version']) is not int or config['version'] != 1
                 or config['enabled'] is not True or type(config['policy']) is not dict
                 or set(config['policy']) != {'workspace', 'team', 'issue', 'actor'}
@@ -105,7 +105,12 @@ def run(settings_path, *, clock=time.time):
         members = tuple(config['members'])
         reader_destination = Destination(policy, config['reader_viewer'], members, audience=config.get('audience'))
         sink_destination = Destination(policy, config['sink_viewer'], members, audience=config.get('audience'))
-        diagnostic, grant = ServiceStatus(config['host_policy']), StatusGrant(config['grant'])
+        operation = config.get('operation', 'service-status')
+        if operation not in ('service-status', 'service-health'):
+            return 'blocked'
+        adapter = ServiceHealth if operation == 'service-health' else ServiceStatus
+        diagnostic = adapter(config['host_policy'])
+        grant = StatusGrant(config['grant'], operation=operation)
         # Credential loading never triggers a network request.
         reader_api = LinearAPI(protected_bytes(config['reader_token_file'], 8192).decode().strip(),
                                oauth=config['reader_oauth'])
@@ -139,7 +144,7 @@ def run(settings_path, *, clock=time.time):
         with sqlite3.connect(db_path) as db:
             if new_db:
                 initialize(db)
-            return poll_once(db, policy, reader, diagnostic, sink, grant, clock)
+            return poll_once(db, policy, reader, diagnostic, sink, grant, clock, operation=operation)
     except Exception:
         return 'blocked'
     finally:

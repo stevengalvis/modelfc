@@ -61,8 +61,10 @@ class StatusGrant:
     Installed only under the user's existing authorization by a trusted operator.
     Does not grant OS permissions, credentials, deployment or coding authority.
     """
-    def __init__(self, path):
-        self.path = path
+    def __init__(self, path, *, operation="service-status"):
+        if operation not in ("service-status", "service-health"):
+            raise ValueError("invalid_operation")
+        self.path, self.operation = path, operation
 
     def check(self, request, request_expires, now, scope):
         record = protected_json(self.path)
@@ -70,7 +72,7 @@ class StatusGrant:
                     'actor', 'scope_sha256', 'expires'}
         if (type(record) is not dict or set(record) != expected
                 or type(record['version']) is not int or record['version'] != 1
-                or record['enabled'] is not True or record['operation'] != 'service-status'
+                or record['enabled'] is not True or record['operation'] != self.operation
                 or any(record[k] != getattr(request, k) for k in ('workspace', 'team', 'issue', 'actor'))
                 or type(scope) is not str or not re.fullmatch(r'[a-f0-9]{64}', scope)
                 or record['scope_sha256'] != scope
@@ -79,7 +81,7 @@ class StatusGrant:
             raise ValueError('status_not_authorized')
 
 
-def validate(request, policy, now, approval=None, scope=None):
+def validate(request, policy, now, approval=None, scope=None, *, operation="service-status"):
     if (type(request) is not Request or type(policy) is not Policy
             or type(now) is not int
             or any(type(v) is not str or not 1 <= len(v) <= 200 for v in
@@ -99,12 +101,15 @@ def validate(request, policy, now, approval=None, scope=None):
             or type(obj['version']) is not int or obj['version'] != 1
             or type(obj['job_id']) is not str
             or not re.fullmatch(r'[a-z0-9][a-z0-9_-]{0,63}', obj['job_id'])
-            or obj['operation'] != 'service-status'
+            or operation not in ('service-status', 'service-health')
+            or obj['operation'] != operation
             or type(obj['expires']) is not int or not now < obj['expires'] <= now + 86400):
         raise ValueError('invalid_request')
     if approval is not None:
         if type(approval) not in (ContentApproval, StatusGrant):
             raise ValueError('invalid_approval')
+        if type(approval) is StatusGrant and approval.operation != operation:
+            raise ValueError("operation_not_authorized")
         approval.check(request, obj['expires'], now, scope)
     elif request.unedited is not True:
         raise ValueError('edit_integrity_unknown')
@@ -138,6 +143,55 @@ REPORTS = {FAILURE} | {
     for load in STATES['LoadState'] for active in STATES['ActiveState']
 }
 
+HEALTH_RESULTS = {'success', 'protocol', 'timeout', 'exit-code', 'signal',
+                  'core-dump', 'watchdog', 'exec-condition', 'oom-kill',
+                  'start-limit-hit', 'resources'}
+HEALTH_FIELDS = set(STATES) | {'Result', 'ExecMainCode', 'ExecMainStatus', 'NRestarts'}
+EXIT_CLASSES = {'not-recorded', 'zero', 'nonzero', 'signal', 'core-dump'}
+
+
+def _uint(value, maximum):
+    if (type(value) is not str or not re.fullmatch(r'0|[1-9][0-9]{0,9}', value)
+            or int(value) > maximum):
+        raise ValueError('invalid_health_number')
+    return int(value)
+
+
+def summarize_health(properties):
+    if type(properties) is not dict or set(properties) != HEALTH_FIELDS:
+        raise ValueError('invalid_health_properties')
+    summarize({key: properties[key] for key in STATES})
+    result = properties['Result']
+    if type(result) is not str or result not in HEALTH_RESULTS:
+        raise ValueError('unknown_service_result')
+    code = _uint(properties['ExecMainCode'], 3)
+    status = _uint(properties['ExecMainStatus'], 255)
+    restarts = _uint(properties['NRestarts'], 4294967295)
+    if code == 0:
+        if status != 0:
+            raise ValueError('invalid_unrecorded_exit')
+        exit_class = 'not-recorded'
+    elif code == 1:
+        exit_class = 'zero' if status == 0 else 'nonzero'
+    else:
+        if not 1 <= status <= 64:
+            raise ValueError('invalid_exit_signal')
+        exit_class = 'signal' if code == 2 else 'core-dump'
+    return (f"Service health: {properties['LoadState']}, {properties['ActiveState']}; "
+            f"result={result}; exit={exit_class}; restarts={restarts}.")
+
+
+def valid_report(report):
+    if type(report) is not str or len(report) > 200:
+        return False
+    if report in REPORTS:
+        return True
+    match = re.fullmatch(r'Service health: ([a-z-]+), ([a-z-]+); result=([a-z-]+); '
+                         r'exit=([a-z-]+); restarts=(0|[1-9][0-9]{0,9})\.', report)
+    return bool(match and match[1] in STATES['LoadState'] and match[2] in STATES['ActiveState']
+                and match[3] in HEALTH_RESULTS and match[4] in EXIT_CLASSES
+                and int(match[5]) <= 4294967295)
+
 
 def initialize(db):
     """Provision a NEW dedicated private database; never migrate coding receipts."""
@@ -164,7 +218,7 @@ def receipt_rows(db, *, require_delivery_id=False, delivery_destination=None):
             if (type(job) is not str or not re.fullmatch(r'[a-z0-9][a-z0-9_-]{0,63}', job)
                     or type(comment) is not str or not 1 <= len(comment) <= 200
                     or type(digest) is not str or not re.fullmatch(r'[a-f0-9]{64}', digest)
-                    or phase != 'posted' or report not in REPORTS):
+                    or phase != 'posted' or not valid_report(report)):
                 return None
         delivered = db.execute('SELECT job,comment,issue,actor,report_sha256 FROM deliveries').fetchall()
         reports = {row[0]: row[4] for row in rows}
@@ -187,7 +241,7 @@ def receipt_rows(db, *, require_delivery_id=False, delivery_destination=None):
         return None
 
 
-def once(db, request, policy, reader, diagnostic, sink, clock, *, approval=None, authorization=None, require_delivery_id=False):
+def once(db, request, policy, reader, diagnostic, sink, clock, *, approval=None, authorization=None, require_delivery_id=False, operation="service-status"):
     """One attempt using trusted adapters; returns only fixed outcomes.
 
     reader.fetch(comment) -> freshly authenticated Request
@@ -201,7 +255,7 @@ def once(db, request, policy, reader, diagnostic, sink, clock, *, approval=None,
 
     def checked(value):
         scope = diagnostic.approval_scope if approval is not None else None
-        return validate(value, policy, int(clock()), approval, scope)
+        return validate(value, policy, int(clock()), approval, scope, operation=operation)
 
     try:
         job = checked(request)
@@ -241,7 +295,8 @@ def once(db, request, policy, reader, diagnostic, sink, clock, *, approval=None,
         if fresh != request or checked(fresh) != job:
             return 'blocked'
         try:
-            report = summarize(diagnostic.status())
+            report = (summarize_health(diagnostic.status()) if operation == "service-health"
+                      else summarize(diagnostic.status()))
         except DiagnosticUncertain:
             return 'blocked'
         except Exception:

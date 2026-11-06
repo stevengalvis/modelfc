@@ -7,7 +7,7 @@ import re
 from urllib.request import Request as HTTPRequest, build_opener
 
 from .bridge_transport import _NoRedirect, _deadline, _pairs, MAX_RESPONSE
-from .linear_status import Policy, Request, REPORTS
+from .linear_status import Policy, Request, valid_report
 
 DESTINATION = '''
  organization { id }
@@ -250,7 +250,7 @@ class LinearSink:
 
     def post(self, issue, report):
         self.last_comment_id = None
-        if issue != self.destination.policy.issue or type(report) is not str or report not in REPORTS:
+        if issue != self.destination.policy.issue or type(report) is not str or not valid_report(report):
             raise ValueError('invalid_report')
         self.destination.check(self.api.call(self.destination.query(CHECK), {'issue': issue}))
         data = self.api.call(POST, {'issue': issue, 'body': report})

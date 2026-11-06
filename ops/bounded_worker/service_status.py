@@ -10,7 +10,7 @@ import subprocess
 import time
 
 from .bridge_security import protected_json
-from .linear_status import DiagnosticUncertain, summarize
+from .linear_status import DiagnosticUncertain, summarize, summarize_health
 
 LIMIT = 4096
 TIMEOUT = 5
@@ -75,7 +75,7 @@ def _read(argv):
                 raise DiagnosticUncertain('status_cleanup_unknown') from None
 
 
-def parse(raw):
+def parse(raw, *, health=False):
     if type(raw) is not bytes or len(raw) > LIMIT:
         raise ValueError('invalid_status')
     try:
@@ -86,13 +86,15 @@ def parse(raw):
             if key in properties:
                 raise ValueError('duplicate_status')
             properties[key] = value
-        summarize(properties)
+        (summarize_health if health else summarize)(properties)
         return properties
     except (UnicodeError, ValueError):
         raise ValueError('invalid_status') from None
 
 
 class ServiceStatus:
+    operation = 'service-status'
+    properties = 'LoadState,ActiveState'
     def __init__(self, policy_path):
         # Root-owned 0600 operator input with protected ancestors, never request data.
         policy = protected_json(policy_path)
@@ -109,13 +111,18 @@ class ServiceStatus:
     @property
     def approval_scope(self):
         # Changes to the fixed command's meaning require a new operation version.
-        value = ['local-system-service-status-v1', self._machine_id, self._unit]
+        value = [f'local-system-{self.operation}-v1', self._machine_id, self._unit]
         return hashlib.sha256(json.dumps(value, separators=(',', ':')).encode()).hexdigest()
 
     def status(self):
         _host_matches(self._machine_id)
         argv = ['/usr/bin/systemctl', '--system', '--no-pager', '--no-ask-password',
-                'show', '--property=LoadState,ActiveState', '--', self._unit]
-        result = parse(_read(argv))
+                'show', '--property=' + self.properties, '--', self._unit]
+        result = parse(_read(argv), health=self.operation == 'service-health')
         _host_matches(self._machine_id)
         return result
+
+
+class ServiceHealth(ServiceStatus):
+    operation = 'service-health'
+    properties = 'LoadState,ActiveState,Result,ExecMainCode,ExecMainStatus,NRestarts'
