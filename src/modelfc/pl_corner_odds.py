@@ -1,6 +1,7 @@
 """Opt-in, pinned EPL corner replay. Team totals only; no publication or refit."""
 from dataclasses import asdict
 from datetime import date, timedelta
+from functools import lru_cache
 import json
 import math
 from pathlib import Path
@@ -94,6 +95,16 @@ def implementation_digest():
         'history_coverage.py', 'goal_totals.py', 'acquisition_storage.py', 'acquisition_planner.py')}))
 
 
+@lru_cache(maxsize=1)
+def _saved_snapshot(payload, metadata, retrieved):
+    """Reuse only immutable normalization of exact bounded bytes and UTC time.
+
+    Keep one successful snapshot, not forecasts, file reads, approval decisions or
+    time-sensitive consumption results. All those checks still run on every call.
+    """
+    return snapshot_from_bytes(payload, metadata, retrieved_at=retrieved)
+
+
 def consume(forecast_raw, saved, *, forecast_sha256, binding_raw, binding_sha256,
             team_side, line, as_of, enabled=False):
     """Explicit exact team-total pair; first-half/match totals remain unsupported.
@@ -120,7 +131,7 @@ def consume(forecast_raw, saved, *, forecast_sha256, binding_raw, binding_sha256
                 and observed-retrieved <= timedelta(minutes=15), 'CORNER_QUOTE_CHRONOLOGY')
         require(fingerprint(saved.payload) == saved.payload_sha256
                 and fingerprint(saved.metadata) == saved.metadata_sha256, 'CORNER_QUOTE_PIN_REJECTED')
-        snapshot = snapshot_from_bytes(saved.payload, saved.metadata, retrieved_at=retrieved)
+        snapshot = _saved_snapshot(saved.payload, saved.metadata, retrieved)
         candidates = [v for v in snapshot.fixtures if v.identity.competition == 'E0'
             and v.identity.tournament_id == 17 and v.identity.fixture_id == binding['quote_fixture_id']
             and v.identity.kickoff_utc == kickoff and (v.home_team, v.away_team) == tuple(names)]
