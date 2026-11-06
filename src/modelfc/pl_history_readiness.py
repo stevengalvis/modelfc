@@ -27,7 +27,7 @@ def assess(raw, *, sources=(), enabled=False, **options):
         return result
     result['state'] = 'BLOCKED'
     next_day = options.pop('next_day', False)
-    calendar_report = readiness(raw, **options)
+    calendar_report = readiness(raw, next_day=next_day, **options)
     result['calendar'] = calendar_report
     if calendar_report['validity'] != 'VALID':
         return result
