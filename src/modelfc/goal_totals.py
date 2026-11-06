@@ -107,6 +107,36 @@ class GoalObservation:
 
 
 @dataclass(frozen=True)
+class ObservedFinalGoals:
+    """History only: final state observed by receipt, not an actual end time."""
+    fixture: GoalFixture
+    home_goals: int
+    away_goals: int
+    observed_finished_at: datetime
+    retrieved_at: datetime  # corroborating CSV receipt
+    source_sha256: str  # corroborating CSV bytes
+    native_source_sha256: str
+    mapping_sha256: str
+    status: str = 'FINISHED'
+    period: str = 'REGULATION'
+
+    def __post_init__(self):
+        require(isinstance(self.fixture, GoalFixture) and self.status == 'FINISHED'
+                and self.period == 'REGULATION', 'RESULT_PERIOD_OR_STATUS_REJECTED')
+        require(all(type(v) is int and v >= 0 for v in (self.home_goals, self.away_goals)), 'SCORE_REJECTED')
+        for key in ('observed_finished_at', 'retrieved_at'):
+            object.__setattr__(self, key, utc(getattr(self, key)))
+        require(self.fixture.kickoff < self.observed_finished_at and
+                self.fixture.kickoff < self.retrieved_at, 'RESULT_CHRONOLOGY_REJECTED')
+        for pin in (self.source_sha256, self.native_source_sha256, self.mapping_sha256):
+            digest(pin)
+
+    @property
+    def available_at(self):
+        return max(self.observed_finished_at, self.retrieved_at)
+
+
+@dataclass(frozen=True)
 class GoalAggregates:
     """Structural input for unchanged btts_model.arithmetic_rates, no E1 guard removal."""
     history_matches: int
@@ -217,16 +247,16 @@ def freeze(fixture, observations, *, frozen_at, cutoff):
             cutoff <= frozen_at.astimezone(ZoneInfo(fixture.timezone)).date() and frozen_at < fixture.kickoff,
             'FREEZE_CUTOFF_REJECTED')
     rows = tuple(observations)
-    require(0 < len(rows) <= 100000 and all(isinstance(r, GoalObservation) for r in rows), 'HISTORY_MISSING_OR_INVALID')
+    require(0 < len(rows) <= 100000 and all(isinstance(r, (GoalObservation, ObservedFinalGoals)) for r in rows), 'HISTORY_MISSING_OR_INVALID')
     require(all(r.fixture.competition == fixture.competition and r.fixture.timezone == fixture.timezone
                 for r in rows), 'HISTORY_COMPETITION_REJECTED')
     keys = [(r.fixture.provider, r.fixture.fixture_id) for r in rows]
     matches = [(r.fixture.kickoff, r.fixture.home, r.fixture.away) for r in rows]
     require(len(set(keys)) == len(keys) and len(set(matches)) == len(matches), 'DUPLICATE_HISTORY')
     prior = sorted((r for r in rows if r.fixture.kickoff.astimezone(ZoneInfo(fixture.timezone)).date() < cutoff
-                    and r.retrieved_at <= frozen_at), key=lambda r: (r.fixture.kickoff, r.fixture.provider, r.fixture.fixture_id, r.fixture.home, r.fixture.away))
+                    and (r.available_at if isinstance(r, ObservedFinalGoals) else r.retrieved_at) <= frozen_at), key=lambda r: (r.fixture.kickoff, r.fixture.provider, r.fixture.fixture_id, r.fixture.home, r.fixture.away))
     require(len(prior) >= MIN_HISTORY, 'INSUFFICIENT_GOAL_HISTORY')
-    require(frozen_at-max(r.completed_at for r in prior) <= timedelta(days=14), 'GOAL_HISTORY_STALE')
+    require(frozen_at-max(r.fixture.kickoff if isinstance(r, ObservedFinalGoals) else r.completed_at for r in prior) <= timedelta(days=14), 'GOAL_HISTORY_STALE')
     home = [r for r in prior if r.fixture.home == fixture.home]
     away = [r for r in prior if r.fixture.away == fixture.away]
     require(len(home) >= 5 and len(away) >= 5, 'GOAL_VENUE_HISTORY_INSUFFICIENT')
@@ -235,7 +265,9 @@ def freeze(fixture, observations, *, frozen_at, cutoff):
         len(away), sum(r.away_goals for r in away), sum(r.home_goals for r in away))
     rates = arithmetic_rates(inputs)
     history_hash = fingerprint(encoded(_wire([asdict(r) for r in prior])))
-    return FrozenGoals(fixture, frozen_at, cutoff, *rates, tuple(sorted({r.source_sha256 for r in prior})),
+    return FrozenGoals(fixture, frozen_at, cutoff, *rates, tuple(sorted({pin for r in prior for pin in
+            ((r.source_sha256, r.native_source_sha256, r.mapping_sha256)
+             if isinstance(r, ObservedFinalGoals) else (r.source_sha256,))})),
         _inputs_hash(inputs, history_hash), implementation_hash(), 'PRIOR_GOAL_OBSERVATIONS', inputs, history_hash)
 
 
