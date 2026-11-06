@@ -31,6 +31,11 @@ jobs:
           "$RUNNER_TEMP/modelfc-locked/bin/python" -m pip check
           "$RUNNER_TEMP/modelfc-locked/bin/python" -B tests/test_deployment_dependencies.py --check-installed
 
+      - name: Run focused release environment acceptance
+        run: |
+          mkdir -m 700 "$RUNNER_TEMP/release-acceptance-tmp"
+          TMPDIR="$RUNNER_TEMP/release-acceptance-tmp" PYTHONPATH=src "$RUNNER_TEMP/modelfc-locked/bin/python" -B -m ops.vps.deployment_acceptance
+
       - name: Install optional private MCP test graph
         run: |
           "$RUNNER_TEMP/modelfc-locked/bin/python" -m pip install --require-hashes --only-binary=:all: --no-cache-dir -r requirements-mcp.lock
