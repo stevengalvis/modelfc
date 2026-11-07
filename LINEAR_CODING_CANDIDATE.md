@@ -1,9 +1,8 @@
 # Offline Linear coding connection candidate
 
 Base source: PR262, d105cd1bb9154c5680315f5b3e9650fec410b52f. This is a selected-file
-snapshot, not a complete repository checkout. Only linear_coding_intake.py,
-linear_coding_runtime.py, their two new test modules and this document belong to
-the candidate patch. The local Git snapshot commit is not an upstream revision.
+snapshot, not a complete repository checkout. The coding intake, runtime and entrypoint, their focused test modules and this
+document comprise the candidate; the pagination patch is separate. The local Git snapshot commit is not an upstream revision.
 Nothing has been installed, published, scheduled or called against a live service.
 
 ## Intake and authorization
@@ -86,9 +85,9 @@ windows must budget worker and transport completion accordingly.
 ## Verification and remaining live acceptance
 
 Command:
-python -B -m unittest -q tests.test_linear_coding_runtime tests.test_linear_coding_intake tests.test_linear_transport tests.test_linear_workspace_audience tests.test_linear_status
+python -B -m unittest -q tests.test_linear_coding_entry tests.test_linear_coding_runtime tests.test_linear_coding_intake tests.test_linear_transport tests.test_linear_workspace_audience tests.test_linear_status
 
-81 unique focused tests pass, including 30 new intake/runtime cases. Actual spawned
+91 unique focused tests pass, including 40 new intake/runtime/entrypoint cases. Actual spawned
 processes test lock contention, process exit after job reservation and process exit
 during send; disk reopen tests verify duplicate suppression and uncertainty holds.
 Fixtures mock root-only directory admission because this environment is UID1000.
@@ -99,6 +98,48 @@ transport author/audience checks. No network, provider or model execution occurr
 Still required before activation: review/publication approval, exact installed
 runtime and protected host configuration, dedicated accepted executor roots,
 credential custody, actual root/filesystem acceptance and one explicitly approved
-bounded coding task plus reply. No CLI/systemd schedule or automatic credential
-provisioning is supplied. Full repository CI and live GraphQL acceptance have not
+bounded coding task plus reply. No systemd schedule or automatic credential provisioning is supplied. Full repository CI and live GraphQL acceptance have not
 run. The independent health trial and its cleanup remain untouched.
+
+## Explicit protected one-shot host entrypoint
+
+The fixed entrypoint is python -m ops.bounded_worker.linear_coding_entry SETTINGS,
+using a reviewed root-owned installed source bundle and trusted Python. Running
+from a writable checkout as root is not supported. No service, timer, key issuance
+or protected configuration is installed by this code. Importing it performs no
+I/O; invoking it explicitly can read Linear, run one approved bounded coding task
+and send one structured reply. It does not publish a GitHub branch or PR.
+
+Entry settings are protected JSON with version=1, enabled=true, runtime_settings,
+request_comment_id, mirror, username, executable, executable_sha256, token_file,
+members, audience and existing_roots. Existing roots must explicitly name
+health_state, github_state, github_workspace and github_evidence. All new state,
+workspace, evidence and mirror roots are disjoint from those operator-pinned
+existing locations. The operator must verify that this inventory is complete and
+current on the actual host; naming unused paths is not proof of isolation.
+Configuration and credentials must be outside all these roots. Optional storage
+uses the existing StorageConfiguration validation and executor behavior, with
+matching workspace and disjoint protected sources. No fallback changes storage.
+
+The entrypoint constructs the existing fixed Executor and Configuration directly,
+with prepared_baseline=true and approval budgets. It does not take module names,
+commands or transports from the task. One protected personal Linear key supplies
+both reader and reply sink; Destination validates the pinned viewer, members and
+audience. It does not request publisher credentials or provision OAuth.
+
+The operator pins the exact request comment UUID; no mailbox polling or task
+selection is added. The initial authenticated fetch occurs inside the same global
+receipt lock, after checking unresolved job/reply state. Exact content approval
+then controls admission. Entry, runtime and approval configuration are checked
+again around refetch and before sending. A change blocks further work without
+clearing receipts. These checks are not an atomic cancellation protocol.
+
+Nine entrypoint tests cover safe construction, disjoint roots, bad command-like
+fields, missing approval, revocation and one-shot task/result routing; one more
+runtime test ensures pending receipts prevent even the initial UUID fetch. Live
+transport, token reads and root admission are mocked in entrypoint fixtures. One
+test constructs the actual existing Executor and Configuration with only the
+protected-tree check mocked, without calling run or any model. Audience may be
+null for an existing private-team policy or a fully validated public roster object. The
+actual host must still verify protected runtime installation, worker containment,
+credential isolation, all pinned roots and a single authorized live task.

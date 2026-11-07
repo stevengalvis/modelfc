@@ -215,6 +215,26 @@ class RuntimeTests(unittest.TestCase):
         self.executor.run.assert_not_called()
         self.sink.post.assert_not_called()
 
+    def test_uuid_intake_does_not_fetch_when_receipt_is_unresolved(self):
+        settings = dict(version=1, enabled=True, reply_enabled=True,
+                        state_root=str(self.root), approval='/protected/approval', viewer=uid(4),
+                        workspace_root='/protected/work', evidence_root='/protected/evidence')
+        self.reader.destination.policy = self.approval.policy
+        self.reader.destination.viewer_id = uid(4)
+        self.sink.destination.policy = self.approval.policy
+        self.executor.config.workspace_root = settings['workspace_root']
+        self.executor.config.evidence_root = settings['evidence_root']
+        with rt.receipt_store(self.root) as db:
+            self.execute_disk(db)
+            db.execute("UPDATE linear_coding_jobs SET phase='launching'")
+            db.commit()
+        self.reader.fetch.reset_mock()
+        with patch.object(rt, 'load_settings', return_value=settings), patch.object(rt, 'load_approval', return_value=self.approval):
+            result = rt.run_once('/protected/settings', uid(5), self.reader, self.executor, self.sink, lambda: 100)
+        self.assertEqual(result, {'status': 'blocked'})
+        self.reader.fetch.assert_not_called()
+        self.sink.post.assert_not_called()
+
     def test_settings_reject_overlap_and_disabled_reply(self):
         settings = dict(version=1, enabled=True, reply_enabled=True, state_root='/safe/state',
                         approval='/safe/approval', viewer=uid(4), workspace_root='/safe/work',

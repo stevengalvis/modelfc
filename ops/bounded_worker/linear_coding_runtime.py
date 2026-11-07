@@ -222,7 +222,8 @@ def run_once(settings_path, request, reader, executor, sink, clock):
     try:
         settings = load_settings(settings_path)
         approval = load_approval(settings['approval'])
-        job, _ = prepare(request, approval, int(clock()))
+        if approval.enabled is not True or not int(clock()) < approval.expires:
+            return {'status': 'blocked'}
         if (reader.destination.policy != approval.policy or sink.destination.policy != approval.policy
                 or reader.destination.viewer_id != settings['viewer']
                 or sink.destination.viewer_id != settings['viewer']
@@ -232,6 +233,13 @@ def run_once(settings_path, request, reader, executor, sink, clock):
         with receipt_store(settings['state_root']) as db:
             if not replies_safe(db, approval.policy.issue, settings['viewer']):
                 return {'status': 'blocked'}
+            # The host entrypoint supplies a protected comment UUID, not a body.
+            # Hold the same global lock and inspect receipts before initial I/O.
+            if type(request) is str:
+                if not _uuid(request):
+                    return {'status': 'blocked'}
+                request = reader.fetch(request)
+            job, _ = prepare(request, approval, int(clock()))
             # Reload protected approval immediately at refetch/launch validation.
             class ApprovedReader:
                 def fetch(self, comment):
