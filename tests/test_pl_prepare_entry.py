@@ -1,5 +1,7 @@
 """Synthetic protected reads/manager state; all networking forbidden."""
 from datetime import datetime, timedelta, timezone
+from contextlib import redirect_stdout
+import io
 import json
 from pathlib import Path
 import subprocess
@@ -42,6 +44,21 @@ class AdmissionTests(unittest.TestCase):
         self.assertEqual(self.manager.call_args.kwargs['env'], {'PATH':'/usr/bin:/bin','LC_ALL':'C'})
         self.assertEqual(self.manager.call_args.kwargs['timeout'], 5)
 
+    def test_main_preserves_incomplete_preparation_result(self):
+        for n in (1, 2):
+            with self.subTest(provider_requests=n):
+                self.prepare.reset_mock()
+                result = {'status': 'HOLD', 'reason': 'PREPARATION_INCOMPLETE_OR_REJECTED',
+                          'provider_requests': n}
+                self.prepare.return_value = result
+                stdout = io.StringIO()
+                with redirect_stdout(stdout):
+                    exit_code = entry.main()
+                self.assertEqual(exit_code, 1)
+                self.assertEqual(json.loads(stdout.getvalue()), result)
+                self.prepare.assert_called_once_with(enabled=True, authorization_path=entry.AUTHORIZATION,
+                                                     authorization_sha256='b'*64)
+
     def test_active_pending_missing_duplicate_manager_state_blocks(self):
         for raw in ('LoadState=loaded\nActiveState=active\nSubState=running\nJob=\n',
                     'LoadState=loaded\nActiveState=inactive\nSubState=dead\nJob=123\n',
@@ -83,6 +100,24 @@ class AdmissionTests(unittest.TestCase):
         self.manager.side_effect=subprocess.TimeoutExpired('systemctl',5)
         self.assertEqual(entry.run()['status'],'HOLD')
         self.prepare.assert_not_called()
+
+    def test_next_e1_and_authorization_expiry_boundaries(self):
+        for target, key in ((self.a, 'next_e1_at'), (self.auth, 'expires_at')):
+            for seconds, delay, expected in ((241, 0, 'RETAINED_UNREVIEWED'),
+                                             (240, 0, 'HOLD'),
+                                             (241, 1, 'HOLD')):
+                with self.subTest(key=key, seconds=seconds, delay=delay):
+                    self.prepare.reset_mock()
+                    self.manager.reset_mock()
+                    self.clock.side_effect=[self.now, self.now+timedelta(seconds=delay)]
+                    with patch.dict(target, {key: (self.now+timedelta(seconds=seconds)).isoformat()}):
+                        self.assertEqual(entry.run()['status'], expected)
+                    if expected == 'HOLD':
+                        self.prepare.assert_not_called()
+                    else:
+                        self.prepare.assert_called_once()
+                    if delay:
+                        self.manager.assert_called_once()
 
     def test_uncertain_primitive_error_is_not_zero_request_result(self):
         self.prepare.side_effect=OSError('uncertain after networking')
