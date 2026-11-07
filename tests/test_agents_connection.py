@@ -142,6 +142,29 @@ os._exit(0)
                                     pass_fds=(sentinel.fileno(),), timeout=5, check=False)
         self.assertEqual(result.returncode, 0)
 
+    def test_closed_standard_streams_remain_open_across_exec(self):
+        verifier = """
+import os
+try:
+    valid = all(os.readlink('/proc/self/fd/' + str(fd)) == '/dev/null' for fd in (0, 1, 2))
+except OSError:
+    os._exit(12)
+os._exit(0 if valid else 13)
+"""
+        code = """
+import os, sys
+from ops.bounded_worker.executor_entry import sanitize_fds
+for fd in sys.argv[1].split(','):
+    os.close(int(fd))
+sanitize_fds()
+os.execv(sys.executable, [sys.executable, '-B', '-c', sys.argv[2]])
+"""
+        for closed in ('0', '1', '2', '0,1,2'):
+            with self.subTest(closed=closed):
+                result = subprocess.run([sys.executable, '-B', '-c', code, closed, verifier],
+                                        capture_output=True, timeout=5, check=False)
+                self.assertEqual(result.returncode, 0)
+
     def test_enter_clears_environment_and_uses_exec_not_shell(self):
         fd = self.pipe_key(b'synthetic_executor_key')
         with patch('os.getuid', return_value=1000), patch('os.geteuid', return_value=1000), \

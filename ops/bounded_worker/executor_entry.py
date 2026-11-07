@@ -62,6 +62,8 @@ def sanitize_fds():
     null = os.open('/dev/null', os.O_RDWR | os.O_CLOEXEC)
     for fd in (0, 1, 2):
         os.dup2(null, fd, inheritable=True)
+        # dup2(fd, fd) leaves O_CLOEXEC unchanged when open reused stdio.
+        os.set_inheritable(fd, True)
     # procfs is required in the isolated executor. Do not silently skip cleanup.
     for name in os.listdir('/proc/self/fd'):
         fd = int(name)
