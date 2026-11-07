@@ -90,7 +90,7 @@ No frontend changed; full project CI and deployment acceptance were not run.
 ## Follow-on: offline Agents API pilot controller
 
 The recommended real coding route is now the self-hosted Agents API, documented
-in `AGENTS_API_PILOT.md`. `ops/bounded_worker/agents_pilot.py` adds a pure offline
+in `PLAN.md`. `ops/bounded_worker/agents_pilot.py` adds a pure offline
 request planner and one-attempt state model. It accepts no credentials and has
 no transport, executor, shell call or live mode. It is NOT a crash-safe controller
 or an installed security boundary.
@@ -114,7 +114,7 @@ Commands:
     ruff check ops tests
 
 The fixture is deliberately not part of the passing controller suite. Run it
-from `fixtures/synthetic` with `python -B -m unittest -v test_clamp`; expect two
+from `docs/agents-api-pilot/synthetic` with `python -B -m unittest -v test_clamp`; expect two
 failures before the pilot fixes `clamp.py`.
 
 Practical next step: implement and independently review the crash-safe admission,
@@ -187,3 +187,11 @@ sandbox validation remains blocked here, and this package is not deployment-read
 Security review found and resolved inherited-descriptor leakage and JSON float
 overflow acceptance. Both have regression coverage. Host isolation, image identity,
 credential scope and durable admission remain explicit deployment prerequisites.
+
+## Offline durable reservation and executor boundary
+
+The follow-on `agents_admission.py` reservation gate and `agents_backend.py`
+backend boundary are documented in ADMISSION.md and BACKEND.md. These modules
+remain unwired: no default process launcher, network client or credential source
+is supplied. They are not an installed or live-ready VPS agent. Historical test
+counts and implementation milestones above describe earlier candidate stages.
