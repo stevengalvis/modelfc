@@ -121,6 +121,10 @@ def _safe(db, *, remote_reservation=None):
                 or request.comment != comment or obj['job_id'] != job
                 or task.task_id != task_id):
             return False
+    if db.execute("SELECT 1 FROM sqlite_master WHERE name='linear_patch_replies'").fetchone():
+        from .linear_patch_delivery import artifacts_safe
+        if not artifacts_safe(db):
+            return False
     if db.execute("SELECT 1 FROM sqlite_master WHERE name='linear_coding_poll'").fetchone():
         rows = db.execute('SELECT slot,next,failures,phase FROM linear_coding_poll').fetchall()
         if (len(rows) != 1 or rows[0][0] != 1 or type(rows[0][1]) is not int or rows[0][1] < 0
