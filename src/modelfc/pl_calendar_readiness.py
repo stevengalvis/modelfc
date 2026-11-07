@@ -1,10 +1,11 @@
 """Bounded, read-only readiness for explicitly supplied saved PL evidence."""
 import argparse
-from datetime import date
+from datetime import date, timedelta
 import hashlib
 import json
 import os
 import stat
+from zoneinfo import ZoneInfo
 
 from modelfc.acquisition_planner import utc
 from modelfc.pl_calendar import (CalendarRejected, MAX_CALENDAR_BYTES,
@@ -25,11 +26,13 @@ def read_bounded(path, limit):
 
 
 def readiness(raw, *, contract_raw, reviewed_contract_sha256, bundle_sha256,
-              competition, season_year, selected_day, as_of):
+              competition, season_year, selected_day, as_of, next_day=False):
     """Counts only: no provider text, names, credentials or local paths are emitted.
 
     EMPTY is established only by a valid, fresh, complete season within scope.
     Unresolved fixtures include earlier kickoffs on the selected London day.
+    Explicit next-day capture instead reconciles history strictly before the
+    observation's London day; collection-day results are not model inputs.
     """
     report = {"version": 1, "competition": "E0", "validity": "NOT_ASSESSED",
               "freshness": "UNKNOWN", "selected_day_state": "UNKNOWN",
@@ -40,6 +43,10 @@ def readiness(raw, *, contract_raw, reviewed_contract_sha256, bundle_sha256,
         _require(type(selected_day) is date and type(season_year) is int
                  and 2020 <= season_year <= 2100 and competition == "E0")
         _require(date(season_year, 7, 1) <= selected_day < date(season_year+1, 7, 1))
+        observation_day = observed.astimezone(ZoneInfo('Europe/London')).date()
+        _require(type(next_day) is bool and
+                 (not next_day or selected_day == observation_day + timedelta(days=1)))
+        history_day = observation_day if next_day else selected_day
         if raw is None:
             return {**report, "validity": "MISSING", "reason": "PL_BUNDLE_MISSING"}
         _require(isinstance(raw, bytes) and isinstance(bundle_sha256, str)
@@ -58,11 +65,13 @@ def readiness(raw, *, contract_raw, reviewed_contract_sha256, bundle_sha256,
             return {**report, "freshness": "STALE", "reason": "PL_CALENDAR_STALE"}
         selected = [m for m in calendar.matches if m.day == selected_day]
         unresolved = [m for m in calendar.matches if m.status not in _TERMINAL
-                      and (m.status in _ACTIVE or m.day < selected_day or m.kickoff < observed)]
+                      and (m.day < history_day or (not next_day and
+                           (m.status in _ACTIVE or m.kickoff < observed)))]
         counts = {status: sum(m.status == status for m in selected) for status in
                   ("SCHEDULED", "TIMED", "FINISHED", "POSTPONED", "CANCELLED",
                    "IN_PLAY", "PAUSED", "SUSPENDED")}
         return {**report, "freshness": "FRESH",
+                "history_before_exclusive": history_day.isoformat(),
                 "selected_day_state": "FIXTURES_PRESENT" if selected else "EMPTY",
                 "selected_count": len(selected), "status_counts": counts,
                 "prior_state": "UNRESOLVED" if unresolved else "RESOLVED",

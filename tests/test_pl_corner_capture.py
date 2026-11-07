@@ -35,6 +35,40 @@ class CaptureTests(unittest.TestCase):
         self.assertEqual(capture('/missing', None)['state'], 'DISABLED')
         self.assertEqual(list(self.store.iterdir()), [])
 
+    def test_next_day_collection_fixtures_do_not_block_or_leak_into_model(self):
+        for row in self.data.payload['matches'][:8]:
+            row['utcDate'] = '2026-10-18T12:00:00Z'
+        collection = self.data.payload['matches'][8]
+        collection['utcDate'] = '2026-10-17T19:30:00Z'
+
+        def forecast():
+            raw, options = self.data.options()
+            options.update(next_day=True, selected_day=(NOW+timedelta(days=1)).date())
+            with patch('socket.socket', side_effect=AssertionError('network')):
+                return prepare(raw, sources=self.data.sources, enabled=True, **options)
+
+        before = forecast()
+        self.assertEqual(before['state'], 'CAPTURED')
+        self.assertEqual(before['history_before_exclusive'], NOW.date().isoformat())
+        for status in ('IN_PLAY', 'FINISHED'):
+            collection.update(utcDate='2026-10-17T08:00:00Z', status=status)
+            collection['score']['fullTime'] = {'home': 2, 'away': 1}
+            self.data.payload['resultSet']['played'] = 11 if status == 'FINISHED' else 10
+            after = forecast()
+            self.assertEqual(after['state'], 'CAPTURED')
+            self.assertEqual(after['model_input_sha256'], before['model_input_sha256'])
+            self.assertEqual([f['prediction'] for f in after['forecasts']],
+                             [f['prediction'] for f in before['forecasts']])
+        self.data.replace_current(lambda b: b+b'E0,17/10/2026,New Home,New Away,9,8,H,99,88\n')
+        after = forecast()
+        self.assertEqual(after['state'], 'CAPTURED')
+        self.assertEqual(after['model_input_sha256'], before['model_input_sha256'])
+        self.assertEqual(after['readiness']['excluded_at_or_after_cutoff'], 1)
+        # An unresolved fixture inside the historical interval must still block.
+        collection.update(utcDate='2026-10-16T08:00:00Z', status='IN_PLAY')
+        self.data.payload['resultSet']['played'] = 10
+        self.assertEqual(forecast()['state'], 'BLOCKED')
+
     def test_cli_no_arguments_reports_disabled_without_io(self):
         output = io.StringIO()
         with redirect_stdout(output), patch('modelfc.pl_corner_capture.read_bounded', side_effect=AssertionError('read')), \

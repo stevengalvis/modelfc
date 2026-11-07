@@ -55,8 +55,11 @@ def _local_bytes(path, limit, *, private=False):
         os.close(fd)
 
 
-def _authorization(path, as_of):
-    value = _json(_local_bytes(path, 8192, private=True))
+def _authorization(path, as_of, expected_sha256=None):
+    raw = _local_bytes(path, 8192, private=True)
+    if expected_sha256 is not None and fingerprint(raw) != expected_sha256:
+        raise AcquisitionRejected('AUTHORIZATION_CHANGED')
+    value = _json(raw)
     if not isinstance(value, dict) or set(value) - {"history_calendar_sha256"} != {
         "version", "experiment_id", "issued_at", "expires_at", "calendar_sha256",
         "metadata_sha256", "enabled_competitions", "max_requests",
@@ -232,7 +235,7 @@ def _prepare(store, entry, sources, frozen, history_calendar=None):
 def run_once(*, state_dir, private_dir, calendar_path, metadata_path, data_config_path,
              authorization_path=None, history_calendar_path=None, clock=now, history_loader=load_history_bytes,
              client_type=OddsPapiTournamentClient, retain_handoff=False, epl_freeze=None,
-             epl_one_shot=False):
+             epl_one_shot=False, authorization_sha256=None):
     """One authorization permits at most one attempt. No caller-selected endpoint/price policy."""
     result = {"status": "DISABLED", "provider_requests": 0, "forecasts": 0, "snapshots": 0,
               "consumers": 0, "reason": None}
@@ -240,7 +243,7 @@ def run_once(*, state_dir, private_dir, calendar_path, metadata_path, data_confi
     try:
         require_runtime()
         as_of = utc(clock())
-        auth = _authorization(authorization_path, as_of)
+        auth = _authorization(authorization_path, as_of, authorization_sha256)
         if epl_one_shot:
             if (epl_one_shot is not True or auth['enabled_competitions'] != ['E0']
                     or not isinstance(epl_freeze, dict)
@@ -287,7 +290,7 @@ def run_once(*, state_dir, private_dir, calendar_path, metadata_path, data_confi
             if epl_one_shot:
                 def check_operator_window():
                     current = utc(clock())
-                    if (_authorization(authorization_path, current) != auth
+                    if (_authorization(authorization_path, current, authorization_sha256) != auth
                             or not control['period']['start'] <= current.date().isoformat() < control['period']['end']):
                         raise AcquisitionRejected('EPL_OPERATOR_WINDOW_CLOSED')
                 guard.calendar_check = check_operator_window
@@ -306,7 +309,7 @@ def run_once(*, state_dir, private_dir, calendar_path, metadata_path, data_confi
                     raise AcquisitionRejected("FORECAST_PREPARATION_REVIEW")
             result["forecasts"] = sum(map(len, prepared.values()))
             dispatch_time = utc(clock())
-            if _authorization(authorization_path, dispatch_time) != auth:
+            if _authorization(authorization_path, dispatch_time, authorization_sha256) != auth:
                 raise AcquisitionRejected("AUTHORIZATION_CHANGED")
             _calendar(calendar_raw, dispatch_time, auth["enabled_competitions"])
             if history_calendar_raw is not None:
@@ -341,7 +344,7 @@ def run_once(*, state_dir, private_dir, calendar_path, metadata_path, data_confi
                 # Shared authorization and collection windows still bind the entire
                 # request. An EPL delay never permits stale Championship dispatch.
                 dispatch_time = utc(clock())
-                if _authorization(authorization_path, dispatch_time) != auth:
+                if _authorization(authorization_path, dispatch_time, authorization_sha256) != auth:
                     raise AcquisitionRejected("AUTHORIZATION_CHANGED")
                 _calendar(calendar_raw, dispatch_time, auth["enabled_competitions"])
                 fresh_plan = plan_acquisition(calendar, as_of=dispatch_time, completed=completed,

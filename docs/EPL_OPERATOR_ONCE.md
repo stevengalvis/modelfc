@@ -138,3 +138,58 @@ monthly allowance allocation and stop/expiry rules. Statistical qualification an
 actual publication authorization remain independent gates; user acceptance of
 performance uncertainty is not a fabricated qualification contract. Disabling
 E0 must leave E1, all records and shared accounting intact.
+
+## Finite protected preparation entrypoint (source-only)
+
+`ops/vps/prospective_launch.py --epl-prepare` reuses the existing physical-release,
+interpreter, protected-path and systemd credential checks, then executes only
+`modelfc.pl_prepare_entry`. The ordinary no-argument E1 launch is unchanged. No
+public evidence ACL is requested by the preparation environment. This mode does
+not run E1, capture quotes, approve mappings or enable recurring operation.
+
+`deploy/modelfc-epl-prepare.service` is an uninstalled commissioning template,
+without a timer or install target. Its placeholder working directory deliberately
+requires the accepted physical release. The oneshot has a 180-second
+`TimeoutStartSec`, 30-second stop timeout, control-group killing and no restart.
+`RuntimeMaxSec` alone would not bound a oneshot startup. Existing E1 service/timer
+files are unchanged. Preserve the original private store; this template only
+allows writes below existing state. If that store is elsewhere, review an exact
+boundary adjustment rather than create another store or relax parent access.
+
+Root supplies two protected files using the existing acquisition reader's exact
+0440 runtime-only POSIX ACL and ancestor/no-symlink rules:
+
+- `/etc/modelfc/epl-preparation-authorization.json`: the unchanged two-request
+  authorization described above, naming the original authoritative store.
+- `/etc/modelfc/epl-preparation-admission.json`: exact keys `version` (integer 1),
+  `release_sha`, `authorization_sha256`, `state_dir`, `private_dir`, `issued_at`,
+  `expires_at`, and `next_e1_at`. Hashes bind the accepted release and authorization;
+  paths match the authorization, with state fixed to `/var/lib/modelfc/state`.
+  Timestamps are UTC. Admission validity is positive and at most ten minutes.
+
+This admission is a protected operator attestation, not a scheduler query or an
+allocation. Before issuing it, the operator verifies E1 has finished, reads its
+actual next trigger/effective timer and drop-ins, and excludes competing manual
+launches for this finite interval. Do not infer the trigger from an hourly source
+example, postpone E1 or stop its timer to make room. The entrypoint independently
+requires the E1 service loaded/inactive/dead with no pending job, using a five-second
+bounded systemctl query and a secret-free environment. It rechecks the clock and
+unchanged admission after that query. Launch is rejected unless the next E1 time
+and provider-authorization expiry are both strictly more than 240 seconds away
+(180 execution + 30 stop + 30 scheduling margin). Admission must still be valid.
+An altered admission or authorization rejects before preparation. The primitive,
+not a second wrapper, owns the existing nonblocking runner lock and durable claim.
+
+Do not invoke the module outside its accepted finite service and call that bounded
+execution. Install only after review and host acceptance of the exact launcher,
+physical release, effective unit, credential/authorization ACLs, original private
+store, systemctl read access and whole-cgroup timeout/cleanup. No installation or
+host acceptance is performed by source tests. The finite timeout remains effective
+if the operator process dies; afterward reconcile unit/cgroup, claims, retained
+responses and reservations. An unknown/partial result is not zero calls or a retry
+permit. A new admission cannot bypass the primitive's same-day claim.
+
+Offline coverage is in `tests.test_pl_prepare_entry`,
+`tests.test_prospective_launch` and `tests.test_pl_operator_once`. It mocks host
+boundaries and forbids sockets in the admission/primitive tests. It is not evidence
+of effective live isolation, provider entitlement, host timing or publication.

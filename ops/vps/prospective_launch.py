@@ -46,7 +46,7 @@ def _credential() -> str:
     return value
 
 
-def launch():
+def launch(*, epl_prepare=False):
     # getcwd returns the physical directory selected by systemd, not $PWD/current.
     release = Path.cwd()
     match = re.fullmatch(r"([0-9a-f]{40})-[0-9a-f]{12}", release.name)
@@ -81,6 +81,9 @@ def launch():
         raise ValueError("invalid prospective history configuration")
     protected(HISTORY, runtime_owner, directory=True)
     protected(STATE, runtime_owner, directory=True)
+    if epl_prepare:
+        for name in ("pl_prepare_entry.py", "pl_operator_once.py", "guarded_acquisition.py", "acquisition_storage.py"):
+            protected(release / "src/modelfc" / name, deploy_owner)
     key = _credential()
     # This launcher is installed only during the separately authorized API
     # reader migration. The already-installed old launcher does not opt in.
@@ -94,6 +97,11 @@ def launch():
               "import_path": str(release / "src"), "uid": os.getuid(), "gid": os.getgid(),
               "config": str(CONFIG), "state": str(STATE)}
     print(json.dumps(record, sort_keys=True, separators=(",", ":")), file=sys.stderr, flush=True)
+    if epl_prepare:
+        env.pop("MODELFC_EVIDENCE_ACL_USER")
+        os.execve(str(python), [str(python), "-B", "-P", "-s", "-m",
+                  "modelfc.pl_prepare_entry"], env)
+        return
     os.execve(str(python), [str(python), "-B", "-P", "-s", "-m",
               "modelfc.corner_prospective", "run-once", "--data-config", str(CONFIG),
               "--state-dir", str(STATE), "--require-calendar-budget"], env)
@@ -101,7 +109,9 @@ def launch():
 
 def main():
     try:
-        launch()
+        if sys.argv[1:] not in ([], ["--epl-prepare"]):
+            raise ValueError("invalid prospective mode")
+        launch(epl_prepare=bool(sys.argv[1:]))
     except (OSError, ValueError, KeyError):
         print("PROSPECTIVE_LAUNCH_FAILED", file=sys.stderr)
         raise SystemExit(1) from None
