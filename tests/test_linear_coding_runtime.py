@@ -235,6 +235,16 @@ class RuntimeTests(unittest.TestCase):
         self.reader.fetch.assert_not_called()
         self.sink.post.assert_not_called()
 
+    def test_internal_store_cannot_be_used_with_changed_state_root(self):
+        settings = dict(version=1, enabled=True, reply_enabled=True,
+                        state_root='/different/protected/store', approval='/protected/approval', viewer=uid(4),
+                        workspace_root='/protected/work', evidence_root='/protected/evidence')
+        with rt.receipt_store(self.root) as db, patch.object(rt, 'load_settings', return_value=settings), \
+             patch.object(rt, 'load_approval', return_value=self.approval):
+            result = rt.run_once('/protected/settings', self.req, self.reader, self.executor, self.sink, lambda: 100, _store=db)
+        self.assertEqual(result, {'status': 'blocked'})
+        self.reader.fetch.assert_not_called(); self.executor.run.assert_not_called(); self.sink.post.assert_not_called()
+
     def test_settings_reject_overlap_and_disabled_reply(self):
         settings = dict(version=1, enabled=True, reply_enabled=True, state_root='/safe/state',
                         approval='/safe/approval', viewer=uid(4), workspace_root='/safe/work',

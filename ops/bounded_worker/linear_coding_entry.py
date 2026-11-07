@@ -36,6 +36,23 @@ def _settings(path):
         raise ValueError('invalid_entry_settings')
     runtime = load_settings(value['runtime_settings'])
     approval = load_approval(runtime['approval'])
+    _validate_host(value, runtime, path, (value['runtime_settings'], runtime['approval']))
+    return value, runtime, approval
+
+
+def _validate_host(value, runtime, path, control_files):
+    """Shared fixed host validation; controls are protected operator file paths."""
+    if (any(type(value[k]) is not str or not value[k] for k in
+            ('mirror', 'username', 'executable', 'executable_sha256', 'token_file'))
+            or not re.fullmatch('[a-z_][a-z0-9_-]{0,31}', value['username'])
+            or not re.fullmatch('[a-f0-9]{64}', value['executable_sha256'])
+            or not Path(value['executable']).is_absolute()
+            or type(value['members']) is not list or not 1 <= len(value['members']) <= 100
+            or not all(_uuid(x) for x in value['members']) or len(set(value['members'])) != len(value['members'])
+            or (value['audience'] is not None and type(value['audience']) is not dict)
+            or type(value['existing_roots']) is not dict or set(value['existing_roots']) !=
+               {'health_state', 'github_state', 'github_workspace', 'github_runtime', 'github_evidence'}):
+        raise ValueError('invalid_host_settings')
     # The host operator pins existing roots; never infer isolation from names.
     current = [protected_dir(value['mirror'])] + [protected_dir(runtime[key]) for key in
                                                ('state_root', 'workspace_root', 'evidence_root')]
@@ -43,7 +60,7 @@ def _settings(path):
     excluded = list(existing.values())
     for index, root in enumerate(current):
         disjoint(root, *current[index+1:], *excluded)
-    for file in (path, value['runtime_settings'], runtime['approval'], value['token_file'], value['executable']):
+    for file in (path, *control_files, value['token_file'], value['executable']):
         disjoint(file, *current, *excluded)
     if 'storage' in value:
         from .storage import StorageConfiguration
@@ -53,7 +70,7 @@ def _settings(path):
         storage.validate()
         if storage.workspace != runtime['workspace_root']:
             raise ValueError('storage_workspace_mismatch')
-        for file in (path, value['runtime_settings'], runtime['approval'], value['token_file'],
+        for file in (path, *control_files, value['token_file'],
                      value['executable'], storage.image, storage.auth_source, storage.config_source):
             disjoint(file, *current, *excluded, storage.mount)
         mount = protected_dir(storage.mount)
@@ -63,7 +80,6 @@ def _settings(path):
         for root in (current[0], current[1], current[3], existing['health_state'],
                      existing['github_state'], existing['github_evidence']):
             disjoint(root, mount)
-    return value, runtime, approval
 
 
 def _executor(value, runtime, approval):
@@ -80,7 +96,7 @@ def _executor(value, runtime, approval):
     return Executor(config, value['mirror'])
 
 
-def run(path, *, clock=time.time):
+def run(path, *, clock=time.time, _store=None):
     try:
         value, runtime, approval = _settings(path)
         if approval.enabled is not True or not int(clock()) < approval.expires:
@@ -111,7 +127,7 @@ def run(path, *, clock=time.time):
 
         return run_once(value['runtime_settings'], value['request_comment_id'],
                         CheckedReader(api, destination), executor,
-                        CheckedSink(api, destination), clock)
+                        CheckedSink(api, destination), clock, _store=_store)
     except Exception:
         return {'status': 'blocked'}
 

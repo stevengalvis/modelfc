@@ -85,9 +85,9 @@ windows must budget worker and transport completion accordingly.
 ## Verification and remaining live acceptance
 
 Command:
-python -B -m unittest -q tests.test_linear_coding_entry tests.test_linear_coding_runtime tests.test_linear_coding_intake tests.test_linear_transport tests.test_linear_workspace_audience tests.test_linear_status
+python -B -m unittest -q tests.test_linear_coding_queue tests.test_linear_coding_entry tests.test_linear_coding_runtime tests.test_linear_coding_intake tests.test_linear_transport tests.test_linear_workspace_audience tests.test_linear_status
 
-96 unique focused tests pass, including 45 new intake/runtime/entrypoint cases. Actual spawned
+136 unique focused tests pass, including queue and remote-admission integration. Actual spawned
 processes test lock contention, process exit after job reservation and process exit
 during send; disk reopen tests verify duplicate suppression and uncertainty holds.
 Fixtures mock root-only directory admission because this environment is UID1000.
@@ -169,3 +169,55 @@ without that field block; no missing runtime path is inferred. An operator must
 point the Linear settings at its separately provisioned sibling workspace/runtime
 and preserve the existing state, evidence and accepted storage identities. No
 operator settings or live storage have been modified by this source change.
+
+## Offline automatic queue of exact approvals
+
+linear_coding_queue is a one-invocation poller, not a standing grant for future
+comments. Protected queue JSON contains exactly version=1, enabled=true,
+state_root and entries, an ordered list of one to sixteen protected entry-config
+paths. Every item retains its own exact comment UUID/body digest approval and
+expiry. All items must share the existing execution/host identity, receipt store
+and destination; only entry/runtime/approval paths and exact task scope vary.
+Duplicate queue paths, request UUIDs or approval digests are rejected.
+
+A trusted operator explicitly provisions one small poll-state table in the
+existing coding.sqlite database via provision_queue. No new database, separate
+poll lock or routine initialization is added. Existing receipt storage/ownership
+checks are reused; missing store/table, malformed state or crash-pending phase
+blocks instead of resetting history. One existing coding lock now spans queue
+selection, one-shot execution and delivery. The queue passes its already locked
+connection through an internal entrypoint argument; no lock is held recursively.
+Manual entrypoints retain their own cadence rules but cannot bypass a pending
+queue or remote-mode hold. All modes must use this same reviewed source revision.
+
+One invocation checks all unresolved receipts before any entry/API call, skips
+confirmed delivered items, skips disabled/expired approvals, reserves cadence
+durably and calls the existing fixed entry.run at most once. A completed worker
+with no send reservation may finish its reply through that same entry path; it
+is not relaunched. Unknown results/crashes leave a durable poll hold. Existing
+job/reply uncertainty also blocks the entire queue. A known blocked/busy outcome
+uses bounded exponential backoff, without clearing any execution or send receipt.
+A blocked first eligible item is not bypassed to launch later work.
+
+Successful/empty polls wait at least sixty seconds; blocked/busy outcomes back off
+from two minutes to one hour. This is a durable minimum interval, not an installed
+schedule. There is no timer, mailbox discovery, automatic approval writer, scope
+expansion or retry of an uncertain model/send. Config changes after reservation
+leave a hold for inspection. Disabling a queue prevents future invocations; it
+does not cancel an already admitted bounded task.
+
+Twelve queue tests use synthetic entry adapters and the real disk receipt store:
+max-one execution, delivered-item skipping, restart cadence, backoff, expired or
+disabled approvals, unknown outcomes, receipt holds, missing-state rejection,
+spawned-process crash and concurrent poll-lock contention. No new live model or
+Linear test is needed or performed for this offline queue. Activating a periodic
+invocation and adding any exact approvals remain separate authorized host actions.
+
+The integrated queue clears its selection-only polling phase while retaining the
+coding lock, before calling the existing one-shot path. No external action has
+yet occurred at that transition. Worker execution and result sending then use
+their existing durable reservations. A crash during a read-only preflight cannot
+have launched a worker; a crash after launch leaves its normal job hold. Unknown
+entrypoint outcomes produce a held poll state recognized by every admission mode.
+Remote-specific usage and the complete dependency bundle are described in
+LINEAR_REMOTE_GATE.md.

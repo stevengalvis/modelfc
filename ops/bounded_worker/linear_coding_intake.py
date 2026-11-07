@@ -105,7 +105,7 @@ def initialize(db):
     db.commit()
 
 
-def _safe(db):
+def _safe(db, *, remote_reservation=None):
     for job, comment, digest, raw, task_id, phase in db.execute(
             'SELECT job,comment,binding,request,task,phase FROM linear_coding_jobs'):
         if type(raw) is not bytes or len(raw) > 4096 or phase not in TERMINAL:
@@ -121,10 +121,46 @@ def _safe(db):
                 or request.comment != comment or obj['job_id'] != job
                 or task.task_id != task_id):
             return False
+    if db.execute("SELECT 1 FROM sqlite_master WHERE name='linear_coding_poll'").fetchone():
+        rows = db.execute('SELECT slot,next,failures,phase FROM linear_coding_poll').fetchall()
+        if (len(rows) != 1 or rows[0][0] != 1 or type(rows[0][1]) is not int or rows[0][1] < 0
+                or type(rows[0][2]) is not int or not 0 <= rows[0][2] <= 6 or rows[0][3] != 'idle'):
+            return False
+    # Optional remote tables are installed only for the opt-in remote mode.
+    # Every legacy/manual/queue path sees their uncertainty holds by default.
+    if db.execute("SELECT 1 FROM sqlite_master WHERE name='linear_remote_poll'").fetchone():
+        rows = db.execute('SELECT slot,next,phase FROM linear_remote_poll').fetchall()
+        if (len(rows) != 1 or rows[0][0] != 1 or type(rows[0][1]) is not int
+                or rows[0][1] < 0 or rows[0][2] != 'idle'):
+            return False
+    if db.execute("SELECT 1 FROM sqlite_master WHERE name='linear_remote_consumptions'").fetchone():
+        policy_rows = db.execute('SELECT slot,fingerprint,next FROM linear_remote_policy').fetchall()
+        consumption_count = db.execute('SELECT COUNT(*) FROM linear_remote_consumptions').fetchone()[0]
+        if (len(policy_rows) > 1 or (consumption_count and not policy_rows)
+                or (policy_rows and (policy_rows[0][0] != 1
+                    or type(policy_rows[0][1]) is not str or not re.fullmatch('[a-f0-9]{64}', policy_rows[0][1])
+                    or type(policy_rows[0][2]) is not int or policy_rows[0][2] < 0))):
+            return False
+        allowed = 0
+        for approval, comment, digest, approval_digest, job, phase in db.execute('SELECT * FROM linear_remote_consumptions'):
+            record = (approval, comment, digest, approval_digest, job)
+            if (not _uuid(approval) or not _uuid(comment) or approval == comment
+                    or any(type(x) is not str or not re.fullmatch('[a-f0-9]{64}', x) for x in (digest, approval_digest))):
+                return False
+            if phase == 'reserved' and remote_reservation == record:
+                allowed += 1
+                continue
+            row = db.execute('SELECT comment,binding,phase FROM linear_coding_jobs WHERE job=?', (job,)).fetchone()
+            if phase != 'consumed' or row is None or row[:2] != (comment, digest) or row[2] not in TERMINAL:
+                return False
+        if remote_reservation is not None and allowed != 1:
+            return False
+    elif remote_reservation is not None:
+        return False
     return True
 
 
-def dispatch_once(db, request, approval, reader, executor, clock):
+def dispatch_once(db, request, approval, reader, executor, clock, *, _remote_reservation=None):
     """At most one local execution; no publication or external status writes.
 
     Exact refetch must use the existing reader's authenticated fetch method, not
@@ -137,7 +173,12 @@ def dispatch_once(db, request, approval, reader, executor, clock):
         digest, raw = binding(request), snapshot(request)
         db.execute('PRAGMA synchronous=FULL')
         db.execute('BEGIN IMMEDIATE')
-        if not _safe(db):
+        if (_remote_reservation is not None
+                and (_remote_reservation[1] != request.comment or _remote_reservation[2] != digest
+                     or _remote_reservation[4] != job)):
+            db.rollback()
+            return {'status': 'blocked'}
+        if not _safe(db, remote_reservation=_remote_reservation):
             db.rollback()
             return {'status': 'blocked'}
         prior = db.execute('SELECT job,comment,binding,request,task FROM linear_coding_jobs '

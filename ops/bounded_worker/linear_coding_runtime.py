@@ -1,5 +1,5 @@
 """Inactive trusted host wiring. No CLI, schedule, credential loader or auto retry."""
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 import fcntl
 import json
 import os
@@ -217,11 +217,18 @@ def deliver(db, job, sink):
         return 'blocked'
 
 
-def run_once(settings_path, request, reader, executor, sink, clock):
+def run_once(settings_path, request, reader, executor, sink, clock, *, _store=None):
     """Explicit trusted call only; adapters are provisioned separately, never by task."""
     try:
         settings = load_settings(settings_path)
         approval = load_approval(settings['approval'])
+        if _store is not None:
+            # Queue settings may have changed since its initial snapshot. Never
+            # pair a new host scope with a different store's held lock/receipts.
+            databases = [row for row in _store.execute('PRAGMA database_list') if row[1] != 'temp']
+            expected = str(Path(settings['state_root']) / 'coding.sqlite')
+            if len(databases) != 1 or databases[0][1] != 'main' or databases[0][2] != expected:
+                return {'status': 'blocked'}
         if approval.enabled is not True or not int(clock()) < approval.expires:
             return {'status': 'blocked'}
         if (reader.destination.policy != approval.policy or sink.destination.policy != approval.policy
@@ -230,7 +237,8 @@ def run_once(settings_path, request, reader, executor, sink, clock):
                 or Path(executor.config.workspace_root) != Path(settings['workspace_root'])
                 or Path(executor.config.evidence_root) != Path(settings['evidence_root'])):
             return {'status': 'blocked'}
-        with receipt_store(settings['state_root']) as db:
+        # Internal queue callers already hold the same protected store lock.
+        with (receipt_store(settings['state_root']) if _store is None else nullcontext(_store)) as db:
             if not replies_safe(db, approval.policy.issue, settings['viewer']):
                 return {'status': 'blocked'}
             # The host entrypoint supplies a protected comment UUID, not a body.
