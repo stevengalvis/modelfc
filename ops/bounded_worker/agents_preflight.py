@@ -46,13 +46,13 @@ def inspect_host(*, read_text=_bounded_read, exists=os.path.exists,
         'systemd_runtime_visible': exists('/run/systemd/system'),
         'bubblewrap_on_path': which('bwrap') is not None,
         'systemd_run_on_path': which('systemd-run') is not None,
-        'pinned_executor_path_exists': exists('/opt/agents/bin/codex'),
         'user_namespaces_configured': None if userns_limit is None else userns_limit > 0,
     }
     missing = [name for name, value in checks.items() if value is not True]
     return {
-        'schema': 'agents-api-prerequisites-v1',
+        'schema': 'agents-api-prerequisites-v2',
         'ready_for_live': False,
+        'executor_image_verified': False,
         'checks': checks,
         'missing_or_unknown': missing,
         'process_metadata': {'no_new_privileges': fields.get('NoNewPrivs'),
