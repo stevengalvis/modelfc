@@ -20,7 +20,8 @@ class EntryTests(unittest.TestCase):
                           executable='/opt/worker/codex', executable_sha256='b'*64,
                           token_file='/config/token', members=[uid(4)], audience={},
                           existing_roots=dict(health_state='/health/state', github_state='/github/state',
-                                              github_workspace='/github/work', github_evidence='/github/evidence'))
+                                              github_workspace='/github/work', github_runtime='/github/runtime',
+                                              github_evidence='/github/evidence'))
         self.runtime = dict(version=1, enabled=True, reply_enabled=True, state_root='/linear/state',
                             approval='/config/approval', viewer=uid(4), workspace_root='/linear/work',
                             evidence_root='/linear/evidence')
@@ -31,6 +32,91 @@ class EntryTests(unittest.TestCase):
              patch.object(entry, 'load_settings', return_value=self.runtime), \
              patch.object(entry, 'load_approval', return_value=self.approval):
             return entry._settings('/config/entry')
+
+    def storage_fixture(self):
+        self.runtime['workspace_root'] = '/pool/linear-work'
+        return self.value | {'existing_roots': self.value['existing_roots'] | {
+            'github_workspace': '/pool/github-work', 'github_runtime': '/pool/github-runtime'},
+            'storage': dict(mount='/pool', image='/images/pool.img', workspace='/pool/linear-work',
+                            runtime='/pool/linear-runtime', image_device=1, image_inode=2,
+                            image_bytes=1000, filesystem_bytes=1000, filesystem_inodes=100,
+                            reserve_bytes=100, reserve_inodes=10, auth_source='/home/worker/.codex/auth.json',
+                            config_source='/home/worker/.codex/config.toml', cgroup_component='worker')}
+
+    def test_same_mount_sibling_directories_accepted(self):
+        value = self.storage_fixture()
+        self.assertEqual(self.settings(value)[0], value)
+
+    def test_missing_github_runtime_requires_config_migration(self):
+        roots = self.value['existing_roots'].copy()
+        del roots['github_runtime']
+        with self.assertRaises(ValueError): self.settings(self.value | {'existing_roots': roots})
+
+    def test_all_cross_source_directory_overlaps_rejected(self):
+        value = self.storage_fixture()
+        for local in ('workspace', 'runtime'):
+            for remote in ('github_workspace', 'github_runtime'):
+                for suffix in ('', '/child'):
+                    path = value['existing_roots'][remote] + suffix
+                    changed = value | {'storage': value['storage'] | {local: path}}
+                    before = self.runtime['workspace_root']
+                    if local == 'workspace': self.runtime['workspace_root'] = path
+                    try:
+                        with self.subTest(local=local, remote=remote, suffix=suffix), self.assertRaises(ValueError):
+                            self.settings(changed)
+                    finally: self.runtime['workspace_root'] = before
+        for local in ('workspace', 'runtime'):
+            for remote in ('github_workspace', 'github_runtime'):
+                changed = value | {'storage': value['storage'] | {local: '/pool/shared'},
+                                   'existing_roots': value['existing_roots'] | {remote: '/pool/shared/old'}}
+                before = self.runtime['workspace_root']
+                if local == 'workspace': self.runtime['workspace_root'] = '/pool/shared'
+                try:
+                    with self.subTest(local=local, remote=remote, ancestor=True), self.assertRaises(ValueError):
+                        self.settings(changed)
+                finally: self.runtime['workspace_root'] = before
+        for runtime in ('/pool/linear-work', '/pool/linear-work/child'):
+            with self.subTest(runtime=runtime), self.assertRaises(ValueError):
+                self.settings(value | {'storage': value['storage'] | {'runtime': runtime}})
+        # Also reject a new root that contains an existing directory.
+        with self.assertRaises(ValueError):
+            self.settings(value | {'storage': value['storage'] | {'runtime': '/pool'}})
+
+    def test_state_evidence_and_secret_sources_must_stay_outside_pool(self):
+        value = self.storage_fixture()
+        for key in ('health_state', 'github_state', 'github_evidence'):
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                self.settings(value | {'existing_roots': value['existing_roots'] | {key: '/pool/' + key}})
+        for key in ('state_root', 'evidence_root'):
+            before = self.runtime[key]
+            self.runtime[key] = '/pool/' + key
+            try:
+                with self.subTest(key=key), self.assertRaises(ValueError): self.settings(value)
+            finally: self.runtime[key] = before
+        for key in ('auth_source', 'config_source', 'image'):
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                self.settings(value | {'storage': value['storage'] | {key: '/pool/' + key}})
+        with self.assertRaises(ValueError): self.settings(value | {'token_file': '/pool/key'})
+
+    def test_symlink_runtime_rejected_by_existing_protected_helper(self):
+        from ops.bounded_worker.bridge_security import protected_dir
+        value = self.storage_fixture()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'real').mkdir()
+            (root / 'alias').symlink_to(root / 'real', target_is_directory=True)
+            value['storage'].update(mount=str(root), workspace=str(root / 'linear-work'), runtime=str(root / 'alias'))
+            self.runtime['workspace_root'] = value['storage']['workspace']
+            def protect(path):
+                if path == value['storage']['runtime']:
+                    return protected_dir(path)
+                return Path(path)
+            with patch.object(entry, 'protected_json', return_value=value), \
+                 patch.object(entry, 'protected_dir', side_effect=protect), \
+                 patch.object(entry, 'load_settings', return_value=self.runtime), \
+                 patch.object(entry, 'load_approval', return_value=self.approval), \
+                 patch('ops.bounded_worker.bridge_security.os.geteuid', return_value=0):
+                with self.assertRaises(ValueError): entry._settings('/config/entry')
 
     def test_pinned_settings_and_no_publisher_credential(self):
         self.assertEqual(self.settings(), (self.value, self.runtime, self.approval))

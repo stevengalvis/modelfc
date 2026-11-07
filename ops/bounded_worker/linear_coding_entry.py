@@ -32,14 +32,15 @@ def _settings(path):
             or len(set(value['members'])) != len(value['members'])
             or (value['audience'] is not None and type(value['audience']) is not dict)
             or type(value['existing_roots']) is not dict or set(value['existing_roots']) !=
-               {'health_state', 'github_state', 'github_workspace', 'github_evidence'}):
+               {'health_state', 'github_state', 'github_workspace', 'github_runtime', 'github_evidence'}):
         raise ValueError('invalid_entry_settings')
     runtime = load_settings(value['runtime_settings'])
     approval = load_approval(runtime['approval'])
     # The host operator pins existing roots; never infer isolation from names.
     current = [protected_dir(value['mirror'])] + [protected_dir(runtime[key]) for key in
                                                ('state_root', 'workspace_root', 'evidence_root')]
-    excluded = [protected_dir(root) for root in value['existing_roots'].values()]
+    existing = {key: protected_dir(root) for key, root in value['existing_roots'].items()}
+    excluded = list(existing.values())
     for index, root in enumerate(current):
         disjoint(root, *current[index+1:], *excluded)
     for file in (path, value['runtime_settings'], runtime['approval'], value['token_file'], value['executable']):
@@ -55,8 +56,13 @@ def _settings(path):
         for file in (path, value['runtime_settings'], runtime['approval'], value['token_file'],
                      value['executable'], storage.image, storage.auth_source, storage.config_source):
             disjoint(file, *current, *excluded, storage.mount)
-        for root in (current[0], current[1], current[3], *excluded):
-            disjoint(root, storage.mount)
+        mount = protected_dir(storage.mount)
+        runtime_root = protected_dir(storage.runtime)
+        # Reuse the accepted filesystem, not another task source's directories.
+        disjoint(runtime_root, *current, *excluded)
+        for root in (current[0], current[1], current[3], existing['health_state'],
+                     existing['github_state'], existing['github_evidence']):
+            disjoint(root, mount)
     return value, runtime, approval
 
 

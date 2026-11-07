@@ -87,7 +87,7 @@ windows must budget worker and transport completion accordingly.
 Command:
 python -B -m unittest -q tests.test_linear_coding_entry tests.test_linear_coding_runtime tests.test_linear_coding_intake tests.test_linear_transport tests.test_linear_workspace_audience tests.test_linear_status
 
-91 unique focused tests pass, including 40 new intake/runtime/entrypoint cases. Actual spawned
+96 unique focused tests pass, including 45 new intake/runtime/entrypoint cases. Actual spawned
 processes test lock contention, process exit after job reservation and process exit
 during send; disk reopen tests verify duplicate suppression and uncertainty holds.
 Fixtures mock root-only directory admission because this environment is UID1000.
@@ -113,7 +113,7 @@ and send one structured reply. It does not publish a GitHub branch or PR.
 Entry settings are protected JSON with version=1, enabled=true, runtime_settings,
 request_comment_id, mirror, username, executable, executable_sha256, token_file,
 members, audience and existing_roots. Existing roots must explicitly name
-health_state, github_state, github_workspace and github_evidence. All new state,
+health_state, github_state, github_workspace, github_runtime and github_evidence. All new state,
 workspace, evidence and mirror roots are disjoint from those operator-pinned
 existing locations. The operator must verify that this inventory is complete and
 current on the actual host; naming unused paths is not proof of isolation.
@@ -143,3 +143,29 @@ protected-tree check mocked, without calling run or any model. Audience may be
 null for an existing private-team policy or a fully validated public roster object. The
 actual host must still verify protected runtime installation, worker containment,
 credential isolation, all pinned roots and a single authorized live task.
+
+## Reusing the accepted storage filesystem
+
+The entrypoint now permits the GitHub workspace/runtime and separate Linear
+workspace/runtime to be siblings under the same accepted mount. It no longer
+requires a second image merely because the existing GitHub workspace lives on
+that filesystem. The actual workspace/runtime roots must remain disjoint in both
+directions; sharing an exact directory or nested directory is rejected. The
+existing StorageConfiguration and admission checks remain unchanged. Linear
+runtime and mount paths are checked through the existing protected directory
+helper, including symlink rejection.
+
+The mirror, both integrations' state/evidence, health state, credentials and
+protected configuration must remain outside the shared filesystem. The image,
+filesystem identity, capacity/reserve checks and per-task containment are reused;
+this correction does not create, mount or resize anything. Filesystem reserves
+remain a shared pool. Separate paths alone do not establish cross-task
+confidentiality or safe simultaneous use of a shared worker identity. This patch
+does not add cross-source scheduling, a shared lock or a new concurrency claim.
+
+Configuration migration: existing_roots must now include github_runtime, pinned
+from the actual protected GitHub worker storage configuration. Old entry files
+without that field block; no missing runtime path is inferred. An operator must
+point the Linear settings at its separately provisioned sibling workspace/runtime
+and preserve the existing state, evidence and accepted storage identities. No
+operator settings or live storage have been modified by this source change.
