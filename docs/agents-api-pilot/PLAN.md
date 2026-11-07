@@ -123,13 +123,21 @@ Sources:
 1. Offline: prepare the synthetic fixture and tests; audit a pinned executor
    artifact, clean image, mounts, identity and credential-injection mechanism.
 2. Offline containment: demonstrate production paths and sentinel credentials
-   are inaccessible; outside-workspace writes, privilege escalation and arbitrary
-   egress fail. Demonstrate CPU/memory/process/time limits and complete cleanup.
+   are inaccessible, outside-workspace writes and privilege escalation are
+   blocked, and CPU/memory/process/time limits and cleanup work. For the standard
+   self-hosted route, verify nested command sandboxing and the documented
+   automatic-review network baseline. Review may approve supported escalations;
+   permanent command-network denial is not a claimed property or an added
+   prerequisite. Keep existing production network restrictions unchanged.
 3. Before live work: verify credit activation, linked project/model availability,
    review availability and enforceable spend controls. Obtain approval for the
    exact credential creation/setup, installation/network changes and live pilot
-   scope/spending. Do not request keys in chat. A proposed pilot amount is not an
-   enforced cap: the fetched create-session schema does not expose a budget field.
+   scope/spending. Do not request keys in chat. Current official SDK schema
+   supports `spend_control.limit` in positive USD cents; omission creates an
+   unlimited session. Configure the approved limit and verify its exact readback.
+   Recorded consumption is best effort, so do not claim a local timer or this
+   schema alone proves an exact final-charge ceiling. See SESSION_CONTROLLER.md
+   for the pinned schema source and remaining enforcement caveats.
 4. Live only after approval: create one session with no initial input, persist its
    identity, start its isolated executor, follow connection events, then submit
    one synthetic bug-fix task. No private repository content in the first run.

@@ -27,6 +27,15 @@ class AgentsPilotTests(unittest.TestCase):
         self.assertEqual(payload['environment'], {'type': 'self_hosted', 'workspace_directory': '/workspace'})
         self.assertNotIn('key', repr(payload).lower())
 
+    def test_explicit_provider_spend_limit_and_standard_tier(self):
+        plan = Plan(self.plan.task, 'test-model', spend_limit_cents=100)
+        self.assertEqual(plan.create_payload()['spend_control'], {'limit': 100})
+        self.assertEqual(plan.create_payload()['agent']['service_tier'], 'default')
+        self.assertNotIn('spend_control', self.plan.create_payload())
+        for limit in (True, 0, -1, 1.5, '100'):
+            with self.subTest(limit=limit), self.assertRaises(ValueError):
+                Plan(self.plan.task, 'test-model', spend_limit_cents=limit).create_payload()
+
     def test_duplicate_create_blocked(self):
         self.state.reserve_create()
         with self.assertRaises(ValueError):

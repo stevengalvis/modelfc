@@ -14,6 +14,7 @@ from ops.bounded_worker.task import Task
 class Plan:
     task: Task
     model: str
+    spend_limit_cents: int | None = None
 
     def validate(self):
         if not isinstance(self.task, Task):
@@ -22,14 +23,18 @@ class Plan:
         if (not isinstance(self.model, str)
                 or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._:-]{0,127}', self.model)):
             raise ValueError('invalid_model')
+        if (self.spend_limit_cents is not None
+                and (type(self.spend_limit_cents) is not int or self.spend_limit_cents <= 0)):
+            raise ValueError('invalid_spend_limit')
 
     def create_payload(self):
         self.validate()
         # No input: constructing a session must not also submit the coding task.
         # Prompts are defense in depth, not filesystem/network enforcement.
-        return {
+        payload = {
             'agent': {
                 'model': self.model,
+                'service_tier': 'default',
                 'instructions': ('Work only in the disposable workspace. Do not access '
                                  'production, credentials or external services. Do not publish '
                                  'changes. Report the offline tests and resulting patch.'),
@@ -38,6 +43,9 @@ class Plan:
             'environment': {'type': 'self_hosted', 'workspace_directory': '/workspace'},
             'review': 'auto_review',
         }
+        if self.spend_limit_cents is not None:
+            payload['spend_control'] = {'limit': self.spend_limit_cents}
+        return payload
 
     def input_payload(self):
         self.validate()

@@ -22,8 +22,9 @@ def connection_arguments(executable, environment_id, remote_url):
     if (not isinstance(remote_url, str) or len(remote_url) > 8192
             or any(ord(c) < 33 or ord(c) == 127 for c in remote_url)):
         raise ValueError('invalid_remote_url')
+    # --remote is the HTTPS registration endpoint, not the later WSS relay.
     parsed = urlsplit(remote_url)
-    if (parsed.scheme != 'wss' or parsed.hostname != 'codex-cloud-environments.chatgpt.com'
+    if (parsed.scheme != 'https' or parsed.hostname != 'api.openai.com'
             or parsed.username is not None or parsed.password is not None
             or parsed.port not in (None, 443) or parsed.fragment):
         raise ValueError('unapproved_remote_url')

@@ -44,15 +44,59 @@ class ConnectionTests(unittest.TestCase):
         for method, suffix in [('submit', '/events'), ('cancel', '/events'), ('retrieve', '')]:
             with self.subTest(method=method):
                 self.setUp()
+                if method != 'retrieve':
+                    self.response = FakeResponse(b'')
+                    self.response.status = 202
                 if method == 'submit':
-                    self.client.submit_task('sess_test', self.plan)
+                    self.assertIsNone(self.client.submit_task('sess_test', self.plan))
                 elif method == 'cancel':
-                    self.client.cancel_turn('sess_test')
+                    self.assertIsNone(self.client.cancel_turn('sess_test'))
                 else:
                     self.client.retrieve_session('sess_test')
                 request = self.opener.open.call_args.args[0]
                 self.assertTrue(request.full_url.endswith('/sess_test' + suffix))
                 self.assertEqual(request.method, 'GET' if method == 'retrieve' else 'POST')
+
+    def test_event_ack_requires_202_and_empty_body(self):
+        for status, body in ((200, b''), (201, b''), (204, b''), (202, b'{}'), (202, b' ')):
+            for operation in ('submit', 'cancel'):
+                with self.subTest(status=status, body=body, operation=operation):
+                    self.setUp()
+                    self.response = FakeResponse(body)
+                    self.response.status = status
+                    with self.assertRaises(ConnectionFailure):
+                        if operation == 'submit':
+                            self.client.submit_task('sess_test', self.plan)
+                        else:
+                            self.client.cancel_turn('sess_test')
+                    self.opener.open.assert_called_once()
+
+    def test_empty_ack_is_not_valid_for_session_reads_or_creation(self):
+        for operation in ('create', 'retrieve'):
+            with self.subTest(operation=operation):
+                self.setUp()
+                self.response = FakeResponse(b'')
+                self.response.status = 202
+                with self.assertRaises(ConnectionFailure):
+                    if operation == 'create':
+                        self.client.create_session(self.plan)
+                    else:
+                        self.client.retrieve_session('sess_test')
+
+    def test_environment_read_uses_fixed_official_resource(self):
+        self.response = FakeResponse(b'{"id":"env_test","status":"connected"}')
+        self.assertEqual(self.client.retrieve_environment('env_test')['status'], 'connected')
+        request = self.opener.open.call_args.args[0]
+        self.assertEqual(request.full_url, 'https://api.openai.com/v1/agents/environments/env_test')
+        self.assertEqual(request.method, 'GET')
+        self.assertEqual(request.get_header('Openai-beta'), 'agents=v1')
+        self.opener.open.assert_called_once()
+
+    def test_environment_path_injection_never_calls_transport(self):
+        for value in ('../other', 'x?token=secret', 'x\n', ''):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                self.client.retrieve_environment(value)
+        self.opener.open.assert_not_called()
 
     def test_path_injection_rejected_before_network(self):
         for value in ('../other', 'x?token=secret', 'x\n', ''):
@@ -86,7 +130,7 @@ class ConnectionTests(unittest.TestCase):
 
 
 class ExecutorTests(unittest.TestCase):
-    url = 'wss://codex-cloud-environments.chatgpt.com/example?x=1'
+    url = 'https://api.openai.com/example?x=1'
 
     def pipe_key(self, value):
         read_fd, write_fd = os.pipe()
@@ -116,10 +160,20 @@ class ExecutorTests(unittest.TestCase):
         self.assertEqual(args, ['/opt/agents/bin/codex', 'exec-server', '--remote', self.url,
                                 '--environment-id', 'env_test'])
         for url in ('http://bad', 'wss://bad.example/x',
+                    'wss://codex-cloud-environments.chatgpt.com/x',
+                    'https://api.openai.com.evil.example/x', 'https://other.example/x',
+                    'https://api.openai.com:444/x', 'https://user@api.openai.com/x',
                     'wss://codex-cloud-environments.chatgpt.com@bad.example/x',
                     self.url + '#fragment', self.url + '\n'):
             with self.subTest(url=url), self.assertRaises(ValueError):
                 connection_arguments('/opt/agents/bin/codex', 'env_test', url)
+
+    def test_registration_url_preserved_without_relay_derivation(self):
+        for url in ('https://api.openai.com/opaque?binding=synthetic',
+                    'https://api.openai.com:443/opaque?binding=synthetic'):
+            with self.subTest(url=url):
+                args = connection_arguments('/opt/agents/bin/codex', 'env_test', url)
+                self.assertEqual(args[3], url)
 
     def test_inheritable_descriptor_and_standard_streams_are_closed(self):
         with tempfile.TemporaryFile() as sentinel:

@@ -46,11 +46,13 @@ class AgentsConnection:
         self._opener = opener if opener is not None else urllib.request.build_opener(
             urllib.request.ProxyHandler({}), _NoRedirect())
 
-    def _request(self, method, suffix, payload=None):
+    def _request(self, method, suffix, payload=None, *, empty_ack=False, resource='sessions'):
         raw = None if payload is None else json.dumps(payload, allow_nan=False).encode('utf-8')
         if raw is not None and len(raw) > self.max_bytes:
             raise ValueError('request_too_large')
-        request = urllib.request.Request('https://api.openai.com/v1/agents/sessions' + suffix,
+        if resource not in ('sessions', 'environments'):
+            raise ValueError('invalid_resource')
+        request = urllib.request.Request('https://api.openai.com/v1/agents/' + resource + suffix,
             method=method, data=raw, headers={
                 'Authorization': 'Bearer ' + self._key,
                 'OpenAI-Beta': 'agents=v1', 'Content-Type': 'application/json',
@@ -59,9 +61,16 @@ class AgentsConnection:
             with self._opener.open(request, timeout=self.timeout) as response:
                 if response.geturl() != request.full_url or not 200 <= response.status < 300:
                     raise ConnectionFailure('response_target_or_status_rejected')
+                if empty_ack and response.status != 202:
+                    raise ConnectionFailure('event_ack_status_rejected')
                 body = response.read(self.max_bytes + 1)
             if len(body) > self.max_bytes:
                 raise ConnectionFailure('response_limit')
+            if empty_ack:
+                if body != b'':
+                    raise ConnectionFailure('event_ack_body_rejected')
+                # Accepted is not durable input completion or turn termination.
+                return None
             def pairs(items):
                 result = {}
                 for key, value in items:
@@ -89,9 +98,13 @@ class AgentsConnection:
     def retrieve_session(self, session_id):
         return self._request('GET', '/' + _id(session_id))
 
+    def retrieve_environment(self, environment_id):
+        return self._request('GET', '/' + _id(environment_id), resource='environments')
+
     def submit_task(self, session_id, plan):
-        return self._request('POST', '/' + _id(session_id) + '/events', plan.input_payload())
+        return self._request('POST', '/' + _id(session_id) + '/events', plan.input_payload(),
+                             empty_ack=True)
 
     def cancel_turn(self, session_id):
         return self._request('POST', '/' + _id(session_id) + '/events',
-                             {'events': [{'type': 'agent.session.input.cancel'}]})
+                             {'events': [{'type': 'agent.session.input.cancel'}]}, empty_ack=True)
