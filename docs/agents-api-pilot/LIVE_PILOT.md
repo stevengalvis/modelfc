@@ -172,6 +172,12 @@ policy fields; it supplements the retained exact-profile acceptance, not a
 complete independent OCI/security audit. Runtime-added environment fields are
 not blanket-allowed; mappings must match exactly, without duplicate names.
 
+Capture accepts the host PID's canonical unified cgroup membership at the bound
+scope or a component-bounded descendant: Podman 4.9.3 normalizes inspect paths
+to the enclosing full-ID scope. Resource checks and the retained descriptor stay
+on that scope; sibling/prefix/traversal or namespace-root mismatches remain
+rejected. See `NESTED_ACCEPTANCE.md` for the pinned source contract and limitations.
+
 Cleanup requires exact stopped-container identity plus the saved cgroup's
 `populated 0`, or removal of that previously held kernel cgroup inode. Losing
 startup evidence leaves cleanup unverified. Stopped container metadata is retained

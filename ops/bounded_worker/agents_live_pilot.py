@@ -390,7 +390,9 @@ Commands are injectable only for offline tests; no command retries are made.
             raise LiveFailure('container_manager_rejected')
         state = value['State']
         raw = state.get('CgroupPath')
-        if not isinstance(raw, str) or not raw.startswith('/') or '..' in Path(raw).parts:
+        if (not isinstance(raw, str) or not raw.startswith('/')
+                or any(part in ('', '.', '..') for part in raw.split('/')[1:])
+                or any(char in raw for char in ('\x00', '\n', '\r'))):
             raise LiveFailure('container_cgroup_unverified')
         path = Path(raw) if raw.startswith('/sys/fs/cgroup/') else Path('/sys/fs/cgroup' + raw)
         if not any(part in (self.container_id, 'libpod-' + self.container_id + '.scope',
@@ -405,7 +407,16 @@ Commands are injectable only for offline tests; no command retries are made.
             if type(state.get('Pid')) is not int or state['Pid'] <= 0:
                 raise LiveFailure('container_cgroup_pid_mismatch')
             lines = Path('/proc/' + str(state['Pid']) + '/cgroup').read_text().splitlines()
-            if '0::' + relative not in lines:
+            # Podman 4.9.3 reports the enclosing full-ID scope, truncating
+            # descendants from this same host /proc membership (container.go,
+            # cGroupPath). Keep the scope inode and limits, not just its child.
+            if len(lines) != 1 or not lines[0].startswith('0::'):
+                raise LiveFailure('container_cgroup_pid_mismatch')
+            member = lines[0][3:]
+            parts, scope_parts = member.split('/'), relative.split('/')
+            if (not member.startswith('/') or '\x00' in member
+                    or any(part in ('', '.', '..') for part in parts[1:])
+                    or parts[:len(scope_parts)] != scope_parts):
                 raise LiveFailure('container_cgroup_pid_mismatch')
             for name, expected in (('memory.max', '1073741824'), ('pids.max', '64'),
                                    ('cpu.max', '100000 100000')):

@@ -181,11 +181,12 @@ class AcceptanceTests(unittest.TestCase):
         if self.capture_error == 'unbound':
             REAL_CAPTURE(backend, value)
             raise AssertionError('capture should fail before opening a cgroup')
-        if self.capture_error in ('pid', 'limits'):
+        if self.capture_error in ('pid', 'limits', 'descendant'):
             relative = value['State']['CgroupPath']
             full = '/sys/fs/cgroup' + relative
             reads = {'/proc/' + str(value['State']['Pid']) + '/cgroup':
-                     '0::' + ('/unrelated' if self.capture_error == 'pid' else relative) + '\n',
+                     '0::' + ('/unrelated' if self.capture_error == 'pid' else relative) +
+                     ('/container' if self.capture_error == 'descendant' else '') + '\n',
                      full + '/memory.max': '0' if self.capture_error == 'limits' else '1073741824',
                      full + '/pids.max': '64', full + '/cpu.max': '100000 100000'}
             self.opened_fd = os.open(self.path, os.O_RDONLY | os.O_DIRECTORY)
@@ -193,6 +194,8 @@ class AcceptanceTests(unittest.TestCase):
                     patch.object(Path, 'read_text', new=lambda path: reads[str(path)]), \
                     patch.object(os, 'open', return_value=self.opened_fd):
                 REAL_CAPTURE(backend, value)
+            if self.capture_error == 'descendant':
+                return
             raise AssertionError('capture should fail')
         backend.cgroup_fd = os.open(self.path, os.O_RDONLY | os.O_DIRECTORY)
         if self.inspect_change:
@@ -348,16 +351,68 @@ class AcceptanceTests(unittest.TestCase):
         value = {'HostConfig': {'CgroupManager': 'systemd'},
                  'State': {'Status': 'running', 'Running': True, 'Pid': 123,
                            'CgroupPath': relative}}
-        fd = os.open(self.path, os.O_RDONLY | os.O_DIRECTORY)
-        reads = {'/proc/123/cgroup': '0::' + relative + '\n',
-                 full + '/memory.max': '1073741824', full + '/pids.max': '64',
-                 full + '/cpu.max': '100000 100000'}
-        with patch.object(Path, 'is_symlink', return_value=False), \
-                patch.object(Path, 'read_text', new=lambda path: reads[str(path)]), \
-                patch.object(os, 'open', return_value=fd) as opened:
-            backend._capture_cgroup(value)
-        self.assertEqual(backend.cgroup_fd, fd)
-        self.assertEqual(str(opened.call_args.args[0]), full)
+        for suffix in ('', '/container', '/container/init.scope'):
+            with self.subTest(suffix=suffix):
+                fd = os.open(self.path, os.O_RDONLY | os.O_DIRECTORY)
+                reads = {'/proc/123/cgroup': '0::' + relative + suffix + '\n',
+                         full + '/memory.max': '1073741824', full + '/pids.max': '64',
+                         full + '/cpu.max': '100000 100000'}
+                with patch.object(Path, 'is_symlink', return_value=False), \
+                        patch.object(Path, 'read_text', new=lambda path: reads[str(path)]), \
+                        patch.object(os, 'open', return_value=fd) as opened:
+                    backend._capture_cgroup(value)
+                self.assertEqual(backend.cgroup_fd, fd)
+                self.assertEqual(str(opened.call_args.args[0]), full)
+                backend.close()
+
+    def test_membership_rejects_outside_ambiguous_and_noncanonical_paths(self):
+        backend = self.fixture.executor
+        backend.container_id = self.value['Id']
+        relative = '/synthetic/libpod-' + self.value['Id'] + '.scope'
+        value = {'HostConfig': {'CgroupManager': 'systemd'},
+                 'State': {'Pid': 123, 'CgroupPath': relative}}
+        rejected = ['', '0::/\n', '0::/container\n', '0::/synthetic\n',
+                    '0::/other-root' + relative + '\n',
+                    '0::' + relative + '-sibling/container\n',
+                    '0::' + relative + '/container/../other\n',
+                    '0::' + relative + '/./container\n',
+                    '0::' + relative + '//container\n',
+                    '0::' + relative + '/container/\n',
+                    '0::' + relative + '/bad\x00name\n',
+                    '1:cpu:' + relative + '\n',
+                    '0::' + relative + '\n0::' + relative + '/container\n',
+                    '0::' + relative + '\nmalformed\n']
+        for membership in rejected:
+            with self.subTest(membership=membership):
+                fd = os.open(self.path, os.O_RDONLY | os.O_DIRECTORY)
+                with patch.object(Path, 'is_symlink', return_value=False), \
+                        patch.object(Path, 'read_text', return_value=membership), \
+                        patch.object(os, 'open', return_value=fd):
+                    with self.assertRaisesRegex(LiveFailure, 'container_cgroup_pid_mismatch'):
+                        backend._capture_cgroup(value)
+                self.assertIsNone(backend.cgroup_fd)
+                with self.assertRaises(OSError):
+                    os.fstat(fd)
+
+    def test_inspect_path_must_be_canonical_before_open(self):
+        backend = self.fixture.executor
+        backend.container_id = self.value['Id']
+        for prefix in ('/synthetic/./', '/synthetic/../', '/synthetic//'):
+            value = {'HostConfig': {'CgroupManager': 'systemd'},
+                     'State': {'Pid': 123, 'CgroupPath': prefix +
+                               'libpod-' + self.value['Id'] + '.scope'}}
+            with self.subTest(prefix=prefix), patch.object(os, 'open') as opened:
+                with self.assertRaisesRegex(LiveFailure, 'container_cgroup_unverified'):
+                    backend._capture_cgroup(value)
+                opened.assert_not_called()
+
+    def test_descendant_membership_releases_gate_and_keeps_scope_cleanup(self):
+        self.capture_error = 'descendant'
+        result = self.run_acceptance()
+        self.assertEqual(result['status'], 'passed')
+        self.assertTrue(result['go_sent'])
+        self.assertEqual(result['nested'], 'passed')
+        self.assertEqual(result['cleanup'], 'verified')
 
     def test_exact_profile_only_entrypoint_and_command_change(self):
         executor = self.fixture.executor
