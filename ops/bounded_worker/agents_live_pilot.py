@@ -43,6 +43,28 @@ _ENV = {'PATH': '/opt/agents/bin:/usr/local/bin:/usr/bin:/bin',
         'HOME': '/home/agents', 'CODEX_HOME': '/home/agents/.codex',
         'LANG': 'C.UTF-8', 'LC_ALL': 'C.UTF-8', 'container': 'podman',
         'HOSTNAME': 'agents-pilot', 'GIT_TERMINAL_PROMPT': '0', 'GIT_CONFIG_NOSYSTEM': '1'}
+# Fixed trusted startup code, executed only inside the fresh private home tmpfs.
+# mkdir is intentionally exclusive: never adopt existing config or follow links.
+CODEX_HOME_SETUP = '''import os, stat
+home_fd = os.open("/home/agents", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+try:
+    info = os.fstat(home_fd)
+    if (info.st_uid != 65534 or info.st_gid != 65534 or stat.S_IMODE(info.st_mode) != 0o700):
+        raise RuntimeError("private_home_rejected")
+    os.mkdir(".codex", mode=0o700, dir_fd=home_fd)
+    codex_fd = os.open(".codex", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=home_fd)
+    try:
+        info = os.fstat(codex_fd)
+        if (info.st_uid != 65534 or info.st_gid != 65534 or stat.S_IMODE(info.st_mode) != 0o700):
+            raise RuntimeError("private_codex_home_rejected")
+    finally:
+        os.close(codex_fd)
+finally:
+    os.close(home_fd)
+'''
+LIVE_BOOTSTRAP = CODEX_HOME_SETUP + '''import sys
+os.execve("/opt/agents/bin/codex", ["/opt/agents/bin/codex", *sys.argv[1:]], dict(os.environ))
+'''
 _CGROUP_LIMITS = {'memory.max': '1073741824', 'memory.swap.max': '0',
                   'pids.max': '64', 'cpu.max': '100000 100000', 'cpu.max.burst': '0'}
 
@@ -336,7 +358,7 @@ Commands are injectable only for offline tests; no command retries are made.
             '--stop-timeout=5', '--restart=no', '--log-driver=none', '--no-healthcheck',
             '--systemd=false', '--sdnotify=ignore', '--image-volume=ignore', '--unsetenv-all',
             '--http-proxy=false', '--hostname=agents-pilot', '--workdir=/workspace',
-            '--entrypoint=/opt/agents/bin/codex']
+            '--entrypoint=/usr/local/bin/python3']
         for directory in ('/workspace', '/home/agents', '/tmp'):
             args += ['--mount', 'type=tmpfs,destination=' + directory
                      + ',tmpfs-size=67108864,tmpfs-mode=0700,chown=true,nosuid,nodev,noexec']
@@ -347,7 +369,8 @@ Commands are injectable only for offline tests; no command retries are made.
                   'agents.acceptance': self.target.acceptance_id}
         for name, value in labels.items():
             args += ['--label', name + '=' + value]
-        return args + ['sha256:' + self.target.image_id, *cmd[1:], '--registration-bearer-stdin']
+        return args + ['sha256:' + self.target.image_id, '-I', '-S', '-B', '-c',
+                       LIVE_BOOTSTRAP, *cmd[1:], '--registration-bearer-stdin']
 
     def _inspect(self):
         if self.binding is None:
@@ -595,12 +618,11 @@ Commands are injectable only for offline tests; no command retries are made.
             evidence['scope_nlink'] = os.fstat(self.cgroup_fd).st_nlink
             # kernfs nlink is not a removed-node proof. Use the originally live,
             # held cgroup.events object, never an ENOENT from a pathname lookup.
-            evidence['stage'] = 'events_seek'
-            if os.lseek(self.cgroup_events_fd, 0, os.SEEK_SET) != 0:
-                raise LiveFailure('container_cgroup_events_seek_failed')
-            evidence['stage'] = 'events_read'
+            # seq_file explicitly supports pread and resets its iterator at
+            # offset zero. Avoid kernfs llseek's separate inactive-node failure.
+            evidence['stage'] = 'events_pread'
             try:
-                raw = os.read(self.cgroup_events_fd, 4097)
+                raw = os.pread(self.cgroup_events_fd, 4097, 0)
             except OSError as error:
                 if error.errno != errno.ENODEV:
                     raise

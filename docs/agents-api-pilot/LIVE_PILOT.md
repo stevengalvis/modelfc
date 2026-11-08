@@ -62,7 +62,7 @@ rejects symlink paths and checks final-directory ownership/mode, but does not
 protect against replacement through writable or foreign-controlled ancestors.
 
 The image must contain a trusted compatible Codex at `/opt/agents/bin/codex`,
-Python 3 on the fixed PATH, and everything needed for **nested** Codex sandboxing.
+Python 3 at `/usr/local/bin/python3`, and everything needed for **nested** Codex sandboxing.
 A full official Codex package preserves its manifest and helpers; an existing
 trusted compatible `bwrap` on PATH is also a documented option. The earlier
 bare-binary no-key outer-container smoke is insufficient. Its `0.0.0` package
@@ -76,6 +76,16 @@ existing seccomp/AppArmor policy, private PID/IPC/UTS/cgroup namespaces, tmpfs
 workspace/home/tmp, and the verified user-namespace support needed by Codex.
 `auto_review` is a server review setting, not by itself sandbox configuration.
 A new image/setup/security change requires its own approval if not already covered.
+
+The fixed entrypoint is now that trusted Python interpreter. Before execing
+Codex it exclusively creates `/home/agents/.codex` inside the new private home
+tmpfs, using directory-relative nofollow operations and UID/GID 65534/mode0700
+checks. The fixed `CODEX_HOME` resolver otherwise rejects the missing directory.
+Existing entries are not adopted and no host config or credentials are copied.
+The bootstrap leaves stdin untouched for `--registration-bearer-stdin`, then
+execs only `/opt/agents/bin/codex` with the already-validated generated arguments.
+The no-key gate uses the same initialization immediately before its Codex exec.
+No isolation flags, limits or key transport are relaxed by this change.
 
 ## Network and key boundary
 
@@ -194,11 +204,11 @@ it does not reconstruct missing historical values. See `NESTED_ACCEPTANCE.md`
 for the pinned source contract, optional-burst semantics and limitations.
 
 Cleanup requires exact stopped-container identity plus a fresh `populated 0`
-read from the originally live, retained scope `cgroup.events` FD. Alternatively,
+offset-zero `pread` from the originally live, retained scope `cgroup.events` FD. Alternatively,
 ENODEV from reading that exact retained core file proves the kernel offlining
 branch under standard cgroup2 semantics. Its capture must first have read valid
-`populated 1`; no missing pathname, EOF, permission error, seek error or link
-count alone proves cleanup. Both the scope and event FDs are retained and closed
+`populated 1`; no missing pathname, EOF, permission error or link count alone
+proves cleanup. No lseek is required before the positioned read. Both the scope and event FDs are retained and closed
 by the owner. See `NESTED_ACCEPTANCE.md` for the versioned kernel source and limits.
 Losing
 startup evidence leaves cleanup unverified. Stopped container metadata is retained

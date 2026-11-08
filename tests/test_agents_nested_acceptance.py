@@ -28,7 +28,8 @@ def local_gate(payload="print('NESTED_OK', flush=True)", *, wait=20, mount_statu
     return gate.GATE_PROGRAM.replace(
         f'os.execve({gate.CODEX!r}, {gate.SANDBOX_ARGV!r}, dict(os.environ))', replacement
     ).replace('[], [], 20)', f'[], [], {wait})').replace(
-        'mount_status = _mount_check()', f'mount_status = {mount_status!r}')
+        'mount_status = _mount_check()', f'mount_status = {mount_status!r}').replace(
+            gate.CODEX_HOME_SETUP, '')
 
 
 class StderrDiagnosticTests(unittest.TestCase):
@@ -381,18 +382,13 @@ class AcceptanceTests(unittest.TestCase):
                 raise OSError(errno.EIO, 'private stop details')
             return original(args)
         self.command = command
-        original_read = os.read
-        def read(fd, size):
-            if size == 4097 and 'stop' in self.actions:
-                raise OSError(errno.EACCES, 'private read details')
-            return original_read(fd, size)
-        with patch.object(os, 'read', new=read):
+        with patch.object(os, 'pread', side_effect=OSError(errno.EACCES, 'private read details')):
             result = self.run_acceptance()
         self.assertEqual(result['reason'], 'stop_uncertain')
         self.assertEqual(result['cleanup'], 'unverified')
         self.assertEqual(result['cleanup_diagnostics']['stop']['error']['errno'], 'EIO')
         self.assertEqual(result['cleanup_diagnostics']['readback']['error']['errno'], 'EACCES')
-        self.assertEqual(result['cleanup_diagnostics']['readback']['stage'], 'events_read')
+        self.assertEqual(result['cleanup_diagnostics']['readback']['stage'], 'events_pread')
         self.assertNotIn('private stop details', repr(result))
         self.assertNotIn('private read details', repr(result))
 
@@ -719,19 +715,21 @@ class AcceptanceTests(unittest.TestCase):
                     backend._capture_cgroup(value)
                 opened.assert_not_called()
 
-    def test_exact_profile_only_entrypoint_and_command_change(self):
+    def test_exact_profile_and_python_entrypoint_only_command_changes(self):
         executor = self.fixture.executor
         binding = self.fixture.binding
         original = executor.create_arguments(binding)
         args = gate.acceptance_arguments(executor, binding)
         index = original.index('sha256:' + executor.target.image_id)
         expected = original[:index]
-        expected[expected.index('--entrypoint=' + gate.CODEX)] = '--entrypoint=' + gate.PYTHON
         self.assertEqual(args[:index], expected)
         self.assertEqual(args[index + 1:], ['-I', '-S', '-B', '-c', gate.GATE_PROGRAM])
         self.assertNotIn(binding.remote_url, repr(args))
         self.assertNotIn('--registration-bearer-stdin', args)
         self.assertNotIn('synthetic-no-key', repr(args))
+        self.assertIn(gate.CODEX_HOME_SETUP, gate.GATE_PROGRAM)
+        self.assertLess(gate.GATE_PROGRAM.index('os.read(0, 1)'),
+                        gate.GATE_PROGRAM.index(gate.CODEX_HOME_SETUP))
 
     def test_safe_state_summary_distinguishes_omitted_empty_and_stopped(self):
         value = {'State': {'Status': 'stopped', 'Running': False, 'Pid': 0}}

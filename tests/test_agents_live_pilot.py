@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import signal
+import sys
 import stat
 import tempfile
 import time
@@ -146,6 +147,71 @@ class LiveLoopTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result['status'], 'blocked')
 
 
+class PrivateHomeTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.home = Path(self.tmp.name) / 'home'
+        self.home.mkdir(mode=0o700)
+
+    def execute(self, program=live.CODEX_HOME_SETUP, *, owner=65534, home=None):
+        real_open, real_fstat = os.open, os.fstat
+        opened = []
+        def open_path(path, flags, *args, **kwargs):
+            path = (home or self.home) if path == '/home/agents' else path
+            fd = real_open(path, flags, *args, **kwargs)
+            opened.append(fd)
+            return fd
+        def fstat(fd):
+            value = real_fstat(fd)
+            # Model mapped UID/GID only; actual mode, mkdir and nofollow are real.
+            return types.SimpleNamespace(st_uid=owner, st_gid=65534, st_mode=value.st_mode)
+        try:
+            with patch.object(os, 'open', new=open_path), patch.object(os, 'fstat', new=fstat):
+                exec(program, {})
+        finally:
+            for fd in opened:
+                with self.assertRaises(OSError):
+                    real_fstat(fd)
+
+    def test_creates_only_private_codex_directory_in_fresh_home(self):
+        self.execute()
+        self.assertEqual([p.name for p in self.home.iterdir()], ['.codex'])
+        self.assertEqual(stat.S_IMODE((self.home / '.codex').stat().st_mode), 0o700)
+
+    def test_existing_directory_or_symlink_is_not_adopted(self):
+        child = self.home / '.codex'
+        child.mkdir(mode=0o700)
+        with self.assertRaises(FileExistsError):
+            self.execute()
+        child.rmdir()
+        child.symlink_to(self.home)
+        with self.assertRaises(FileExistsError):
+            self.execute()
+        self.assertTrue(child.is_symlink())
+
+    def test_home_owner_mode_and_symlink_rejected_without_mkdir(self):
+        with self.assertRaisesRegex(RuntimeError, 'private_home_rejected'):
+            self.execute(owner=65535)
+        self.home.chmod(0o755)
+        with self.assertRaisesRegex(RuntimeError, 'private_home_rejected'):
+            self.execute()
+        self.home.chmod(0o700)
+        link = Path(self.tmp.name) / 'link'
+        link.symlink_to(self.home, target_is_directory=True)
+        with self.assertRaises(OSError):
+            self.execute(home=link)
+        self.assertFalse((self.home / '.codex').exists())
+
+    def test_live_bootstrap_execs_fixed_codex_with_argv_and_never_reads_registration_pipe(self):
+        args = ['exec-server', '--remote', 'https://api.openai.com/synthetic', '--registration-bearer-stdin']
+        with patch.object(sys, 'argv', ['-c', *args]), patch.object(os, 'execve') as execute, \
+                patch.object(os, 'read', side_effect=AssertionError('stdin must stay untouched')):
+            self.execute(live.LIVE_BOOTSTRAP)
+        self.assertEqual(execute.call_args.args[:2], ('/opt/agents/bin/codex',
+                                                    ['/opt/agents/bin/codex', *args]))
+
+
 class PodmanTests(unittest.TestCase):
     def setUp(self):
         self.target = live.PreparedTarget('a' * 64, '/home/synthetic', '/run/user/1000', 'b' * 64)
@@ -174,6 +240,8 @@ class PodmanTests(unittest.TestCase):
 
     def test_fixed_no_pull_no_host_mount_no_key_arguments(self):
         args = self.executor.create_arguments(self.binding)
+        self.assertIn('--entrypoint=/usr/local/bin/python3', args)
+        self.assertIn(live.LIVE_BOOTSTRAP, args)
         self.assertIn('--pull=never', args)
         self.assertIn('--interactive', args)
         self.assertIn('--cap-drop=ALL', args)
@@ -296,11 +364,11 @@ class PodmanTests(unittest.TestCase):
             path.rmdir()
             # Ordinary removed directory nlink=0 is NOT a cgroup offlining proof.
             self.assertFalse(self.executor.verify_empty(self.binding))
-            with patch.object(live.os, 'read', side_effect=OSError(errno.ENODEV, 'private')):
+            with patch.object(live.os, 'pread', side_effect=OSError(errno.ENODEV, 'private')):
                 self.assertTrue(self.executor.verify_empty(self.binding))
             self.assertEqual(self.executor.cleanup_diagnostics['readback']['reason'], 'scope_offline')
 
-    def test_retained_events_only_accepts_read_enodev_not_other_errors_or_eof(self):
+    def test_retained_events_pread_accepts_only_enodev_not_other_errors_or_eof(self):
         self.executor.binding = self.binding
         self.executor._create_attempted = self.executor._start_attempted = self.executor._stop_attempted = True
         self.command.return_value = (0, json.dumps([self.value]).encode())
@@ -310,26 +378,24 @@ class PodmanTests(unittest.TestCase):
             self.executor.cgroup_fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
             self.executor.cgroup_events_fd = os.open(path / 'cgroup.events', os.O_RDONLY)
             for failure in (errno.ENOENT, errno.EACCES, errno.EBADF):
-                with self.subTest(errno=failure), patch.object(live.os, 'read',
+                with self.subTest(errno=failure), patch.object(live.os, 'pread',
                         side_effect=OSError(failure, 'private')):
                     with self.assertRaises(OSError):
                         self.executor.verify_empty(self.binding)
                 self.assertEqual(self.executor.cleanup_diagnostics['readback']['outcome'], 'error')
-            with patch.object(live.os, 'lseek', side_effect=OSError(errno.ENODEV, 'private')):
-                with self.assertRaises(OSError):
-                    self.executor.verify_empty(self.binding)
-            self.assertEqual(self.executor.cleanup_diagnostics['readback']['stage'], 'events_seek')
-            with patch.object(live.os, 'lseek', return_value=1):
-                with self.assertRaises(live.LiveFailure):
-                    self.executor.verify_empty(self.binding)
+            with patch.object(live.os, 'lseek', side_effect=AssertionError('must not seek')), \
+                    patch.object(live.os, 'pread', side_effect=OSError(errno.ENODEV, 'private')) as pread:
+                self.assertTrue(self.executor.verify_empty(self.binding))
+            pread.assert_called_once_with(self.executor.cgroup_events_fd, 4097, 0)
+            self.assertEqual(self.executor.cleanup_diagnostics['readback']['stage'], 'events_pread')
             for raw in (b'', b'populated 0\npopulated 1\n', b'populated maybe\n'):
-                with self.subTest(raw=raw), patch.object(live.os, 'read', return_value=raw):
+                with self.subTest(raw=raw), patch.object(live.os, 'pread', return_value=raw):
                     with self.assertRaises(live.LiveFailure):
                         self.executor.verify_empty(self.binding)
             # A process still running blocks before even reading the retained FD.
             self.value['State']['Running'] = True
             self.command.return_value = (0, json.dumps([self.value]).encode())
-            with patch.object(live.os, 'read', side_effect=OSError(errno.ENODEV, 'private')) as read:
+            with patch.object(live.os, 'pread', side_effect=OSError(errno.ENODEV, 'private')) as read:
                 self.assertFalse(self.executor.verify_empty(self.binding))
             read.assert_not_called()
 

@@ -11,7 +11,7 @@ import selectors
 import subprocess
 import time
 
-from .agents_live_pilot import LIMIT, PODMAN_PREFIX, LiveFailure, PodmanExecutor, _bounded_call, _error_evidence
+from .agents_live_pilot import CODEX_HOME_SETUP, LIMIT, PODMAN_PREFIX, LiveFailure, PodmanExecutor, _bounded_call, _error_evidence
 from .agents_session_controller import ExecutorBinding
 
 PYTHON = '/usr/local/bin/python3'
@@ -68,6 +68,7 @@ if not select.select([0], [], [], 20)[0]:
     raise SystemExit(74)
 if os.read(0, 1) != b"G" or mount_status != "verified":
     raise SystemExit(75)
+{CODEX_HOME_SETUP}
 os.execve({CODEX!r}, {SANDBOX_ARGV!r}, dict(os.environ))
 '''
 _SAFE_FAILURES = frozenset((
@@ -280,12 +281,11 @@ class _Pipe:
 
 
 def acceptance_arguments(executor, binding):
-    """Reuse exact live container options; change only fixed entrypoint/argv."""
+    """Reuse exact live container options/Python entrypoint; replace fixed argv."""
     args = executor.create_arguments(binding)
     image = 'sha256:' + executor.target.image_id
     index = args.index(image)
     profile = args[:index]
-    profile[profile.index('--entrypoint=' + CODEX)] = '--entrypoint=' + PYTHON
     return [*profile, image, '-I', '-S', '-B', '-c', GATE_PROGRAM]
 
 
