@@ -193,8 +193,14 @@ bounded numeric scope/payload controls and fixed error states before a failure;
 it does not reconstruct missing historical values. See `NESTED_ACCEPTANCE.md`
 for the pinned source contract, optional-burst semantics and limitations.
 
-Cleanup requires exact stopped-container identity plus the saved cgroup's
-`populated 0`, or removal of that previously held kernel cgroup inode. Losing
+Cleanup requires exact stopped-container identity plus a fresh `populated 0`
+read from the originally live, retained scope `cgroup.events` FD. Alternatively,
+ENODEV from reading that exact retained core file proves the kernel offlining
+branch under standard cgroup2 semantics. Its capture must first have read valid
+`populated 1`; no missing pathname, EOF, permission error, seek error or link
+count alone proves cleanup. Both the scope and event FDs are retained and closed
+by the owner. See `NESTED_ACCEPTANCE.md` for the versioned kernel source and limits.
+Losing
 startup evidence leaves cleanup unverified. Stopped container metadata is retained
 for reconciliation; this wrapper does not remove containers/images. No worker
 output is copied off the tmpfs. Separate approved operator cleanup can remove the
@@ -206,7 +212,9 @@ uncertain cloud and local state manually; creating a fresh attempt is not recove
 SDK stream close, local stop and cloud cancel are distinct operations.
 The returned report retains known attempt/session/environment/turn/container IDs
 for private operator reconciliation, including when opening the stream fails
-after session creation, plus safe numeric resource diagnostics. It excludes
+after session creation, plus numeric resource and separate stop/readback
+stage/error/errno evidence. Container exit snapshots remain distinct from attach
+client cleanup, and neither overwrites the other. It excludes
 remote URLs, keys and raw events. Retain this
 report privately; a crash before return can still lose those in-memory identities.
 

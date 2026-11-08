@@ -11,7 +11,7 @@ import selectors
 import subprocess
 import time
 
-from .agents_live_pilot import LIMIT, PODMAN_PREFIX, LiveFailure, PodmanExecutor, _bounded_call
+from .agents_live_pilot import LIMIT, PODMAN_PREFIX, LiveFailure, PodmanExecutor, _bounded_call, _error_evidence
 from .agents_session_controller import ExecutorBinding
 
 PYTHON = '/usr/local/bin/python3'
@@ -73,9 +73,10 @@ os.execve({CODEX!r}, {SANDBOX_ARGV!r}, dict(os.environ))
 _SAFE_FAILURES = frozenset((
     'acceptance_pipe_timeout', 'acceptance_output_limit', 'acceptance_ready_eof',
     'acceptance_ready_rejected', 'acceptance_go_timeout', 'acceptance_go_uncertain',
-    'acceptance_sentinel_failed', 'acceptance_not_running', 'acceptance_capture_unverified',
+    'acceptance_sentinel_exit_nonzero', 'acceptance_sentinel_stdout_mismatch', 'acceptance_not_running', 'acceptance_capture_unverified',
     'acceptance_changed_before_go', 'container_cgroup_unverified', 'container_cgroup_unbound',
     'container_cgroup_pid_mismatch', 'container_cgroup_limits_unverified',
+    'container_cgroup_events_invalid',
     'container_create_uncertain', 'container_name_not_available', 'prepared_runtime_unverified',
     'rootless_user_required', 'runtime_path_rejected',
     'container_manager_rejected', 'container_policy_rejected',
@@ -163,10 +164,42 @@ def cgroup_summary(value, container_id):
     return result
 
 
+def stderr_summary(raw):
+    """No-key diagnostics only. Keep useful bounded text, never a raw log dump.
+
+    Redaction is defense in depth, not a guarantee for arbitrary secret-bearing
+    output. This helper is deliberately not used by the live/keyed launcher.
+    """
+    text = bytes(raw).decode('utf-8', errors='replace')
+    text = re.sub(r'\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07]*(?:\x07|\x1b\\)', '', text)
+    text = ''.join(char if char in '\n\t' or char.isprintable() else '?' for char in text)
+    signatures = [name for name, pattern in (
+        ('permission_denied', r'permission denied|operation not permitted'),
+        ('namespace', r'namespace|unshare'),
+        ('missing_path', r'no such file or directory|executable not found'),
+        ('python_error', r'traceback|assertionerror|permissionerror|filenotfounderror'),
+        ('digest_verification', r'digest verification'), ('panic', r'panicked at'))
+        if re.search(pattern, text, re.IGNORECASE)]
+    text = re.sub(r'(?im)(api[_-]?key|token|authorization|password|secret)\s*[:=][^\n]*',
+                  r'\1=[redacted]', text)
+    text = re.sub(r'(?i)bearer\s+\S+|\bsk-[a-z0-9_-]+', '[credential]', text)
+    text = re.sub(r'\b[a-zA-Z][a-zA-Z0-9+.-]*://\S+', '[url]', text)
+    text = re.sub(r'/(?:[^\s\x22\x27<>])+', '[path]', text)
+    text = re.sub(r'\b[a-fA-F0-9]{16,}\b|\b[0-9]{9,}\b', '[identifier]', text)
+    text = '\n'.join(line.rstrip() for line in text.splitlines()).strip()
+    truncated = len(text) > 2048
+    detail = text if not truncated else text[:1024] + '\n[truncated]\n' + text[-1024:]
+    return {'signatures': signatures or (['unclassified_nonempty'] if raw else []),
+            'detail': detail, 'detail_truncated': truncated}
+
+
 class _Pipe:
-    """Bounded raw pipe reader. Stderr is counted/drained but never retained."""
+    """Bounded no-key pipes; raw stderr exists only until private redacted summary."""
     def __init__(self, process):
         self.process, self.total, self.buffer = process, 0, bytearray()
+        self.stderr = bytearray()
+        self.counts = {'stdout': 0, 'stderr': 0}
+        self.ready_seen = False
         self.ready = selectors.DefaultSelector()
         for name in ('stdin', 'stdout', 'stderr'):
             stream = getattr(process, name)
@@ -189,11 +222,12 @@ class _Pipe:
             if not chunk:
                 self.ready.unregister(key.fileobj)
                 continue
+            self.counts[key.data] += len(chunk)
+            retained = chunk[:max(0, LIMIT - self.total)]
+            (self.buffer if key.data == 'stdout' else self.stderr).extend(retained)
             self.total += len(chunk)
             if self.total > LIMIT:
                 raise LiveFailure('acceptance_output_limit')
-            if key.data == 'stdout':
-                self.buffer.extend(chunk)
 
     def wait_ready(self, deadline):
         while b'\n' not in self.buffer:
@@ -206,6 +240,7 @@ class _Pipe:
         if not line.startswith(prefix) or status not in MOUNT_STATES or rest:
             raise LiveFailure('acceptance_ready_rejected')
         self.buffer.clear()
+        self.ready_seen = True
         return status
 
     def release(self, deadline):
@@ -220,11 +255,25 @@ class _Pipe:
     def finish(self, deadline):
         while self.ready.get_map():
             self.pump(deadline)
-        if (self.process.wait(timeout=max(.001, deadline - time.monotonic())) != 0
-                or bytes(self.buffer) != DONE):
-            raise LiveFailure('acceptance_sentinel_failed')
+        code = self.process.wait(timeout=max(.001, deadline - time.monotonic()))
+        if code != 0:
+            raise LiveFailure('acceptance_sentinel_exit_nonzero')
+        if bytes(self.buffer) != DONE:
+            raise LiveFailure('acceptance_sentinel_stdout_mismatch')
+
+    def summary(self):
+        output = bytes(self.buffer)
+        kind = ('not_reached' if not self.ready_seen else 'empty' if not output else
+                'exact_sentinel' if output == DONE else
+                'sentinel_plus_other' if DONE in output else 'other')
+        return {'attach_returncode_before_stop': self.process.poll(),
+                'stdout_bytes': self.counts['stdout'], 'stderr_bytes': self.counts['stderr'],
+                'sentinel_stdout_bytes': len(output) if self.ready_seen else None,
+                'stdout_class': kind, 'combined_limit_exceeded': self.total > LIMIT,
+                'stderr': stderr_summary(self.stderr)}
 
     def close(self):
+        self.stderr.clear()
         self.ready.close()
         for name in ('stdin', 'stdout', 'stderr'):
             getattr(self.process, name).close()
@@ -257,7 +306,8 @@ Retain this private report and the stopped container; no automatic removal.
     report = {'attempt_id': attempt_id, 'container_id': None, 'stage': 'preflight',
               'reason': None, 'status': 'blocked', 'nested': 'not_run', 'cleanup': 'not_started',
               'startup_state': state_summary(None), 'go_sent': False, 'mount_check': 'not_run',
-              'cgroup_diagnostics': cgroup_summary(None, None)}
+              'cgroup_diagnostics': cgroup_summary(None, None), 'process_result': None,
+              'failure_error': None}
     pipe = None
     deadline = time.monotonic() + 180
 
@@ -322,7 +372,13 @@ Retain this private report and the stopped container; no automatic removal.
         # Stage/state summary distinguish failures without leaking exception/log text.
         reason = str(error) if isinstance(error, LiveFailure) else ''
         report['reason'] = reason if reason in _SAFE_FAILURES else 'acceptance_failed'
+        report['failure_error'] = _error_evidence(error)
+        if report['go_sent']:
+            report['nested'] = ('failed' if reason in ('acceptance_sentinel_exit_nonzero',
+                'acceptance_sentinel_stdout_mismatch') else 'unknown')
     finally:
+        if pipe is not None:
+            report['process_result'] = pipe.summary()  # Before stop can terminate the attach client.
         if executor._create_attempted:
             report['cleanup'] = 'unverified'
             try:
@@ -336,6 +392,7 @@ Retain this private report and the stopped container; no automatic removal.
                 pass
         report['container_id'] = executor.container_id  # Cleanup can resolve an uncertain create.
         report['resource_diagnostics'] = executor.resource_diagnostics
+        report['cleanup_diagnostics'] = executor.cleanup_diagnostics
         if pipe is not None:
             pipe.close()
         executor.close()

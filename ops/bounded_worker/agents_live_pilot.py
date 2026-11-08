@@ -6,6 +6,7 @@ No provisioning, key discovery, retry, resume, publication or result acceptance.
 """
 import asyncio
 from dataclasses import dataclass, field
+import errno
 import importlib.metadata
 import json
 import os
@@ -68,8 +69,42 @@ def _cgroup_values(directory_fd):
     return values
 
 
+def _events_value(raw):
+    """Parse a bounded kernel event snapshot without accepting duplicate keys."""
+    try:
+        lines = [line.split() for line in raw.decode('ascii').splitlines()]
+        if (len(raw) > 4096 or not raw.endswith(b'\n')
+                or any(len(line) != 2 for line in lines)
+                or len({line[0] for line in lines}) != len(lines)):
+            raise ValueError
+        value = dict(lines).get('populated')
+        if value not in ('0', '1'):
+            raise ValueError
+        return value
+    except (UnicodeError, ValueError):
+        raise LiveFailure('container_cgroup_events_invalid') from None
+
+
 class LiveFailure(RuntimeError):
     """Fixed diagnostic only; never attach provider bodies, keys or raw logs."""
+
+
+def _error_evidence(error):
+    """Closed error class and errno only, never an exception's message."""
+    return {'kind': 'os_error' if isinstance(error, OSError) else
+            'deadline' if isinstance(error, _OperationDeadline) else
+            'validation' if isinstance(error, LiveFailure) else 'other',
+            'errno': errno.errorcode.get(getattr(error, 'errno', None))}
+
+
+def _container_outcome(value):
+    state = value.get('State', {})
+    status, code = state.get('Status'), state.get('ExitCode')
+    return {'status': status if status in ('created', 'configured', 'running', 'paused',
+                                          'stopped', 'exited') else 'unknown',
+            'running': state.get('Running') if type(state.get('Running')) is bool else None,
+            'exit_code': code if type(code) is int and -(2**31) <= code < 2**31 else None,
+            'oom_killed': state.get('OOMKilled') if type(state.get('OOMKilled')) is bool else None}
 
 
 class _OperationDeadline(BaseException):
@@ -226,9 +261,14 @@ Commands are injectable only for offline tests; no command retries are made.
         self._popen = popen or subprocess.Popen
         self.env = {'PATH': '/usr/bin:/bin', 'HOME': target.runtime_home,
                     'XDG_RUNTIME_DIR': target.runtime_dir, 'LANG': 'C.UTF-8'}
-        self.binding = self.container_id = self.process = self.cgroup_fd = None
+        self.binding = self.container_id = self.process = self.cgroup_fd = self.cgroup_events_fd = None
         self.resource_diagnostics = {'membership': 'unknown', 'scope': {}, 'payload': {},
                                      'mismatches': []}
+        self.cleanup_diagnostics = {
+            'stop': {'outcome': 'not_attempted', 'stage': None, 'returncode': None, 'error': None},
+            'readback': {'outcome': 'not_attempted', 'stage': None, 'reason': None,
+                         'error': None, 'scope_nlink': None, 'events': None, 'events_read_errno': None},
+            'before_stop': None, 'after_stop': None, 'attach_cleanup_error': None}
         self._create_attempted = self._start_attempted = self._stop_attempted = False
 
     def verify_prepared(self):
@@ -431,7 +471,7 @@ Commands are injectable only for offline tests; no command retries are made.
             if parent.is_symlink():
                 raise LiveFailure('container_cgroup_unverified')
         fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
-        payload_fd = None
+        payload_fd = events_fd = None
         try:
             self.resource_diagnostics['scope'] = _cgroup_values(fd)
             relative = '/' + str(path.relative_to('/sys/fs/cgroup'))
@@ -473,64 +513,115 @@ Commands are injectable only for offline tests; no command retries are made.
             self.resource_diagnostics['mismatches'] = mismatches
             if mismatches:
                 raise LiveFailure('container_cgroup_limits_unverified')
+            # Retain the mandatory core file while it demonstrably belongs to
+            # this live scope. A future pathname lookup cannot replace it.
+            events_fd = os.open('cgroup.events', os.O_RDONLY | os.O_NOFOLLOW, dir_fd=fd)
+            if _events_value(os.read(events_fd, 4097)) != '1':
+                raise LiveFailure('container_cgroup_events_invalid')
             if proc_membership.read_text().splitlines() != lines:
                 raise LiveFailure('container_cgroup_pid_mismatch')
         except BaseException:
+            if events_fd is not None:
+                os.close(events_fd)
             os.close(fd)
             raise
         finally:
             if payload_fd is not None:
                 os.close(payload_fd)
-        self.cgroup_fd = fd  # Only completely validated evidence can prove cleanup.
+        # Only completely validated, originally live evidence can prove cleanup.
+        self.cgroup_fd, self.cgroup_events_fd = fd, events_fd
 
     def stop(self, binding):
         if binding != self.binding or self._stop_attempted:
             raise LiveFailure('container_stop_not_admitted')
         self._stop_attempted = True
+        stop = self.cleanup_diagnostics['stop']
+        stop['outcome'] = 'attempted'
         try:
             if self._create_attempted:
-                self._inspect()  # Resolve an uncertain create only after exact label/image binding.
+                stop['stage'] = 'bound_inspect'
+                value = self._inspect()  # Resolve uncertain create only after exact binding.
+                self.cleanup_diagnostics['before_stop'] = _container_outcome(value)
+                stop['stage'] = 'stop_command'
                 code, _ = self._command(['stop', '--time=5', self.container_id])
+                stop['returncode'] = code
                 if code:
                     raise LiveFailure('container_stop_uncertain')
+            stop['outcome'] = 'acknowledged' if self._create_attempted else 'not_created'
+        except BaseException as error:
+            stop.update(outcome='uncertain', error=_error_evidence(error))
+            raise
         finally:
-            if self.process is not None:
-                if self.process.poll() is None:
-                    self.process.terminate()  # Attach client only; not evidence of container shutdown.
-                try:
-                    self.process.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    self.process.kill()
-                    self.process.wait(timeout=5)
+            try:
+                if self.process is not None:
+                    if self.process.poll() is None:
+                        self.process.terminate()  # Attach client only, not container shutdown proof.
+                    try:
+                        self.process.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        self.process.kill()
+                        self.process.wait(timeout=5)
+            except BaseException as error:
+                self.cleanup_diagnostics['attach_cleanup_error'] = _error_evidence(error)
+                raise
 
     def verify_empty(self, binding):
-        if binding != self.binding or not self._stop_attempted:
-            return False
-        if not self._create_attempted:
-            return True
-        value = self._inspect()
-        state = value['State']
-        if (state['Running'] is not False or state['Pid'] != 0
-                or state['Status'] not in ('created', 'configured', 'exited', 'stopped')
-                or value.get('ExecIDs')):
-            return False
-        if not self._start_attempted:
-            return True
-        if self.cgroup_fd is None:
-            return False  # Unknown startup is not a proof of empty containment.
-        if os.fstat(self.cgroup_fd).st_nlink == 0:
-            return True  # Kernel removed the previously bound cgroup.
-        fd = os.open('cgroup.events', os.O_RDONLY | os.O_NOFOLLOW, dir_fd=self.cgroup_fd)
+        evidence = self.cleanup_diagnostics['readback']
+        evidence.update(outcome='checking', stage='admission', reason=None, error=None,
+                        scope_nlink=None, events=None, events_read_errno=None)
+
+        def result(verified, reason):
+            evidence.update(outcome='verified' if verified else 'unverified', reason=reason)
+            return verified
+
         try:
-            events = dict(line.split() for line in os.read(fd, 4096).decode('ascii').splitlines())
-            return events.get('populated') == '0'
-        finally:
-            os.close(fd)
+            if binding != self.binding or not self._stop_attempted:
+                return result(False, 'not_admitted')
+            if not self._create_attempted:
+                return result(True, 'not_created')
+            evidence['stage'] = 'bound_inspect'
+            value = self._inspect()
+            self.cleanup_diagnostics['after_stop'] = _container_outcome(value)
+            state = value['State']
+            if (state['Running'] is not False or state['Pid'] != 0
+                    or state['Status'] not in ('created', 'configured', 'exited', 'stopped')
+                    or value.get('ExecIDs')):
+                return result(False, 'container_not_stopped')
+            if not self._start_attempted:
+                return result(True, 'never_started')
+            if self.cgroup_fd is None or self.cgroup_events_fd is None:
+                return result(False, 'scope_not_captured')
+            evidence['stage'] = 'scope_stat'
+            evidence['scope_nlink'] = os.fstat(self.cgroup_fd).st_nlink
+            # kernfs nlink is not a removed-node proof. Use the originally live,
+            # held cgroup.events object, never an ENOENT from a pathname lookup.
+            evidence['stage'] = 'events_seek'
+            if os.lseek(self.cgroup_events_fd, 0, os.SEEK_SET) != 0:
+                raise LiveFailure('container_cgroup_events_seek_failed')
+            evidence['stage'] = 'events_read'
+            try:
+                raw = os.read(self.cgroup_events_fd, 4097)
+            except OSError as error:
+                if error.errno != errno.ENODEV:
+                    raise
+                # Core events deactivation follows the cgroup's empty/no-live-
+                # child checks and offlining. Controller toggles/PSI hiding do
+                # not deactivate this captured mandatory core file.
+                evidence.update(events='inactive', events_read_errno='ENODEV')
+                return result(True, 'scope_offline')
+            populated = _events_value(raw)
+            evidence['events'] = populated
+            return result(populated == '0', 'scope_empty' if populated == '0' else 'scope_populated')
+        except BaseException as error:
+            evidence.update(outcome='error', error=_error_evidence(error))
+            raise
 
     def close(self):
-        if self.cgroup_fd is not None:
-            os.close(self.cgroup_fd)
-            self.cgroup_fd = None
+        for name in ('cgroup_events_fd', 'cgroup_fd'):
+            fd = getattr(self, name)
+            if fd is not None:
+                os.close(fd)
+                setattr(self, name, None)
         self._environment_key = None
 
 
@@ -633,6 +724,7 @@ never command-line arguments or environment discovery. No actions run on import.
         result = await execute_once(controller, events, overall_seconds=plan.task.timeout_seconds)
         result['container_id'] = executor.container_id
         result['resource_diagnostics'] = executor.resource_diagnostics
+        result['cleanup_diagnostics'] = executor.cleanup_diagnostics
         return result
     finally:
         executor.close()

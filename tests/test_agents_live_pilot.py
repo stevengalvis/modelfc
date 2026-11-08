@@ -1,6 +1,7 @@
 """Offline orchestration/transport fixtures. No API, Podman or executor runs."""
 import asyncio
 import copy
+import errno
 import json
 import os
 from pathlib import Path
@@ -275,7 +276,7 @@ class PodmanTests(unittest.TestCase):
         self.executor._stop_attempted = True
         self.assertFalse(self.executor.verify_empty(self.binding))
 
-    def test_held_cgroup_empty_readback_and_removed_inode(self):
+    def test_held_cgroup_events_empty_and_dead_node_readback(self):
         self.executor.binding = self.binding
         self.executor._create_attempted = self.executor._start_attempted = True
         self.executor._stop_attempted = True
@@ -286,12 +287,51 @@ class PodmanTests(unittest.TestCase):
             self.executor.cgroup_fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
             events = path / 'cgroup.events'
             events.write_text('populated 1\nfrozen 0\n')
+            self.executor.cgroup_events_fd = os.open(events, os.O_RDONLY)
             self.assertFalse(self.executor.verify_empty(self.binding))
             events.write_text('populated 0\nfrozen 0\n')
             self.assertTrue(self.executor.verify_empty(self.binding))
+            events.write_text('populated 1\nfrozen 0\n')
             events.unlink()
             path.rmdir()
-            self.assertTrue(self.executor.verify_empty(self.binding))
+            # Ordinary removed directory nlink=0 is NOT a cgroup offlining proof.
+            self.assertFalse(self.executor.verify_empty(self.binding))
+            with patch.object(live.os, 'read', side_effect=OSError(errno.ENODEV, 'private')):
+                self.assertTrue(self.executor.verify_empty(self.binding))
+            self.assertEqual(self.executor.cleanup_diagnostics['readback']['reason'], 'scope_offline')
+
+    def test_retained_events_only_accepts_read_enodev_not_other_errors_or_eof(self):
+        self.executor.binding = self.binding
+        self.executor._create_attempted = self.executor._start_attempted = self.executor._stop_attempted = True
+        self.command.return_value = (0, json.dumps([self.value]).encode())
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp)
+            (path / 'cgroup.events').write_text('populated 1\n')
+            self.executor.cgroup_fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
+            self.executor.cgroup_events_fd = os.open(path / 'cgroup.events', os.O_RDONLY)
+            for failure in (errno.ENOENT, errno.EACCES, errno.EBADF):
+                with self.subTest(errno=failure), patch.object(live.os, 'read',
+                        side_effect=OSError(failure, 'private')):
+                    with self.assertRaises(OSError):
+                        self.executor.verify_empty(self.binding)
+                self.assertEqual(self.executor.cleanup_diagnostics['readback']['outcome'], 'error')
+            with patch.object(live.os, 'lseek', side_effect=OSError(errno.ENODEV, 'private')):
+                with self.assertRaises(OSError):
+                    self.executor.verify_empty(self.binding)
+            self.assertEqual(self.executor.cleanup_diagnostics['readback']['stage'], 'events_seek')
+            with patch.object(live.os, 'lseek', return_value=1):
+                with self.assertRaises(live.LiveFailure):
+                    self.executor.verify_empty(self.binding)
+            for raw in (b'', b'populated 0\npopulated 1\n', b'populated maybe\n'):
+                with self.subTest(raw=raw), patch.object(live.os, 'read', return_value=raw):
+                    with self.assertRaises(live.LiveFailure):
+                        self.executor.verify_empty(self.binding)
+            # A process still running blocks before even reading the retained FD.
+            self.value['State']['Running'] = True
+            self.command.return_value = (0, json.dumps([self.value]).encode())
+            with patch.object(live.os, 'read', side_effect=OSError(errno.ENODEV, 'private')) as read:
+                self.assertFalse(self.executor.verify_empty(self.binding))
+            read.assert_not_called()
 
     def test_rootless_verification_rejects_root_before_commands(self):
         with patch.object(live.os, 'geteuid', return_value=0):

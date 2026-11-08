@@ -1,6 +1,7 @@
 """Real fixed Python pipes plus modeled Podman/cgroup observations, never VPS tests."""
 import copy
 from contextlib import contextmanager
+import errno
 import json
 from io import BytesIO
 import os
@@ -28,6 +29,31 @@ def local_gate(payload="print('NESTED_OK', flush=True)", *, wait=20, mount_statu
         f'os.execve({gate.CODEX!r}, {gate.SANDBOX_ARGV!r}, dict(os.environ))', replacement
     ).replace('[], [], 20)', f'[], [], {wait})').replace(
         'mount_status = _mount_check()', f'mount_status = {mount_status!r}')
+
+
+class StderrDiagnosticTests(unittest.TestCase):
+    def test_unknown_failure_keeps_useful_detail_with_redaction(self):
+        raw = (b'Unexpected helper failure: invalid resource descriptor\n'
+               b'path /home/private/work; endpoint https://private.example/token\n'
+               b'Authorization: Bearer private-token\nAPI_KEY=sk-private-value\n')
+        result = gate.stderr_summary(raw)
+        self.assertEqual(result['signatures'], ['unclassified_nonempty'])
+        self.assertIn('invalid resource descriptor', result['detail'])
+        self.assertNotIn('private', result['detail'])
+        self.assertIn('[path]', result['detail'])
+        self.assertIn('[url]', result['detail'])
+        self.assertIn('[redacted]', result['detail'])
+
+    def test_diagnostic_signatures_and_head_tail_are_bounded(self):
+        raw = b'\x1b[31mbwrap: Creating new namespace failed: Operation not permitted\x1b[0m\n'
+        result = gate.stderr_summary(raw)
+        self.assertEqual(result['signatures'], ['permission_denied', 'namespace'])
+        self.assertNotIn('\x1b', result['detail'])
+        result = gate.stderr_summary(b'head ' + b'x' * 4096 + b' tail')
+        self.assertTrue(result['detail_truncated'])
+        self.assertLess(len(result['detail']), 2100)
+        self.assertTrue(result['detail'].startswith('head '))
+        self.assertTrue(result['detail'].endswith(' tail'))
 
 
 class MountCheckTests(unittest.TestCase):
@@ -111,7 +137,7 @@ class GatePipeTests(unittest.TestCase):
         self.assertEqual(pipe.wait_ready(time.monotonic() + 2), 'writable')
         self.assertIsNone(process.poll())
         pipe.release(time.monotonic() + 2)
-        with self.assertRaisesRegex(LiveFailure, 'acceptance_sentinel_failed'):
+        with self.assertRaisesRegex(LiveFailure, 'acceptance_sentinel_exit_nonzero'):
             pipe.finish(time.monotonic() + 2)
         self.assertEqual(process.returncode, 75)
         self.assertEqual(bytes(pipe.buffer), b'')
@@ -122,7 +148,7 @@ class GatePipeTests(unittest.TestCase):
         self.addCleanup(pipe.close)
         pipe.wait_ready(time.monotonic() + 2)
         process.stdin.close()
-        with self.assertRaisesRegex(LiveFailure, 'acceptance_sentinel_failed'):
+        with self.assertRaisesRegex(LiveFailure, 'acceptance_sentinel_exit_nonzero'):
             pipe.finish(time.monotonic() + 2)
         self.assertEqual(process.returncode, 75)
         self.assertEqual(bytes(pipe.buffer), b'')
@@ -134,7 +160,7 @@ class GatePipeTests(unittest.TestCase):
         pipe.wait_ready(time.monotonic() + 2)
         os.write(process.stdin.fileno(), b'X')
         process.stdin.close()
-        with self.assertRaisesRegex(LiveFailure, 'acceptance_sentinel_failed'):
+        with self.assertRaisesRegex(LiveFailure, 'acceptance_sentinel_exit_nonzero'):
             pipe.finish(time.monotonic() + 2)
         self.assertEqual(process.returncode, 75)
         self.assertEqual(bytes(pipe.buffer), b'')
@@ -144,11 +170,11 @@ class GatePipeTests(unittest.TestCase):
         pipe = gate._Pipe(process)
         self.addCleanup(pipe.close)
         pipe.wait_ready(time.monotonic() + 2)
-        with self.assertRaisesRegex(LiveFailure, 'acceptance_sentinel_failed'):
+        with self.assertRaisesRegex(LiveFailure, 'acceptance_sentinel_exit_nonzero'):
             pipe.finish(time.monotonic() + 2)
         self.assertEqual(process.returncode, 74)
 
-    def test_stderr_counted_and_discarded(self):
+    def test_stderr_combined_budget_and_separation(self):
         process = self.start(local_gate("import os; os.write(2, b'x' * 65537); print('NESTED_OK')"))
         pipe = gate._Pipe(process)
         self.addCleanup(pipe.close)
@@ -157,6 +183,8 @@ class GatePipeTests(unittest.TestCase):
         with self.assertRaisesRegex(LiveFailure, 'acceptance_output_limit'):
             pipe.finish(time.monotonic() + 2)
         self.assertNotIn(b'x', pipe.buffer)
+        self.assertLessEqual(len(pipe.stderr) + len(pipe.buffer), gate.LIMIT)
+        self.assertTrue(pipe.summary()['combined_limit_exceeded'])
 
     def test_missing_ready_eof_and_timeout_distinct(self):
         for program, reason in (("pass", 'acceptance_ready_eof'),
@@ -207,10 +235,15 @@ class AcceptanceTests(unittest.TestCase):
             return 0, (self.value['Id'] + '\n').encode()
         if args[0] == 'stop':
             self.clean_process()
-            self.value['State'] = {'Running': False, 'Status': 'stopped', 'Pid': 0}
+            self.value['State'] = {'Running': False, 'Status': 'stopped', 'Pid': 0,
+                                   'ExitCode': self.process.returncode if self.process else 0,
+                                   'OOMKilled': False}
             (self.path / 'cgroup.events').write_text('populated 0\n')
             return 0, b''
         if args[0] == 'inspect':
+            if self.process is not None and self.process.poll() is not None:
+                self.value['State'].update(Running=False, Status='exited', Pid=0,
+                                            ExitCode=self.process.returncode, OOMKilled=False)
             return 0, json.dumps([self.value]).encode()
         raise AssertionError('unexpected command')
 
@@ -236,18 +269,21 @@ class AcceptanceTests(unittest.TestCase):
         if self.capture_error == 'unbound':
             REAL_CAPTURE(backend, value)
             raise AssertionError('capture should fail before opening a cgroup')
-        if self.capture_error in ('pid', 'limits', 'descendant'):
+        if self.capture_error in ('pid', 'limits', 'descendant', 'events'):
             relative = value['State']['CgroupPath']
             suffix = '/container' if self.capture_error == 'descendant' else ''
             membership = '0::' + ('/unrelated' if self.capture_error == 'pid' else relative + suffix) + '\n'
             payload = {'memory.max': '0'} if self.capture_error == 'limits' else {}
             with self.capture_files(value, membership, suffix=suffix,
                                     scope={'pids.max': 'max'} if suffix else {}, payload=payload):
+                if self.capture_error == 'events':
+                    (self.path / 'cgroup.events').write_text('populated invalid\n')
                 REAL_CAPTURE(backend, value)
             if self.capture_error == 'descendant':
                 return
             raise AssertionError('capture should fail')
         backend.cgroup_fd = os.open(self.path, os.O_RDONLY | os.O_DIRECTORY)
+        backend.cgroup_events_fd = os.open(self.path / 'cgroup.events', os.O_RDONLY)
         if self.inspect_change:
             self.value['State']['Pid'] += 1
 
@@ -281,7 +317,10 @@ class AcceptanceTests(unittest.TestCase):
             if str(path) == initial:
                 self.opened_fd = real_open(self.path, flags, *args, **kwargs)
                 return self.opened_fd
-            return real_open(path, flags, *args, **kwargs)
+            fd = real_open(path, flags, *args, **kwargs)
+            if str(path) == 'cgroup.events':
+                self.opened_events_fd = fd
+            return fd
 
         def read(path, *args, **kwargs):
             if str(path) == proc:
@@ -309,6 +348,53 @@ class AcceptanceTests(unittest.TestCase):
         self.assertEqual(self.actions, ['container', 'create', 'inspect', 'start',
                                        'inspect', 'capture', 'inspect', 'inspect', 'stop', 'inspect'])
         self.assertEqual(result['startup_state']['cgroup_path'], 'present')
+
+    def test_nonzero_exit_retains_distinct_attach_container_and_stderr_evidence(self):
+        self.gate_program = local_gate('import sys; print("helper failed: novel diagnostic", file=sys.stderr); sys.exit(7)')
+        result = self.run_acceptance()
+        self.assertEqual(result['reason'], 'acceptance_sentinel_exit_nonzero')
+        self.assertEqual(result['nested'], 'failed')
+        process = result['process_result']
+        self.assertEqual(process['attach_returncode_before_stop'], 7)
+        self.assertEqual(process['stdout_class'], 'empty')
+        self.assertEqual(process['sentinel_stdout_bytes'], 0)
+        self.assertGreater(process['stderr_bytes'], 0)
+        self.assertIn('novel diagnostic', process['stderr']['detail'])
+        self.assertEqual(result['cleanup_diagnostics']['before_stop']['exit_code'], 7)
+        self.assertFalse(result['cleanup_diagnostics']['before_stop']['oom_killed'])
+        self.assertEqual(result['cleanup'], 'verified')
+
+    def test_zero_exit_unexpected_stdout_is_distinct_from_process_failure(self):
+        self.gate_program = local_gate("print('NESTED_OK'); print('extra')")
+        result = self.run_acceptance()
+        self.assertEqual(result['reason'], 'acceptance_sentinel_stdout_mismatch')
+        self.assertEqual(result['process_result']['attach_returncode_before_stop'], 0)
+        self.assertEqual(result['process_result']['stdout_class'], 'sentinel_plus_other')
+        self.assertEqual(result['process_result']['stderr']['detail'], '')
+        self.assertEqual(result['cleanup'], 'verified')
+
+    def test_stop_error_and_independent_readback_error_remain_separate(self):
+        original = self.command
+        def command(args):
+            if args[0] == 'stop':
+                original(args)  # Model a completed stop whose reply is lost.
+                raise OSError(errno.EIO, 'private stop details')
+            return original(args)
+        self.command = command
+        original_read = os.read
+        def read(fd, size):
+            if size == 4097 and 'stop' in self.actions:
+                raise OSError(errno.EACCES, 'private read details')
+            return original_read(fd, size)
+        with patch.object(os, 'read', new=read):
+            result = self.run_acceptance()
+        self.assertEqual(result['reason'], 'stop_uncertain')
+        self.assertEqual(result['cleanup'], 'unverified')
+        self.assertEqual(result['cleanup_diagnostics']['stop']['error']['errno'], 'EIO')
+        self.assertEqual(result['cleanup_diagnostics']['readback']['error']['errno'], 'EACCES')
+        self.assertEqual(result['cleanup_diagnostics']['readback']['stage'], 'events_read')
+        self.assertNotIn('private stop details', repr(result))
+        self.assertNotIn('private read details', repr(result))
 
     def test_same_gate_mount_failure_never_goes_but_scope_cleanup_is_verified(self):
         self.gate_program = local_gate(mount_status='writable')
@@ -410,6 +496,16 @@ class AcceptanceTests(unittest.TestCase):
         self.assertEqual(set(result['resource_diagnostics']['scope']), set(CONTROL_VALUES))
         with self.assertRaises(OSError):
             os.fstat(self.opened_fd)
+
+    def test_initial_events_validation_failure_closes_both_fds_and_never_goes(self):
+        self.capture_error = 'events'
+        result = self.run_acceptance()
+        self.assertEqual(result['reason'], 'container_cgroup_events_invalid')
+        self.assertFalse(result['go_sent'])
+        self.assertEqual(result['cleanup'], 'unverified')
+        for fd in (self.opened_fd, self.opened_events_fd):
+            with self.assertRaises(OSError):
+                os.fstat(fd)
 
     def test_timeout_after_capture_still_attempts_cleanup(self):
         self.gate_program = local_gate('import time; time.sleep(10)')
