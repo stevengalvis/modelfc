@@ -10,7 +10,7 @@ import tempfile
 import time
 import types
 import unittest
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import httpx
 
@@ -163,6 +163,7 @@ class PodmanTests(unittest.TestCase):
                 'User': '65534:65534', 'WorkingDir': '/workspace', 'OpenStdin': True,
                 'Tty': False, 'Timeout': 180, 'StopTimeout': 5},
             'HostConfig': {'Memory': 1073741824, 'MemorySwap': 1073741824, 'CpuPeriod': 100000,
+                'CgroupManager': 'systemd',
                 'CpuQuota': 100000, 'PidsLimit': 64, 'ReadonlyRootfs': True, 'Privileged': False,
                 'LogConfig': {'Type': 'none'}, 'RestartPolicy': {'Name': 'no'},
                 'SecurityOpt': ['no-new-privileges'],
@@ -229,6 +230,8 @@ class PodmanTests(unittest.TestCase):
             return 0, json.dumps([self.value]).encode()
         self.executor._command = command
         def popen(*args, **kwargs):
+            self.assertEqual(args[0][:4], ['/usr/bin/podman', '--remote=false',
+                                         '--cgroup-manager=systemd', 'start'])
             self.value['State']['Running'] = True
             return self.popen.return_value
         self.executor._popen = popen
@@ -280,13 +283,56 @@ class PodmanTests(unittest.TestCase):
         self.command.assert_not_called()
 
     def test_rootless_runtime_version_and_paths_checked(self):
-        self.command.side_effect = [(0, b'podman version 4.9.3\n'), (0, b'true\n')]
+        self.command.side_effect = [(0, b'podman version 4.9.3\n'), (0, b'true systemd v2\n')]
         info = types.SimpleNamespace(st_uid=1000, st_mode=stat.S_IFDIR | 0o700)
         with patch.object(live.os, 'geteuid', return_value=1000), \
                 patch.object(Path, 'is_symlink', return_value=False), \
                 patch.object(Path, 'stat', return_value=info):
             self.executor.verify_prepared()
-        self.assertEqual(self.command.call_args.args[0], ['info', '--format', '{{.Host.Security.Rootless}}'])
+        self.assertEqual(self.command.call_args.args[0], ['info', '--format',
+            '{{.Host.Security.Rootless}} {{.Host.CgroupManager}} {{.Host.CgroupsVersion}}'])
+
+    def test_effective_cgroupfs_fallback_or_v1_is_rejected_without_create(self):
+        info = types.SimpleNamespace(st_uid=1000, st_mode=stat.S_IFDIR | 0o700)
+        for observed in (b'true cgroupfs v2', b'true systemd v1', b'false systemd v2', b''):
+            with self.subTest(observed=observed):
+                self.command.reset_mock()
+                self.command.side_effect = [(0, b'podman version 4.9.3'), (0, observed)]
+                with patch.object(live.os, 'geteuid', return_value=1000), \
+                        patch.object(Path, 'is_symlink', return_value=False), \
+                        patch.object(Path, 'stat', return_value=info):
+                    with self.assertRaisesRegex(live.LiveFailure, 'prepared_runtime_unverified'):
+                        self.executor.verify_prepared()
+                self.assertEqual(self.command.call_count, 2)
+                self.assertFalse(self.executor._create_attempted)
+
+    def test_created_container_manager_must_be_effective_systemd(self):
+        for manager in (None, '', 'cgroupfs', True):
+            self.value['HostConfig']['CgroupManager'] = manager
+            with self.assertRaisesRegex(live.LiveFailure, 'container_manager_rejected'):
+                self.executor._created_policy(self.value)
+
+    def test_capture_rejects_manager_change_before_opening_cgroup(self):
+        self.value['HostConfig']['CgroupManager'] = 'cgroupfs'
+        with patch.object(live.os, 'open', side_effect=AssertionError('must not open')):
+            with self.assertRaisesRegex(live.LiveFailure, 'container_manager_rejected'):
+                self.executor._capture_cgroup(self.value)
+        self.assertIsNone(self.executor.cgroup_fd)
+
+    def test_metadata_commands_use_same_explicit_systemd_prefix(self):
+        process = Mock()
+        process.stdout.fileno.return_value = 123
+        process.poll.return_value = 0
+        process.wait.return_value = 0
+        selector = MagicMock()
+        selector.__enter__.return_value.select.return_value = [(Mock(), 1)]
+        with patch.object(live.subprocess, 'Popen', return_value=process) as launch, \
+                patch.object(live.os, 'set_blocking'), \
+                patch.object(live.os, 'read', side_effect=[b'true systemd v2', b'']), \
+                patch.object(live.selectors, 'DefaultSelector', return_value=selector):
+            self.assertEqual(self.executor._run(['info']), (0, b'true systemd v2'))
+        self.assertEqual(launch.call_args.args[0], ['/usr/bin/podman', '--remote=false',
+                                                   '--cgroup-manager=systemd', 'info'])
 
 
 class SDKTransportTests(unittest.IsolatedAsyncioTestCase):
@@ -420,6 +466,14 @@ class LiveEntryTests(unittest.IsolatedAsyncioTestCase):
                 await self.run_entry()
         self.executor.close.assert_called_once()
         self.fixture.connection.create_session.assert_not_called()
+
+    async def test_runtime_fallback_blocks_before_cloud_create(self):
+        self.executor.verify_prepared.side_effect = live.LiveFailure('prepared_runtime_unverified')
+        with self.assertRaisesRegex(live.LiveFailure, 'prepared_runtime_unverified'):
+            await self.run_entry()
+        self.fixture.connection.create_session.assert_not_called()
+        self.fixture.start.assert_not_called()
+        live.SDKEvents.assert_not_called()
 
 
 if __name__ == '__main__':

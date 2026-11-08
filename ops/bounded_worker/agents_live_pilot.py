@@ -26,6 +26,8 @@ from .executor_entry import connection_arguments
 
 LIMIT = 65536
 SDK_VERSION = '3.47.0'
+PODMAN_PREFIX = ('/usr/bin/podman', '--remote=false', '--cgroup-manager=systemd')
+RUNTIME_INFO_FORMAT = '{{.Host.Security.Rootless}} {{.Host.CgroupManager}} {{.Host.CgroupsVersion}}'
 SYNTHETIC_INSTRUCTIONS = (
     'This is a synthetic connection smoke in an empty disposable /workspace. '
     'Run this single command in /workspace: '
@@ -216,14 +218,14 @@ Commands are injectable only for offline tests; no command retries are made.
                     or info.st_mode & 0o022):
                 raise LiveFailure('runtime_path_rejected')
         for args, expected in ((['--version'], b'podman version 4.9.3'),
-                (['info', '--format', '{{.Host.Security.Rootless}}'], b'true')):
+                (['info', '--format', RUNTIME_INFO_FORMAT], b'true systemd v2')):
             code, raw = self._command(args)
             if code or raw.strip() != expected:
                 raise LiveFailure('prepared_runtime_unverified')
 
     def _run(self, args):
         """Bounded trusted metadata only. Never retain stderr or print command args."""
-        process = subprocess.Popen(['/usr/bin/podman', '--remote=false', *args], env=self.env,
+        process = subprocess.Popen([*PODMAN_PREFIX, *args], env=self.env,
             stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
             bufsize=0, close_fds=True)
         output, deadline = bytearray(), time.monotonic() + 10
@@ -305,6 +307,8 @@ Commands are injectable only for offline tests; no command retries are made.
 
     def _created_policy(self, value):
         config, host = value['Config'], value['HostConfig']
+        if host.get('CgroupManager') != 'systemd':
+            raise LiveFailure('container_manager_rejected')
         actual_env = {}
         for entry in config['Env']:
             key, sep, val = entry.partition('=')
@@ -350,7 +354,7 @@ Commands are injectable only for offline tests; no command retries are made.
         self.container_id = raw.decode('ascii').strip()
         self._created_policy(self._inspect())
         self._start_attempted = True
-        self.process = self._popen(['/usr/bin/podman', '--remote=false', 'start', '--attach', '--interactive',
+        self.process = self._popen([*PODMAN_PREFIX, 'start', '--attach', '--interactive',
                                     self.container_id], env=self.env, stdin=subprocess.PIPE,
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, bufsize=0, close_fds=True)
         # Official remote registration reads one newline-terminated bearer once.
@@ -382,6 +386,8 @@ Commands are injectable only for offline tests; no command retries are made.
         raise LiveFailure('container_running_unverified')
 
     def _capture_cgroup(self, value):
+        if value.get('HostConfig', {}).get('CgroupManager') != 'systemd':
+            raise LiveFailure('container_manager_rejected')
         state = value['State']
         raw = state.get('CgroupPath')
         if not isinstance(raw, str) or not raw.startswith('/') or '..' in Path(raw).parts:

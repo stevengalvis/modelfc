@@ -132,6 +132,7 @@ class AcceptanceTests(unittest.TestCase):
         self.process = None
         self.actions = []
         self.capture_error = self.inspect_change = False
+        self.preflight_error = False
         self.startup_path = None
         self.gate_program = local_gate()
         self.addCleanup(self.clean_process)
@@ -160,7 +161,7 @@ class AcceptanceTests(unittest.TestCase):
 
     def popen(self, args, **kwargs):
         self.actions.append('start')
-        self.assertEqual(args[:3], ['/usr/bin/podman', '--remote=false', 'start'])
+        self.assertEqual(args[:4], ['/usr/bin/podman', '--remote=false', '--cgroup-manager=systemd', 'start'])
         self.process = subprocess.Popen([sys.executable, '-I', '-S', '-B', '-c', self.gate_program],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             bufsize=0, env={'LANG': 'C.UTF-8'})
@@ -198,7 +199,8 @@ class AcceptanceTests(unittest.TestCase):
             self.value['State']['Pid'] += 1
 
     def run_acceptance(self):
-        with patch.object(PodmanExecutor, 'verify_prepared'), \
+        with patch.object(PodmanExecutor, 'verify_prepared', side_effect=
+                          LiveFailure('prepared_runtime_unverified') if self.preflight_error else None), \
                 patch.object(PodmanExecutor, '_capture_cgroup', new=lambda backend, value: self.capture(backend, value)):
             return gate.run_nested_acceptance(self.fixture.target, self.attempt,
                                               command=self.command, popen=self.popen)
@@ -212,6 +214,25 @@ class AcceptanceTests(unittest.TestCase):
         self.assertEqual(self.actions, ['container', 'create', 'inspect', 'start',
                                        'inspect', 'capture', 'inspect', 'inspect', 'stop', 'inspect'])
         self.assertEqual(result['startup_state']['cgroup_path'], 'present')
+
+    def test_effective_runtime_failure_blocks_before_container_create(self):
+        self.preflight_error = True
+        result = self.run_acceptance()
+        self.assertEqual(result['stage'], 'preflight')
+        self.assertEqual(result['reason'], 'prepared_runtime_unverified')
+        self.assertEqual(result['cleanup'], 'not_started')
+        self.assertEqual(self.actions, [])
+        self.assertFalse(result['go_sent'])
+
+    def test_created_container_fallback_blocks_start_without_retry(self):
+        self.value['HostConfig']['CgroupManager'] = 'cgroupfs'
+        result = self.run_acceptance()
+        self.assertEqual(result['reason'], 'container_manager_rejected')
+        self.assertEqual(result['cgroup_diagnostics']['manager'], 'cgroupfs')
+        self.assertEqual(result['cgroup_diagnostics']['requested_manager'], 'systemd')
+        self.assertNotIn('start', self.actions)
+        self.assertEqual(self.actions.count('create'), 1)
+        self.assertFalse(result['go_sent'])
 
     def test_capture_failure_never_sends_go_or_claims_cleanup(self):
         self.capture_error = True
@@ -236,12 +257,12 @@ class AcceptanceTests(unittest.TestCase):
         self.capture_error = 'unbound'
         self.startup_path = '/private-ancestor/shared-scope'
         self.value['OCIRuntime'] = 'crun'
-        self.value['HostConfig'].update(CgroupManager='cgroupfs', Cgroups='default', CgroupMode='private')
+        self.value['HostConfig'].update(CgroupManager='systemd', Cgroups='default', CgroupMode='private')
         result = self.run_acceptance()
         summary = result['cgroup_diagnostics']
         self.assertEqual(summary['component'], 'no_match')
         self.assertEqual(summary['position'], 'none')
-        self.assertEqual(summary['manager'], 'cgroupfs')
+        self.assertEqual(summary['manager'], 'systemd')
         self.assertEqual(summary['runtime'], 'crun')
         self.assertEqual(summary['requested_mode'], 'enabled')
         self.assertEqual(summary['inspect_cgroups'], 'default')
@@ -312,7 +333,8 @@ class AcceptanceTests(unittest.TestCase):
     def test_missing_cgroup_is_not_accepted_from_another_json_level(self):
         backend = self.fixture.executor
         backend.container_id = self.value['Id']
-        value = {'State': {'Status': 'running', 'Running': True, 'Pid': 123},
+        value = {'HostConfig': {'CgroupManager': 'systemd'},
+                 'State': {'Status': 'running', 'Running': True, 'Pid': 123},
                  'CgroupPath': '/synthetic/libpod-' + self.value['Id'] + '.scope'}
         with self.assertRaisesRegex(LiveFailure, 'container_cgroup_unverified'):
             backend._capture_cgroup(value)
@@ -323,7 +345,8 @@ class AcceptanceTests(unittest.TestCase):
         backend.container_id = self.value['Id']
         relative = '/synthetic/libpod-' + self.value['Id'] + '.scope'
         full = '/sys/fs/cgroup' + relative
-        value = {'State': {'Status': 'running', 'Running': True, 'Pid': 123,
+        value = {'HostConfig': {'CgroupManager': 'systemd'},
+                 'State': {'Status': 'running', 'Running': True, 'Pid': 123,
                            'CgroupPath': relative}}
         fd = os.open(self.path, os.O_RDONLY | os.O_DIRECTORY)
         reads = {'/proc/123/cgroup': '0::' + relative + '\n',

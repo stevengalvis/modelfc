@@ -2,8 +2,9 @@
 
 `agents_nested_acceptance.py` is a separate, explicitly invoked OS acceptance
 harness. Importing it has no side effects. It does not create an API session,
-load an SDK/key, register an executor, or authorize a paid test. The existing live
-launch command/profile is unchanged. Its shared cgroup-capture helper now retains
+load an SDK/key, register an executor, or authorize a paid test. Both entrypoints
+now select the systemd cgroup manager per invocation for fresh containers. All
+other isolation/resource options remain unchanged. The shared cgroup-capture helper retains
 an inode descriptor only after all PID-membership and limit checks pass, closing
 the descriptor on any failed validation. These changes are tested offline only.
 
@@ -67,6 +68,23 @@ contain both fixed executable paths. This harness provisions nothing. Existing
 host security and all outer limits stay unchanged; do not use privileged or
 unconfined modes, change sysctls, or add capabilities to make it pass.
 
+The selected worker must already have a usable user systemd manager/bus, cgroup
+v2 and delegated controllers for the existing limits. Every new-attempt Podman
+invocation uses `--remote=false --cgroup-manager=systemd`; it does not edit host
+configuration. Before any container creation, the existing bounded info call
+requires effective rootless/systemd/v2, using `.Host.CgroupsVersion` (plural) in
+the Go template. Created inspection and capture require effective systemd too.
+A silently selected cgroupfs fallback blocks before create; an inconsistent
+created-container manager blocks before start. Scope/delegation failures still
+block GO through the unchanged resource checks and complete cgroup binding.
+
+No new bus, linger setting, service change, delegation or permission change is
+made. If those are needed, stop for specific approval rather than relaxing the
+profile. Reconcile prior cgroupfs targets with their original manager/context;
+never use this systemd-only wrapper to reinterpret or resume them. A fresh
+systemd acceptance record is required, not the old cgroupfs record. This change
+has only been tested with mocked runtime observations; it is not VPS acceptance.
+
 ```python
 from ops.bounded_worker.agents_nested_acceptance import run_nested_acceptance
 
@@ -102,13 +120,13 @@ These are diagnostic patterns, not newly accepted cgroup names.
 Manager, selected OCI-runtime name and cgroup-namespace fields come from the
 same inspect response and use closed enums; arbitrary strings become `other`,
 missing fields remain `missing`. No runtime version is inferred and no extra
-runtime, filesystem or API call is made. The known requested mode remains
+runtime, filesystem or API call is made. Requested manager is `systemd`; mode remains
 `enabled`, separately from inspect's `Cgroups` value: Podman 4.9.3 reports only
 `default`/`disabled` there, not whether enabled/split/no-conmon was requested.
 The split-payload shape is recorded but remains rejected by this enabled-mode
 profile. Missing historical paths are not reconstructed from later snapshots.
 The private top-level attempt/container IDs remain separate from this sanitized
-subsection. Capture, GO, limits and cleanup validation are unchanged.
+subsection. These classifications do not relax capture, GO, limits or cleanup validation.
 
 ## Sources and offline checks
 
@@ -122,6 +140,12 @@ subsection. Capture, GO, limits and cleanup validation are unchanged.
   https://github.com/containers/podman/blob/v4.9.3/libpod/container_inspect.go#L140-L150
   https://github.com/containers/podman/blob/v4.9.3/libpod/container_inspect_linux.go#L212-L247
   https://github.com/containers/podman/blob/v4.9.3/libpod/container_inspect.go#L434-L443
+- Manager selection, effective info fields and existing user-bus discovery:
+  https://docs.podman.io/en/v4.9.3/markdown/podman.1.html#cgroup-manager-manager
+  https://github.com/containers/podman/blob/v4.9.3/libpod/define/info.go#L26-L31
+  https://github.com/containers/podman/blob/v4.9.3/libpod/info_linux.go#L29-L55
+  https://github.com/containers/podman/blob/v4.9.3/libpod/runtime.go#L114-L150
+  https://github.com/containers/podman/blob/v4.9.3/vendor/github.com/containers/common/pkg/config/config.go#L612-L636
 - Codex pinned CLI flags and built-in workspace profile:
   https://github.com/openai/codex/blob/fc01c073b9ea09c06347a234a1ca231a9ef65bf5/codex-rs/cli/src/lib.rs#L114-L158
   https://github.com/openai/codex/blob/fc01c073b9ea09c06347a234a1ca231a9ef65bf5/codex-rs/protocol/src/models.rs#L384-L499

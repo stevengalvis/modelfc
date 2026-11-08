@@ -11,7 +11,7 @@ import selectors
 import subprocess
 import time
 
-from .agents_live_pilot import LIMIT, LiveFailure, PodmanExecutor, _bounded_call
+from .agents_live_pilot import LIMIT, PODMAN_PREFIX, LiveFailure, PodmanExecutor, _bounded_call
 from .agents_session_controller import ExecutorBinding
 
 PYTHON = '/usr/local/bin/python3'
@@ -40,6 +40,7 @@ _SAFE_FAILURES = frozenset((
     'container_cgroup_pid_mismatch', 'container_cgroup_limits_unverified',
     'container_create_uncertain', 'container_name_not_available', 'prepared_runtime_unverified',
     'rootless_user_required', 'runtime_path_rejected',
+    'container_manager_rejected',
 ))
 
 
@@ -76,7 +77,7 @@ def cgroup_summary(value, container_id):
         return item if isinstance(item, str) and item in choices else 'missing' if item is None else 'other'
 
     result = {
-        'requested_mode': 'enabled', 'requested_namespace': 'private',
+        'requested_mode': 'enabled', 'requested_namespace': 'private', 'requested_manager': 'systemd',
         'manager': known(host.get('CgroupManager'), ('systemd', 'cgroupfs')),
         'runtime': known(value.get('OCIRuntime'), ('crun', 'runc', 'runsc', 'youki', 'kata')),
         'inspect_cgroups': known(host.get('Cgroups'), ('default', 'disabled')),
@@ -238,7 +239,7 @@ Retain this private report and the stopped container; no automatic removal.
         report['stage'] = 'ready'
         executor._start_attempted = True
         executor.process = executor._popen(
-            ['/usr/bin/podman', '--remote=false', 'start', '--attach', '--interactive',
+            [*PODMAN_PREFIX, 'start', '--attach', '--interactive',
              executor.container_id], env=executor.env, stdin=subprocess.PIPE,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=0, close_fds=True)
         pipe = _Pipe(executor.process)
