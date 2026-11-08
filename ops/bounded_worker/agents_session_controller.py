@@ -14,6 +14,15 @@ from ops.bounded_worker.agents_pilot import Plan, PilotState
 from ops.bounded_worker.executor_entry import connection_arguments
 
 
+SESSION_POLICY_FIELDS = frozenset({
+    'object', 'id', 'review', 'environment', 'environment.type',
+    'environment.workspace_directory', 'environment.capability_directories',
+    'environment.id', 'agent', 'agent.id', 'agent.model', 'agent.service_tier',
+    'spend_control', 'spend_control.limit', 'agent.instructions', 'agent.multi_agent',
+    'agent.multi_agent.enabled', 'agent.tools', 'vault_ids', 'status', 'required_actions',
+})
+
+
 class ControllerFailure(RuntimeError):
     """Fail closed; retain the journal and reconcile uncertain external state."""
 
@@ -63,6 +72,9 @@ class SessionController:
         self._stop_attempted = False
         self._seen = {}
         self._errors = []
+        self.policy_mismatches = ()
+        # Diagnostics only: never used as a session/launch/cancellation binding.
+        self.reconciliation_candidates = {}
 
     @property
     def errors(self):
@@ -91,25 +103,32 @@ class SessionController:
         """Validate policy and binding, never interpret idle as turn completion."""
         if not isinstance(value, dict):
             self._fail('session_shape_rejected')
-        env, agent = value.get('environment'), value.get('agent')
-        spend = value.get('spend_control')
-        if (value.get('object') != 'agent.session' or not _identifier(value.get('id'))
-                or value.get('review') != 'auto_review'
-                or not isinstance(env, dict) or env.get('type') != 'self_hosted'
-                or env.get('workspace_directory') != '/workspace'
-                or env.get('capability_directories') != []
-                or not _identifier(env.get('id')) or not isinstance(agent, dict)
-                or not _identifier(agent.get('id'))
-                or agent.get('model') != self.state.plan.model
-                or agent.get('service_tier') != 'default'
-                or not isinstance(spend, dict) or type(spend.get('limit')) is not int
-                or spend['limit'] != self.state.plan.spend_limit_cents
-                or agent.get('instructions') != self.state.plan.create_payload()['agent']['instructions']
-                or not isinstance(agent.get('multi_agent'), dict)
-                or agent['multi_agent'].get('enabled') is not False
-                or agent.get('tools') != [] or value.get('vault_ids') != []
-                or value.get('status') not in ('idle', 'in_progress', 'requires_action', 'failed')
-                or not isinstance(value.get('required_actions'), list)):
+        env = value['environment'] if isinstance(value.get('environment'), dict) else {}
+        agent = value['agent'] if isinstance(value.get('agent'), dict) else {}
+        spend = value['spend_control'] if isinstance(value.get('spend_control'), dict) else {}
+        multi = agent['multi_agent'] if isinstance(agent.get('multi_agent'), dict) else {}
+        checks = {
+            'object': value.get('object') == 'agent.session',
+            'id': _identifier(value.get('id')), 'review': value.get('review') == 'auto_review',
+            'environment': isinstance(value.get('environment'), dict),
+            'environment.type': env.get('type') == 'self_hosted',
+            'environment.workspace_directory': env.get('workspace_directory') == '/workspace',
+            'environment.capability_directories': env.get('capability_directories') == [],
+            'environment.id': _identifier(env.get('id')), 'agent': isinstance(value.get('agent'), dict),
+            'agent.id': _identifier(agent.get('id')), 'agent.model': agent.get('model') == self.state.plan.model,
+            'agent.service_tier': agent.get('service_tier') == 'default',
+            'spend_control': isinstance(value.get('spend_control'), dict),
+            'spend_control.limit': (type(spend.get('limit')) is int
+                                    and spend['limit'] == self.state.plan.spend_limit_cents),
+            'agent.instructions': agent.get('instructions') == self.state.plan.create_payload()['agent']['instructions'],
+            'agent.multi_agent': isinstance(agent.get('multi_agent'), dict),
+            'agent.multi_agent.enabled': multi.get('enabled') is False,
+            'agent.tools': agent.get('tools') == [], 'vault_ids': value.get('vault_ids') == [],
+            'status': value.get('status') in ('idle', 'in_progress', 'requires_action', 'failed'),
+            'required_actions': isinstance(value.get('required_actions'), list),
+        }
+        if not all(checks.values()):
+            self.policy_mismatches = tuple(name for name, passed in checks.items() if not passed)
             self._fail('session_policy_rejected')
         try:
             connection_arguments('/opt/agents/bin/codex', env['id'], env.get('remote_url'))
@@ -146,6 +165,12 @@ class SessionController:
             response = self.connection.create_session(self.state.plan)
         except Exception:
             self._fail('create_outcome_uncertain')
+        if isinstance(response, dict):
+            env = response.get('environment')
+            for name, candidate in (('session_id', response.get('id')),
+                                    ('environment_id', env.get('id') if isinstance(env, dict) else None)):
+                if _identifier(candidate):
+                    self.reconciliation_candidates[name] = candidate
         response = self._session(response, initial=True)
         env = response['environment']
         self.state.bind_session(response['id'], env['id'], review=response['review'])

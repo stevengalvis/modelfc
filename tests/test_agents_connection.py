@@ -1,3 +1,4 @@
+import http.client
 import io
 import json
 import os
@@ -5,6 +6,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import urllib.error
 from unittest.mock import Mock, patch
 
 from ops.bounded_worker.agents_connection import AgentsConnection, ConnectionFailure, _NoRedirect
@@ -110,6 +112,78 @@ class ConnectionTests(unittest.TestCase):
             self.client.create_session(self.plan)
         self.assertNotIn('synthetic_application_key', str(caught.exception))
         self.opener.open.assert_called_once()
+        self.assertEqual(self.client.diagnostic, {'operation': 'create', 'outcome': 'transport_error',
+            'http_status': None, 'request_id': None, 'provider_code': None})
+
+    def test_http_failure_retains_only_bounded_safe_metadata_without_retry(self):
+        body = io.BytesIO(json.dumps({'error': {'code': 'insufficient_permissions',
+            'message': 'synthetic_application_key', 'param': 'private'}}).encode())
+        self.opener.open.side_effect = urllib.error.HTTPError(
+            'https://api.openai.com/v1/agents/sessions', 403, 'private exception',
+            {'x-request-id': 'req_synthetic'}, body)
+        with self.assertRaises(ConnectionFailure) as caught:
+            self.client.create_session(self.plan)
+        self.assertEqual(self.client.diagnostic, {'operation': 'create', 'outcome': 'http_error',
+            'http_status': 403, 'request_id': 'req_synthetic', 'provider_code': 'insufficient_permissions'})
+        self.assertTrue(body.closed)
+        self.assertNotIn('private', str(caught.exception))
+        self.assertNotIn('synthetic_application_key', repr(self.client.diagnostic))
+        self.opener.open.assert_called_once()
+
+    def test_malformed_oversized_and_reflective_error_bodies_do_not_leak(self):
+        for raw, code in ((b'not json', 'unavailable'), (b'x' * 5000, 'unavailable'),
+            (b'{"error":{"code":"synthetic_application_key"}}', 'other'),
+            (b'{"error":{"code":[]}}', 'other'),
+            (b'{"error":{"code":"a","code":"invalid_api_key"}}', 'unavailable')):
+            with self.subTest(code=code, length=len(raw)):
+                self.setUp()
+                body = io.BytesIO(raw)
+                read = Mock(wraps=body.read)
+                body.read = read
+                self.opener.open.side_effect = urllib.error.HTTPError(
+                    'https://api.openai.com/v1/agents/sessions', 401, 'private',
+                    {'x-request-id': 'req_synthetic_application_key'}, body)
+                with self.assertRaises(ConnectionFailure):
+                    self.client.create_session(self.plan)
+                self.assertEqual(self.client.diagnostic['provider_code'], code)
+                self.assertIsNone(self.client.diagnostic['request_id'])
+                self.assertNotIn('synthetic_application_key', repr(self.client.diagnostic))
+                read.assert_called_once_with(4097)
+                self.opener.open.assert_called_once()
+
+    def test_success_keeps_metadata_for_later_policy_failure(self):
+        self.response.headers = {'x-request-id': 'req_synthetic'}
+        self.assertEqual(self.client.create_session(self.plan), {'id': 'sess_test'})
+        self.assertEqual(self.client.diagnostic, {'operation': 'create', 'outcome': 'response_received',
+            'http_status': 201, 'request_id': 'req_synthetic', 'provider_code': None})
+
+    def test_response_read_transport_failure_keeps_status_without_claiming_policy_rejection(self):
+        for error in (TimeoutError('private'), ConnectionResetError('private'),
+                      http.client.IncompleteRead(b'private')):
+            with self.subTest(kind=type(error).__name__):
+                self.setUp()
+                self.response.status = 200
+                self.response.headers = {'x-request-id': 'req_synthetic'}
+                self.response.read = Mock(side_effect=error)
+                with self.assertRaises(ConnectionFailure):
+                    self.client.create_session(self.plan)
+                self.assertEqual(self.client.diagnostic, {'operation': 'create',
+                    'outcome': 'transport_error', 'http_status': 200,
+                    'request_id': 'req_synthetic', 'provider_code': None})
+                self.opener.open.assert_called_once()
+
+    def test_later_cleanup_request_does_not_erase_first_rest_failure(self):
+        self.opener.open.side_effect = OSError('private')
+        with self.assertRaises(ConnectionFailure):
+            self.client.submit_task('sess_test', self.plan)
+        first = self.client.diagnostic
+        response = FakeResponse(b'')
+        response.status = 202
+        response.url = 'https://api.openai.com/v1/agents/sessions/sess_test/events'
+        self.opener.open.side_effect = None
+        self.opener.open.return_value = response
+        self.client.cancel_turn('sess_test')
+        self.assertEqual(self.client.diagnostic, first)
 
     def test_bad_responses_fail(self):
         for body in (b'[]', b'{"id":1,"id":2}', b'{"v":NaN}', b'{"v":1e999}', b'{"v":{"nested":-1e999}}', b'x' * 262145):

@@ -63,7 +63,9 @@ class LiveLoopTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result, {'cloud_outcome': 'completed', 'cleanup_verified': True,
             'result_verified': False, 'status': 'not_completed', 'errors': [],
             'attempt_id': 'b' * 64, 'session_id': 'sess_test',
-            'environment_id': 'env_test', 'turn_id': 'turn_test'})
+            'environment_id': 'env_test', 'turn_id': 'turn_test',
+            'diagnostics': {'api': None, 'policy_mismatches': [],
+                'reconciliation_candidates': {'session_id': 'sess_test', 'environment_id': 'env_test'}}})
         f.connection.submit_task.assert_called_once()
         f.connection.cancel_turn.assert_not_called()
         f.stop.assert_called_once()

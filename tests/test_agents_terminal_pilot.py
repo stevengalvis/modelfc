@@ -108,7 +108,7 @@ class CallerTests(unittest.TestCase):
         self.assertEqual(caller.main(ARGS), 0)
         value = json.loads(self.tty.getvalue())
         self.assertIsNone(value['session_id'])
-        self.assertNotIn('errors', value)
+        self.assertEqual(value['errors'], ['unclassified_failure'])
         self.assertNotIn('raw_body', value)
         self.assertNotIn('remote_url', value)
         self.assertTrue(all(key not in self.tty.getvalue() for key in KEYS))
@@ -119,6 +119,37 @@ class CallerTests(unittest.TestCase):
         self.assertNotIn(KEYS[0], self.output.getvalue())
         self.hidden.assert_not_called()
         self.live.assert_not_called()
+
+    def test_bounded_diagnostics_keep_codes_and_untrusted_candidates_not_values(self):
+        self.live.return_value.update(status='blocked', cloud_outcome=None, cleanup_verified=False,
+            session_id=None, environment_id=None, errors=['session_policy_rejected', KEYS[0]],
+            diagnostics={'api': {'operation': 'create', 'outcome': 'response_received',
+                'http_status': 201, 'request_id': 'req_synthetic', 'provider_code': None,
+                'body': KEYS[0]}, 'policy_mismatches': ['agent.tools', KEYS[0]],
+                'reconciliation_candidates': {'session_id': 'sess_candidate',
+                    'environment_id': KEYS[1], 'remote_url': 'https://private.invalid'}})
+        self.assertEqual(caller.main(ARGS), 1)
+        value = json.loads(self.tty.getvalue())
+        self.assertIsNone(value['session_id'])
+        self.assertEqual(value['errors'], ['session_policy_rejected', 'unclassified_failure'])
+        self.assertEqual(value['diagnostics']['api'], {'operation': 'create',
+            'outcome': 'response_received', 'http_status': 201,
+            'request_id': 'req_synthetic', 'provider_code': None})
+        self.assertEqual(value['diagnostics']['policy_mismatches'], ['agent.tools'])
+        self.assertEqual(value['diagnostics']['reconciliation_candidates'],
+                         {'session_id': 'sess_candidate', 'environment_id': None})
+        self.assertTrue(all(key not in self.tty.getvalue() for key in KEYS))
+
+    def test_malformed_diagnostics_cannot_echo_or_break_summary(self):
+        value = caller._summary({'errors': [KEYS[0]] * 100,
+            'diagnostics': {'api': {'operation': [], 'outcome': {}, 'http_status': True,
+                'request_id': KEYS[0], 'provider_code': KEYS[1]},
+                'policy_mismatches': [KEYS[0], []],
+                'reconciliation_candidates': {'session_id': KEYS[0]}}}, 'd' * 64, KEYS)
+        self.assertEqual(value['errors'], ['unclassified_failure'])
+        self.assertTrue(all(item is None for item in value['diagnostics']['api'].values()))
+        self.assertEqual(value['diagnostics']['policy_mismatches'], [])
+        self.assertTrue(all(key not in json.dumps(value) for key in KEYS))
 
 
 class TerminalTests(unittest.TestCase):

@@ -88,6 +88,33 @@ class SessionControllerTests(unittest.TestCase):
         self.start.assert_not_called()
         self.assertEqual(self.operations(), set())
 
+    def test_rejected_response_retains_only_candidate_ids_and_field_names(self):
+        self.session['agent']['tools'] = None
+        self.session['environment']['capability_directories'] = None
+        self.session['vault_ids'] = 'private field value'
+        with self.assertRaisesRegex(ControllerFailure, 'session_policy_rejected'):
+            self.controller.create()
+        self.assertEqual(set(self.controller.policy_mismatches),
+                         {'agent.tools', 'environment.capability_directories', 'vault_ids'})
+        self.assertEqual(self.controller.reconciliation_candidates,
+                         {'session_id': 'sess_test', 'environment_id': 'env_test'})
+        self.assertIsNone(self.controller.binding)
+        self.assertIsNone(self.controller.state.session_id)
+        self.assertEqual(self.operations(), {'create'})
+        self.start.assert_not_called()
+        with self.assertRaises(ControllerFailure):
+            self.controller.start()
+        self.start.assert_not_called()
+
+    def test_malformed_policy_fields_remain_rejected_without_raw_values(self):
+        self.session.update(agent='private agent value', environment=[], spend_control=None)
+        with self.assertRaisesRegex(ControllerFailure, 'session_policy_rejected'):
+            self.controller.create()
+        self.assertTrue({'agent', 'environment', 'spend_control'} <= set(self.controller.policy_mismatches))
+        self.assertNotIn('private', repr(self.controller.policy_mismatches))
+        self.assertIsNone(self.controller.binding)
+        self.start.assert_not_called()
+
     def test_controller_requires_explicit_positive_spend_limit(self):
         for value in (None, 0, -1, True, 100.0, '100'):
             with self.subTest(value=value):

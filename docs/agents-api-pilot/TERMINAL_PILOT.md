@@ -92,8 +92,8 @@ no-echo is not protection against a compromised operator host or account.
 ## Result and recovery
 
 The caller emits only selected lifecycle enums, cleanup/result booleans, the
-operator-attested marker and known reconciliation IDs. It does not dump raw
-SDK objects, errors, events, URLs, logs or credentials. Keep this detailed result
+operator-attested marker, fixed diagnostic codes and reconciliation IDs. It
+does not dump raw SDK objects, error messages, events, URLs, logs or credentials. Keep this detailed result
 operator-private; use only the separately approved sanitized status for external
 reporting. `result_verified` remains false: cloud completion is not independent
 verification of workspace contents.
@@ -106,6 +106,57 @@ attempt/journal and known cloud/container records before any further action.
 Do not repeat the invocation or replace the attempt ID. No crash recovery,
 credential rotation, container removal or user-manager restoration is added.
 Existing cleanup/reconciliation and approved restoration obligations remain.
+
+### Diagnosing an attempt without replay
+
+`errors` contains only bounded, allowlisted controller/watchdog reason codes.
+Unknown strings become `unclassified_failure`. `diagnostics.api` identifies the
+first failed REST operation, or the last received response when controller
+policy subsequently rejects it. It contains only the operation/outcome enums,
+HTTP status if received, bounded safe `x-request-id`, and an allowlisted provider
+error code. Error bodies are read at most 4097 bytes to enforce a 4096-byte parse
+limit, inspected transiently and discarded. Messages, parameters, headers other
+than request ID and raw exceptions are never reported. Unknown, malformed or
+oversized bodies produce a fixed category, not their contents. A missing status
+does not prove that the server never received a request.
+
+`diagnostics.policy_mismatches` lists rejected field names, never field values.
+Array/null distinctions and all prior policy checks remain unchanged.
+`diagnostics.reconciliation_candidates` may contain IDs extracted from a response
+that failed validation. These are explicitly **untrusted, unbound candidates**,
+not authorized targets for executor startup, input, cancellation or recovery.
+The normal session/environment fields remain null until validation succeeds.
+No diagnostic authorizes a retry. Older discarded observations cannot be
+reconstructed by installing this change.
+
+Inspect the existing journal as its owner, without constructing the live
+controller or `AdmissionJournal`. This command accepts only the retained
+nonsecret directory and attempt ID, opens SQLite read-only, and prints operation
+names only:
+
+```sh
+python -B - "$PRIVATE_JOURNAL_DIRECTORY" "$RETAINED_ATTEMPT_ID" <<'PY'
+import pathlib, sqlite3, sys
+path = pathlib.Path(sys.argv[1]) / 'admission.sqlite3'
+db = sqlite3.connect(path.as_uri() + '?mode=ro', uri=True)
+try:
+    db.execute('PRAGMA query_only=ON')
+    print([row[0] for row in db.execute(
+        'SELECT operation FROM operations WHERE attempt=? ORDER BY operation',
+        (sys.argv[2],))])
+finally:
+    db.close()
+PY
+```
+
+A `create` reservation means creation may have occurred, not that it succeeded.
+No `executor`/`input` reservation means those callbacks were not reached in this
+unchanged reserve-before-action path. Separately inspect the same account,
+project and owner in the dashboard for sessions near the attempt time, without
+sending input, connecting an executor or resuming. The attempt ID is not session
+metadata, so timing/model/limit matches alone are not an exact binding. Empty
+dashboard lists or zero usage do not recover a missing HTTP error or prove no
+session was ever created.
 
 ## Sources and offline checks
 

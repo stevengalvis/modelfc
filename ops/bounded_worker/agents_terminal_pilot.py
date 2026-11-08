@@ -20,7 +20,9 @@ import termios
 import warnings
 
 from .agents_live_pilot import PreparedTarget, SYNTHETIC_INSTRUCTIONS, _key, run_live
+from .agents_connection import API_OPERATIONS, API_OUTCOMES, PROVIDER_CODES
 from .agents_pilot import Plan
+from .agents_session_controller import SESSION_POLICY_FIELDS
 from .task import Task
 
 
@@ -120,6 +122,53 @@ _ATTESTATION = (
 )
 
 
+_ERROR_CODES = frozenset('''api_error_event cancel_acknowledgment_rejected cancel_outcome_uncertain
+create_outcome_uncertain duplicate_event_rejected durable_reservation_rejected
+environment_event_rejected environment_failed environment_not_connected_for_input
+environment_read_failed event_limit event_session_mismatch event_shape_rejected
+executor_start_uncertain executor_cleanup_unverified executor_stop_uncertain
+input_acknowledgment_rejected input_outcome_uncertain new_session_already_running
+session_binding_mismatch session_event_status_mismatch session_failed
+session_not_idle_for_input session_policy_rejected session_read_failed
+session_regressed_after_terminal session_remote_rejected session_shape_rejected
+stream_closed_before_terminal terminal_before_turn_binding turn_binding_mismatch
+turn_event_rejected turn_lifecycle_regression unexpected_executor_connection
+unexpected_session_turn unsupported_event unsupported_required_action
+operation_deadline overall_deadline dedicated_main_thread_required live_attempt_failed
+cloud_cancel_uncertain local_cleanup_unverified stream_close_failed stream_quiet_timeout
+encoded_stream_rejected stream_byte_limit stream_not_admitted stream_target_rejected'''.split())
+
+
+def _safe_id(value, secrets):
+    return value if (isinstance(value, str) and re.fullmatch(r'[A-Za-z0-9_-]{1,128}', value)
+        and not value.startswith('sk-') and not any(secret in value for secret in secrets)) else None
+
+
+def _diagnostics(value, secrets):
+    value = value if isinstance(value, dict) else {}
+    api = value.get('api')
+    if isinstance(api, dict):
+        status, code = api.get('http_status'), api.get('provider_code')
+        operation, outcome = api.get('operation'), api.get('outcome')
+        api = {'operation': operation if isinstance(operation, str) and operation in API_OPERATIONS else None,
+               'outcome': outcome if isinstance(outcome, str) and outcome in API_OUTCOMES else None,
+               'http_status': status if type(status) is int and 100 <= status <= 599 else None,
+               'request_id': _safe_id(api.get('request_id'), secrets),
+               'provider_code': code if isinstance(code, str)
+                and code in PROVIDER_CODES | {'other', 'unavailable'} else None}
+    else:
+        api = None
+    fields = value.get('policy_mismatches')
+    fields = fields[:len(SESSION_POLICY_FIELDS)] if isinstance(fields, (list, tuple)) else ()
+    candidates = value.get('reconciliation_candidates')
+    candidates = candidates if isinstance(candidates, dict) else {}
+    return {'api': api,
+            'policy_mismatches': [name for name in fields
+                                  if isinstance(name, str) and name in SESSION_POLICY_FIELDS],
+            'reconciliation_candidates': {name: _safe_id(candidates.get(name), secrets)
+                                           for name in ('session_id', 'environment_id')}}
+
+
 def _summary(result, attempt_id, secrets):
     """Only fixed outcomes and known reconciliation IDs, never arbitrary dumps."""
     output = {'status': result.get('status') if result.get('status') in
@@ -130,10 +179,12 @@ def _summary(result, attempt_id, secrets):
               'result_verified': False, 'attempt_id': attempt_id,
               'key_scope_verification': 'operator_attested'}
     for name in ('session_id', 'environment_id', 'turn_id', 'container_id'):
-        value = result.get(name)
-        output[name] = value if (isinstance(value, str)
-            and re.fullmatch(r'[A-Za-z0-9_-]{1,128}', value)
-            and not any(secret in value for secret in secrets)) else None
+        output[name] = _safe_id(result.get(name), secrets)
+    errors = result.get('errors')
+    errors = errors[:32] if isinstance(errors, (list, tuple)) else ()
+    output['errors'] = list(dict.fromkeys(code if isinstance(code, str) and code in _ERROR_CODES
+                                        else 'unclassified_failure' for code in errors))
+    output['diagnostics'] = _diagnostics(result.get('diagnostics'), secrets)
     return output
 
 

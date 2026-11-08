@@ -709,10 +709,14 @@ Exceptions, including SDK-generated error events, become fixed blocked reasons.
         except BaseException:
             controller.state.uncertain_request()
             errors.append('stream_close_failed')
+    api = getattr(controller.connection, 'diagnostic', None)
     return {'cloud_outcome': controller.state.cloud_outcome, 'cleanup_verified': cleanup,
             'result_verified': False, 'status': controller.state.result(),
             'attempt_id': controller.attempt_id, 'session_id': controller.state.session_id,
             'environment_id': controller.state.environment_id, 'turn_id': controller.turn_id,
+            'diagnostics': {'api': api if isinstance(api, dict) else None,
+                            'policy_mismatches': list(controller.policy_mismatches),
+                            'reconciliation_candidates': dict(controller.reconciliation_candidates)},
             'errors': list(dict.fromkeys([*controller.errors, *errors]))}
 
 
