@@ -132,6 +132,7 @@ class AcceptanceTests(unittest.TestCase):
         self.process = None
         self.actions = []
         self.capture_error = self.inspect_change = False
+        self.startup_path = None
         self.gate_program = local_gate()
         self.addCleanup(self.clean_process)
 
@@ -164,7 +165,8 @@ class AcceptanceTests(unittest.TestCase):
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             bufsize=0, env={'LANG': 'C.UTF-8'})
         self.value['State'] = {'Running': True, 'Status': 'running', 'Pid': self.process.pid,
-                              'CgroupPath': '/synthetic/libpod-' + self.value['Id'] + '.scope'}
+                              'CgroupPath': self.startup_path or
+                              '/synthetic/libpod-' + self.value['Id'] + '.scope'}
         if self.capture_error is True:
             self.value['State'].pop('CgroupPath')
         return self.process
@@ -175,6 +177,9 @@ class AcceptanceTests(unittest.TestCase):
         if self.capture_error is True:
             self.value['State'].pop('CgroupPath', None)
             raise LiveFailure('container_cgroup_unverified')
+        if self.capture_error == 'unbound':
+            REAL_CAPTURE(backend, value)
+            raise AssertionError('capture should fail before opening a cgroup')
         if self.capture_error in ('pid', 'limits'):
             relative = value['State']['CgroupPath']
             full = '/sys/fs/cgroup' + relative
@@ -226,6 +231,36 @@ class AcceptanceTests(unittest.TestCase):
         self.assertEqual(result['reason'], 'acceptance_changed_before_go')
         self.assertEqual(result['cleanup'], 'verified')
         self.assertEqual(result['status'], 'blocked')
+
+    def test_unbound_failure_retains_sanitized_shape_and_runtime_before_guard(self):
+        self.capture_error = 'unbound'
+        self.startup_path = '/private-ancestor/shared-scope'
+        self.value['OCIRuntime'] = 'crun'
+        self.value['HostConfig'].update(CgroupManager='cgroupfs', Cgroups='default', CgroupMode='private')
+        result = self.run_acceptance()
+        summary = result['cgroup_diagnostics']
+        self.assertEqual(summary['component'], 'no_match')
+        self.assertEqual(summary['position'], 'none')
+        self.assertEqual(summary['manager'], 'cgroupfs')
+        self.assertEqual(summary['runtime'], 'crun')
+        self.assertEqual(summary['requested_mode'], 'enabled')
+        self.assertEqual(summary['inspect_cgroups'], 'default')
+        self.assertEqual(summary['inspect_namespace'], 'private')
+        self.assertEqual(result['reason'], 'container_cgroup_unbound')
+        self.assertEqual(result['cleanup'], 'unverified')
+        self.assertFalse(result['go_sent'])
+        self.assertNotIn('private-ancestor', repr(summary))
+        self.assertNotIn(self.value['Id'], repr(summary))
+
+    def test_payload_is_diagnosed_without_relaxing_enabled_mode_guard(self):
+        self.capture_error = 'unbound'
+        self.startup_path = '/private-ancestor/libpod-payload-' + self.value['Id']
+        result = self.run_acceptance()
+        self.assertEqual(result['cgroup_diagnostics']['component'], 'split_payload_full_id')
+        self.assertEqual(result['cgroup_diagnostics']['position'], 'leaf')
+        self.assertEqual(result['reason'], 'container_cgroup_unbound')
+        self.assertFalse(result['go_sent'])
+        self.assertEqual(result['cleanup'], 'unverified')
 
     def test_post_open_pid_mismatch_closes_fd_and_never_authorizes_go_or_cleanup(self):
         self.capture_error = 'pid'
@@ -324,6 +359,64 @@ class AcceptanceTests(unittest.TestCase):
         value['State']['CgroupPath'] = '/private/path'
         self.assertEqual(gate.state_summary(value)['cgroup_path'], 'present')
         self.assertNotIn('private', repr(gate.state_summary(value)))
+
+
+class CgroupDiagnosticTests(unittest.TestCase):
+    def summary(self, path):
+        return gate.cgroup_summary({'State': {'CgroupPath': path}}, 'a' * 64)
+
+    def test_exact_known_components_leaf_and_ancestor(self):
+        for component, kind in (('a' * 64, 'bare_full_id'),
+                ('libpod-' + 'a' * 64, 'cgroupfs_full_id'),
+                ('libpod-' + 'a' * 64 + '.scope', 'systemd_full_id'),
+                ('libpod-payload-' + 'a' * 64, 'split_payload_full_id')):
+            for suffix, position in (('', 'leaf'), ('/child', 'ancestor')):
+                with self.subTest(kind=kind, position=position):
+                    result = self.summary('/private-prefix/' + component + suffix)
+                    self.assertEqual(result['component'], kind)
+                    self.assertEqual(result['position'], position)
+                    self.assertNotIn(component, repr(result))
+                    self.assertNotIn('private-prefix', repr(result))
+
+    def test_different_and_short_ids_are_only_classified_not_matched(self):
+        for component, kind in (('libpod-' + 'b' * 64, 'different_full_id'),
+                               ('libpod-' + 'a' * 12, 'short_bound_id'),
+                               ('libpod-' + 'b' * 12 + '.scope', 'different_short_id')):
+            result = self.summary('/root/' + component)
+            self.assertEqual(result['component'], kind)
+            self.assertEqual(result['position'], 'leaf')
+        for component in ('prefix-libpod-' + 'a' * 64, 'libpod-' + 'a' * 64 + '-suffix'):
+            self.assertEqual(self.summary('/root/' + component)['component'], 'no_match')
+
+    def test_multiple_and_mixed_components_retain_ambiguity(self):
+        result = self.summary('/libpod-' + 'a' * 64 + '/libpod-payload-' + 'a' * 64)
+        self.assertEqual(result['component'], 'multiple_bound_components')
+        self.assertEqual(result['position'], 'multiple')
+        result = self.summary('/libpod-' + 'a' * 64 + '/libpod-' + 'b' * 64 + '/' + 'a' * 12)
+        self.assertEqual(result['component'], 'cgroupfs_full_id')
+        self.assertEqual(result['position'], 'ancestor')
+        self.assertEqual(result['other_full_id_present'], 'yes')
+        self.assertEqual(result['short_id_present'], 'yes')
+
+    def test_missing_malformed_root_and_dot_paths_do_not_reveal_input(self):
+        for value in (None, '', 7, 'relative/private/path'):
+            self.assertEqual(self.summary(value)['component'], 'unavailable')
+        for value in ('/', '/sys/fs/cgroup/'):
+            self.assertEqual(self.summary(value)['root_path'], 'yes')
+        self.assertEqual(self.summary('/private/../scope')['dot_components'], 'yes')
+        self.assertEqual(self.summary('/private/./scope')['dot_components'], 'yes')
+
+    def test_runtime_and_manager_fields_use_closed_enums_without_new_reads(self):
+        value = {'OCIRuntime': '/private/secret-runtime', 'HostConfig': {
+            'CgroupManager': 'secret-manager', 'Cgroups': 'split', 'CgroupMode': 'ns:/private/ns'}}
+        with patch.object(os, 'open', side_effect=AssertionError('no filesystem read')), \
+                patch.object(subprocess, 'Popen', side_effect=AssertionError('no runtime call')):
+            result = gate.cgroup_summary(value, 'a' * 64)
+        for name in ('runtime', 'manager', 'inspect_cgroups', 'inspect_namespace'):
+            self.assertEqual(result[name], 'other')
+        self.assertEqual(result['requested_mode'], 'enabled')
+        self.assertNotIn('secret', repr(result))
+        self.assertNotIn('/private/', repr(result))
 
 
 if __name__ == '__main__':

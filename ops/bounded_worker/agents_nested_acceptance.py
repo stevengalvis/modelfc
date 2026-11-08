@@ -60,6 +60,70 @@ def state_summary(value):
     }
 
 
+def cgroup_summary(value, container_id):
+    """Diagnostic only: classify existing inspect data, never authorize capture.
+
+    All returned values are fixed enums. No path component, ID, PID, arbitrary
+    runtime name or host configuration value is copied into this summary.
+    """
+    value = value if isinstance(value, dict) else {}
+    host = value.get('HostConfig')
+    host = host if isinstance(host, dict) else {}
+    state = value.get('State')
+    state = state if isinstance(state, dict) else {}
+
+    def known(item, choices):
+        return item if isinstance(item, str) and item in choices else 'missing' if item is None else 'other'
+
+    result = {
+        'requested_mode': 'enabled', 'requested_namespace': 'private',
+        'manager': known(host.get('CgroupManager'), ('systemd', 'cgroupfs')),
+        'runtime': known(value.get('OCIRuntime'), ('crun', 'runc', 'runsc', 'youki', 'kata')),
+        'inspect_cgroups': known(host.get('Cgroups'), ('default', 'disabled')),
+        'inspect_namespace': known(host.get('CgroupMode'), ('private', 'host')),
+        'component': 'unavailable', 'position': 'unknown',
+        'other_full_id_present': 'unknown', 'short_id_present': 'unknown',
+        'root_path': 'unknown', 'dot_components': 'unknown',
+    }
+    raw = state.get('CgroupPath')
+    if (not isinstance(raw, str) or not raw.startswith('/')
+            or not isinstance(container_id, str) or not re.fullmatch(r'[a-f0-9]{64}', container_id)):
+        return result
+    parts = [part for part in raw.split('/') if part]
+    names = {container_id: 'bare_full_id', 'libpod-' + container_id: 'cgroupfs_full_id',
+             'libpod-' + container_id + '.scope': 'systemd_full_id',
+             'libpod-payload-' + container_id: 'split_payload_full_id'}
+    bound = [(index, names[part]) for index, part in enumerate(parts) if part in names]
+    other, short_bound, short_other = [], [], []
+    for index, part in enumerate(parts):
+        match = re.fullmatch(r'(?:libpod(?:-payload)?-)?([a-f0-9]{12,64})(?:\.scope)?', part)
+        if match:
+            candidate = match[1]
+            if len(candidate) == 64 and candidate != container_id:
+                other.append(index)
+            elif len(candidate) < 64:
+                (short_bound if container_id.startswith(candidate) else short_other).append(index)
+    result.update(other_full_id_present='yes' if other else 'no',
+                  short_id_present='yes' if short_bound or short_other else 'no',
+                  root_path='yes' if raw.rstrip('/') in ('', '/sys/fs/cgroup') else 'no',
+                  dot_components='yes' if any(p in ('.', '..') for p in parts) else 'no')
+    indexes = [index for index, _ in bound]
+    if bound:
+        result['component'] = bound[0][1] if len(bound) == 1 else 'multiple_bound_components'
+    else:
+        for indexes, kind in ((other, 'different_full_id'), (short_bound, 'short_bound_id'),
+                              (short_other, 'different_short_id')):
+            if indexes:
+                result['component'] = kind
+                break
+        else:
+            result['component'] = 'no_match'
+    result['position'] = ('multiple' if len(indexes) > 1 else
+                          'leaf' if indexes and indexes[0] == len(parts) - 1 else
+                          'ancestor' if indexes else 'none')
+    return result
+
+
 class _Pipe:
     """Bounded raw pipe reader. Stderr is counted/drained but never retained."""
     def __init__(self, process):
@@ -150,7 +214,8 @@ Retain this private report and the stopped container; no automatic removal.
                               'https://api.openai.com/never-called')
     report = {'attempt_id': attempt_id, 'container_id': None, 'stage': 'preflight',
               'reason': None, 'status': 'blocked', 'nested': 'not_run', 'cleanup': 'not_started',
-              'startup_state': state_summary(None), 'go_sent': False}
+              'startup_state': state_summary(None), 'go_sent': False,
+              'cgroup_diagnostics': cgroup_summary(None, None)}
     pipe = None
     deadline = time.monotonic() + 180
 
@@ -168,6 +233,7 @@ Retain this private report and the stopped container; no automatic removal.
             raise LiveFailure('container_create_uncertain')
         executor.container_id = raw.decode('ascii').strip()
         value = executor._inspect()
+        report['cgroup_diagnostics'] = cgroup_summary(value, executor.container_id)
         executor._created_policy(value)
         report['stage'] = 'ready'
         executor._start_attempted = True
@@ -181,6 +247,7 @@ Retain this private report and the stopped container; no automatic removal.
         report['stage'] = 'capture'
         value = executor._inspect()
         report['startup_state'] = state_summary(value)
+        report['cgroup_diagnostics'] = cgroup_summary(value, executor.container_id)
         if (value['State'].get('Running') is not True
                 or value['State'].get('Status') != 'running'
                 or type(value['State'].get('Pid')) is not int or value['State']['Pid'] <= 0):
