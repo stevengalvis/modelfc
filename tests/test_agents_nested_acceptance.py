@@ -1,5 +1,6 @@
 """Real fixed Python pipes plus modeled Podman/cgroup observations, never VPS tests."""
 import copy
+from contextlib import contextmanager
 import json
 import os
 from pathlib import Path
@@ -15,6 +16,8 @@ from ops.bounded_worker.agents_live_pilot import LiveFailure, PodmanExecutor
 from tests import test_agents_live_pilot as fixtures
 
 REAL_CAPTURE = PodmanExecutor._capture_cgroup
+CONTROL_VALUES = {'memory.max': '1073741824', 'memory.swap.max': '0',
+                  'pids.max': '64', 'cpu.max': '100000 100000', 'cpu.max.burst': '0'}
 
 
 def local_gate(payload="print('NESTED_OK', flush=True)", *, wait=20):
@@ -183,16 +186,11 @@ class AcceptanceTests(unittest.TestCase):
             raise AssertionError('capture should fail before opening a cgroup')
         if self.capture_error in ('pid', 'limits', 'descendant'):
             relative = value['State']['CgroupPath']
-            full = '/sys/fs/cgroup' + relative
-            reads = {'/proc/' + str(value['State']['Pid']) + '/cgroup':
-                     '0::' + ('/unrelated' if self.capture_error == 'pid' else relative) +
-                     ('/container' if self.capture_error == 'descendant' else '') + '\n',
-                     full + '/memory.max': '0' if self.capture_error == 'limits' else '1073741824',
-                     full + '/pids.max': '64', full + '/cpu.max': '100000 100000'}
-            self.opened_fd = os.open(self.path, os.O_RDONLY | os.O_DIRECTORY)
-            with patch.object(Path, 'is_symlink', return_value=False), \
-                    patch.object(Path, 'read_text', new=lambda path: reads[str(path)]), \
-                    patch.object(os, 'open', return_value=self.opened_fd):
+            suffix = '/container' if self.capture_error == 'descendant' else ''
+            membership = '0::' + ('/unrelated' if self.capture_error == 'pid' else relative + suffix) + '\n'
+            payload = {'memory.max': '0'} if self.capture_error == 'limits' else {}
+            with self.capture_files(value, membership, suffix=suffix,
+                                    scope={'pids.max': 'max'} if suffix else {}, payload=payload):
                 REAL_CAPTURE(backend, value)
             if self.capture_error == 'descendant':
                 return
@@ -200,6 +198,47 @@ class AcceptanceTests(unittest.TestCase):
         backend.cgroup_fd = os.open(self.path, os.O_RDONLY | os.O_DIRECTORY)
         if self.inspect_change:
             self.value['State']['Pid'] += 1
+
+    def capture_value(self, relative=None):
+        value = copy.deepcopy(self.value)
+        value['State'] = {'Running': True, 'Status': 'running', 'Pid': 123,
+                          'CgroupPath': relative or '/synthetic/libpod-' + self.value['Id'] + '.scope'}
+        self.fixture.executor.container_id = self.value['Id']
+        return value
+
+    @contextmanager
+    def capture_files(self, value, membership, *, suffix='', scope=None, payload=None):
+        # Ordinary temp files model cgroup controls; only host path/procfs lookup
+        # is redirected. Descriptor-relative traversal/read/close are real.
+        for directory, overrides in ((self.path, scope or {}),
+                (self.path / suffix.lstrip('/'), payload or {})):
+            directory.mkdir(parents=True, exist_ok=True)
+            for name, default in CONTROL_VALUES.items():
+                control = directory / name
+                val = overrides.get(name, default)
+                if val is None:
+                    control.unlink(missing_ok=True)
+                else:
+                    control.write_text(val)
+        initial = '/sys/fs/cgroup' + value['State']['CgroupPath']
+        proc = '/proc/' + str(value['State']['Pid']) + '/cgroup'
+        real_open, real_read = os.open, Path.read_text
+        observations = iter(membership) if isinstance(membership, list) else None
+
+        def opened(path, flags, *args, **kwargs):
+            if str(path) == initial:
+                self.opened_fd = real_open(self.path, flags, *args, **kwargs)
+                return self.opened_fd
+            return real_open(path, flags, *args, **kwargs)
+
+        def read(path, *args, **kwargs):
+            if str(path) == proc:
+                return next(observations) if observations is not None else membership
+            return real_read(path, *args, **kwargs)
+
+        with patch.object(Path, 'is_symlink', return_value=False), \
+                patch.object(Path, 'read_text', new=read), patch.object(os, 'open', new=opened):
+            yield
 
     def run_acceptance(self):
         with patch.object(PodmanExecutor, 'verify_prepared', side_effect=
@@ -301,6 +340,9 @@ class AcceptanceTests(unittest.TestCase):
         self.assertFalse(result['go_sent'])
         self.assertEqual(result['reason'], 'container_cgroup_limits_unverified')
         self.assertEqual(result['cleanup'], 'unverified')
+        self.assertEqual(result['resource_diagnostics']['payload']['memory.max'], '0')
+        self.assertEqual(result['resource_diagnostics']['mismatches'], ['memory.max'])
+        self.assertEqual(set(result['resource_diagnostics']['scope']), set(CONTROL_VALUES))
         with self.assertRaises(OSError):
             os.fstat(self.opened_fd)
 
@@ -335,42 +377,29 @@ class AcceptanceTests(unittest.TestCase):
 
     def test_missing_cgroup_is_not_accepted_from_another_json_level(self):
         backend = self.fixture.executor
-        backend.container_id = self.value['Id']
-        value = {'HostConfig': {'CgroupManager': 'systemd'},
-                 'State': {'Status': 'running', 'Running': True, 'Pid': 123},
-                 'CgroupPath': '/synthetic/libpod-' + self.value['Id'] + '.scope'}
+        value = self.capture_value()
+        value['CgroupPath'] = value['State'].pop('CgroupPath')
         with self.assertRaisesRegex(LiveFailure, 'container_cgroup_unverified'):
             backend._capture_cgroup(value)
         self.assertIsNone(backend.cgroup_fd)
 
     def test_native_state_cgroup_shape_binds_without_fallback(self):
         backend = self.fixture.executor
-        backend.container_id = self.value['Id']
-        relative = '/synthetic/libpod-' + self.value['Id'] + '.scope'
-        full = '/sys/fs/cgroup' + relative
-        value = {'HostConfig': {'CgroupManager': 'systemd'},
-                 'State': {'Status': 'running', 'Running': True, 'Pid': 123,
-                           'CgroupPath': relative}}
+        value = self.capture_value()
+        relative = value['State']['CgroupPath']
         for suffix in ('', '/container', '/container/init.scope'):
-            with self.subTest(suffix=suffix):
-                fd = os.open(self.path, os.O_RDONLY | os.O_DIRECTORY)
-                reads = {'/proc/123/cgroup': '0::' + relative + suffix + '\n',
-                         full + '/memory.max': '1073741824', full + '/pids.max': '64',
-                         full + '/cpu.max': '100000 100000'}
-                with patch.object(Path, 'is_symlink', return_value=False), \
-                        patch.object(Path, 'read_text', new=lambda path: reads[str(path)]), \
-                        patch.object(os, 'open', return_value=fd) as opened:
-                    backend._capture_cgroup(value)
-                self.assertEqual(backend.cgroup_fd, fd)
-                self.assertEqual(str(opened.call_args.args[0]), full)
+            with self.subTest(suffix=suffix), self.capture_files(value,
+                    '0::' + relative + suffix + '\n', suffix=suffix):
+                backend._capture_cgroup(value)
+                self.assertEqual(backend.cgroup_fd, self.opened_fd)
+                self.assertEqual(os.fstat(backend.cgroup_fd).st_ino, self.path.stat().st_ino)
                 backend.close()
 
     def test_membership_rejects_outside_ambiguous_and_noncanonical_paths(self):
         backend = self.fixture.executor
         backend.container_id = self.value['Id']
         relative = '/synthetic/libpod-' + self.value['Id'] + '.scope'
-        value = {'HostConfig': {'CgroupManager': 'systemd'},
-                 'State': {'Pid': 123, 'CgroupPath': relative}}
+        value = self.capture_value(relative)
         rejected = ['', '0::/\n', '0::/container\n', '0::/synthetic\n',
                     '0::/other-root' + relative + '\n',
                     '0::' + relative + '-sibling/container\n',
@@ -384,23 +413,18 @@ class AcceptanceTests(unittest.TestCase):
                     '0::' + relative + '\nmalformed\n']
         for membership in rejected:
             with self.subTest(membership=membership):
-                fd = os.open(self.path, os.O_RDONLY | os.O_DIRECTORY)
-                with patch.object(Path, 'is_symlink', return_value=False), \
-                        patch.object(Path, 'read_text', return_value=membership), \
-                        patch.object(os, 'open', return_value=fd):
+                with self.capture_files(value, membership):
                     with self.assertRaisesRegex(LiveFailure, 'container_cgroup_pid_mismatch'):
                         backend._capture_cgroup(value)
                 self.assertIsNone(backend.cgroup_fd)
                 with self.assertRaises(OSError):
-                    os.fstat(fd)
+                    os.fstat(self.opened_fd)
 
     def test_inspect_path_must_be_canonical_before_open(self):
         backend = self.fixture.executor
         backend.container_id = self.value['Id']
         for prefix in ('/synthetic/./', '/synthetic/../', '/synthetic//'):
-            value = {'HostConfig': {'CgroupManager': 'systemd'},
-                     'State': {'Pid': 123, 'CgroupPath': prefix +
-                               'libpod-' + self.value['Id'] + '.scope'}}
+            value = self.capture_value(prefix + 'libpod-' + self.value['Id'] + '.scope')
             with self.subTest(prefix=prefix), patch.object(os, 'open') as opened:
                 with self.assertRaisesRegex(LiveFailure, 'container_cgroup_unverified'):
                     backend._capture_cgroup(value)
@@ -413,6 +437,126 @@ class AcceptanceTests(unittest.TestCase):
         self.assertTrue(result['go_sent'])
         self.assertEqual(result['nested'], 'passed')
         self.assertEqual(result['cleanup'], 'verified')
+
+    def test_payload_limits_bound_but_scope_inode_retained_for_recursive_cleanup(self):
+        backend = self.fixture.executor
+        value = self.capture_value()
+        member = '0::' + value['State']['CgroupPath'] + '/container\n'
+        with self.capture_files(value, member, suffix='/container', scope={'pids.max': 'max'}):
+            backend._capture_cgroup(value)
+        self.assertEqual(backend.resource_diagnostics['scope']['pids.max'], 'max')
+        self.assertEqual(backend.resource_diagnostics['payload'], CONTROL_VALUES)
+        self.assertEqual(backend.resource_diagnostics['membership'], 'descendant')
+        self.assertEqual(os.fstat(backend.cgroup_fd).st_ino, self.path.stat().st_ino)
+        self.assertNotEqual(os.fstat(backend.cgroup_fd).st_ino, (self.path / 'container').stat().st_ino)
+        backend.binding = self.fixture.binding
+        backend._create_attempted = backend._start_attempted = backend._stop_attempted = True
+        stopped = copy.deepcopy(value)
+        stopped['State'] = {'Running': False, 'Status': 'stopped', 'Pid': 0}
+        (self.path / 'container' / 'cgroup.events').write_text('populated 0\n')
+        with patch.object(backend, '_inspect', return_value=stopped):
+            self.assertFalse(backend.verify_empty(backend.binding))  # Scope still populated.
+            (self.path / 'cgroup.events').write_text('populated 0\n')
+            self.assertTrue(backend.verify_empty(backend.binding))
+
+    def test_payload_mismatches_retain_all_numeric_controls_and_close_scope(self):
+        backend = self.fixture.executor
+        value = self.capture_value()
+        member = '0::' + value['State']['CgroupPath'] + '/container\n'
+        changes = (('memory.max', 'max'), ('memory.max', '2147483648'),
+                   ('memory.swap.max', '1'), ('pids.max', 'max'), ('pids.max', '65'),
+                   ('cpu.max', '200000 100000'), ('cpu.max', '50000 50000'),
+                   ('cpu.max.burst', '1'), ('cpu.max.burst', 'max'))
+        for name, actual in changes:
+            with self.subTest(name=name, actual=actual), self.capture_files(value, member,
+                    suffix='/container', payload={name: actual}):
+                with self.assertRaisesRegex(LiveFailure, 'container_cgroup_limits_unverified'):
+                    backend._capture_cgroup(value)
+            self.assertEqual(backend.resource_diagnostics['payload'], CONTROL_VALUES | {name: actual})
+            self.assertEqual(backend.resource_diagnostics['mismatches'], [name])
+            self.assertIsNone(backend.cgroup_fd)
+            with self.assertRaises(OSError):
+                os.fstat(self.opened_fd)
+
+    def test_limit_errors_are_sanitized_without_losing_later_values(self):
+        backend = self.fixture.executor
+        value = self.capture_value()
+        member = '0::' + value['State']['CgroupPath'] + '/container\n'
+        with self.capture_files(value, member, suffix='/container', payload={
+                'memory.max': 'private-secret', 'memory.swap.max': None,
+                'pids.max': '9' * 129}):
+            (self.path / 'container' / 'cpu.max.burst').unlink()
+            (self.path / 'container' / 'cpu.max.burst').symlink_to(self.path / 'cpu.max.burst')
+            with self.assertRaisesRegex(LiveFailure, 'container_cgroup_limits_unverified'):
+                backend._capture_cgroup(value)
+        actual = backend.resource_diagnostics['payload']
+        self.assertEqual(actual, {'memory.max': 'invalid', 'memory.swap.max': 'missing',
+            'pids.max': 'invalid', 'cpu.max': '100000 100000', 'cpu.max.burst': 'unreadable'})
+        self.assertNotIn('private-secret', repr(backend.resource_diagnostics))
+        self.assertEqual(len(backend.resource_diagnostics['mismatches']), 4)
+
+    def test_optional_burst_absent_only_when_unavailable_at_both_levels(self):
+        backend = self.fixture.executor
+        value = self.capture_value()
+        member = '0::' + value['State']['CgroupPath'] + '/container\n'
+        with self.capture_files(value, member, suffix='/container',
+                scope={'cpu.max.burst': None}, payload={'cpu.max.burst': None}):
+            backend._capture_cgroup(value)
+        self.assertEqual(backend.resource_diagnostics['payload']['cpu.max.burst'], 'missing')
+        self.assertEqual(backend.resource_diagnostics['mismatches'], [])
+        backend.close()
+        with self.capture_files(value, member, suffix='/container', payload={'cpu.max.burst': None}):
+            with self.assertRaisesRegex(LiveFailure, 'container_cgroup_limits_unverified'):
+                backend._capture_cgroup(value)
+
+    def test_zero_payload_burst_is_not_weakened_by_scope_diagnostics(self):
+        backend = self.fixture.executor
+        value = self.capture_value()
+        member = '0::' + value['State']['CgroupPath'] + '/container\n'
+        for scope_value in (None, 'private-malformed', '1000'):
+            with self.subTest(scope_value=scope_value), self.capture_files(value, member,
+                    suffix='/container', scope={'cpu.max.burst': scope_value}):
+                backend._capture_cgroup(value)
+            self.assertEqual(backend.resource_diagnostics['payload']['cpu.max.burst'], '0')
+            self.assertEqual(backend.resource_diagnostics['mismatches'], [])
+            backend.close()
+
+    def test_observed_subgroup_only_no_search_or_symlink_fallback(self):
+        backend = self.fixture.executor
+        value = self.capture_value()
+        member = '0::' + value['State']['CgroupPath'] + '/missing\n'
+        with self.capture_files(value, member, suffix='/good'):
+            with self.assertRaises(FileNotFoundError):
+                backend._capture_cgroup(value)
+        self.assertIsNone(backend.cgroup_fd)
+        with self.assertRaises(OSError):
+            os.fstat(self.opened_fd)
+        (self.path / 'missing').symlink_to(self.path / 'good', target_is_directory=True)
+        with self.capture_files(value, member, suffix='/good'):
+            with self.assertRaises(OSError):
+                backend._capture_cgroup(value)
+        self.assertIsNone(backend.cgroup_fd)
+
+    def test_changed_membership_during_limit_read_blocks_capture(self):
+        backend = self.fixture.executor
+        value = self.capture_value()
+        before = '0::' + value['State']['CgroupPath'] + '/container\n'
+        after = '0::' + value['State']['CgroupPath'] + '\n'
+        with self.capture_files(value, [before, after], suffix='/container'):
+            with self.assertRaisesRegex(LiveFailure, 'container_cgroup_pid_mismatch'):
+                backend._capture_cgroup(value)
+        self.assertIsNone(backend.cgroup_fd)
+        with self.assertRaises(OSError):
+            os.fstat(self.opened_fd)
+
+    def test_scope_must_be_exact_full_id_leaf_not_any_ancestor(self):
+        backend = self.fixture.executor
+        for suffix in ('/child', '-lookalike'):
+            value = self.capture_value('/synthetic/libpod-' + self.value['Id'] + '.scope' + suffix)
+            with self.subTest(suffix=suffix), patch.object(os, 'open') as opened:
+                with self.assertRaisesRegex(LiveFailure, 'container_cgroup_unbound'):
+                    backend._capture_cgroup(value)
+                opened.assert_not_called()
 
     def test_exact_profile_only_entrypoint_and_command_change(self):
         executor = self.fixture.executor

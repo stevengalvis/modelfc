@@ -163,7 +163,7 @@ class PodmanTests(unittest.TestCase):
                 'User': '65534:65534', 'WorkingDir': '/workspace', 'OpenStdin': True,
                 'Tty': False, 'Timeout': 180, 'StopTimeout': 5},
             'HostConfig': {'Memory': 1073741824, 'MemorySwap': 1073741824, 'CpuPeriod': 100000,
-                'CgroupManager': 'systemd',
+                'CgroupManager': 'systemd', 'CgroupMode': 'private', 'PidMode': 'private',
                 'CpuQuota': 100000, 'PidsLimit': 64, 'ReadonlyRootfs': True, 'Privileged': False,
                 'LogConfig': {'Type': 'none'}, 'RestartPolicy': {'Name': 'no'},
                 'SecurityOpt': ['no-new-privileges'],
@@ -207,6 +207,23 @@ class PodmanTests(unittest.TestCase):
                 value['HostConfig']['Tmpfs']['/tmp'] = 'rw,nodev,nosuid,size=67108864,mode=700,U'
             with self.assertRaises(live.LiveFailure):
                 self.executor._created_policy(value)
+
+    def test_policy_rejects_shared_namespaces_or_systemd_writable_cgroup_mode(self):
+        for section, name, actual in (('Config', 'SystemdMode', True),
+                ('Config', 'SystemdMode', None), ('Config', 'SystemdMode', 'false'),
+                ('Config', 'SystemdMode', 0), ('HostConfig', 'CgroupMode', 'host'),
+                ('HostConfig', 'PidMode', 'host')):
+            value = copy.deepcopy(self.value)
+            value[section][name] = actual
+            with self.subTest(name=name, actual=actual), self.assertRaisesRegex(
+                    live.LiveFailure, 'container_policy_rejected'):
+                self.executor._created_policy(value)
+
+    def test_systemdmode_false_omitempty_matches_native_inspect(self):
+        self.assertNotIn('SystemdMode', self.value['Config'])
+        self.executor._created_policy(self.value)
+        self.value['Config']['SystemdMode'] = False
+        self.executor._created_policy(self.value)
 
     def test_inspect_binds_image_container_and_labels(self):
         self.executor.binding = self.binding

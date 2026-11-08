@@ -174,9 +174,20 @@ not blanket-allowed; mappings must match exactly, without duplicate names.
 
 Capture accepts the host PID's canonical unified cgroup membership at the bound
 scope or a component-bounded descendant: Podman 4.9.3 normalizes inspect paths
-to the enclosing full-ID scope. Resource checks and the retained descriptor stay
-on that scope; sibling/prefix/traversal or namespace-root mismatches remain
-rejected. See `NESTED_ACCEPTANCE.md` for the pinned source contract and limitations.
+to the enclosing full-ID scope. For the verified crun 1.14.1 profile, controls are
+read from the exact observed PID-membership directory, opened component by
+component beneath the bound scope with no symlinks or child search. Require
+1 GiB memory, zero additional swap, 64 PIDs, CPU quota/period 100000/100000,
+and zero burst when that optional kernel interface exists. The enclosing scope
+FD remains the recursive cleanup boundary, not just the payload's FD. Exact
+private PID/cgroup namespace and non-systemd container mode are checked along
+with the existing nonroot/no-capability/no-host-mount profile. Its retained OCI
+acceptance must establish read-only cgroup access with no writable alternative;
+inspect policy checks are not a fresh mount-table audit. Sibling/prefix/traversal
+and namespace-root mismatches remain rejected. `resource_diagnostics` records
+bounded numeric scope/payload controls and fixed error states before a failure;
+it does not reconstruct missing historical values. See `NESTED_ACCEPTANCE.md`
+for the pinned source contract, optional-burst semantics and limitations.
 
 Cleanup requires exact stopped-container identity plus the saved cgroup's
 `populated 0`, or removal of that previously held kernel cgroup inode. Losing
@@ -191,7 +202,8 @@ uncertain cloud and local state manually; creating a fresh attempt is not recove
 SDK stream close, local stop and cloud cancel are distinct operations.
 The returned report retains known attempt/session/environment/turn/container IDs
 for private operator reconciliation, including when opening the stream fails
-after session creation. It excludes remote URLs, keys and raw events. Retain this
+after session creation, plus safe numeric resource diagnostics. It excludes
+remote URLs, keys and raw events. Retain this
 report privately; a crash before return can still lose those in-memory identities.
 
 ## Source and test evidence

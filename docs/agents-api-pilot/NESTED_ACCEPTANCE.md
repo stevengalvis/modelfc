@@ -115,9 +115,11 @@ descendants below the exact `libpod-<full-ID>.scope` when reporting
 incorrect acceptance requirement. Capture now requires one canonical unified
 `0::` membership at that bound path or beneath it at a complete path-component
 boundary. Siblings, prefix lookalikes, traversal, ambiguous entries and
-namespace-relative roots are rejected. The descriptor and resource checks stay
-on the enclosing full-ID scope, not the payload child. Its recursive
-`cgroup.events populated` check still covers the complete subtree.
+namespace-relative roots are rejected. The enclosing path must end in the exact
+`libpod-<full-ID>.scope`; a matching ancestor or prefix is insufficient. The
+scope descriptor is retained for recursive cleanup, while resource controls are
+read from the exact observed PID-membership directory as described below. The
+scope's `cgroup.events populated` check still covers the complete subtree.
 
 The caller must run in the host PID/cgroup view used by its local Podman, not
 inside the tested container or through a remote service. Inspect returns
@@ -127,13 +129,87 @@ or cgroup-namespace path translation/fallback is attempted here. A mismatching
 path continues to block capture. This source-confirmed contract correction does
 not establish the cause of the reported VPS mismatch: that run's actual procfs
 suffix was not retained. Do not infer `/container` or relabel its historical
-cleanup. Current-state reconciliation and already-authorized temporary-manager
-restoration remain separate operator work before any new attempt.
+cleanup. Current-state reconciliation remains separate operator work before a
+new attempt. The already-active manager can be reused after that reconciliation;
+manager shutdown is not a prerequisite for an isolated new target. Preserve the
+separate restoration obligation without stopping unrelated workloads.
 
 Sources: [Podman normalization](https://github.com/containers/podman/blob/v4.9.3/libpod/container.go#L1002-L1072),
 [inspect PID](https://github.com/containers/podman/blob/v4.9.3/libpod/container_inspect.go#L117-L131),
 [rootless namespace flags](https://github.com/containers/podman/blob/v4.9.3/pkg/rootless/rootless_linux.c#L933-L955),
 and [recursive cgroup state](https://docs.kernel.org/admin-guide/cgroup-v2.html#un-populated-notification).
+
+### Resource boundary for the verified crun 1.14.1 runtime
+
+crun 1.14.1 normally puts the payload into a `container` subgroup beneath its
+systemd scope, then applies the OCI resource controls to that payload path.
+Its systemd scope setup enables task accounting but does not set `TasksMax`.
+Requiring the enclosing scope's `pids.max` to be 64 was therefore not a valid
+check of this runtime's enforced payload limit. This is a source-confirmed
+contract correction, **not** evidence of which value failed on the VPS: those
+historical numeric values and the actual payload suffix were not retained.
+
+Capture now opens only the canonical path observed in the identity-bound host
+PID's unified membership. Each suffix component is opened relative to the held
+scope directory with `O_DIRECTORY|O_NOFOLLOW`. It never scans children, assumes
+a subgroup name, follows a symlink, or chooses a convenient bounded sibling.
+The membership is reread after all controls and must remain identical. Every
+failure closes the incomplete descriptors and leaves GO unsent and historical
+cleanup unverified. Only the enclosing scope descriptor survives successful
+validation, so a vacant payload alone cannot prove that its whole scope is empty.
+
+At the exact payload directory, require `memory.max=1073741824`,
+`memory.swap.max=0`, `pids.max=64`, and `cpu.max="100000 100000"`. The original
+1 GiB combined memory/swap request means no extra swap allowance. CPU quota and
+period are checked independently by their exact two-field value. If
+`cpu.max.burst` is available it must be zero. ENOENT at **both** scope and payload
+is retained as `missing` and accepted for this optional interface: Linux 5.13
+exposes `cpu.max` without burst, while 5.14 adds it. A nonzero/malformed payload value or payload permission error still blocks.
+Missing payload burst also blocks if the scope exposes that interface. A verified
+zero payload burst is sufficient regardless of the scope's diagnostic value;
+the scope is not a second resource acceptance boundary. Other missing payload
+controls are not waived. Unlimited payload controls are never accepted; an enclosing
+scope's limits are diagnostic, not a substitute for payload verification.
+These are kernel resource controls, not an instantaneous memory or CPU-use promise.
+
+The effective inspect policy now also requires private PID and cgroup namespaces
+and effective `Config.SystemdMode=false` (the native `omitempty` field may be
+absent for false; explicit null, wrong types or true are rejected), in addition to nonroot UID/GID 65534, all
+capabilities dropped, no-new-privileges, no host mounts/devices and exact tmpfs
+controls. Podman 4.9.3's normal nonprivileged OCI profile mounts cgroups read-only;
+privileged/unmask/systemd-mode writable overrides are outside this accepted
+profile. Retained exact-profile acceptance must cover that read-only cgroup
+mount and absence of alternate writable cgroup access, preventing commands from
+moving upward out of the bounded payload. These inspect fields supplement the
+trusted prepared runtime/configuration; they are **not** a fresh mount-table audit.
+No new namespace probe, mount, security option, or host permission is introduced.
+
+`resource_diagnostics` retains all five controls at the scope and payload before
+comparison, the `scope`/`descendant`/`unknown` membership enum, and all mismatched
+control names. Values are bounded numeric strings, `max` (including the CPU
+period), or fixed `missing`/`unreadable`/`invalid` states. No path, PID, ID, raw
+file text or exception is copied into this subsection. If capture stops before
+a level is reachable, that level stays empty; do not reconstruct it later.
+Retain this evidence privately; external reporting remains limited to the
+already-authorized sanitized status, unless sharing more is separately approved.
+
+Pinned sources:
+- [crun default subgroup](https://github.com/containers/crun/blob/1.14.1/src/libcrun/cgroup-systemd.c#L1162-L1207)
+  and [move into subgroup](https://github.com/containers/crun/blob/1.14.1/src/libcrun/cgroup-systemd.c#L349-L405).
+- [Scope resource properties](https://github.com/containers/crun/blob/1.14.1/src/libcrun/cgroup-systemd.c#L802-L898)
+  and [task accounting](https://github.com/containers/crun/blob/1.14.1/src/libcrun/cgroup-systemd.c#L930-L1048).
+- [Apply resources to returned payload path](https://github.com/containers/crun/blob/1.14.1/src/libcrun/cgroup.c#L341-L355)
+  and [v2 control writes](https://github.com/containers/crun/blob/1.14.1/src/libcrun/cgroup-resources.c#L1157-L1197).
+- [Memory/swap conversion](https://github.com/containers/crun/blob/1.14.1/src/libcrun/cgroup-resources.c#L644-L700),
+  [PID/burst writes](https://github.com/containers/crun/blob/1.14.1/src/libcrun/cgroup-resources.c#L823-L851),
+  and [CPU quota/period](https://github.com/containers/crun/blob/1.14.1/src/libcrun/cgroup-resources.c#L944-L954).
+- [Podman read-only cgroup permissions](https://github.com/containers/podman/blob/v4.9.3/pkg/specgen/generate/oci_linux.go#L59-L98),
+  [default mount](https://github.com/containers/podman/blob/v4.9.3/pkg/specgen/generate/oci_linux.go#L187-L194),
+  [effective namespace fields](https://github.com/containers/podman/blob/v4.9.3/libpod/container_inspect_linux.go#L212-L271),
+  and [SystemdMode omission semantics](https://github.com/containers/podman/blob/v4.9.3/libpod/define/container_inspect.go#L64-L67).
+- [Linux 5.13 CPU files](https://github.com/torvalds/linux/blob/v5.13/kernel/sched/core.c#L8873-L8911),
+  [Linux 5.14 burst interface](https://github.com/torvalds/linux/blob/v5.14/kernel/sched/core.c#L9782-L9794),
+  and [kernel CPU semantics](https://docs.kernel.org/admin-guide/cgroup-v2.html#cpu-interface-files).
 
 ### Retained cgroup diagnostics
 
@@ -182,6 +258,7 @@ subsection. These classifications do not relax capture, GO, limits or cleanup va
 
 Focused command: `python -B -m unittest -q tests.test_agents_nested_acceptance`.
 Tests launch only fixed local Python peers over real pipes; Podman and Codex are
-never executed. Runtime inspection/cgroup limits are modeled, including a local
-ordinary-directory descriptor standing in for the held cgroup inode. These tests
+never executed. Runtime inspection/cgroup limits are modeled. Real local ordinary-directory
+descriptors and bounded control-file reads exercise exact descendant traversal,
+resource diagnostics, failed-capture closure, and scope-versus-payload cleanup. These tests
 prove handshake/control flow, not Linux cgroup or VPS containment acceptance.

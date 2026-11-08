@@ -40,7 +40,7 @@ _SAFE_FAILURES = frozenset((
     'container_cgroup_pid_mismatch', 'container_cgroup_limits_unverified',
     'container_create_uncertain', 'container_name_not_available', 'prepared_runtime_unverified',
     'rootless_user_required', 'runtime_path_rejected',
-    'container_manager_rejected',
+    'container_manager_rejected', 'container_policy_rejected',
 ))
 
 
@@ -289,6 +289,7 @@ Retain this private report and the stopped container; no automatic removal.
             except BaseException:
                 pass
         report['container_id'] = executor.container_id  # Cleanup can resolve an uncertain create.
+        report['resource_diagnostics'] = executor.resource_diagnostics
         if pipe is not None:
             pipe.close()
         executor.close()

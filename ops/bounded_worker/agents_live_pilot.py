@@ -42,6 +42,30 @@ _ENV = {'PATH': '/opt/agents/bin:/usr/local/bin:/usr/bin:/bin',
         'HOME': '/home/agents', 'CODEX_HOME': '/home/agents/.codex',
         'LANG': 'C.UTF-8', 'LC_ALL': 'C.UTF-8', 'container': 'podman',
         'HOSTNAME': 'agents-pilot', 'GIT_TERMINAL_PROMPT': '0', 'GIT_CONFIG_NOSYSTEM': '1'}
+_CGROUP_LIMITS = {'memory.max': '1073741824', 'memory.swap.max': '0',
+                  'pids.max': '64', 'cpu.max': '100000 100000', 'cpu.max.burst': '0'}
+
+
+def _cgroup_values(directory_fd):
+    """Bounded numeric diagnostics from a held directory, without raw error text."""
+    values = {}
+    for name in _CGROUP_LIMITS:
+        try:
+            fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=directory_fd)
+            try:
+                raw = os.read(fd, 129)
+            finally:
+                os.close(fd)
+            value = raw.decode('ascii').strip()
+            pattern = r'(?:max|[0-9]{1,20}) [0-9]{1,20}' if name == 'cpu.max' else r'max|[0-9]{1,20}'
+            values[name] = value if len(raw) <= 128 and re.fullmatch(pattern, value) else 'invalid'
+        except FileNotFoundError:
+            values[name] = 'missing'
+        except OSError:
+            values[name] = 'unreadable'
+        except UnicodeError:
+            values[name] = 'invalid'
+    return values
 
 
 class LiveFailure(RuntimeError):
@@ -203,6 +227,8 @@ Commands are injectable only for offline tests; no command retries are made.
         self.env = {'PATH': '/usr/bin:/bin', 'HOME': target.runtime_home,
                     'XDG_RUNTIME_DIR': target.runtime_dir, 'LANG': 'C.UTF-8'}
         self.binding = self.container_id = self.process = self.cgroup_fd = None
+        self.resource_diagnostics = {'membership': 'unknown', 'scope': {}, 'payload': {},
+                                     'mismatches': []}
         self._create_attempted = self._start_attempted = self._stop_attempted = False
 
     def verify_prepared(self):
@@ -315,6 +341,7 @@ Commands are injectable only for offline tests; no command retries are made.
             if not sep or key in actual_env:
                 raise LiveFailure('container_environment_rejected')
             actual_env[key] = val
+        # Podman 4.9.3 serializes SystemdMode with omitempty: absent means false.
         expected = {'Memory': 1073741824, 'MemorySwap': 1073741824,
                     'CpuPeriod': 100000, 'CpuQuota': 100000, 'PidsLimit': 64,
                     'ReadonlyRootfs': True, 'Privileged': False}
@@ -322,6 +349,8 @@ Commands are injectable only for offline tests; no command retries are made.
                 or config['WorkingDir'] != '/workspace' or config['OpenStdin'] is not True
                 or config['Tty'] is not False or config['Timeout'] != 180
                 or config['StopTimeout'] != 5 or config.get('Secrets')
+                or config.get('SystemdMode', False) is not False
+                or host.get('CgroupMode') != 'private' or host.get('PidMode') != 'private'
                 or value.get('Mounts') or host.get('Binds') or host.get('Devices')
                 or any(type(host.get(k)) is not type(v) or host[k] != v for k, v in expected.items())
                 or host['LogConfig']['Type'] != 'none'
@@ -388,6 +417,7 @@ Commands are injectable only for offline tests; no command retries are made.
     def _capture_cgroup(self, value):
         if value.get('HostConfig', {}).get('CgroupManager') != 'systemd':
             raise LiveFailure('container_manager_rejected')
+        self._created_policy(value)  # Recheck the effective nonroot/private/no-mount profile.
         state = value['State']
         raw = state.get('CgroupPath')
         if (not isinstance(raw, str) or not raw.startswith('/')
@@ -395,21 +425,23 @@ Commands are injectable only for offline tests; no command retries are made.
                 or any(char in raw for char in ('\x00', '\n', '\r'))):
             raise LiveFailure('container_cgroup_unverified')
         path = Path(raw) if raw.startswith('/sys/fs/cgroup/') else Path('/sys/fs/cgroup' + raw)
-        if not any(part in (self.container_id, 'libpod-' + self.container_id + '.scope',
-                            'libpod-' + self.container_id) for part in path.parts):
+        if path.name != 'libpod-' + self.container_id + '.scope':
             raise LiveFailure('container_cgroup_unbound')
         for parent in (*reversed(path.parents), path):
             if parent.is_symlink():
                 raise LiveFailure('container_cgroup_unverified')
         fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        payload_fd = None
         try:
+            self.resource_diagnostics['scope'] = _cgroup_values(fd)
             relative = '/' + str(path.relative_to('/sys/fs/cgroup'))
             if type(state.get('Pid')) is not int or state['Pid'] <= 0:
                 raise LiveFailure('container_cgroup_pid_mismatch')
-            lines = Path('/proc/' + str(state['Pid']) + '/cgroup').read_text().splitlines()
+            proc_membership = Path('/proc/' + str(state['Pid']) + '/cgroup')
+            lines = proc_membership.read_text().splitlines()
             # Podman 4.9.3 reports the enclosing full-ID scope, truncating
             # descendants from this same host /proc membership (container.go,
-            # cGroupPath). Keep the scope inode and limits, not just its child.
+            # cGroupPath). Keep the scope inode for recursive cleanup.
             if len(lines) != 1 or not lines[0].startswith('0::'):
                 raise LiveFailure('container_cgroup_pid_mismatch')
             member = lines[0][3:]
@@ -418,13 +450,37 @@ Commands are injectable only for offline tests; no command retries are made.
                     or any(part in ('', '.', '..') for part in parts[1:])
                     or parts[:len(scope_parts)] != scope_parts):
                 raise LiveFailure('container_cgroup_pid_mismatch')
-            for name, expected in (('memory.max', '1073741824'), ('pids.max', '64'),
-                                   ('cpu.max', '100000 100000')):
-                if (path / name).read_text().strip() != expected:
-                    raise LiveFailure('container_cgroup_limits_unverified')
+            tail = parts[len(scope_parts):]
+            self.resource_diagnostics['membership'] = 'descendant' if tail else 'scope'
+            # crun 1.14.1 applies OCI resources to the actual payload subgroup.
+            # Open only the observed membership, beneath the bound scope inode.
+            payload_fd = os.dup(fd)
+            for part in tail:
+                child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                                dir_fd=payload_fd)
+                os.close(payload_fd)
+                payload_fd = child
+            observed = _cgroup_values(payload_fd)
+            self.resource_diagnostics['payload'] = observed
+            # Older kernels expose cpu.max without the later burst interface.
+            # Only genuine absence at both levels is compatible; never turn a
+            # permission error, malformed value or nonzero burst into zero.
+            burst_absent = (observed['cpu.max.burst'] == 'missing'
+                            and self.resource_diagnostics['scope']['cpu.max.burst'] == 'missing')
+            mismatches = [name for name, expected in _CGROUP_LIMITS.items()
+                          if observed[name] != expected
+                          and not (name == 'cpu.max.burst' and burst_absent)]
+            self.resource_diagnostics['mismatches'] = mismatches
+            if mismatches:
+                raise LiveFailure('container_cgroup_limits_unverified')
+            if proc_membership.read_text().splitlines() != lines:
+                raise LiveFailure('container_cgroup_pid_mismatch')
         except BaseException:
             os.close(fd)
             raise
+        finally:
+            if payload_fd is not None:
+                os.close(payload_fd)
         self.cgroup_fd = fd  # Only completely validated evidence can prove cleanup.
 
     def stop(self, binding):
@@ -576,6 +632,7 @@ never command-line arguments or environment discovery. No actions run on import.
             verify_empty=executor.verify_empty)
         result = await execute_once(controller, events, overall_seconds=plan.task.timeout_seconds)
         result['container_id'] = executor.container_id
+        result['resource_diagnostics'] = executor.resource_diagnostics
         return result
     finally:
         executor.close()
