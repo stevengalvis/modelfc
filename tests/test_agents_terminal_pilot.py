@@ -49,6 +49,7 @@ class CallerTests(unittest.TestCase):
         self.assertEqual(plan.task.allowed_paths, ('pilot_sentinel.txt',))
         self.assertEqual((attempt, journal, target.image_id, target.acceptance_id),
                          ('d' * 64, '/private/journal', 'b' * 64, 'c' * 64))
+        self.assertTrue(callable(kwargs.pop('private_error_sink')))
         self.assertEqual(kwargs, dict(zip(('application_key', 'environment_key'), KEYS)))
         report = json.loads(self.tty.getvalue())
         self.assertFalse(report['result_verified'])
@@ -150,6 +151,78 @@ class CallerTests(unittest.TestCase):
         self.assertTrue(all(item is None for item in value['diagnostics']['api'].values()))
         self.assertEqual(value['diagnostics']['policy_mismatches'], [])
         self.assertTrue(all(key not in json.dumps(value) for key in KEYS))
+
+    def test_private_callback_is_separate_from_summary_and_logs(self):
+        private = caller._PrivateProviderError({'message': 'private provider wording'})
+        async def run(*args, **kwargs):
+            kwargs['private_error_sink'](private)
+            return {'status': 'blocked', 'diagnostics': {'api': {'http_status': 400,
+                'provider_type': 'invalid_request_error', 'provider_param': 'agent.model',
+                'message': 'private provider wording'}}}
+        self.live.side_effect = run
+        with patch.object(caller, '_private_explanation') as explain:
+            self.assertEqual(caller.main(ARGS), 1)
+        explain.assert_called_once_with(self.tty, private, KEYS)
+        report = json.loads(self.tty.getvalue())
+        self.assertEqual(report['diagnostics']['api']['provider_type'], 'invalid_request_error')
+        self.assertEqual(report['diagnostics']['api']['provider_param'], 'agent.model')
+        self.assertNotIn('private provider wording', self.tty.getvalue() + self.output.getvalue())
+        self.live.assert_awaited_once()
+
+
+class PrivateExplanationTests(unittest.TestCase):
+    def setUp(self):
+        self.output = io.StringIO()
+        self.tty = Mock(wraps=self.output)
+        self.tty.fileno.return_value = 9
+        stack = ExitStack()
+        self.addCleanup(stack.close)
+        stack.enter_context(patch.object(caller.os, 'isatty', return_value=True))
+        stack.enter_context(patch.object(caller.os, 'geteuid', return_value=1000))
+        self.info = types.SimpleNamespace(st_mode=stat.S_IFCHR | 0o600, st_uid=1000, st_rdev=136)
+        alias = types.SimpleNamespace(st_mode=stat.S_IFCHR | 0o666, st_uid=0, st_rdev=5)
+        stack.enter_context(patch.object(caller.os, 'fstat',
+            side_effect=lambda fd: alias if fd == 9 else self.info))
+        stack.enter_context(patch.object(caller.os, 'tcgetpgrp', return_value=55))
+        stack.enter_context(patch.object(caller.os, 'getpgrp', return_value=55))
+        for number, name in enumerate(('stdin', 'stdout', 'stderr')):
+            stream = Mock()
+            stream.fileno.return_value = number
+            stack.enter_context(patch.object(caller.sys, name, stream))
+
+    def test_both_keys_controls_and_token_patterns_redacted_before_truncation(self):
+        body = ('Unsupported model. ' + KEYS[0] + ' ' + KEYS[1]
+            + ' sk-unknown-secret Bearer another-secret api_key="quoted secret" '
+            + 'x' * 50 + '\x1b[31mred\x1b[0m\x1b]52;c;clipboard\x07\n\r\x00\u202e'
+            + ' prefix ' + 'padding ' * 100 + KEYS[0])
+        private = caller._PrivateProviderError({'type': 'invalid_request_error',
+            'param': 'agent.model', 'message': body})
+        caller._private_explanation(self.tty, private, KEYS)
+        output = self.output.getvalue()
+        self.assertIn('Unsupported model.', output)
+        self.assertIn('agent.model', output)
+        self.assertIn('[truncated]', output)
+        for hidden in (*KEYS, 'sk-unknown-secret', 'another-secret', 'quoted secret',
+                       'x' * 50, 'clipboard', '\x1b', '\r', '\x00', '\u202e'):
+            self.assertNotIn(hidden, output)
+        self.assertTrue(all(32 <= ord(c) <= 126 or c == '\n' for c in output))
+        self.assertLess(len(output), 1300)
+        self.assertEqual(private.take_fields(), {})
+        # A credential crossing the output boundary is fully removed first.
+        text = 'x ' * 380 + KEYS[1]
+        self.assertNotIn(KEYS[1][:8], caller._private_text(text, KEYS, 768))
+
+    def test_missing_fields_and_changed_terminal_never_fall_back_to_stdout(self):
+        private = caller._PrivateProviderError({'message': [], 'type': None})
+        caller._private_explanation(self.tty, private, KEYS)
+        self.assertIn('message: unavailable', self.output.getvalue())
+        self.output.seek(0)
+        self.output.truncate()
+        self.info.st_uid = 1001
+        private = caller._PrivateProviderError({'message': 'private'})
+        caller._private_explanation(self.tty, private, KEYS)
+        self.assertEqual(self.output.getvalue(), '')
+        self.assertEqual(private.take_fields(), {})
 
 
 class TerminalTests(unittest.TestCase):

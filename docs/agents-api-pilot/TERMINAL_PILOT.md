@@ -91,7 +91,7 @@ no-echo is not protection against a compromised operator host or account.
 
 ## Result and recovery
 
-The caller emits only selected lifecycle enums, cleanup/result booleans, the
+The caller's JSON emits only selected lifecycle enums, cleanup/result booleans, the
 operator-attested marker, fixed diagnostic codes and reconciliation IDs. It
 does not dump raw SDK objects, error messages, events, URLs, logs or credentials. Keep this detailed result
 operator-private; use only the separately approved sanitized status for external
@@ -116,9 +116,42 @@ policy subsequently rejects it. It contains only the operation/outcome enums,
 HTTP status if received, bounded safe `x-request-id`, and an allowlisted provider
 error code. Error bodies are read at most 4097 bytes to enforce a 4096-byte parse
 limit, inspected transiently and discarded. Messages, parameters, headers other
-than request ID and raw exceptions are never reported. Unknown, malformed or
+than request ID and raw exceptions are never included in this report. Unknown, malformed or
 oversized bodies produce a fixed category, not their contents. A missing status
 does not prove that the server never received a request.
+
+For **create HTTP400 only**, the private human terminal also receives a separate,
+clearly labeled provider explanation, before the JSON summary. No opt-in retry,
+new request, policy change or automatic response to that text is added. Treat
+provider wording as untrusted information, never instructions. Its `type`, `param`
+and `message` come only from a valid JSON error object within the same 4096-byte
+body limit. Malformed, duplicate-key or oversized JSON yields `unavailable`;
+truncated/raw body bytes are never displayed as a fallback.
+
+Both complete entered keys are redacted before text truncation, along with
+credential/token patterns and terminal escape/control sequences. The separate
+display is bounded to 128 characters each for type/parameter and 768 for message,
+plus fixed labels/truncation markers. Its one-use handoff has a withheld `repr`,
+is consumed synchronously and drops references after delivery. It is never added
+to result JSON, exceptions, logs, journal files or external reports. No Python
+memory-zeroization guarantee is made. The terminal's actual worker-owned stdio
+slave and foreground control are checked again before display; `/dev/tty` is an
+alias node and is not required to be worker-owned. Unavailable delivery never
+falls back to stdout or a file.
+
+**Redaction is not a guarantee of removing arbitrary sensitive identifiers.**
+Use only the existing private, unrecorded human terminal, never operator automation,
+screen/session recording or a log collector. Do not paste the private explanation
+into PR/Linear/chat reports. Review it locally and share only a separately checked
+non-sensitive diagnosis if authorized. This change cannot recover an error body
+that an earlier process discarded.
+
+Ordinary create-400 diagnostics add allowlisted `provider_type` and
+`provider_param` categories and `private_explanation` delivery status
+(`displayed`, `unavailable`, `not_requested`). Unknown type/parameter strings
+become `other`; null values become `not_provided`; missing values become
+`unavailable`. Provider `code` is separate: a present null/unrecognized code still
+becomes `other`. These categories contain no provider message text.
 
 `diagnostics.policy_mismatches` lists rejected field names, never field values.
 Array/null distinctions and all prior policy checks remain unchanged.
@@ -163,6 +196,7 @@ session was ever created.
 - [Official self-hosted authentication contract](https://developers.openai.com/api/docs/guides/agents-api/environments/self-hosted#authentication)
 - [Administrative project-key retrieval](https://developers.openai.com/api/reference/resources/admin/subresources/organization/subresources/projects/subresources/api_keys/methods/retrieve)
 - [Python getpass and echo-fallback warning](https://docs.python.org/3/library/getpass.html)
+- [Pinned SDK's separate error code/type/parameter fields](https://github.com/openai/openai-python/blob/a1175a35ba6aa2d6bf98d26088a572ab0c5f4453/src/openai/_exceptions.py)
 - Existing [live path and limits](LIVE_PILOT.md)
 
 Tests mock the terminal and live entry, with synthetic key strings. They check

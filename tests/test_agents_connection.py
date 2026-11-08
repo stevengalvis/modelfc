@@ -157,6 +157,64 @@ class ConnectionTests(unittest.TestCase):
         self.assertEqual(self.client.diagnostic, {'operation': 'create', 'outcome': 'response_received',
             'http_status': 201, 'request_id': 'req_synthetic', 'provider_code': None})
 
+    def test_create_400_private_explanation_is_transient_not_a_diagnostic_or_exception(self):
+        received = []
+        sink = Mock(side_effect=lambda private: received.append(repr(private)))
+        self.client = AgentsConnection('synthetic_application_key', opener=self.opener,
+                                       private_error_sink=sink)
+        body = io.BytesIO(json.dumps({'error': {'code': None, 'type': 'invalid_request_error',
+            'param': 'agent.model', 'message': 'private synthetic_application_key'}}).encode())
+        self.opener.open.side_effect = urllib.error.HTTPError(
+            'https://api.openai.com/v1/agents/sessions', 400, 'raw private text', {}, body)
+        with self.assertRaises(ConnectionFailure) as caught:
+            self.client.create_session(self.plan)
+        self.assertEqual(self.client.diagnostic['provider_type'], 'invalid_request_error')
+        self.assertEqual(self.client.diagnostic['provider_param'], 'agent.model')
+        self.assertEqual(self.client.diagnostic['provider_code'], 'other')
+        sink.assert_called_once()
+        self.assertEqual(sink.call_args.args[0].take_fields(), {})
+        self.assertNotIn('synthetic_application_key', repr(sink.call_args))
+        self.assertNotIn('synthetic_application_key', repr(self.client.diagnostic))
+        self.assertNotIn('raw private text', str(caught.exception))
+        self.opener.open.assert_called_once()
+
+    def test_private_sink_gets_no_unparseable_oversized_or_duplicate_body_fallback(self):
+        for raw in (b'private not json', b'x' * 4097,
+                    b'{"error":{"message":"private","message":"other"}}'):
+            with self.subTest(size=len(raw)):
+                self.setUp()
+                received = []
+                self.client = AgentsConnection('synthetic_application_key', opener=self.opener,
+                    private_error_sink=lambda private: received.append(private.take_fields()))
+                self.opener.open.side_effect = urllib.error.HTTPError(
+                    'https://api.openai.com/v1/agents/sessions', 400, '', {}, io.BytesIO(raw))
+                with self.assertRaises(ConnectionFailure):
+                    self.client.create_session(self.plan)
+                self.assertEqual(received, [{}])
+                self.assertEqual(self.client.diagnostic['provider_type'], 'unavailable')
+                self.opener.open.assert_called_once()
+
+    def test_private_sink_only_handles_create_400_and_its_failure_does_not_replay(self):
+        for operation, status in (('create', 403), ('retrieve', 400), ('create', 400)):
+            with self.subTest(operation=operation, status=status):
+                self.setUp()
+                sink = Mock(side_effect=RuntimeError('private sink failure'))
+                self.client = AgentsConnection('synthetic_application_key', opener=self.opener,
+                                               private_error_sink=sink)
+                suffix = '' if operation == 'create' else '/sess_test'
+                self.opener.open.side_effect = urllib.error.HTTPError(
+                    'https://api.openai.com/v1/agents/sessions' + suffix, status, '', {},
+                    io.BytesIO(b'{"error":{"code":"unknown_code","type":"private_type"}}'))
+                with self.assertRaises(ConnectionFailure) as caught:
+                    if operation == 'create':
+                        self.client.create_session(self.plan)
+                    else:
+                        self.client.retrieve_session('sess_test')
+                self.assertEqual(sink.call_count, int(operation == 'create' and status == 400))
+                self.assertNotIn('private', str(caught.exception))
+                self.assertEqual(self.client.diagnostic['provider_code'], 'other')
+                self.opener.open.assert_called_once()
+
     def test_response_read_transport_failure_keeps_status_without_claiming_policy_rejection(self):
         for error in (TimeoutError('private'), ConnectionResetError('private'),
                       http.client.IncompleteRead(b'private')):

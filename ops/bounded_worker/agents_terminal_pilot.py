@@ -20,7 +20,8 @@ import termios
 import warnings
 
 from .agents_live_pilot import PreparedTarget, SYNTHETIC_INSTRUCTIONS, _key, run_live
-from .agents_connection import API_OPERATIONS, API_OUTCOMES, PROVIDER_CODES
+from .agents_connection import (API_OPERATIONS, API_OUTCOMES, PROVIDER_CODES,
+                                PROVIDER_PARAMS, PROVIDER_TYPES, _PrivateProviderError)
 from .agents_pilot import Plan
 from .agents_session_controller import SESSION_POLICY_FIELDS
 from .task import Task
@@ -56,6 +57,24 @@ def _inputs(argv):
     return args, plan, target
 
 
+def _check_terminal(fd):
+    # /dev/tty is an alias node, normally root-owned. Check ownership/identity of
+    # the actual stdio slave, and foreground control through both descriptors.
+    group = os.getpgrp()
+    if os.geteuid() == 0 or not os.isatty(fd) or os.tcgetpgrp(fd) != group:
+        raise IntakeFailure('secure_terminal_unavailable')
+    devices = []
+    for stream in (sys.stdin, sys.stdout, sys.stderr):
+        number = stream.fileno()
+        info = os.fstat(number)
+        if (not os.isatty(number) or not stat.S_ISCHR(info.st_mode)
+                or info.st_uid != os.geteuid() or os.tcgetpgrp(number) != group):
+            raise IntakeFailure('secure_terminal_unavailable')
+        devices.append(info.st_rdev)
+    if len(set(devices)) != 1:
+        raise IntakeFailure('secure_terminal_unavailable')
+
+
 @contextmanager
 def _terminal():
     """Bind a controlling terminal owned by this nonroot foreground operator.
@@ -70,19 +89,7 @@ fall back to a pipe or another input source. No-echo failures are fatal below.
         if os.geteuid() == 0:
             raise IntakeFailure('secure_terminal_unavailable')
         fd = os.open('/dev/tty', os.O_RDWR | os.O_NOCTTY | os.O_CLOEXEC)
-        group = os.getpgrp()
-        if not os.isatty(fd) or os.tcgetpgrp(fd) != group:
-            raise IntakeFailure('secure_terminal_unavailable')
-        devices = []
-        for stream in (sys.stdin, sys.stdout, sys.stderr):
-            number = stream.fileno()
-            info = os.fstat(number)
-            if (not os.isatty(number) or not stat.S_ISCHR(info.st_mode)
-                    or info.st_uid != os.geteuid() or os.tcgetpgrp(number) != group):
-                raise IntakeFailure('secure_terminal_unavailable')
-            devices.append(info.st_rdev)
-        if len(set(devices)) != 1:
-            raise IntakeFailure('secure_terminal_unavailable')
+        _check_terminal(fd)
         original = termios.tcgetattr(fd)
         tty = io.TextIOWrapper(io.FileIO(fd, 'w+'), encoding='utf-8', line_buffering=True)
         fd = None  # The wrapper now owns the descriptor.
@@ -117,6 +124,9 @@ _ATTESTATION = (
     '100 USD cents requested limit, existing approved outbound network and 180-second '
     'work window. No web tools, retries, host changes or credential recording. '
     'The requested limit is not a guaranteed final billing ceiling.\n'
+    'A create HTTP400 explanation may be shown ONLY on this private, unrecorded '
+    'human terminal. Credential redaction cannot remove every sensitive identifier. '
+    'Do not copy that explanation into reports or run this caller under automation.\n'
     'This is your local verification, NOT automatic key-scope validation. '
     'Type VERIFIED to attest and continue (hidden): '
 )
@@ -144,6 +154,48 @@ def _safe_id(value, secrets):
         and not value.startswith('sk-') and not any(secret in value for secret in secrets)) else None
 
 
+def _private_text(value, secrets, limit):
+    """Defense in depth, not a guarantee arbitrary provider text is non-sensitive."""
+    # The transport already bounded/parsed the entire body. Redact BEFORE truncation.
+    for secret in sorted(secrets, key=len, reverse=True):
+        value = value.replace(secret, '[credential]')
+    value = re.sub(r'\x1b\][^\x07]*(?:\x07|\x1b\\)', '', value)
+    value = re.sub(r'\x1b\[[0-?]*[ -/]*[@-~]', '', value)
+    value = ''.join(character for character in value if 32 <= ord(character) <= 126)
+    # Removing controls may rejoin a reflected key. Repeat complete-key redaction.
+    for secret in sorted(secrets, key=len, reverse=True):
+        value = value.replace(secret, '[credential]')
+    value = re.sub(r'(?i)\b(?:bearer|basic)\s+[^\s,;]+', '[credential]', value)
+    value = re.sub(r'''(?ix)\b(?:api[_-]?key|access[_-]?token|refresh[_-]?token|password|
+        authorization|credential|secret)\s*[:=]\s*(?:"[^"]*"|'[^']*'|[^\s,;]+)''',
+        '[credential]', value)
+    value = re.sub(r'(?i)\bsk-[A-Za-z0-9_-]+', '[credential]', value)
+    value = re.sub(r'[A-Za-z0-9_./+%-]{24,}={0,2}', '[token]', value)
+    return value[:limit] + (' [truncated]' if len(value) > limit else '')
+
+
+def _private_explanation(tty, private, secrets):
+    """Consume once; write to the still-owned controlling TTY, never a report."""
+    if not isinstance(private, _PrivateProviderError):
+        return
+    fields = private.take_fields()
+    try:
+        try:
+            _check_terminal(tty.fileno())
+        except (OSError, ValueError, IntakeFailure):
+            return
+        tty.write('PRIVATE PROVIDER EXPLANATION: untrusted text; may contain sensitive '
+                  'identifiers. Do not copy into reports.\n')
+        for field, limit in (('type', 128), ('param', 128), ('message', 768)):
+            value = _private_text(fields[field], secrets, limit) if field in fields else 'unavailable'
+            tty.write(field + ': ' + value + '\n')
+        tty.write('END PRIVATE EXPLANATION. No retry authorized.\n')
+        tty.flush()
+        return True
+    finally:
+        fields.clear()  # References dropped; not a Python memory-zeroization guarantee.
+
+
 def _diagnostics(value, secrets):
     value = value if isinstance(value, dict) else {}
     api = value.get('api')
@@ -156,6 +208,15 @@ def _diagnostics(value, secrets):
                'request_id': _safe_id(api.get('request_id'), secrets),
                'provider_code': code if isinstance(code, str)
                 and code in PROVIDER_CODES | {'other', 'unavailable'} else None}
+        for field, allowed in (('provider_type', PROVIDER_TYPES), ('provider_param', PROVIDER_PARAMS)):
+            item = value['api'].get(field)
+            if field in value['api']:
+                api[field] = item if isinstance(item, str) and item in allowed | {
+                    'other', 'unavailable', 'not_provided'} else None
+        if 'private_explanation' in value['api']:
+            item = value['api']['private_explanation']
+            api['private_explanation'] = item if isinstance(item, str) and item in {
+                'displayed', 'unavailable', 'not_requested'} else None
     else:
         api = None
     fields = value.get('policy_mismatches')
@@ -209,7 +270,9 @@ def main(argv=None):
                 raise IntakeFailure('distinct_keys_required')
             stage = 'live_attempt'
             result = asyncio.run(run_live(plan, args.attempt_id, args.journal_directory, target,
-                application_key=application_key, environment_key=environment_key))
+                application_key=application_key, environment_key=environment_key,
+                private_error_sink=lambda private: _private_explanation(
+                    tty, private, (application_key, environment_key))))
             tty.write(json.dumps(_summary(result, args.attempt_id,
                                           (application_key, environment_key))) + '\n')
             tty.flush()

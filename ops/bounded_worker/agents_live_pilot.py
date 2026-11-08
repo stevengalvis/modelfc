@@ -720,7 +720,8 @@ Exceptions, including SDK-generated error events, become fixed blocked reasons.
             'errors': list(dict.fromkeys([*controller.errors, *errors]))}
 
 
-async def run_live(plan, attempt_id, journal_directory, target, *, application_key, environment_key):
+async def run_live(plan, attempt_id, journal_directory, target, *, application_key, environment_key,
+                   private_error_sink=None):
     """EXPLICIT LIVE ENTRY. Requires approved workload, spend and prepared runtime.
 
 Call via asyncio.run(run_live(...)); secrets must come from an authorized caller,
@@ -744,7 +745,8 @@ never command-line arguments or environment discovery. No actions run on import.
         events = SDKEvents(application_key)  # Dependency/header checks before create.
         journal = AdmissionJournal(journal_directory)
         controller = SessionController(plan, attempt_id, journal,
-            AgentsConnection(application_key, timeout=10, max_bytes=LIMIT),
+            AgentsConnection(application_key, timeout=10, max_bytes=LIMIT,
+                             private_error_sink=private_error_sink),
             start_executor=executor.start, stop_executor=executor.stop,
             verify_empty=executor.verify_empty)
         result = await execute_once(controller, events, overall_seconds=plan.task.timeout_seconds)

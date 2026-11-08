@@ -597,10 +597,12 @@ class LiveEntryTests(unittest.IsolatedAsyncioTestCase):
     async def run_entry(self, **kwargs):
         return await live.run_live(kwargs.get('plan', self.plan), 'd' * 64, self.directory,
             self.target, application_key='synthetic-app',
-            environment_key=kwargs.get('environment_key', 'synthetic-environment'))
+            environment_key=kwargs.get('environment_key', 'synthetic-environment'),
+            private_error_sink=kwargs.get('private_error_sink'))
 
     async def test_real_entry_wires_controller_journal_and_callbacks(self):
-        result = await self.run_entry()
+        private_sink = Mock()
+        result = await self.run_entry(private_error_sink=private_sink)
         self.assertEqual(result['cloud_outcome'], 'completed')
         self.assertEqual(result['container_id'], 'c' * 64)
         self.assertFalse(result['result_verified'])
@@ -608,6 +610,8 @@ class LiveEntryTests(unittest.IsolatedAsyncioTestCase):
         self.fixture.start.assert_called_once()
         self.fixture.stop.assert_called_once()
         self.executor.close.assert_called_once()
+        self.assertIs(live.AgentsConnection.call_args.kwargs['private_error_sink'], private_sink)
+        private_sink.assert_not_called()
 
     async def test_non_synthetic_input_or_same_key_rejected_before_io(self):
         with self.assertRaisesRegex(ValueError, 'synthetic_smoke_only'):

@@ -12,7 +12,7 @@ import urllib.error
 import urllib.request
 
 
-# Provider text is never a diagnostic. Unknown codes stay a fixed category.
+# Ordinary diagnostics never contain provider text. Unknown codes stay categorical.
 PROVIDER_CODES = frozenset({
     'invalid_api_key', 'insufficient_quota', 'model_not_found', 'permission_denied',
     'insufficient_permissions', 'unsupported_parameter', 'invalid_value',
@@ -21,6 +21,12 @@ PROVIDER_CODES = frozenset({
 API_OPERATIONS = frozenset({'create', 'retrieve_session', 'retrieve_environment', 'input', 'cancel'})
 API_OUTCOMES = frozenset({'request_started', 'response_received', 'http_error',
                           'response_rejected', 'transport_error'})
+PROVIDER_TYPES = frozenset({'invalid_request_error', 'authentication_error', 'permission_error',
+                           'not_found_error', 'rate_limit_error', 'server_error', 'api_error'})
+PROVIDER_PARAMS = frozenset({'agent', 'agent.model', 'model', 'agent.service_tier', 'service_tier',
+    'agent.instructions', 'agent.multi_agent', 'agent.multi_agent.enabled', 'environment',
+    'environment.type', 'environment.workspace_directory', 'review', 'spend_control',
+    'spend_control.limit', 'input', 'stream'})
 
 
 def _request_id(value, key):
@@ -30,10 +36,10 @@ def _request_id(value, key):
     return None
 
 
-def _provider_code(raw):
+def _provider_error(raw):
     try:
         if len(raw) > 4096:
-            return 'unavailable'
+            return {}
         def pairs(items):
             result = {}
             for key, value in items:
@@ -42,10 +48,38 @@ def _provider_code(raw):
                 result[key] = value
             return result
         value = json.loads(raw, object_pairs_hook=pairs)
-        code = value['error']['code']
-        return code if isinstance(code, str) and code in PROVIDER_CODES else 'other'
+        error = value['error']
+        return error if isinstance(error, dict) else {}
     except (ValueError, TypeError, KeyError, RecursionError):
+        return {}
+
+
+def _provider_category(error, field, allowed):
+    if field not in error:
         return 'unavailable'
+    value = error[field]
+    if value is None and field != 'code':
+        return 'not_provided'
+    return value if isinstance(value, str) and value in allowed else 'other'
+
+
+class _PrivateProviderError:
+    """Transient, one-use terminal handoff. Never part of a result or exception."""
+    __slots__ = ('_fields',)
+
+    def __init__(self, error):
+        self._fields = {name: error[name] for name in ('type', 'param', 'message')
+                        if isinstance(error.get(name), str)}
+
+    def __repr__(self):
+        return '<private provider explanation withheld>'
+
+    def take_fields(self):
+        fields, self._fields = self._fields, {}
+        return fields
+
+    def clear(self):
+        self._fields = {}
 
 
 class ConnectionFailure(RuntimeError):
@@ -71,14 +105,17 @@ class AgentsConnection:
     are intentionally ignored to avoid sending application credentials through
     an unreviewed proxy. All HTTP/network failures have uncertain write outcomes.
     """
-    def __init__(self, application_key, *, timeout=20, max_bytes=262144, opener=None):
+    def __init__(self, application_key, *, timeout=20, max_bytes=262144, opener=None,
+                 private_error_sink=None):
         if (not isinstance(application_key, str)
                 or not re.fullmatch(r'[A-Za-z0-9_-]{1,4096}', application_key)
                 or type(timeout) is not int or not 1 <= timeout <= 60
-                or type(max_bytes) is not int or not 1024 <= max_bytes <= 1048576):
+                or type(max_bytes) is not int or not 1024 <= max_bytes <= 1048576
+                or private_error_sink is not None and not callable(private_error_sink)):
             raise ValueError('invalid_connection_configuration')
         self._key = application_key
         self._last_observation = self._first_failure = None
+        self._private_error_sink = private_error_sink
         self.timeout = timeout
         self.max_bytes = max_bytes
         self._opener = opener if opener is not None else urllib.request.build_opener(
@@ -156,8 +193,24 @@ class AgentsConnection:
             try:
                 with error:
                     response_metadata(error)
-                    # Bounded and transient: never retain the body/message/param.
-                    observation['provider_code'] = _provider_code(error.read(4097))
+                    # No truncated/unparseable-body fallback, including the private sink.
+                    fields = _provider_error(error.read(4097))
+                    observation['provider_code'] = _provider_category(fields, 'code', PROVIDER_CODES)
+                    if operation == 'create' and observation['http_status'] == 400:
+                        observation['provider_type'] = _provider_category(fields, 'type', PROVIDER_TYPES)
+                        observation['provider_param'] = _provider_category(fields, 'param', PROVIDER_PARAMS)
+                        observation['private_explanation'] = 'not_requested'
+                        if self._private_error_sink is not None:
+                            observation['private_explanation'] = 'unavailable'
+                            private = _PrivateProviderError(fields)
+                            try:
+                                if self._private_error_sink(private) is True:
+                                    observation['private_explanation'] = 'displayed'
+                            except Exception:
+                                pass  # Never echo sink exceptions or retry the request.
+                            finally:
+                                private.clear()
+                    fields.clear()
             except Exception:
                 observation['provider_code'] = 'unavailable'
             raise ConnectionFailure('request_failed_outcome_uncertain') from None
