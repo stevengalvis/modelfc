@@ -394,17 +394,21 @@ Commands are injectable only for offline tests; no command retries are made.
             if parent.is_symlink():
                 raise LiveFailure('container_cgroup_unverified')
         fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
-        self.cgroup_fd = fd
-        relative = '/' + str(path.relative_to('/sys/fs/cgroup'))
-        if type(state.get('Pid')) is not int or state['Pid'] <= 0:
-            raise LiveFailure('container_cgroup_pid_mismatch')
-        lines = Path('/proc/' + str(state['Pid']) + '/cgroup').read_text().splitlines()
-        if '0::' + relative not in lines:
-            raise LiveFailure('container_cgroup_pid_mismatch')
-        for name, expected in (('memory.max', '1073741824'), ('pids.max', '64'),
-                               ('cpu.max', '100000 100000')):
-            if (path / name).read_text().strip() != expected:
-                raise LiveFailure('container_cgroup_limits_unverified')
+        try:
+            relative = '/' + str(path.relative_to('/sys/fs/cgroup'))
+            if type(state.get('Pid')) is not int or state['Pid'] <= 0:
+                raise LiveFailure('container_cgroup_pid_mismatch')
+            lines = Path('/proc/' + str(state['Pid']) + '/cgroup').read_text().splitlines()
+            if '0::' + relative not in lines:
+                raise LiveFailure('container_cgroup_pid_mismatch')
+            for name, expected in (('memory.max', '1073741824'), ('pids.max', '64'),
+                                   ('cpu.max', '100000 100000')):
+                if (path / name).read_text().strip() != expected:
+                    raise LiveFailure('container_cgroup_limits_unverified')
+        except BaseException:
+            os.close(fd)
+            raise
+        self.cgroup_fd = fd  # Only completely validated evidence can prove cleanup.
 
     def stop(self, binding):
         if binding != self.binding or self._stop_attempted:
