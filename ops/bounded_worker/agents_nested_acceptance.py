@@ -16,19 +16,57 @@ from .agents_session_controller import ExecutorBinding
 
 PYTHON = '/usr/local/bin/python3'
 CODEX = '/opt/agents/bin/codex'
-READY = b'NESTED_READY\n'
+READY = b'NESTED_READY:verified\n'
+MOUNT_STATES = frozenset(('verified', 'unreadable', 'oversized', 'invalid',
+                          'missing', 'writable', 'unsupported'))
 DONE = b'NESTED_OK\n'
 SENTINEL = ('from pathlib import Path; p=Path("nested_sentinel.txt"); '
             'p.write_text("nested-ok\\n"); assert p.read_text()=="nested-ok\\n"; '
             'print("NESTED_OK", flush=True)')
 SANDBOX_ARGV = [CODEX, 'sandbox', '--permission-profile', ':workspace', '--cd', '/workspace',
                 '--', PYTHON, '-I', '-S', '-B', '-c', SENTINEL]
+# Fixed self-read avoids a host ptrace permission requirement for the mapped UID.
+# Only a closed enum crosses the pipe; raw mount paths/options never leave PID1.
+MOUNT_CHECK = '''def _mount_check():
+    try:
+        with open("/proc/self/mountinfo", "rb") as source:
+            raw = source.read(65537)
+    except OSError:
+        return "unreadable"
+    if len(raw) > 65536:
+        return "oversized"
+    if not raw or not raw.endswith(b"\\n") or b"\\x00" in raw:
+        return "invalid"
+    expected = []
+    for line in raw.splitlines():
+        fields = line.split()
+        if fields.count(b"-") != 1:
+            return "invalid"
+        split = fields.index(b"-")
+        if (split < 6 or len(fields) != split + 4
+                or not fields[0].isdigit() or not fields[1].isdigit()
+                or not fields[3].startswith(b"/") or not fields[4].startswith(b"/")):
+            return "invalid"
+        filesystem = fields[split + 1]
+        if fields[4] == b"/sys/fs/cgroup":
+            expected.append(filesystem)
+        if filesystem in (b"cgroup", b"cgroup2"):
+            if filesystem != b"cgroup2":
+                return "unsupported"
+            options = fields[5].split(b",")
+            if b"ro" not in options or b"rw" in options:
+                return "writable"
+    return "verified" if expected == [b"cgroup2"] else "missing"
+'''
 # Trusted fixed program. No argv, environment, key, shell or task text is interpreted.
+# Even a failed mount check holds for capture/cleanup, but can never execute Codex.
 GATE_PROGRAM = f'''import os, select
-print("NESTED_READY", flush=True)
+{MOUNT_CHECK}
+mount_status = _mount_check()
+print("NESTED_READY:" + mount_status, flush=True)
 if not select.select([0], [], [], 20)[0]:
     raise SystemExit(74)
-if os.read(0, 1) != b"G":
+if os.read(0, 1) != b"G" or mount_status != "verified":
     raise SystemExit(75)
 os.execve({CODEX!r}, {SANDBOX_ARGV!r}, dict(os.environ))
 '''
@@ -41,7 +79,7 @@ _SAFE_FAILURES = frozenset((
     'container_create_uncertain', 'container_name_not_available', 'prepared_runtime_unverified',
     'rootless_user_required', 'runtime_path_rejected',
     'container_manager_rejected', 'container_policy_rejected',
-))
+)) | frozenset('acceptance_mountinfo_' + state for state in MOUNT_STATES - {'verified'})
 
 
 def state_summary(value):
@@ -163,9 +201,12 @@ class _Pipe:
                 raise LiveFailure('acceptance_ready_eof')
             self.pump(deadline)
         line, _, rest = self.buffer.partition(b'\n')
-        if line + b'\n' != READY or rest:
+        prefix = b'NESTED_READY:'
+        status = line[len(prefix):].decode('ascii', errors='replace')
+        if not line.startswith(prefix) or status not in MOUNT_STATES or rest:
             raise LiveFailure('acceptance_ready_rejected')
         self.buffer.clear()
+        return status
 
     def release(self, deadline):
         fd = self.process.stdin.fileno()
@@ -215,7 +256,7 @@ Retain this private report and the stopped container; no automatic removal.
                               'https://api.openai.com/never-called')
     report = {'attempt_id': attempt_id, 'container_id': None, 'stage': 'preflight',
               'reason': None, 'status': 'blocked', 'nested': 'not_run', 'cleanup': 'not_started',
-              'startup_state': state_summary(None), 'go_sent': False,
+              'startup_state': state_summary(None), 'go_sent': False, 'mount_check': 'not_run',
               'cgroup_diagnostics': cgroup_summary(None, None)}
     pipe = None
     deadline = time.monotonic() + 180
@@ -244,7 +285,7 @@ Retain this private report and the stopped container; no automatic removal.
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=0, close_fds=True)
         pipe = _Pipe(executor.process)
         ready_deadline = min(deadline, time.monotonic() + 15)
-        pipe.wait_ready(ready_deadline)
+        report['mount_check'] = pipe.wait_ready(ready_deadline)
         report['stage'] = 'capture'
         value = executor._inspect()
         report['startup_state'] = state_summary(value)
@@ -256,6 +297,11 @@ Retain this private report and the stopped container; no automatic removal.
         executor._capture_cgroup(value)
         if executor.cgroup_fd is None:
             raise LiveFailure('acceptance_capture_unverified')
+        # The trusted READY peer reports its own namespace, avoiding host ptrace
+        # access. Capture first so a denied mount check can still prove cleanup.
+        report['stage'] = 'mount_check'
+        if report['mount_check'] != 'verified':
+            raise LiveFailure('acceptance_mountinfo_' + report['mount_check'])
         # Recheck identity and liveness immediately before releasing the fixed child.
         current = executor._inspect()
         if (current['State'].get('Running') is not True

@@ -182,8 +182,12 @@ and zero burst when that optional kernel interface exists. The enclosing scope
 FD remains the recursive cleanup boundary, not just the payload's FD. Exact
 private PID/cgroup namespace and non-systemd container mode are checked along
 with the existing nonroot/no-capability/no-host-mount profile. Its retained OCI
-acceptance must establish read-only cgroup access with no writable alternative;
-inspect policy checks are not a fresh mount-table audit. Sibling/prefix/traversal
+acceptance must establish read-only cgroup access with no writable alternative.
+The no-key READY/GO harness now checks its trusted PID1's actual mountinfo before
+GO in that same attempt; a prior mount audit is not a prerequisite for starting
+that fixed bootstrap. The live path still requires the retained successful
+result for its exact image/runtime/profile. Inspect policy alone is not a mount
+audit. Sibling/prefix/traversal
 and namespace-root mismatches remain rejected. `resource_diagnostics` records
 bounded numeric scope/payload controls and fixed error states before a failure;
 it does not reconstruct missing historical values. See `NESTED_ACCEPTANCE.md`

@@ -2,6 +2,7 @@
 import copy
 from contextlib import contextmanager
 import json
+from io import BytesIO
 import os
 from pathlib import Path
 import subprocess
@@ -20,12 +21,51 @@ CONTROL_VALUES = {'memory.max': '1073741824', 'memory.swap.max': '0',
                   'pids.max': '64', 'cpu.max': '100000 100000', 'cpu.max.burst': '0'}
 
 
-def local_gate(payload="print('NESTED_OK', flush=True)", *, wait=20):
+def local_gate(payload="print('NESTED_OK', flush=True)", *, wait=20, mount_status="verified"):
     # Test-only substitution: no Codex/container binary or network is invoked.
     replacement = f'os.execve({sys.executable!r}, {[sys.executable, "-I", "-S", "-B", "-c", payload]!r}, dict(os.environ))'
     return gate.GATE_PROGRAM.replace(
         f'os.execve({gate.CODEX!r}, {gate.SANDBOX_ARGV!r}, dict(os.environ))', replacement
-    ).replace('[], [], 20)', f'[], [], {wait})')
+    ).replace('[], [], 20)', f'[], [], {wait})').replace(
+        'mount_status = _mount_check()', f'mount_status = {mount_status!r}')
+
+
+class MountCheckTests(unittest.TestCase):
+    def setUp(self):
+        self.namespace = {}
+        exec(gate.MOUNT_CHECK, self.namespace)
+        self.check = self.namespace['_mount_check']
+        # Per-mount ro is decisive; a shared superblock may still report rw.
+        self.valid = b'31 20 0:28 / /sys/fs/cgroup ro,nosuid,nodev,noexec - cgroup2 cgroup rw\n'
+
+    def check_raw(self, raw):
+        with patch('builtins.open', return_value=BytesIO(raw)) as opened:
+            result = self.check()
+        opened.assert_called_once_with('/proc/self/mountinfo', 'rb')
+        return result
+
+    def test_readonly_per_mount_with_writable_superblock_is_accepted(self):
+        self.assertEqual(self.check_raw(self.valid), 'verified')
+
+    def test_writable_primary_or_alias_is_rejected(self):
+        for raw in (self.valid.replace(b'ro,nosuid', b'rw,nosuid'),
+                self.valid + b'32 20 0:28 / /alternate rw - cgroup2 cgroup rw\n'):
+            with self.subTest(raw=raw):
+                self.assertEqual(self.check_raw(raw), 'writable')
+
+    def test_missing_stacked_wrong_type_and_malformed_are_rejected(self):
+        self.assertEqual(self.check_raw(self.valid.replace(b'cgroup2', b'cgroup')), 'unsupported')
+        self.assertEqual(self.check_raw(self.valid.replace(b'/sys/fs/cgroup', b'/elsewhere')), 'missing')
+        self.assertEqual(self.check_raw(self.valid +
+            b'32 31 0:29 / /sys/fs/cgroup rw - tmpfs tmpfs rw\n'), 'missing')
+        for raw in (b'', self.valid.rstrip(), b'private-invalid\n', self.valid + b'bad\n'):
+            with self.subTest(raw=raw):
+                self.assertEqual(self.check_raw(raw), 'invalid')
+
+    def test_unreadable_and_overflow_are_fixed_enums(self):
+        with patch('builtins.open', side_effect=PermissionError('private details')):
+            self.assertEqual(self.check(), 'unreadable')
+        self.assertEqual(self.check_raw(b'x' * 65537), 'oversized')
 
 
 class GatePipeTests(unittest.TestCase):
@@ -63,6 +103,18 @@ class GatePipeTests(unittest.TestCase):
         pipe.release(time.monotonic() + 2)
         pipe.finish(time.monotonic() + 2)
         self.assertEqual(bytes(pipe.buffer), gate.DONE)
+
+    def test_failed_self_mount_check_holds_but_rejects_go(self):
+        process = self.start(local_gate(mount_status='writable'))
+        pipe = gate._Pipe(process)
+        self.addCleanup(pipe.close)
+        self.assertEqual(pipe.wait_ready(time.monotonic() + 2), 'writable')
+        self.assertIsNone(process.poll())
+        pipe.release(time.monotonic() + 2)
+        with self.assertRaisesRegex(LiveFailure, 'acceptance_sentinel_failed'):
+            pipe.finish(time.monotonic() + 2)
+        self.assertEqual(process.returncode, 75)
+        self.assertEqual(bytes(pipe.buffer), b'')
 
     def test_closed_stdin_never_executes_sentinel(self):
         process = self.start()
@@ -253,9 +305,22 @@ class AcceptanceTests(unittest.TestCase):
         self.assertEqual(result['nested'], 'passed')
         self.assertEqual(result['cleanup'], 'verified')
         self.assertTrue(result['go_sent'])
+        self.assertEqual(result['mount_check'], 'verified')
         self.assertEqual(self.actions, ['container', 'create', 'inspect', 'start',
                                        'inspect', 'capture', 'inspect', 'inspect', 'stop', 'inspect'])
         self.assertEqual(result['startup_state']['cgroup_path'], 'present')
+
+    def test_same_gate_mount_failure_never_goes_but_scope_cleanup_is_verified(self):
+        self.gate_program = local_gate(mount_status='writable')
+        result = self.run_acceptance()
+        self.assertEqual(result['mount_check'], 'writable')
+        self.assertEqual(result['reason'], 'acceptance_mountinfo_writable')
+        self.assertEqual(result['stage'], 'mount_check')
+        self.assertFalse(result['go_sent'])
+        self.assertEqual(result['nested'], 'not_run')
+        self.assertEqual(result['cleanup'], 'verified')
+        self.assertEqual(self.actions.count('create'), 1)
+        self.assertIn('capture', self.actions)
 
     def test_effective_runtime_failure_blocks_before_container_create(self):
         self.preflight_error = True

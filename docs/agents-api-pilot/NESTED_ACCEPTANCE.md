@@ -24,12 +24,16 @@ This harness makes normal startup ordering deterministic:
    privilege and identity profile. Change only the fixed entrypoint/arguments
    for this acceptance: `/usr/local/bin/python3 -I -S -B -c <fixed gate>`.
 2. Create interactively and attach stdin/stdout/stderr. The trusted Python PID1
-   emits `NESTED_READY`, flushes it, then waits at most 20 seconds for exactly the
-   release byte `G`. EOF, another first byte, or timeout exits without Codex.
+   reads its own `/proc/self/mountinfo` within 64 KiB and emits
+   `NESTED_READY:<fixed mount status>`, flushes it, then waits at most 20 seconds
+   for exactly the release byte `G`. It holds even after a denied mount check,
+   allowing the host to capture cleanup evidence. EOF, another first byte,
+   timeout, or a nonverified mount status can never execute Codex.
 3. The host requires READY within 15 seconds. Before sending G, it verifies the
    bound full container ID, labels and image, running state/positive PID, captures
    the live cgroup inode, and checks memory/CPU/PID limits through the existing
-   backend. A fresh inspect must still match the running PID and cgroup path.
+   backend. Require the gate's actual cgroup-mount status to be `verified`.
+   A fresh inspect must still match the running PID and cgroup path.
    A post-open PID/limit failure closes the incomplete descriptor and cannot
    later support a verified-cleanup claim.
 4. Only then send G once and close stdin. PID1 uses `os.execve`, preserving its
@@ -64,7 +68,13 @@ The operator supplies an already prepared `PreparedTarget` and fresh 64-hex
 attempt ID. The target must meet `LIVE_PILOT.md` requirements, including trusted
 exclusive control of runtime paths/ancestors/configuration, exact image identity,
 rootless Podman 4.9.3, and a trusted compatible Codex package/helper. The image must
-contain both fixed executable paths. This harness provisions nothing. Existing
+contain both fixed executable paths. **Do not require a prior successful nested
+or read-only-cgroup mount acceptance before invoking this harness.** Those are
+outputs of this single approved no-key run, checked before releasing Codex. The
+supplied `acceptance_id` initially identifies the approved candidate/setup; it
+is not a passed attestation until the recorded run succeeds. The trust and
+approval prerequisites still apply to running this fixed Python bootstrap.
+This harness provisions nothing. Existing
 host security and all outer limits stay unchanged; do not use privileged or
 unconfined modes, change sysctls, or add capabilities to make it pass.
 
@@ -101,7 +111,8 @@ that this local managed workspace command can execute; it does not establish liv
 or success of a later API task. Do not treat a PASS as approval to relax anything.
 
 The report contains private attempt/container IDs, GO status, nested outcome,
-cleanup status, a fixed failure reason/stage, and safe startup-state enums. It
+cleanup status, a fixed failure reason/stage, safe startup-state enums, and the
+closed `mount_check` status. It
 never includes keys, raw paths, PID values, remote URLs or raw process output.
 Keep IDs/private evidence on the operator side. Publish only already-authorized
 sanitized status codes, not the full report. An `acceptance_id` remains a reference
@@ -178,11 +189,29 @@ absent for false; explicit null, wrong types or true are rejected), in addition 
 capabilities dropped, no-new-privileges, no host mounts/devices and exact tmpfs
 controls. Podman 4.9.3's normal nonprivileged OCI profile mounts cgroups read-only;
 privileged/unmask/systemd-mode writable overrides are outside this accepted
-profile. Retained exact-profile acceptance must cover that read-only cgroup
-mount and absence of alternate writable cgroup access, preventing commands from
-moving upward out of the bounded payload. These inspect fields supplement the
-trusted prepared runtime/configuration; they are **not** a fresh mount-table audit.
-No new namespace probe, mount, security option, or host permission is introduced.
+profile. This no-key gate now obtains actual mount evidence before GO, rather
+than requiring an unavailable prior audit. Its fixed trusted program reads the
+mount table of its own namespace, so mapped-UID ptrace restrictions on a host
+`/proc/<PID>/mountinfo` read do not become a new prerequisite. Only one closed
+status enum is emitted; raw mount information never leaves PID1.
+
+The gate requires one unambiguous cgroup2 mount at `/sys/fs/cgroup`, rejects any
+writable cgroup2 alias and any cgroup-v1 mount, and checks the **per-mount** `ro`
+flag. A shared superblock may legitimately report `rw`; that is not a writable
+mount. Missing, stacked/ambiguous, malformed, oversized or unreadable evidence
+blocks GO. The 64 KiB bounded read is separate from the unchanged combined
+64 KiB stdout/stderr cap. A denied check still waits for the host's bound-scope
+capture and stop so cleanup can be established; the child refuses exec even if
+it mistakenly receives G. No new mount, namespace probe, container or host
+permission is introduced.
+
+This actual mount observation, the immutable fixed gate, no inherited host
+handles, private PID/cgroup namespaces, nonroot/no-capability profile, and no
+host mounts jointly support the accepted cgroup access boundary. Mountinfo
+alone is not proof against every alternate access or a runtime/kernel escape.
+The later live invocation still requires the successful retained exact-profile
+acceptance, and changes to image/runtime/profile invalidate its reuse. This
+check has only been tested offline, not on the VPS.
 
 `resource_diagnostics` retains all five controls at the scope and payload before
 comparison, the `scope`/`descendant`/`unknown` membership enum, and all mismatched
@@ -207,6 +236,9 @@ Pinned sources:
   [default mount](https://github.com/containers/podman/blob/v4.9.3/pkg/specgen/generate/oci_linux.go#L187-L194),
   [effective namespace fields](https://github.com/containers/podman/blob/v4.9.3/libpod/container_inspect_linux.go#L212-L271),
   and [SystemdMode omission semantics](https://github.com/containers/podman/blob/v4.9.3/libpod/define/container_inspect.go#L64-L67).
+- [Linux mountinfo semantics](https://man7.org/linux/man-pages/man5/proc_pid_mountinfo.5.html),
+  including process mount namespaces, stacked mounts, and per-mount versus
+  per-superblock options.
 - [Linux 5.13 CPU files](https://github.com/torvalds/linux/blob/v5.13/kernel/sched/core.c#L8873-L8911),
   [Linux 5.14 burst interface](https://github.com/torvalds/linux/blob/v5.14/kernel/sched/core.c#L9782-L9794),
   and [kernel CPU semantics](https://docs.kernel.org/admin-guide/cgroup-v2.html#cpu-interface-files).
@@ -261,4 +293,7 @@ Tests launch only fixed local Python peers over real pipes; Podman and Codex are
 never executed. Runtime inspection/cgroup limits are modeled. Real local ordinary-directory
 descriptors and bounded control-file reads exercise exact descendant traversal,
 resource diagnostics, failed-capture closure, and scope-versus-payload cleanup. These tests
-prove handshake/control flow, not Linux cgroup or VPS containment acceptance.
+prove handshake/control flow and the fixed mount parser's fixture behavior,
+not Linux cgroup or VPS containment acceptance. Pipe peers substitute a fixed
+mount status; parser tests inject bounded synthetic mountinfo, so no actual
+local or VPS mount audit is claimed.
