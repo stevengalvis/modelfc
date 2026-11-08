@@ -122,14 +122,39 @@ class LiveLoopTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result['status'], 'blocked')
         self.fixture.connection.submit_task.assert_not_called()
 
-    async def test_blocking_start_interrupted_without_late_thread(self):
-        self.fixture.start.side_effect = lambda _: time.sleep(.2)
-        before = time.monotonic()
-        result = await live.execute_once(self.controller, Events(), overall_seconds=.02)
-        self.assertLess(time.monotonic() - before, .15)
+    async def test_start_deadline_cleans_after_callback_entry(self):
+        completed = []
+        def interrupted_start(_):
+            # Deliver the installed watchdog only after the durable reservations
+            # and callback entry, not after an arbitrary CI disk/scheduling delay.
+            signal.raise_signal(signal.SIGALRM)
+            completed.append(True)
+        self.fixture.start.side_effect = interrupted_start
+        result = await live.execute_once(self.controller, Events())
         self.assertIn('operation_deadline', result['errors'])
+        self.fixture.start.assert_called_once()
         self.fixture.stop.assert_called_once()
+        self.assertTrue(result['cleanup_verified'])
+        self.assertEqual(completed, [])
+        self.assertEqual(self.fixture.operations(), {'create', 'executor'})
         self.fixture.connection.submit_task.assert_not_called()
+        self.assertEqual(signal.getitimer(signal.ITIMER_REAL), (0, 0))
+
+    async def test_deadline_after_reservation_before_callback_does_not_stop(self):
+        reserve = self.fixture.journal.reserve
+        def interrupted_reserve(attempt, operation):
+            reserve(attempt, operation)
+            if operation == 'executor':
+                signal.raise_signal(signal.SIGALRM)
+        with patch.object(self.fixture.journal, 'reserve', side_effect=interrupted_reserve):
+            result = await live.execute_once(self.controller, Events())
+        self.assertIn('operation_deadline', result['errors'])
+        self.assertFalse(result['cleanup_verified'])
+        self.fixture.start.assert_not_called()
+        self.fixture.stop.assert_not_called()
+        self.fixture.empty.assert_not_called()
+        self.fixture.connection.submit_task.assert_not_called()
+        self.assertEqual(self.fixture.operations(), {'create', 'executor'})
         self.assertEqual(signal.getitimer(signal.ITIMER_REAL), (0, 0))
 
     async def test_lost_stop_reply_still_reads_empty(self):
@@ -145,6 +170,15 @@ class LiveLoopTests(unittest.IsolatedAsyncioTestCase):
         result = await live.execute_once(self.controller, events)
         self.assertIn('stream_close_failed', result['errors'])
         self.assertEqual(result['status'], 'blocked')
+
+
+class BoundedCallTests(unittest.TestCase):
+    def test_real_timer_interrupts_blocking_call_and_restores_handler(self):
+        previous = signal.getsignal(signal.SIGALRM)
+        with self.assertRaises(live._OperationDeadline):
+            live._bounded_call(lambda: time.sleep(1), .01)
+        self.assertEqual(signal.getsignal(signal.SIGALRM), previous)
+        self.assertEqual(signal.getitimer(signal.ITIMER_REAL), (0, 0))
 
 
 class PrivateHomeTests(unittest.TestCase):
