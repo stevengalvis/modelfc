@@ -18,7 +18,7 @@ PROVIDER_CODES = frozenset({
     'insufficient_permissions', 'unsupported_parameter', 'invalid_value',
     'rate_limit_exceeded', 'server_error', 'billing_hard_limit_reached',
 })
-API_OPERATIONS = frozenset({'create', 'retrieve_session', 'retrieve_environment', 'input', 'cancel'})
+API_OPERATIONS = frozenset({'create', 'update_spend', 'retrieve_session', 'retrieve_environment', 'input', 'cancel'})
 API_OUTCOMES = frozenset({'request_started', 'response_received', 'http_error',
                           'response_rejected', 'transport_error'})
 PROVIDER_TYPES = frozenset({'invalid_request_error', 'authentication_error', 'permission_error',
@@ -196,7 +196,7 @@ class AgentsConnection:
                     # No truncated/unparseable-body fallback, including the private sink.
                     fields = _provider_error(error.read(4097))
                     observation['provider_code'] = _provider_category(fields, 'code', PROVIDER_CODES)
-                    if operation == 'create' and observation['http_status'] == 400:
+                    if operation in ('create', 'update_spend') and observation['http_status'] == 400:
                         observation['provider_type'] = _provider_category(fields, 'type', PROVIDER_TYPES)
                         observation['provider_param'] = _provider_category(fields, 'param', PROVIDER_PARAMS)
                         observation['private_explanation'] = 'not_requested'
@@ -229,6 +229,12 @@ class AgentsConnection:
 
     def retrieve_session(self, session_id):
         return self._request('GET', '/' + _id(session_id), operation='retrieve_session')
+
+    def update_spend_limit(self, session_id, limit_cents):
+        if type(limit_cents) is not int or limit_cents <= 0:
+            raise ValueError('invalid_spend_limit')
+        return self._request('POST', '/' + _id(session_id),
+                             {'spend_control': {'limit': limit_cents}}, operation='update_spend')
 
     def retrieve_environment(self, environment_id):
         return self._request('GET', '/' + _id(environment_id), resource='environments',

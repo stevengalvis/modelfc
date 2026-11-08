@@ -40,6 +40,39 @@ def _identifier(value):
     return isinstance(value, str) and re.fullmatch(r'[A-Za-z0-9_-]{1,128}', value) is not None
 
 
+def session_policy_checks(value, plan, *, require_budget=True):
+    """Pure shared wire-policy checks. Live controller always requires its budget.
+
+Only the separate no-work idle probe may validate the pre-budget create response.
+"""
+    value = value if isinstance(value, dict) else {}
+    env = value['environment'] if isinstance(value.get('environment'), dict) else {}
+    agent = value['agent'] if isinstance(value.get('agent'), dict) else {}
+    spend = value['spend_control'] if isinstance(value.get('spend_control'), dict) else {}
+    multi = agent['multi_agent'] if isinstance(agent.get('multi_agent'), dict) else {}
+    checks = {
+        'object': value.get('object') == 'agent.session',
+        'id': _identifier(value.get('id')), 'review': value.get('review') == 'auto_review',
+        'environment': isinstance(value.get('environment'), dict),
+        'environment.type': env.get('type') == 'self_hosted',
+        'environment.workspace_directory': env.get('workspace_directory') == '/workspace',
+        'environment.capability_directories': env.get('capability_directories') == [],
+        'environment.id': _identifier(env.get('id')), 'agent': isinstance(value.get('agent'), dict),
+        'agent.id': _identifier(agent.get('id')), 'agent.model': agent.get('model') == plan.model,
+        'agent.service_tier': agent.get('service_tier') == 'default',
+        'spend_control': not require_budget or isinstance(value.get('spend_control'), dict),
+        'spend_control.limit': not require_budget or (type(spend.get('limit')) is int
+                                and spend['limit'] == plan.spend_limit_cents),
+        'agent.instructions': agent.get('instructions') == plan.create_payload()['agent']['instructions'],
+        'agent.multi_agent': isinstance(agent.get('multi_agent'), dict),
+        'agent.multi_agent.enabled': multi.get('enabled') is False,
+        'agent.tools': agent.get('tools') == [], 'vault_ids': value.get('vault_ids') == [],
+        'status': value.get('status') in ('idle', 'in_progress', 'requires_action', 'failed'),
+        'required_actions': isinstance(value.get('required_actions'), list),
+    }
+    return checks
+
+
 class SessionController:
     """Single-owner, non-reentrant controller for one new session and root turn.
 
@@ -103,30 +136,8 @@ class SessionController:
         """Validate policy and binding, never interpret idle as turn completion."""
         if not isinstance(value, dict):
             self._fail('session_shape_rejected')
-        env = value['environment'] if isinstance(value.get('environment'), dict) else {}
-        agent = value['agent'] if isinstance(value.get('agent'), dict) else {}
-        spend = value['spend_control'] if isinstance(value.get('spend_control'), dict) else {}
-        multi = agent['multi_agent'] if isinstance(agent.get('multi_agent'), dict) else {}
-        checks = {
-            'object': value.get('object') == 'agent.session',
-            'id': _identifier(value.get('id')), 'review': value.get('review') == 'auto_review',
-            'environment': isinstance(value.get('environment'), dict),
-            'environment.type': env.get('type') == 'self_hosted',
-            'environment.workspace_directory': env.get('workspace_directory') == '/workspace',
-            'environment.capability_directories': env.get('capability_directories') == [],
-            'environment.id': _identifier(env.get('id')), 'agent': isinstance(value.get('agent'), dict),
-            'agent.id': _identifier(agent.get('id')), 'agent.model': agent.get('model') == self.state.plan.model,
-            'agent.service_tier': agent.get('service_tier') == 'default',
-            'spend_control': isinstance(value.get('spend_control'), dict),
-            'spend_control.limit': (type(spend.get('limit')) is int
-                                    and spend['limit'] == self.state.plan.spend_limit_cents),
-            'agent.instructions': agent.get('instructions') == self.state.plan.create_payload()['agent']['instructions'],
-            'agent.multi_agent': isinstance(agent.get('multi_agent'), dict),
-            'agent.multi_agent.enabled': multi.get('enabled') is False,
-            'agent.tools': agent.get('tools') == [], 'vault_ids': value.get('vault_ids') == [],
-            'status': value.get('status') in ('idle', 'in_progress', 'requires_action', 'failed'),
-            'required_actions': isinstance(value.get('required_actions'), list),
-        }
+        checks = session_policy_checks(value, self.state.plan)
+        env, agent = value.get('environment'), value.get('agent')
         if not all(checks.values()):
             self.policy_mismatches = tuple(name for name, passed in checks.items() if not passed)
             self._fail('session_policy_rejected')

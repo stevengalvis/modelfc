@@ -1,8 +1,9 @@
 # Save-once VPS credentials
 
 This helper is prepared offline. It neither deploys itself nor authorizes an API
-run. Importing it does not read credentials. The current caller/probe is unchanged;
-a future approved caller must explicitly adopt `read_credentials()`.
+run. Importing it does not read credentials. Saving keys never invokes the
+caller/probe. A separately approved idle probe may explicitly use
+`read_application_key()`; a paid caller must separately adopt `read_credentials()`.
 
 ## Exact storage and approval
 

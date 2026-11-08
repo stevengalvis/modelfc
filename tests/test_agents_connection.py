@@ -94,6 +94,28 @@ class ConnectionTests(unittest.TestCase):
         self.assertEqual(request.get_header('Openai-beta'), 'agents=v1')
         self.opener.open.assert_called_once()
 
+    def test_budget_update_has_its_own_operation_and_private_400_explanation(self):
+        sink = Mock(return_value=True)
+        self.client = AgentsConnection('synthetic_application_key', opener=self.opener,
+                                       private_error_sink=sink)
+        self.opener.open.side_effect = urllib.error.HTTPError(
+            'https://api.openai.com/v1/agents/sessions/sess_test', 400, '', {},
+            io.BytesIO(b'{"error":{"type":"invalid_request_error","param":"spend_control","message":"Unknown parameter"}}'))
+        with self.assertRaises(ConnectionFailure):
+            self.client.update_spend_limit('sess_test', 100)
+        request = self.opener.open.call_args.args[0]
+        self.assertEqual((request.method, request.full_url),
+                         ('POST', 'https://api.openai.com/v1/agents/sessions/sess_test'))
+        self.assertEqual(json.loads(request.data), {'spend_control': {'limit': 100}})
+        self.assertEqual(self.client.diagnostic['operation'], 'update_spend')
+        self.assertEqual(self.client.diagnostic['private_explanation'], 'displayed')
+        sink.assert_called_once()
+        self.opener.open.assert_called_once()
+        for invalid in (None, True, 0, -1, 1.5):
+            with self.assertRaises(ValueError):
+                self.client.update_spend_limit('sess_test', invalid)
+        self.opener.open.assert_called_once()
+
     def test_environment_path_injection_never_calls_transport(self):
         for value in ('../other', 'x?token=secret', 'x\n', ''):
             with self.subTest(value=value), self.assertRaises(ValueError):
