@@ -1,5 +1,10 @@
 # Recommended next step: a self-hosted Agents API pilot
 
+November 9 update: the separately scoped, fixed-task Responses pilot and its
+tested sandbox-completion adapter are prepared as an inactive source increment.
+See [Responses usage pilot](RESPONSES_USAGE_PILOT.md). This does not activate or
+replace the Agents API plan below.
+
 Research date: 2026-11-07. This is an implementation plan, not an installed service.
 The original checkout remains clean at c2a86f70cabca28b03b3ed2bab86bf203c437f4e.
 No credentials were accessed or created, no API session was created, and no
