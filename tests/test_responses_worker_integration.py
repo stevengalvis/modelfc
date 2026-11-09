@@ -22,7 +22,7 @@ socket.socket.connect_ex=deny
 socket.getaddrinfo=deny
 suite=unittest.defaultTestLoader.discover(str(root/"tests"),pattern="test_*.py")
 result=unittest.TextTestRunner(verbosity=1).run(suite)
-raise SystemExit(0 if result.wasSuccessful() and result.testsRun==128 else 1)
+raise SystemExit(0 if result.wasSuccessful() and result.testsRun==150 else 1)
 '''
         env = {'PATH': os.defpath, 'LANG': 'C.UTF-8'}
         if os.environ.get('TMPDIR'):

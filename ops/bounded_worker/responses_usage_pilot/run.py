@@ -52,7 +52,7 @@ def save_result(directory, name, data):
         os.close(fd)
 
 
-def run_pipeline(journal, transport, tester, results):
+def run_pipeline(journal, transport, tester, results, *, before_propose=None):
     from pilot import propose
     from diagnostics import failure_details
     report = {'status': 'blocked', 'calls': 0, 'calls_basis': 'reservations',
@@ -63,7 +63,12 @@ def run_pipeline(journal, transport, tester, results):
     failed = ()
     phase, validated_calls = 'admission', 0
     try:
-        for _ in range(3):
+        for next_number in range(1, 4):
+            if before_propose is not None:
+                phase = 'sandbox_readiness'
+                if before_propose(next_number) is not True:
+                    from readiness import ReadinessFailure
+                    raise ReadinessFailure('invalid_readiness_evidence')
             phase = 'propose'
             candidate = propose(journal, transport, failed)
             report['calls'] = candidate['call']
@@ -117,6 +122,9 @@ def run_pipeline(journal, transport, tester, results):
     except BaseException as exc:
         report.update(status='blocked', reason='operation_failed_or_uncertain')
         report['pipeline_failure'] = {'phase': phase, **failure_details(exc)}
+        if phase == 'sandbox_readiness':
+            from readiness import readiness_failure
+            report['readiness_failure'] = readiness_failure(exc)
     return report
 
 
@@ -127,8 +135,10 @@ def run_prepared_pipeline(journal, transport, target, results):
     approval and admission; tests inject synthetic transport/runtime boundaries.
     """
     from sandbox import test_candidate
+    from readiness import verify_readiness
     return run_pipeline(journal, transport,
-                        lambda source, number: test_candidate(target, source, number), results)
+                        lambda source, number: test_candidate(target, source, number), results,
+                        before_propose=lambda number: verify_readiness(target, (number,)))
 
 
 def main():
@@ -138,6 +148,7 @@ def main():
         parser.add_argument('--' + name, required=True)
     args = parser.parse_args()
     transport = journal = None
+    phase = 'source_preflight'
     report = {'status': 'blocked', 'calls': 0, 'reason': 'preflight_failed'}
     try:
         if os.getuid() != 1003 or os.geteuid() != 1003:
@@ -159,13 +170,13 @@ def main():
         sys.path[:0] = [str(own), str(root)]
         from pilot import PilotJournal
         from live_transport import ResponsesTransport
-        from sandbox import TestExecutor
+        from readiness import verify_readiness, readiness_failure
         from ops.bounded_worker.agents_live_pilot import PreparedTarget, _bounded_call
         from ops.bounded_worker.agents_credentials import read_application_key
         target = PreparedTarget(args.image_id, args.runtime_home, args.runtime_dir, args.acceptance_id)
-        executor = TestExecutor(target, 'synthetic-no-key')
-        _bounded_call(executor.verify_prepared, 25)
-        executor.close()
+        phase = 'readiness_before_key'
+        verify_readiness(target, (1, 2, 3))
+        phase = 'journal_admission'
         journal = PilotJournal(state)
         journal.reserve_invocation()
         # The one approved fixed-store read. No environment key is opened.
@@ -173,9 +184,11 @@ def main():
         report = run_prepared_pipeline(journal, transport, target, state)
         report['http_status'] = transport.http_status
         save_result(state, 'final.json', json.dumps(report, sort_keys=True).encode())
-    except BaseException:
+    except BaseException as exc:
         # No raw exception, provider content, credential, private path or traceback.
         report.update(status='blocked', reason='operation_failed_or_uncertain')
+        if phase == 'readiness_before_key':
+            report['readiness_failure'] = readiness_failure(exc)
     finally:
         if transport is not None:
             transport.close()

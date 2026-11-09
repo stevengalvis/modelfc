@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import run
 from pilot import PilotJournal, request_payload
@@ -27,9 +27,13 @@ class WorkerIntegrationTests(unittest.TestCase):
         self.transport = Mock(return_value=response())
 
     def execute(self, **kwargs):
-        report, deadlines, process = self.controller.modeled(
-            operation=lambda target: run.run_prepared_pipeline(
-                self.journal, self.transport, target, self.root), **kwargs)
+        # Readiness has its own real-composition regression suite; this fixture
+        # models the existing sandbox completion/cleanup boundary only.
+        with patch('readiness.verify_readiness', return_value=True) as ready:
+            report, deadlines, process = self.controller.modeled(
+                operation=lambda target: run.run_prepared_pipeline(
+                    self.journal, self.transport, target, self.root), **kwargs)
+        ready.assert_called_once_with(self.controller.fixture.target, (1,))
         self.transport.assert_called_once()
         self.assertEqual(report['calls'], 1)
         self.assertEqual(report['input_tokens'], 400)

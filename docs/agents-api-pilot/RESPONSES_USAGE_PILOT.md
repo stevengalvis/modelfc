@@ -56,7 +56,7 @@ From the repository root, use the existing Python environment:
 python -B -m unittest -q tests.test_responses_worker_integration
 ```
 
-The discovery bridge runs all 128 included worker tests in a clean child Python
+The discovery bridge runs all 150 included worker tests in a clean child Python
 process with socket connections and DNS disabled. The child excludes inherited
 credentials and provider configuration. No model output is executed on the
 host: local source execution is limited to author-written fixtures. Runtime
@@ -68,8 +68,37 @@ composition with a synthetic model response, real temporary admission/receipt
 files and fake runtime observations. They cover successful delayed completion,
 late/missing/extra output, nonzero/late attachment exit, cleanup failure and the
 45-second overall limit. Controller failures never trigger a repair request.
-The 128-test count excludes the separate one-shot sandbox-only staging runner,
+The worker test count excludes the separate one-shot sandbox-only staging runner,
 which remains in its previously reviewed private artifact.
+
+## Pre-provider sandbox readiness
+
+`readiness.py` adds bounded read-only checks before the API CLI reads the saved
+key or creates the invocation journal. It repeats existing runtime checks,
+inspects only the exact image ID and requires all three historical candidate
+container names to be absent. Before each actual model request, the shared
+pipeline rechecks the runtime, image ID and that request's applicable name.
+
+The metadata operation has a 25-second deadline using the existing dedicated
+main-thread mechanism. Existing bounded subprocess cleanup may take additional
+time. There is no pull, create, start, exec, delete, retry or permission change.
+Only the exact expected 64-character image ID and Podman's explicit absent
+container result are affirmative evidence. Errors, denial, malformed replies,
+timeouts and cleanup exceptions fail closed. Safe fixed-code diagnostics do
+not include paths, image/container IDs, command output or raw exception text.
+
+Twenty-two added readiness tests include actual pipeline zero-call/zero-call-
+reservation failures, before-key CLI failures with all external seams mocked,
+per-repair checks, deadline/denial handling and no retry after provider
+uncertainty. They do not access a key, invoke Podman or contact the provider.
+
+The existing create-time identity/policy checks remain necessary: read-only
+observations can become stale and do not prove launch/isolation capability.
+This correction prevents obvious unavailable-sandbox calls; it does not make
+an atomic promise that the runtime cannot change between check and use.
+
+Podman 4.9.3 reference:
+https://github.com/podman-container-tools/podman/blob/v4.9.3/docs/source/markdown/podman-image-inspect.1.md
 
 ## Next steps and permission boundary
 
@@ -84,3 +113,5 @@ unchanged. Both previous API attempts and all v1/v2/v3 sandbox records must
 remain intact. A future paid task needs separately prepared, explicitly
 approved task/settings and a distinct identity, not a reset or resumption of
 the uncertain attempt. No new paid task or continuous worker is enabled here.
+See [canonical admission requirements](RESPONSES_CANONICAL_ADMISSION.md) for the
+next separately scoped increment; it is a design outline, not implemented here.
