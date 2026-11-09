@@ -15,14 +15,14 @@ import sqlite3
 import stat
 
 STORE = Path('/home/zeno-worker/responses-task-admission')
-VERSION = 1
+VERSION = 2
 SCHEMA = (
     'CREATE TABLE metadata (version INTEGER NOT NULL, directory TEXT NOT NULL)',
     'CREATE TABLE tasks (task_id TEXT PRIMARY KEY, identity TEXT UNIQUE NOT NULL, '
     'scope TEXT UNIQUE NOT NULL, manifest TEXT NOT NULL)',
     'CREATE TABLE calls (task_id TEXT NOT NULL REFERENCES tasks(task_id), '
     'number INTEGER NOT NULL, request TEXT UNIQUE NOT NULL, sandbox TEXT UNIQUE NOT NULL, '
-    'receipt TEXT, PRIMARY KEY(task_id, number))',
+    'receipt TEXT, container_id TEXT, PRIMARY KEY(task_id, number))',
 )
 
 
@@ -223,6 +223,14 @@ class CanonicalAdmission:
             raise ValueError('private_database_required')
         self.db = sqlite3.connect(target, timeout=5, isolation_level=None)
         try:
+            # Reject old/unknown stores before changing journal settings. No
+            # automatic migration, reset, or retry of historical uncertainty.
+            if not created:
+                actual = {row[0] for row in self.db.execute(
+                    "SELECT sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'")}
+                if (actual != set(SCHEMA)
+                        or self.db.execute('PRAGMA user_version').fetchone() != (VERSION,)):
+                    raise ValueError('schema_or_store_mismatch')
             if self.db.execute('PRAGMA journal_mode=DELETE').fetchone() != ('delete',):
                 raise ValueError('journal_mode_rejected')
             self.db.execute('PRAGMA synchronous=EXTRA')
@@ -234,7 +242,7 @@ class CanonicalAdmission:
                 for sql in SCHEMA:
                     self.db.execute(sql)
                 self.db.execute('INSERT INTO metadata VALUES (?, ?)', (VERSION, str(path)))
-                self.db.execute('PRAGMA user_version=1')
+                self.db.execute(f'PRAGMA user_version={VERSION}')
             actual = {row[0] for row in self.db.execute(
                 "SELECT sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'")}
             if (actual != set(SCHEMA)
@@ -304,7 +312,7 @@ class CanonicalAdmission:
             number = len(rows) + 1
             request = digest(canonical([manifest.identity, number, feedback]).encode())
             sandbox = 'responses-task-' + manifest.identity + '-' + str(number)
-            self.db.execute('INSERT INTO calls VALUES (?, ?, ?, ?, NULL)',
+            self.db.execute('INSERT INTO calls VALUES (?, ?, ?, ?, NULL, NULL)',
                             (manifest.task_id, number, request, sandbox))
             self.db.execute('COMMIT')
             return {'number': number, 'request_hash': request, 'sandbox_name': sandbox}
@@ -312,6 +320,31 @@ class CanonicalAdmission:
             if self.db.in_transaction:
                 self.db.execute('ROLLBACK')
             raise
+
+    def bind_container(self, manifest, number, sandbox_name, container_id):
+        """Write once before candidate transmission to the newly created sandbox.
+
+        This is a trusted controller observation, not independent attestation.
+        A lost acknowledgement blocks execution; no idempotent replay is offered.
+        """
+        _hex(container_id)
+        if type(number) is not int or not 1 <= number <= manifest.max_calls:
+            raise ValueError('invalid_call')
+        try:
+            self.db.execute('BEGIN IMMEDIATE')
+            self._registered(manifest)
+            row = self.db.execute('SELECT sandbox, receipt, container_id FROM calls '
+                                  'WHERE task_id=? AND number=?', (manifest.task_id, number)).fetchone()
+            if row != (sandbox_name, None, None):
+                raise ValueError('container_binding_rejected')
+            self.db.execute('UPDATE calls SET container_id=? WHERE task_id=? AND number=?',
+                            (container_id, manifest.task_id, number))
+            self.db.execute('COMMIT')
+        except BaseException:
+            if self.db.in_transaction:
+                self.db.execute('ROLLBACK')
+            raise
+        return True
 
     def record(self, manifest, number, receipt):
         """Append a single trusted-controller receipt, never replace/replay one.
@@ -324,11 +357,13 @@ class CanonicalAdmission:
         try:
             self.db.execute('BEGIN IMMEDIATE')
             self._registered(manifest)
-            row = self.db.execute('SELECT sandbox, receipt FROM calls WHERE task_id=? AND number=?',
+            row = self.db.execute('SELECT sandbox, receipt, container_id FROM calls WHERE task_id=? AND number=?',
                                   (manifest.task_id, number)).fetchone()
             if row is None or row[1] is not None:
                 raise ValueError('missing_or_completed_reservation')
             receipt.validate(manifest, row[0])
+            if row[2] is not None and receipt.container_id != row[2]:
+                raise ValueError('created_container_mismatch')
             self.db.execute('UPDATE calls SET receipt=? WHERE task_id=? AND number=?',
                             (canonical(asdict(receipt)), manifest.task_id, number))
             self.db.execute('COMMIT')

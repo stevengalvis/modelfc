@@ -227,10 +227,10 @@ finally:
             c.CanonicalAdmission()
 
     def test_bad_version_and_schema(self):
-        self.gate.db.execute('PRAGMA user_version=2')
+        self.gate.db.execute(f'PRAGMA user_version={c.VERSION + 1}')
         with self.assertRaises(ValueError):
             c.CanonicalAdmission()
-        self.gate.db.execute('PRAGMA user_version=1')
+        self.gate.db.execute(f'PRAGMA user_version={c.VERSION}')
         self.gate.db.execute('CREATE TABLE surprise (x TEXT)')
         with self.assertRaises(ValueError):
             c.CanonicalAdmission()

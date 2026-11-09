@@ -146,3 +146,14 @@ cleanup/test/identity/usage validation, copied state directories, schema/version
 rejection and path/link guards. They do not access the production store or run
 Podman, a provider, generated code or a credential reader. The original 150-test
 worker suite and its hard-coded source pins remain unchanged.
+
+
+## Inactive one-file composition
+
+The [one-file adapter](RESPONSES_ONE_FILE_ADAPTER.md) now composes this primitive
+with task-bound transport, exact-scope candidate validation, immutable restricted
+tests and an exact-name runtime adapter. It is offline-tested and not activated.
+Canonical schema v2 adds write-once created-container binding before candidate
+execution. V1/unknown stores fail closed before journal-setting changes, with no
+migration/reset. See that document for scope, tests and outstanding live approval
+and prepared-host acceptance. Historical synthetic worker behavior is unchanged.
