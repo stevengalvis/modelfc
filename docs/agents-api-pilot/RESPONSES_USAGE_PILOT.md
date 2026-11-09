@@ -114,4 +114,5 @@ remain intact. A future paid task needs separately prepared, explicitly
 approved task/settings and a distinct identity, not a reset or resumption of
 the uncertain attempt. No new paid task or continuous worker is enabled here.
 See [canonical admission requirements](RESPONSES_CANONICAL_ADMISSION.md) for the
-next separately scoped increment; it is a design outline, not implemented here.
+separate offline admission primitive and remaining trusted-caller requirements.
+It is not wired into this pilot and does not authorize or execute a real task.
