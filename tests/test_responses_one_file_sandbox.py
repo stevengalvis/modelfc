@@ -41,7 +41,7 @@ class OneFileSandboxTests(unittest.TestCase):
 
     def modeled(self, *, raw=b'{"failed": [], "passed": true}\n', stderr=b'', exitcode=0,
                 cleanup=True, record=True, occupied=False, capture=False, trailing=False,
-                eof_timeout=False, stop_error=False, cleanup_error=False):
+                eof_timeout=False, stop_error=False, cleanup_error=False, created_policy=None):
         ex = Mock()
         ex._create_attempted = ex._start_attempted = False
         ex.container_id = None
@@ -54,6 +54,8 @@ class OneFileSandboxTests(unittest.TestCase):
         ex._inspect.return_value = {'State': {'Running': True, 'Pid': 123, 'CgroupPath': '/fixture'}}
         if capture:
             ex._capture_cgroup.side_effect = LiveFailure('capture_failed')
+        if created_policy is not None:
+            ex._created_policy.side_effect = created_policy
         ex.verify_empty.return_value = cleanup
         if stop_error:
             ex.stop.side_effect = LiveFailure("stop_uncertain")
@@ -82,8 +84,12 @@ class OneFileSandboxTests(unittest.TestCase):
         recorder = Mock(return_value=record)
         with patch.object(s, 'TestExecutor', return_value=ex), patch.object(s, '_Pipe', return_value=pipe), \
                 patch.object(s.select, 'select', return_value=([], [10], [])), \
-                patch.object(s.os, 'write', side_effect=lambda _, data: len(data)):
+                patch.object(s.os, 'write', side_effect=lambda _, data: len(data)) as write:
             result = s.test_candidate(*self.args, identity_recorder=recorder)
+        if not ex._start_attempted:
+            write.assert_not_called()
+            ex._popen.assert_not_called()
+            pipe.wait_ready.assert_not_called()
         return result, ex, recorder
 
     def test_success_checks_eof_exit_and_independent_cleanup(self):
@@ -180,12 +186,116 @@ class OneFileSandboxTests(unittest.TestCase):
         value = copy.deepcopy(fixture.value)
         value['HostConfig']['NetworkMode'] = 'none'
         value['Config']['Cmd'] = ['-I', '-S', '-B', '-c', program]
-        value['Config']['Entrypoint'] = ['/usr/local/bin/python3']
+        value['Config']['Entrypoint'] = '/usr/local/bin/python3'
         ex._created_policy(value)
         value['Config']['Cmd'][-1] = 'print("fake")'
         with self.assertRaises(LiveFailure):
             ex._created_policy(value)
 
+
+    def test_pinned_entrypoint_rejections_precede_attach_and_input(self):
+        fixture = runtime_fixtures.PodmanTests()
+        fixture.setUp()
+        self.addCleanup(fixture.doCleanups)
+        ex = s.TestExecutor(fixture.target, self.args[5]['sandbox_name'], 'fixed')
+        self.addCleanup(ex.close)
+        value = copy.deepcopy(fixture.value)
+        value['HostConfig']['NetworkMode'] = 'none'
+        value['Config'].update(Cmd=['-I', '-S', '-B', '-c', 'fixed'],
+                               Entrypoint='/usr/local/bin/python3')
+        result, _, recorder = self.modeled(created_policy=lambda _: ex._created_policy(value))
+        self.assertEqual(result['status'], 'passed')
+        recorder.assert_called_once()
+        absent = object()
+        for entrypoint in (absent, None, '', '/usr/bin/python3', '/usr/local/bin/python3 -I',
+                           ['/usr/local/bin/python3'], [], {}, 1, True,
+                           b'/usr/local/bin/python3'):
+            with self.subTest(entrypoint=entrypoint):
+                bad = copy.deepcopy(value)
+                if entrypoint is absent:
+                    del bad['Config']['Entrypoint']
+                else:
+                    bad['Config']['Entrypoint'] = entrypoint
+                result, modeled, recorder = self.modeled(
+                    created_policy=lambda _: ex._created_policy(bad))
+                self.assertEqual(result['status'], 'blocked')
+                self.assertEqual(result['diagnostic']['step'], 'created_policy')
+                self.assertEqual(result['diagnostic']['failure'], {
+                    'category': 'operation_failed', 'code': 'task_program_identity_mismatch'})
+                self.assertEqual(result['diagnostic']['input_bytes_written'], 0)
+                recorder.assert_not_called()
+                modeled._popen.assert_not_called()
+                modeled.stop.assert_called_once()
+                modeled.verify_empty.assert_called_once()
+
+    def test_other_created_policy_checks_remain_before_attach(self):
+        fixture = runtime_fixtures.PodmanTests()
+        fixture.setUp()
+        self.addCleanup(fixture.doCleanups)
+        ex = s.TestExecutor(fixture.target, self.args[5]['sandbox_name'], 'fixed')
+        self.addCleanup(ex.close)
+        value = copy.deepcopy(fixture.value)
+        value['HostConfig']['NetworkMode'] = 'none'
+        value['Config'].update(Cmd=['-I', '-S', '-B', '-c', 'fixed'],
+                               Entrypoint='/usr/local/bin/python3')
+        cases = (
+            ('Config', 'Cmd', ['-I', '-S', '-B', '-c', 'synthetic-private-program'],
+             'task_program_identity_mismatch'),
+            ('Config', 'Cmd', None, 'task_program_identity_mismatch'),
+            ('Config', 'Cmd', '-I -S -B -c fixed', 'task_program_identity_mismatch'),
+            ('HostConfig', 'NetworkMode', 'bridge', 'test_network_not_disabled'),
+            ('HostConfig', 'CgroupManager', 'cgroupfs', 'container_manager_rejected'),
+            ('Config', 'Env', ['SYNTHETIC_PRIVATE_ENV=synthetic-private-credential'],
+             'container_policy_rejected'),
+            ('Config', 'Env', ['malformed'], 'container_environment_rejected'),
+            ('HostConfig', 'Privileged', True, 'container_policy_rejected'),
+            ('HostConfig', 'Tmpfs', {}, 'container_tmpfs_rejected'),
+        )
+        for section, key, replacement, code in cases:
+            with self.subTest(key=key, code=code):
+                bad = copy.deepcopy(value)
+                bad[section][key] = replacement
+                result, modeled, recorder = self.modeled(
+                    created_policy=lambda _: ex._created_policy(bad))
+                self.assertEqual(result['status'], 'blocked')
+                self.assertEqual(result['diagnostic']['failure']['code'], code)
+                self.assertEqual(result['diagnostic']['input_bytes_written'], 0)
+                self.assertNotIn('synthetic-private', json.dumps(result))
+                recorder.assert_not_called()
+                modeled._popen.assert_not_called()
+                modeled.stop.assert_called_once()
+                modeled.verify_empty.assert_called_once()
+
+    def test_failure_codes_are_closed_and_do_not_serialize_exception_text(self):
+        class UntrustedFailure(LiveFailure):
+            def __str__(self):
+                raise AssertionError('must not stringify')
+
+        class UntrustedString(str):
+            pass
+
+        for code in s.FAILURE_CODES:
+            self.assertEqual(s.test_failure(LiveFailure(code)), {
+                'category': 'operation_failed', 'code': code})
+        private = 'synthetic-private-program-env-credential-path'
+        errors = (LiveFailure(private), RuntimeError(private), ValueError(private),
+                  LiveFailure(), LiveFailure('container_policy_rejected', private),
+                  LiveFailure(['container_policy_rejected']),
+                  LiveFailure({'code': 'container_policy_rejected'}),
+                  LiveFailure(UntrustedString('container_policy_rejected')),
+                  UntrustedFailure('container_policy_rejected'),
+                  RuntimeError('container_policy_rejected'), s.ResultRejected(private))
+        for error in errors:
+            with self.subTest(error_type=type(error)):
+                detail = s.test_failure(error)
+                self.assertEqual(detail, {'category': 'operation_failed', 'code': 'unclassified'})
+                self.assertNotIn(private, json.dumps(detail))
+        self.assertEqual(s.test_failure(TimeoutError(private)), {
+            'category': 'deadline', 'code': 'unclassified'})
+        result, _, _ = self.modeled(created_policy=lambda _: (_ for _ in ()).throw(
+            LiveFailure(private)))
+        self.assertEqual(result['diagnostic']['failure']['code'], 'unclassified')
+        self.assertNotIn(private, json.dumps(result))
 
     def test_missing_eof_and_uncertain_cleanup_never_pass(self):
         for kwargs in ({'eof_timeout': True}, {'cleanup_error': True}):

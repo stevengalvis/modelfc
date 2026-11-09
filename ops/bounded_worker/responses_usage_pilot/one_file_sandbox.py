@@ -49,9 +49,33 @@ def parse_result(raw):
     return value
 
 
+# Fixed controller reasons only. Unknown errors must never become report text.
+FAILURE_CODES = frozenset((
+    'container_manager_rejected', 'container_environment_rejected',
+    'container_policy_rejected', 'container_tmpfs_rejected',
+    'task_program_identity_mismatch', 'test_network_not_disabled',
+    'container_not_bound', 'container_inspection_failed', 'container_binding_rejected',
+    'container_name_not_available', 'container_create_uncertain',
+    'container_identity_not_persisted', 'unexpected_base_profile',
+    'test_not_running', 'test_isolation_unverified', 'test_changed_before_go',
+    'test_input_timeout', 'test_input_no_progress', 'test_result_after_workload_deadline',
+    'test_workload_timeout', 'test_completion_timeout', 'test_attach_exit_nonzero',
+    'test_stderr_nonempty', 'test_stdout_limit',
+    'acceptance_pipe_timeout', 'acceptance_output_limit',
+    'acceptance_ready_eof', 'acceptance_ready_rejected',
+))
+
+
 def test_failure(exc):
-    # Never retain candidate output, arbitrary exception text or runtime paths.
-    return {'category': 'deadline' if isinstance(exc, TimeoutError) else 'operation_failed'}
+    # Exact trusted class and a single plain allowlisted token, never str(exc),
+    # raw args, candidate output, program text, environment or runtime paths.
+    code = 'unclassified'
+    if type(exc) is LiveFailure:
+        args = exc.args
+        if len(args) == 1 and type(args[0]) is str and args[0] in FAILURE_CODES:
+            code = args[0]
+    return {'category': 'deadline' if isinstance(exc, TimeoutError) else 'operation_failed',
+            'code': code}
 
 
 def container_summary(value):
@@ -272,8 +296,12 @@ class TestExecutor(PodmanExecutor):
 
     def _created_policy(self, value):
         super()._created_policy(value)
+        # Podman v4.9.3 InspectContainerConfig.Entrypoint is a string;
+        # libpod/container_inspect.go joins the OCI entrypoint array with spaces.
+        # Require the exact pinned inspect representation, not Docker's list.
         if (value['Config'].get('Cmd') != ['-I', '-S', '-B', '-c', self.program]
-                or value['Config'].get('Entrypoint') != ['/usr/local/bin/python3']):
+                or type(value['Config'].get('Entrypoint')) is not str
+                or value['Config']['Entrypoint'] != '/usr/local/bin/python3'):
             raise LiveFailure('task_program_identity_mismatch')
         if value['HostConfig'].get('NetworkMode') != 'none':
             raise LiveFailure('test_network_not_disabled')
