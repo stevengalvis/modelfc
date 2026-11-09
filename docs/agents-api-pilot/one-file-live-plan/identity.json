@@ -1,0 +1,16 @@
+{
+  "controller_head": "b6e177681579fa7e4c68d6546a67f2ec87132255",
+  "controller_tree": "d824fafa997f27a0f4d10379205de8b4cc2dd943",
+  "manifest_identity": "63d219109f3b5bf120a07b2097827446e3e6f5a54bf44daf19114e99d28811ba",
+  "sandbox_name": "responses-task-63d219109f3b5bf120a07b2097827446e3e6f5a54bf44daf19114e99d28811ba-1",
+  "scope": "4232f5d1597a2793d56dceaeed3861f88cd988775a10b8b53ab6b22a79bdad2e",
+  "status": "proposal-not-authorized",
+  "target": {
+    "acceptance_id": "31bd52b2da697b7cc5ffd0d6c945285027718ff2dddf31b0238370c1611bf99d",
+    "image_id": "8b55ec4b95fe747b3142e938a72bd182877c68a3c1da36006b766517ee4805ee",
+    "runtime_dir": "/run/user/1003",
+    "runtime_home": "/home/agents-api-stage-6cb988668042/home"
+  },
+  "wire_bytes": 1454,
+  "wire_sha256": "6810b0a0cb27f7a768dda5fcc5345bb3952f3cbecd7dfa9e250fe622b1aa9abd"
+}
