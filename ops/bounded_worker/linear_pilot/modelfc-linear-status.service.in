@@ -1,0 +1,39 @@
+# Inactive template. Replace @REVIEWED_SHA@ only with the accepted 40-hex commit.
+# No Install section or timer: one separately authorized manual start only.
+[Unit]
+Description=Bounded Linear service-status pilot
+After=network.target
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+WorkingDirectory=/
+ExecStart=/usr/bin/python3 -I -B -S /opt/modelfc-linear-status/releases/@REVIEWED_SHA@/launch.py
+UMask=0077
+StandardInput=null
+StandardOutput=journal
+StandardError=null
+TimeoutStartSec=90s
+TimeoutStopSec=5s
+KillMode=control-group
+SendSIGKILL=yes
+Restart=no
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ReadWritePaths=/var/lib/modelfc-linear-status
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+LockPersonality=yes
+LimitCORE=0
+TasksMax=16
+MemoryMax=128M

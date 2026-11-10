@@ -221,3 +221,9 @@ check or diagnostic publication fails. The summary survives lifecycle event
 truncation; no arguments, exception text, payloads, IDs or output are recorded.
 Diagnostic publication failure makes the worker outcome uncertain and containment
 cleanup still runs. These codes do not explain the historical docs-task failure.
+
+## Private diagnostic preparation
+
+See [LINEAR_STATUS.md](LINEAR_STATUS.md) for the separate offline Linear
+service-status prototype and its live adapter blockers. It does not invoke this
+coding worker or establish host acceptance.
