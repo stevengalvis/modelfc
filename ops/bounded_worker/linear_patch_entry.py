@@ -28,7 +28,7 @@ def run(host_path, disclosure_path):
                 return 'blocked'
             saved = json.loads(row[0])
             request = Request(saved['body'].encode(), saved['workspace'], saved['team'],
-                              saved['issue'], saved['actor'], saved['comment'], None)
+                              saved['issue'], saved['actor'], saved['comment'], None, saved.get('created_at'))
             if binding(request) != disclosure['request_sha256']:
                 return 'blocked'
         # Release lookup lock before delivery acquires it. Delivery revalidates

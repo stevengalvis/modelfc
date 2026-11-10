@@ -3,6 +3,7 @@
 The trusted caller supplies protected policy and credentials; no CLI or polling.
 """
 import json
+from datetime import datetime
 import re
 from urllib.request import Request as HTTPRequest, build_opener
 
@@ -236,9 +237,23 @@ class LinearReader:
                     or type(value['updatedAt']) is not str or not value['updatedAt']
                     or (value['editedAt'] is not None and type(value['editedAt']) is not str)):
                 raise ValueError('invalid_requester')
+            created_at = None
+            # Preserve legacy metadata handling. New pickup envelopes bind the
+            # actual server timestamp, never a client-supplied posted-at claim.
+            try:
+                envelope = json.loads(value['body'], object_pairs_hook=_pairs)
+            except ValueError:
+                envelope = None
+            if type(envelope) is dict and envelope.get('version') == 2 and envelope.get('operation') == 'coding-task':
+                stamp = datetime.fromisoformat(value['createdAt'].replace('Z', '+00:00'))
+                if stamp.tzinfo is None or stamp.utcoffset().total_seconds() != 0:
+                    raise ValueError('invalid_creation_time')
+                created_at = int(stamp.timestamp())
+                if created_at < 0:
+                    raise ValueError('invalid_creation_time')
             # Never turn a null editedAt into a claim of immutable edit history.
             return Request(value['body'].encode(), policy.workspace, policy.team, policy.issue,
-                           user['id'], comment, None)
+                           user['id'], comment, None, created_at)
         except (KeyError, TypeError, AttributeError):
             raise ValueError('invalid_linear_comment') from None
 

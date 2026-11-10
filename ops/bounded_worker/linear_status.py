@@ -30,6 +30,8 @@ class Request:
     comment: str
     # True requires verified edit history; unknown may use separate content approval.
     unedited: bool | None
+    # Authenticated Linear creation time, required only by coding envelope v2.
+    created_at: int | None = None
 
 
 class ContentApproval:
