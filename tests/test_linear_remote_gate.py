@@ -37,6 +37,7 @@ class RemoteTests(unittest.TestCase):
 
     def test_protected_policy_loader_enforces_opt_in_and_limits(self):
         value = dataclasses.asdict(self.policy) | {'version': 1, 'repository': 'stevengalvis/modelfc'}
+        value.pop('target')
         value['paths'] = list(value['paths'])
         with patch.object(gate, 'protected_json', return_value=value) as read:
             self.assertEqual(REAL_LOAD_POLICY('/protected/grant'), self.policy)

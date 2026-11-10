@@ -36,7 +36,7 @@ def _load(path):
         # One queue retains one host/execution identity and destination. Per-job
         # entry/runtime/approval paths and the exact request are allowed to vary.
         identity = ({k: v for k, v in settings.items() if k not in ('runtime_settings', 'request_comment_id')},
-                    {k: v for k, v in runtime.items() if k != 'approval'}, approval.policy)
+                    {k: v for k, v in runtime.items() if k != 'approval'}, approval.policy, approval.target)
         if common is not None and identity != common:
             raise ValueError('mixed_queue_scope')
         common = identity
@@ -105,13 +105,13 @@ def poll_once(path, *, clock=time.time):
             db.commit()
             result = {'status': 'idle'} if chosen is None else entry.run(chosen, clock=clock, _store=db)
             if (type(result) is not dict or result.get('status') not in
-                    ('idle', 'busy', 'blocked', 'duplicate', 'completed', 'failed', 'timeout', 'rejected')
+                    ('idle', 'busy', 'blocked', 'unsupported_target', 'duplicate', 'completed', 'failed', 'timeout', 'rejected')
                     or (result['status'] in ('duplicate', 'completed', 'failed', 'timeout', 'rejected')
                         and result.get('reply') not in ('posted', 'duplicate', 'blocked'))):
                 db.execute("UPDATE linear_coding_poll SET phase='held' WHERE slot=1")
                 db.commit()
                 return {'status': 'blocked'}
-            failed = result['status'] in ('blocked', 'busy') or result.get('reply') == 'blocked'
+            failed = result['status'] in ('blocked', 'busy', 'unsupported_target') or result.get('reply') == 'blocked'
             failures = min(failures + 1, 6) if failed else 0
             delay = min(3600, 60 * (2 ** failures))
             db.execute("UPDATE linear_coding_poll SET next=?,failures=? WHERE slot=1",

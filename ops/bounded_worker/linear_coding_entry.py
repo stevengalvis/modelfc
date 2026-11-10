@@ -83,6 +83,10 @@ def _validate_host(value, runtime, path, control_files):
 
 
 def _executor(value, runtime, approval):
+    from .linear_pickup import SubscriptionAdapter, UnsupportedTarget
+    if approval.target not in (None, 'codex-subscription'):
+        # No API constructor is integrated. Never fall back to subscription use.
+        raise UnsupportedTarget('agents_api_adapter_unavailable')
     # Fixed trusted implementation, not a module/command named by the request.
     from .bridge_executor import Executor
     from .launcher import Configuration
@@ -93,7 +97,8 @@ def _executor(value, runtime, approval):
                            executable_sha256=value['executable_sha256'],
                            timeout_seconds=approval.max_timeout, output_bytes=approval.max_output,
                            diff_bytes=approval.max_diff, prepared_baseline=True, storage=storage)
-    return Executor(config, value['mirror'])
+    executor = Executor(config, value['mirror'])
+    return executor if approval.target is None else SubscriptionAdapter(executor)
 
 
 def run(path, *, clock=time.time, _store=None):
@@ -103,11 +108,11 @@ def run(path, *, clock=time.time, _store=None):
             return {'status': 'blocked'}
         # One locally protected key and fixed personal-key authentication; no OAuth
         # provisioning, publisher credential or arbitrary transport endpoint.
+        executor = _executor(value, runtime, approval)
         token = protected_bytes(value['token_file'], 8192).decode().strip()
         destination = Destination(approval.policy, runtime['viewer'], tuple(value['members']),
                                   audience=value['audience'])
         api = LinearAPI(token, oauth=False)
-        executor = _executor(value, runtime, approval)
 
         def unchanged():
             if _settings(path) != (value, runtime, approval):
@@ -128,8 +133,9 @@ def run(path, *, clock=time.time, _store=None):
         return run_once(value['runtime_settings'], value['request_comment_id'],
                         CheckedReader(api, destination), executor,
                         CheckedSink(api, destination), clock, _store=_store)
-    except Exception:
-        return {'status': 'blocked'}
+    except Exception as error:
+        from .linear_pickup import UnsupportedTarget
+        return {'status': 'unsupported_target'} if isinstance(error, UnsupportedTarget) else {'status': 'blocked'}
 
 
 def main():

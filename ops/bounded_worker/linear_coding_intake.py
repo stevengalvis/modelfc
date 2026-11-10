@@ -15,6 +15,7 @@ from .linear_status import Request, Policy
 from .task import Task
 
 TERMINAL = ('completed', 'failed', 'timeout', 'rejected')
+TARGETS = ('codex-subscription', 'agents-api')
 
 
 def _canonical(value):
@@ -32,9 +33,15 @@ def snapshot(request):
             or not all(_uuid(getattr(request, key)) for key in
                        ('workspace', 'team', 'issue', 'actor', 'comment'))):
         raise ValueError('invalid_request')
+    metadata = {}
+    value = json.loads(request.body, object_pairs_hook=_pairs)
+    if type(value) is dict and value.get('version') == 2:
+        if type(request.created_at) is not int or request.created_at < 0:
+            raise ValueError('missing_creation_time')
+        metadata['created_at'] = request.created_at
     return _canonical({key: getattr(request, key) for key in
                        ('workspace', 'team', 'issue', 'actor', 'comment')} |
-                      {'body': request.body.decode('utf-8')})
+                      {'body': request.body.decode('utf-8')} | metadata)
 
 
 def binding(request):
@@ -53,20 +60,27 @@ class Approval:
     max_timeout: int = 90
     max_output: int = 262144
     max_diff: int = 4096
+    target: str | None = None
 
 
 def _task(request):
     raw = request.body
     obj = json.loads(raw.decode(), object_pairs_hook=_pairs)
-    if (type(obj) is not dict or set(obj) != {'version', 'operation', 'job_id', 'base',
-            'paths', 'prompt', 'expires', 'timeout', 'output', 'diff', 'publish'}
-            or _canonical(obj) != raw or type(obj['version']) is not int
-            or obj['version'] != 1 or obj['operation'] != 'coding-task'
+    fields = {'version', 'operation', 'job_id', 'base', 'paths', 'prompt',
+              'expires', 'timeout', 'output', 'diff', 'publish'}
+    if (type(obj) is not dict or type(obj.get('version')) is not int
+            or obj['version'] not in (1, 2)
+            or set(obj) != (fields if obj['version'] == 1 else fields | {'target', 'ack_timeout'})
+            or _canonical(obj) != raw or obj['operation'] != 'coding-task'
             or obj['publish'] is not False or type(obj['expires']) is not int
             or type(obj['job_id']) is not str
             or not re.fullmatch(r'[a-z0-9][a-z0-9_-]{0,63}', obj['job_id'])
             or type(obj['paths']) is not list):
         raise ValueError('invalid_envelope')
+    if obj['version'] == 2 and (obj['target'] not in TARGETS
+            or type(obj['ack_timeout']) is not int or not 30 <= obj['ack_timeout'] <= 600
+            or type(request.created_at) is not int or request.created_at < 0):
+        raise ValueError('invalid_pickup_envelope')
     # Native UUID+bytes binding gives a separate, deterministic worker task name.
     # Approved host roots still must be distinct from the GitHub worker's roots.
     task = Task('linear-' + binding(request)[:40], 'stevengalvis/modelfc', obj['base'],
@@ -87,7 +101,9 @@ def prepare(request, approval, now):
                    for key in ('workspace', 'team', 'issue', 'actor'))):
         raise ValueError('not_authorized')
     obj, task = _task(request)
-    if (not now < obj['expires'] <= min(now + 3600, approval.expires)
+    if (approval.target != obj.get('target')
+            or (obj['version'] == 2 and request.created_at > now)
+            or not now < obj['expires'] <= min(now + 3600, approval.expires)
             or task.base_revision != approval.base
             or not all(path in approval.paths for path in task.allowed_paths)
             or task.timeout_seconds > approval.max_timeout
@@ -111,16 +127,20 @@ def _safe(db, *, remote_reservation=None):
         if type(raw) is not bytes or len(raw) > 4096 or phase not in TERMINAL:
             return False
         value = json.loads(raw.decode(), object_pairs_hook=_pairs)
-        if (type(value) is not dict or set(value) !=
-                {'body', 'workspace', 'team', 'issue', 'actor', 'comment'}):
+        if (type(value) is not dict or set(value) not in (
+                {'body', 'workspace', 'team', 'issue', 'actor', 'comment'},
+                {'body', 'workspace', 'team', 'issue', 'actor', 'comment', 'created_at'})):
             return False
         request = Request(value['body'].encode(), value['workspace'], value['team'],
-                          value['issue'], value['actor'], value['comment'], None)
+                          value['issue'], value['actor'], value['comment'], None, value.get('created_at'))
         obj, task = _task(request)
         if (snapshot(request) != raw or binding(request) != digest
                 or request.comment != comment or obj['job_id'] != job
                 or task.task_id != task_id):
             return False
+    from .linear_pickup import receipts_safe
+    if not receipts_safe(db):
+        return False
     if db.execute("SELECT 1 FROM sqlite_master WHERE name='linear_patch_replies'").fetchone():
         from .linear_patch_delivery import artifacts_safe
         if not artifacts_safe(db):
@@ -164,7 +184,7 @@ def _safe(db, *, remote_reservation=None):
     return True
 
 
-def dispatch_once(db, request, approval, reader, executor, clock, *, _remote_reservation=None):
+def dispatch_once(db, request, approval, reader, executor, clock, *, _remote_reservation=None, _pickup=None):
     """At most one local execution; no publication or external status writes.
 
     Exact refetch must use the existing reader's authenticated fetch method, not
@@ -175,6 +195,11 @@ def dispatch_once(db, request, approval, reader, executor, clock, *, _remote_res
     try:
         job, task = prepare(request, approval, int(clock()))
         digest, raw = binding(request), snapshot(request)
+        obj, _ = _task(request)
+        if obj['version'] == 2:
+            if _pickup is None:
+                return {'status': 'pickup_not_configured'}
+            _pickup.check(request, executor)
         db.execute('PRAGMA synchronous=FULL')
         db.execute('BEGIN IMMEDIATE')
         if (_remote_reservation is not None
@@ -198,6 +223,20 @@ def dispatch_once(db, request, approval, reader, executor, clock, *, _remote_res
         fresh = reader.fetch(request.comment)
         if fresh != request or prepare(fresh, approval, int(clock())) != (job, task):
             return {'status': 'blocked'}
+        if obj['version'] == 2:
+            if not _pickup.acknowledge(job, request):
+                db.execute('UPDATE linear_coding_jobs SET phase=? WHERE job=?', ('rejected', job))
+                _pickup.finish(job, 'ack_timeout')
+                db.commit()
+                return {'status': 'rejected', 'job_id': job, 'task_id': task.task_id,
+                        'request_sha256': digest, 'comment_id': request.comment}
+            # Sending an acknowledgment is another external boundary. Recheck
+            # authenticated content and protected approval before any execution.
+            fresh = reader.fetch(request.comment)
+            if fresh != request or prepare(fresh, approval, int(clock())) != (job, task):
+                return {'status': 'blocked'}
+            _pickup.check(request, executor)
+            _pickup.running(job)
         db.execute('UPDATE linear_coding_jobs SET phase=? WHERE job=?', ('launching', job))
         db.commit()
         result = executor.run(task)
@@ -205,6 +244,8 @@ def dispatch_once(db, request, approval, reader, executor, clock, *, _remote_res
                 or result.get('task_id') != task.task_id):
             return {'status': 'blocked'}
         db.execute('UPDATE linear_coding_jobs SET phase=? WHERE job=?', (result['status'], job))
+        if obj['version'] == 2:
+            _pickup.finish(job, 'finished')
         db.commit()
         return {'status': result['status'], 'job_id': job, 'task_id': task.task_id,
                 'request_sha256': digest, 'comment_id': request.comment}

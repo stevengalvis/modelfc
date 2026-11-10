@@ -140,3 +140,10 @@ scope, changed bytes, expiry/budgets, quota/cadence, replay/collision, policy ch
 uncertain outcomes, pending replies and protected policy parsing. The combined focused suite has 136 passing tests, including real subprocess
 crash/concurrency tests and cross-mode blocking. Test readers and executors are synthetic; these tests do not authenticate a live Linear client or
 establish host storage durability.
+
+## Optional target-bound pickup
+
+See [LINEAR_PICKUP.md](LINEAR_PICKUP.md) for opt-in v2 target binding and durable
+acknowledgment using this same dispatcher/store. It is offline source only; the
+API host adapter and interactive-session wake remain unsupported. Legacy v1
+behavior is unchanged.

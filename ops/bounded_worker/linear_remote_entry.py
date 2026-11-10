@@ -93,6 +93,8 @@ def run(path, *, clock=time.time):
         now = int(clock())
         if policy.enabled is not True or not now < policy.expires <= now + 86400:
             return {'status': 'blocked'}
+        if policy.target not in (None, 'codex-subscription'):
+            return {'status': 'unsupported_target'}
         with receipt_store(runtime['state_root']) as db:
             # This guard also sees remote holds from prior crashed invocations.
             if not replies_safe(db, policy.policy.issue, runtime['viewer']):
@@ -160,7 +162,9 @@ def run(path, *, clock=time.time):
             if 'artifact_policy' in value:
                 from .linear_patch_trial import enroll
                 enroll(db, pair[0], pair[1], value['artifact_policy'], policy, int(clock()))
-            result = dispatch_remote(db, pair[0], pair[1], value['channel_policy'], reader, executor, clock)
+            from .linear_pickup import Pickup
+            result = dispatch_remote(db, pair[0], pair[1], value['channel_policy'], reader, executor, clock,
+                                     _pickup=Pickup(db, CheckedSink(api, destination), clock))
             if result.get('status') == 'duplicate':
                 job = db.execute('SELECT job FROM linear_remote_consumptions WHERE approval=?', (pair[1].comment,)).fetchone()[0]
                 result = {'status': 'duplicate', 'job_id': job}
@@ -177,8 +181,9 @@ def run(path, *, clock=time.time):
             return result
     except BlockingIOError:
         return {'status': 'busy'}
-    except Exception:
-        return {'status': 'blocked'}
+    except Exception as error:
+        from .linear_pickup import UnsupportedTarget
+        return {'status': 'unsupported_target'} if isinstance(error, UnsupportedTarget) else {'status': 'blocked'}
 
 
 def main():

@@ -11,7 +11,7 @@ import re
 from .bridge_security import protected_json
 from .bridge_envelope import _pairs
 from .linear_status import Policy
-from .linear_coding_intake import (Approval, TERMINAL, _canonical, _safe, _task,
+from .linear_coding_intake import (Approval, TERMINAL, TARGETS, _canonical, _safe, _task,
                                    binding, dispatch_once, prepare, snapshot)
 
 
@@ -26,14 +26,18 @@ class ChannelPolicy:
     max_output: int = 262144
     max_diff: int = 4096
     enabled: bool = False
+    target: str | None = None
 
 
 def load_policy(path):
     value = protected_json(path)
     fields = {'version', 'enabled', 'policy', 'repository', 'paths', 'expires', 'max_jobs',
               'cadence', 'max_timeout', 'max_output', 'max_diff'}
-    if (type(value) is not dict or set(value) != fields or type(value['version']) is not int
-            or value['version'] != 1 or value['repository'] != 'stevengalvis/modelfc'
+    if (type(value) is not dict or type(value.get('version')) is not int
+            or value['version'] not in (1, 2)
+            or set(value) != (fields if value['version'] == 1 else fields | {'target'})
+            or (value['version'] == 2 and value['target'] not in TARGETS)
+            or value['repository'] != 'stevengalvis/modelfc'
             or type(value['enabled']) is not bool or type(value['policy']) is not dict
             or set(value['policy']) != {'workspace', 'team', 'issue', 'actor'}
             or type(value['paths']) is not list or not value['paths']
@@ -51,12 +55,15 @@ def load_policy(path):
         raise ValueError('invalid_scope')
     return ChannelPolicy(Policy(**value['policy']), tuple(value['paths']), value['expires'],
                          value['max_jobs'], value['cadence'], value['max_timeout'],
-                         value['max_output'], value['max_diff'], value['enabled'])
+                         value['max_output'], value['max_diff'], value['enabled'], value.get('target'))
 
 
 def _fingerprint(policy):
     from dataclasses import asdict
-    return hashlib.sha256(_canonical(asdict(policy))).hexdigest()
+    value = asdict(policy)
+    if policy.target is None:
+        del value['target']  # Preserve existing v1 protected policy fingerprints.
+    return hashlib.sha256(_canonical(value)).hexdigest()
 
 
 def initialize_remote(db):
@@ -88,7 +95,7 @@ def authorize(request, approval_comment, policy, now):
     request_obj, _ = _task(request)
     exact = Approval(policy.policy, binding(request), request_obj['base'], policy.paths,
                      min(policy.expires, obj['expires']), True, policy.max_timeout,
-                     policy.max_output, policy.max_diff)
+                     policy.max_output, policy.max_diff, policy.target)
     job, task = prepare(request, exact, now)
     return exact, job, task
 
@@ -111,7 +118,7 @@ def _safe_remote(db):
     return True
 
 
-def dispatch_remote(db, request, approval_comment, grant_path, reader, executor, clock):
+def dispatch_remote(db, request, approval_comment, grant_path, reader, executor, clock, *, _pickup=None):
     """Caller holds existing coding lock; consumes at most one exact approval.
 
     No network discovery, protected approval-file writing, reply sending or
@@ -125,6 +132,10 @@ def dispatch_remote(db, request, approval_comment, grant_path, reader, executor,
         if (reader.destination.policy != policy.policy
                 or reader.destination.viewer_id != policy.policy.actor):
             return {'status': 'blocked'}
+        if exact.target is not None:
+            if _pickup is None:
+                return {'status': 'pickup_not_configured'}
+            _pickup.check(request, executor)
         fingerprint = _fingerprint(policy)
         digest, approval_digest = binding(request), binding(approval_comment)
         db.execute('PRAGMA synchronous=FULL')
@@ -164,7 +175,7 @@ def dispatch_remote(db, request, approval_comment, grant_path, reader, executor,
                 authorize(fresh_request, fresh_approval, policy, int(clock()))
                 return fresh_request
 
-        result = dispatch_once(db, request, exact, PairedReader(), executor, clock, _remote_reservation=record)
+        result = dispatch_once(db, request, exact, PairedReader(), executor, clock, _remote_reservation=record, _pickup=_pickup)
         if result.get('status') not in TERMINAL:
             return {'status': 'blocked'}
         db.execute("UPDATE linear_remote_consumptions SET phase='consumed' WHERE approval=?", (approval_comment.comment,))

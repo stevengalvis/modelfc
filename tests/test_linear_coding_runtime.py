@@ -171,6 +171,7 @@ class RuntimeTests(unittest.TestCase):
 
     def test_config_loader_uses_protected_input_and_rejects_extra_fields(self):
         value = dataclasses.asdict(self.approval) | {'version': 1}
+        value.pop('target')
         value['paths'] = list(value['paths'])
         with patch.object(rt, 'protected_json', return_value=value) as read:
             self.assertEqual(rt.load_approval('/protected/approval'), self.approval)
