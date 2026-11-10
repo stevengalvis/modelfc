@@ -281,6 +281,37 @@ cannot return success; existing artifacts and reservations remain untouched. The
 canonical store remains authoritative. No automatic recovery, retry, mode chaining,
 provider fallback, patch apply, upload, publication or deployment exists.
 
+### Private candidate diagnostics
+
+After a response and its usage pass structural validation, the fixed launcher
+exclusively writes `candidate-source.bin` inside the new private run directory,
+before candidate validation. This is at most 8,192 bytes of untrusted inert text,
+not an importable Python module or an execution/patch approval. The directory
+must remain worker-owned mode0700 and the regular single-link file mode0600.
+The write and directory are fsynced and the bytes verified on readback. Existing
+files, links, wrong permissions, partial writes and failed acknowledgements stop
+before validation or sandbox execution, without overwriting or deleting evidence.
+The runner's optional recorder is supplied only by trusted controller code; the
+fixed production launcher always supplies it. It is not a provider-selected tool.
+
+Reports contain only the candidate hash, byte count, successful-retention flag
+and a closed `failure_reason` for candidate-validation or retention failures.
+The candidate hash now identifies received bytes even when validation rejects
+them; it is not evidence of acceptance. Only exact reviewed validation labels
+are exposed; unexpected exceptions map to `candidate_validation_failed`, and
+retention errors to `candidate_retention_failed`. No exception text, candidate
+text, raw API envelope or key is added to JSON reports or terminal output.
+The private text may still be malicious; inspect it only as data and do not
+publish or execute it outside the existing validated sandbox workflow.
+
+This diagnostic change does not recover previously discarded candidates or
+reconstruct missing failure reasons. It does not change task identity, budgets,
+validation, trusted tests, container/EOF/exit/cleanup gates or canonical receipts.
+Failure after reservation still spends the slot permanently, with no new patch
+or fabricated receipt. Preserve the earlier live attempt and its unknown cause.
+The fixed task is already spent: installing this code cannot authorize another
+call, and renaming the task or store is not a way to regain an allowance.
+
 Focused command for this increment:
 
 ```sh

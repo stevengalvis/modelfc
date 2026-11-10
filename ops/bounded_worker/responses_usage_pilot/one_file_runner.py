@@ -9,8 +9,26 @@ from .one_file_adapter import prepare, bind_first_reservation, validate_candidat
 from .one_file_transport import parse_response, transport_observation
 
 
+# Never persist exception text, source fragments, or arbitrary provider strings.
+# These are the fixed rejection labels from the reviewed adapter and harness.
+CANDIDATE_FAILURES = frozenset({
+    'candidate_bound', 'invalid_python', 'function_scope', 'signature_bytes',
+    'function_bound', 'function_shape', 'function_signature', 'candidate_complexity',
+    'candidate_grammar', 'candidate_name', 'candidate_assignment', 'candidate_subscript',
+    'candidate_attribute', 'candidate_call', 'candidate_constant', 'candidate_format',
+    'single_strip_required', 'unchanged_candidate',
+})
+
+
+def _candidate_failure(exc):
+    if (type(exc) is ValueError and len(exc.args) == 1
+            and type(exc.args[0]) is str and exc.args[0] in CANDIDATE_FAILURES):
+        return exc.args[0]
+    return 'candidate_validation_failed'
+
+
 def run_once(manifest, source, tests, harness, *, gate, target, transport_factory,
-             readiness=None, runtime=None):
+             readiness=None, runtime=None, candidate_recorder=None):
     if readiness is None or runtime is None:
         from .one_file_sandbox import verify_readiness, test_candidate
         readiness = readiness or verify_readiness
@@ -35,6 +53,16 @@ def run_once(manifest, source, tests, harness, *, gate, target, transport_factor
         result['phase'] = 'response'
         candidate, usage = parse_response(manifest, raw)
         result.update(response_hash=digest(raw), usage=usage)
+        # The digest identifies received bytes, not approval or a validation pass.
+        # Only the trusted launcher supplies the optional private recorder. Never
+        # include candidate bytes in returned reports, transport logs or receipts.
+        result.update(candidate_hash=digest(candidate), candidate_bytes=len(candidate),
+                      candidate_retained=False)
+        if candidate_recorder is not None:
+            result['phase'] = 'candidate_retention'
+            if candidate_recorder(candidate) is not True:
+                raise ValueError('candidate_retention_failed')
+            result['candidate_retained'] = True
         result['phase'] = 'candidate'
         candidate_hash = validate_candidate(manifest, source, tests, harness, candidate)
         result['candidate_hash'] = candidate_hash
@@ -81,10 +109,14 @@ def run_once(manifest, source, tests, harness, *, gate, target, transport_factor
         if not failed:
             result['patch'] = review_patch(manifest, source, tests, harness, candidate)
         result['phase'] = 'complete'
-    except BaseException:
+    except BaseException as exc:
         # Missing evidence remains reserved; no invented receipt and no retry.
         result['status'] = 'unknown' if reservation is not None else 'blocked'
         result['patch'] = None
+        if result['phase'] == 'candidate':
+            result['failure_reason'] = _candidate_failure(exc)
+        elif result['phase'] == 'candidate_retention':
+            result['failure_reason'] = 'candidate_retention_failed'
     finally:
         if transport is not None:
             result['transport'] = transport_observation(transport)

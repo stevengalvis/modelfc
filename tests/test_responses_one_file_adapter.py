@@ -11,6 +11,7 @@ from unittest.mock import patch
 
 from ops.bounded_worker.responses_usage_pilot import canonical_admission as c
 from ops.bounded_worker.responses_usage_pilot import one_file_adapter as a
+from ops.bounded_worker.responses_usage_pilot import one_file_runner as runner
 from ops.bounded_worker.responses_usage_pilot.one_file_fixtures.trusted_harness import compare, validate_function
 from ops.bounded_worker.responses_usage_pilot.one_file_runner import run_once
 from ops.bounded_worker.responses_usage_pilot.one_file_transport import OneFileTransport, parse_response, transport_observation
@@ -174,6 +175,92 @@ class AdapterTests(unittest.TestCase):
         self.assertEqual(json.loads(row[0])['outcome'], 'pass')
         self.assertEqual(self.run_task()['status'], 'blocked')
         self.assertEqual(self.events.count('provider'), 1)
+
+    def test_candidate_rejection_retains_before_validation_without_runtime(self):
+        self.candidate = self.candidate.rstrip(b'\n')
+        retained = []
+        def record(candidate):
+            self.events.append('retained')
+            retained.append(candidate)
+            return True
+        result = self.run_task(candidate_recorder=record)
+        self.assertEqual(result['status'], 'unknown')
+        self.assertEqual(result['phase'], 'candidate')
+        self.assertEqual(result['failure_reason'], 'candidate_bound')
+        self.assertEqual(result['candidate_hash'], c.digest(self.candidate))
+        self.assertEqual(result['candidate_bytes'], len(self.candidate))
+        self.assertTrue(result['candidate_retained'])
+        self.assertEqual(retained, [self.candidate])
+        self.assertEqual(self.events, ['ready', 'credentials', 'provider', 'retained', 'closed'])
+        self.assertEqual(self.gate.db.execute('SELECT receipt, container_id FROM calls').fetchall(),
+                         [(None, None)])
+        self.assertIsNone(result['patch'])
+        self.assertEqual(self.run_task()['status'], 'blocked')
+        self.assertEqual(self.events.count('provider'), 1)
+
+    def test_candidate_failure_labels_are_closed_and_do_not_format_exceptions(self):
+        for reason in runner.CANDIDATE_FAILURES:
+            with self.subTest(reason=reason):
+                self.assertEqual(runner._candidate_failure(ValueError(reason)), reason)
+        class Untrusted(ValueError):
+            def __str__(self):
+                raise AssertionError('must not format')
+        for exc in (ValueError('secret-exception-sentinel'), ValueError('candidate_bound', 'secret'),
+                    ValueError(['candidate_bound']), TypeError('candidate_bound'),
+                    Untrusted('candidate_bound'), KeyboardInterrupt('secret')):
+            self.assertEqual(runner._candidate_failure(exc), 'candidate_validation_failed')
+
+    def test_unknown_validation_error_is_redacted_and_candidate_not_returned(self):
+        with patch.object(runner, 'validate_candidate', side_effect=ValueError('secret-error')):
+            result = self.run_task()
+        self.assertEqual(result['failure_reason'], 'candidate_validation_failed')
+        self.assertFalse(result['candidate_retained'])
+        self.assertNotIn('secret-error', repr(result))
+        self.assertNotIn(self.candidate.decode(), repr(result))
+        self.assertNotIn('runtime', self.events)
+
+    def test_retention_failure_blocks_validator_runtime_and_retry(self):
+        def record(candidate):
+            raise OSError('secret-path-sentinel')
+        with patch.object(runner, 'validate_candidate') as validator:
+            result = self.run_task(candidate_recorder=record)
+        validator.assert_not_called()
+        self.assertEqual(result['phase'], 'candidate_retention')
+        self.assertEqual(result['failure_reason'], 'candidate_retention_failed')
+        self.assertEqual(result['status'], 'unknown')
+        self.assertFalse(result['candidate_retained'])
+        self.assertNotIn('secret-path-sentinel', repr(result))
+        self.assertEqual(self.events, ['ready', 'credentials', 'provider', 'closed'])
+        self.assertIsNone(result['patch'])
+        self.assertEqual(self.run_task()['status'], 'blocked')
+
+    def test_retention_acknowledgement_must_be_true(self):
+        result = self.run_task(candidate_recorder=lambda candidate: 1)
+        self.assertEqual(result['failure_reason'], 'candidate_retention_failed')
+        self.assertFalse(result['candidate_retained'])
+        self.assertNotIn('runtime', self.events)
+
+    def test_retention_precedes_validation_and_verified_pass(self):
+        def record(candidate):
+            self.events.append('retained')
+            self.assertEqual(candidate, self.candidate)
+            return True
+        result = self.run_task(candidate_recorder=record)
+        self.assertEqual(result['status'], 'pass')
+        self.assertTrue(result['candidate_retained'])
+        self.assertNotIn('failure_reason', result)
+        self.assertEqual(self.events, ['ready', 'credentials', 'provider', 'retained', 'runtime', 'closed'])
+
+    def test_malformed_response_never_reaches_candidate_recorder(self):
+        with patch.object(runner, 'parse_response', side_effect=ValueError('response-sentinel')):
+            with patch.object(runner, 'validate_candidate') as validator:
+                recorder = unittest.mock.Mock()
+                result = self.run_task(candidate_recorder=recorder)
+        recorder.assert_not_called()
+        validator.assert_not_called()
+        self.assertEqual(result['phase'], 'response')
+        self.assertNotIn('candidate_hash', result)
+        self.assertNotIn('failure_reason', result)
 
     def test_readiness_blocks_provider_and_reservation(self):
         result = self.run_task(readiness=lambda *args: False)

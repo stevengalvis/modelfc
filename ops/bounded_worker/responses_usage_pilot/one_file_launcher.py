@@ -229,6 +229,24 @@ def _write(name, raw):
     _exclusive(RUN / name, raw)
 
 
+def _retain_candidate(candidate):
+    """Preserve bounded untrusted source as private inert data, never Python.
+
+    No raw API envelope, credentials or exception text belongs in this file.
+    A failed/partial write remains evidence and blocks validation/execution.
+    """
+    if type(candidate) is not bytes or not 0 < len(candidate) <= 8192:
+        raise ValueError('candidate_retention_failed')
+    _parents(RUN)
+    info = RUN.lstat()
+    if info.st_uid != UID or stat.S_IMODE(info.st_mode) != 0o700:
+        raise ValueError('candidate_retention_failed')
+    _write('candidate-source.bin', candidate)
+    if _read(RUN / 'candidate-source.bin', 8192, private=True) != candidate:
+        raise ValueError('candidate_retention_failed')
+    return True
+
+
 def _transport(manifest, source, tests, harness, reservation):
     # run_once invokes this only after durable reservation. Key never reaches child.
     OBSERVED.update(stage='credential', reservation='reserved')
@@ -292,7 +310,7 @@ def execute(mode):
         try:
             OBSERVED['reservation'] = 'unknown'
             result = run_once(manifest, *blobs, gate=gate, target=target,
-                              transport_factory=_transport)
+                              transport_factory=_transport, candidate_recorder=_retain_candidate)
         finally:
             gate.close()
         OBSERVED.update(stage='evidence',
@@ -300,7 +318,8 @@ def execute(mode):
                         provider_delivery=result.get('transport', {}).get('delivery', 'not_started'))
         evidence = {name: result[name] for name in (
             'reservation', 'wire_hash', 'manifest_identity', 'response_hash',
-            'candidate_hash', 'runtime', 'usage', 'transport', 'status', 'phase') if name in result}
+            'candidate_hash', 'candidate_bytes', 'candidate_retained', 'failure_reason',
+            'runtime', 'usage', 'transport', 'status', 'phase') if name in result}
         evidence_raw = c.canonical(evidence).encode()
         if len(evidence_raw) > 65536:
             raise ValueError('evidence_bound')
@@ -310,7 +329,10 @@ def execute(mode):
                   'usage': result.get('usage'), 'transport': result.get('transport'),
                   'evidence_sha256': c.digest(evidence_raw),
                   'patch_sha256': c.digest(patch) if patch is not None else None}
-        # Runner owns receipt/trusted result validation; never persist raw provider data.
+        report.update({name: result[name] for name in (
+            'candidate_hash', 'candidate_bytes', 'candidate_retained', 'failure_reason') if name in result})
+        # Only bounded candidate text is privately retained, never the raw envelope.
+        # Runner still owns receipt/trusted result validation before patch output.
         if patch is not None and result['status'] == 'pass' and result['phase'] == 'complete':
             _write('proposed.patch', patch)
         elif patch is not None:

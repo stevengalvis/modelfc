@@ -343,11 +343,116 @@ class LauncherTests(unittest.TestCase):
         self.assertEqual(result['status'], 'pass')
         self.assertEqual(self.events, ['ready','ready','key-after-durable-reservation','provider','runtime'])
         self.assertTrue((l.RUN / 'proposed.patch').is_file())
+        self.assertEqual((l.RUN / 'candidate-source.bin').read_bytes(), self.candidate)
+        self.assertEqual((l.RUN / 'candidate-source.bin').stat().st_mode & 0o777, 0o600)
+        self.assertEqual(l.RUN.stat().st_mode & 0o777, 0o700)
+        self.assertTrue(result['candidate_retained'])
+        self.assertEqual(result['candidate_hash'], c.digest(self.candidate))
         for file in l.RUN.iterdir():
             self.assertNotIn(b'fake-secret-never-export', file.read_bytes())
         with self.assertRaises(ValueError):
             l.execute('run')
         self.assertEqual(self.events.count('provider'), 1)
+
+    def test_rejected_candidate_is_exact_private_data_not_a_patch_or_report_content(self):
+        self.provision()
+        self.candidate += b'# untrusted-candidate-marker\n'
+        result = l.execute('run')
+        self.assertEqual((l.RUN / 'candidate-source.bin').read_bytes(), self.candidate)
+        self.assertEqual(result['status'], 'unknown')
+        self.assertEqual(result['phase'], 'candidate')
+        self.assertEqual(result['failure_reason'], 'function_scope')
+        self.assertEqual(result['candidate_hash'], c.digest(self.candidate))
+        self.assertTrue(result['candidate_retained'])
+        self.assertEqual(result['candidate_bytes'], len(self.candidate))
+        self.assertNotIn('runtime', self.events)
+        self.assertFalse((l.RUN / 'proposed.patch').exists())
+        for name in ('evidence.json', 'report.json'):
+            raw = (l.RUN / name).read_bytes()
+            self.assertNotIn(b'untrusted-candidate-marker', raw)
+            self.assertNotIn(b'fake-secret-never-export', raw)
+            self.assertEqual(json.loads(raw)['failure_reason'], 'function_scope')
+        before = {p.name: p.read_bytes() for p in l.RUN.iterdir()}
+        self.assertEqual(l.classify(self.m), 'spent')
+        with self.assertRaisesRegex(ValueError, '^admission_blocked$'):
+            l.execute('run')
+        self.assertEqual({p.name: p.read_bytes() for p in l.RUN.iterdir()}, before)
+        self.assertEqual(self.events.count('provider'), 1)
+
+    def test_candidate_file_cannot_be_overwritten_or_follow_links(self):
+        l.RUN.mkdir(mode=0o700)
+        path = l.RUN / 'candidate-source.bin'
+        other = self.home / 'prior-evidence'
+        other.write_bytes(b'preserve')
+        for kind in ('file', 'symlink', 'hardlink'):
+            with self.subTest(kind=kind):
+                if kind == 'file':
+                    path.write_bytes(b'preserve')
+                elif kind == 'symlink':
+                    path.symlink_to(other)
+                else:
+                    os.link(other, path)
+                with self.assertRaises(FileExistsError):
+                    l._retain_candidate(self.candidate)
+                self.assertEqual(path.read_bytes(), b'preserve')
+                self.assertEqual(other.read_bytes(), b'preserve')
+                path.unlink()  # private fixture only
+
+    def test_retention_bounds_types_and_private_parent(self):
+        l.RUN.mkdir(mode=0o700)
+        for value in (b'', b'x'*8193, 'text', bytearray(b'text')):
+            with self.subTest(value_type=type(value)), self.assertRaises(ValueError):
+                l._retain_candidate(value)
+        self.assertFalse(list(l.RUN.iterdir()))
+        l.RUN.chmod(0o755)
+        with self.assertRaises(ValueError):
+            l._retain_candidate(self.candidate)
+        l.RUN.chmod(0o700)
+        self.assertTrue(l._retain_candidate(b'x'*8192))
+        self.assertEqual((l.RUN / 'candidate-source.bin').read_bytes(), b'x'*8192)
+
+    def test_retention_rejects_symlink_parent_without_writes(self):
+        other = self.home / 'other'
+        other.mkdir(mode=0o700)
+        l.RUN.symlink_to(other, target_is_directory=True)
+        with self.assertRaises(ValueError):
+            l._retain_candidate(self.candidate)
+        self.assertFalse(list(other.iterdir()))
+
+    def test_failed_candidate_write_retains_partial_and_stops_without_retry(self):
+        self.provision()
+        original = l._write
+        def write(name, raw):
+            if name == 'candidate-source.bin':
+                original(name, raw[:12])
+                raise OSError('secret-disk-error')
+            original(name, raw)
+        with patch.object(l, '_write', side_effect=write):
+            result = l.execute('run')
+        self.assertEqual((l.RUN / 'candidate-source.bin').read_bytes(), self.candidate[:12])
+        self.assertEqual(result['phase'], 'candidate_retention')
+        self.assertEqual(result['failure_reason'], 'candidate_retention_failed')
+        self.assertFalse(result['candidate_retained'])
+        self.assertEqual(l.classify(self.m), 'spent')
+        self.assertNotIn('runtime', self.events)
+        self.assertFalse((l.RUN / 'proposed.patch').exists())
+        self.assertNotIn('secret-disk-error', (l.RUN / 'report.json').read_text())
+        with self.assertRaisesRegex(ValueError, '^admission_blocked$'):
+            l.execute('run')
+
+    def test_candidate_envelope_and_exception_details_are_never_retained(self):
+        from ops.bounded_worker.responses_usage_pilot import one_file_runner as runner
+        self.provision()
+        envelope = json.loads(response(self.candidate))
+        envelope['metadata'] = {'private': 'envelope-sentinel'}
+        with patch('tests.test_responses_one_file_launcher.response', return_value=json.dumps(envelope).encode()):
+            with patch.object(runner, 'validate_candidate', side_effect=ValueError('exception-sentinel')):
+                result = l.execute('run')
+        self.assertEqual(result['failure_reason'], 'candidate_validation_failed')
+        for file in l.RUN.iterdir():
+            raw = file.read_bytes()
+            for secret in (b'envelope-sentinel', b'exception-sentinel', b'fake-secret-never-export'):
+                self.assertNotIn(secret, raw)
 
     def test_readiness_blocks_key_and_leaves_marker(self):
         self.provision()
