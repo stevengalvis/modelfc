@@ -79,6 +79,9 @@ def bind_first_reservation(manifest, prepared, reservation, source, tests, harne
         'request_hash': digest(canonical([manifest.identity, 1, []]).encode()),
         'sandbox_name': 'responses-task-' + manifest.identity + '-1',
     }
+    if type(reservation) is dict and reservation.get('number') == 2:
+        from .followup_allowance import reservation_plan
+        expected = reservation_plan(manifest, reservation.get('approval_hash'))
     if (type(reservation) is not dict or reservation != expected
             or type(reservation.get('number')) is not int):
         raise ValueError('reservation_identity')

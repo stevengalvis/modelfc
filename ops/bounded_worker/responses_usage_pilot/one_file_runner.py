@@ -72,7 +72,7 @@ def run_once(manifest, source, tests, harness, *, gate, target, transport_factor
             nonlocal bound_container
             if bound_container is not None:
                 raise ValueError('duplicate_container')
-            if gate.bind_container(manifest, 1, reservation['sandbox_name'], container_id) is not True:
+            if gate.bind_container(manifest, reservation['number'], reservation['sandbox_name'], container_id) is not True:
                 raise ValueError('container_binding_unverified')
             bound_container = container_id
             return True
@@ -102,7 +102,7 @@ def run_once(manifest, source, tests, harness, *, gate, target, transport_factor
             usage['input_tokens'], usage['output_tokens'], len(raw), len(candidate),
             digest(canonical(execution).encode()), digest(canonical(cleanup).encode()), True)
         result['phase'] = 'receipt'
-        gate.record(manifest, 1, receipt)
+        gate.record(manifest, reservation['number'], receipt)
         result['status'] = receipt.outcome
         # Only independently verified tests + complete cleanup + durable receipt
         # produce the proposed patch. No application, commit or publication.

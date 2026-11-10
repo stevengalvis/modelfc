@@ -117,10 +117,13 @@ def _settings(manifest, target):
         raise ValueError('sandbox_settings_mismatch')
 
 
-def verify_readiness(manifest, target, *, command=None):
+def verify_readiness(manifest, target, *, command=None, followup=False):
     """Read-only exact runtime/image/name checks before provider access; no reservation."""
     _settings(manifest, target)
     name = 'responses-task-' + manifest.identity + '-1'
+    if followup:
+        from .followup_allowance import sandbox_name
+        name = sandbox_name(manifest)
     executor = TestExecutor(target, name, '', command=command)
     def inspect():
         executor.verify_prepared()

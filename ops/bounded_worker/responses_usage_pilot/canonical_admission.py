@@ -197,6 +197,9 @@ class CanonicalAdmission:
     Directory provisioning is a separate operator action. The fixed store must
     be outside worker mounts and retained forever; deletion/rollback is unsafe.
     """
+    schema = SCHEMA
+    version = VERSION
+
     def __init__(self):
         path = STORE
         if not path.is_absolute() or '..' in path.parts:
@@ -228,8 +231,8 @@ class CanonicalAdmission:
             if not created:
                 actual = {row[0] for row in self.db.execute(
                     "SELECT sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'")}
-                if (actual != set(SCHEMA)
-                        or self.db.execute('PRAGMA user_version').fetchone() != (VERSION,)):
+                if (actual != set(self.schema)
+                        or self.db.execute('PRAGMA user_version').fetchone() != (self.version,)):
                     raise ValueError('schema_or_store_mismatch')
             if self.db.execute('PRAGMA journal_mode=DELETE').fetchone() != ('delete',):
                 raise ValueError('journal_mode_rejected')
@@ -239,15 +242,15 @@ class CanonicalAdmission:
                 raise ValueError('synchronization_rejected')
             self.db.execute('BEGIN IMMEDIATE')
             if created:
-                for sql in SCHEMA:
+                for sql in self.schema:
                     self.db.execute(sql)
-                self.db.execute('INSERT INTO metadata VALUES (?, ?)', (VERSION, str(path)))
-                self.db.execute(f'PRAGMA user_version={VERSION}')
+                self.db.execute('INSERT INTO metadata VALUES (?, ?)', (self.version, str(path)))
+                self.db.execute(f'PRAGMA user_version={self.version}')
             actual = {row[0] for row in self.db.execute(
                 "SELECT sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'")}
-            if (actual != set(SCHEMA)
-                    or self.db.execute('PRAGMA user_version').fetchone() != (VERSION,)
-                    or self.db.execute('SELECT * FROM metadata').fetchall() != [(VERSION, str(path))]
+            if (actual != set(self.schema)
+                    or self.db.execute('PRAGMA user_version').fetchone() != (self.version,)
+                    or self.db.execute('SELECT * FROM metadata').fetchall() != [(self.version, str(path))]
                     or self.db.execute('PRAGMA integrity_check').fetchall() != [('ok',)]):
                 raise ValueError('schema_or_store_mismatch')
             self.db.execute('COMMIT')
