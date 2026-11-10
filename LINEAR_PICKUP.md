@@ -164,3 +164,99 @@ Still required before claiming ZEN-86 complete:
 No full repository CI, protected-host acceptance, live Linear write, Codex/model
 execution, API run, spending, interactive wake, installation or deployment is
 claimed. ZEN-86 remains incomplete until both real end-to-end paths are accepted.
+
+## Subscription commissioning sequence
+
+This is a proposed acceptance sequence, not permission to perform it. The source
+baseline is PR270 `d8f9b5489c6665c5174f04f097d7e5797d315f16`. Its subscription
+constructor already wraps the existing `bridge_executor.Executor`; another
+subscription adapter, dispatcher or database is not needed. New source-only
+checks in `tests/test_linear_subscription_acceptance.py` retain that constructor
+and wrapper through the exact-entry acknowledgment/result path. They use a real
+temporary SQLite store but mock protected-host inputs, Linear I/O and executor
+execution. They do not prove authentication, containment, actual task execution,
+remote polling, patch delivery or host acceptance.
+
+### 1. Inventory before an installation decision
+
+Under separately authorized read-only host scope, establish the actual installed
+source and all manual/queue/remote entrypoints; current worker activity and
+unresolved receipts; existing Linear account/audience and authentication method;
+and the accepted subscription executable, account and containment configuration.
+Do not read or export credential contents or call a model just to test login.
+Record unknowns instead of treating earlier GitHub job success as proof that the
+new Linear path is ready. An unconfirmed sandbox run or cleanup is a hold.
+
+Record real CPU, memory, process, runtime, storage and cleanup limits and how they
+apply to this task. Existing ZEN-69 CPU/storage and interruption acceptance gaps
+must not disappear from the report merely because the source tests pass. Do not
+change limits, mounts, ACLs or credentials to satisfy this inventory.
+
+### 2. Present one coordinated, bounded installation proposal
+
+Pin the final reviewed source tree and enumerate every installed entrypoint
+sharing its coding store. Propose their coordinated upgrade, preserving old
+receipts and the lock; old code must not continue admitting work against newer
+holds. Follow the existing provisioning functions only for demonstrably absent
+tables. Partial schemas, uncertain receipts or an unexpected existing store need
+reconciliation, not deletion, reset or a new database to evade the hold.
+
+Use subscription-only target binding. The health store and existing GitHub worker
+roots remain separate. Keep one Linear coding store for future subscription/API
+targets, with the API constructor unavailable until its independent work is
+reviewed and accepted. Do not install the unmerged API pilot as a dependency.
+
+Choose the exact host paths, account/audience, admission mode, resource limits and
+finite schedule from the inventory, then obtain the applicable approval before
+installation or migration. The remote gate is the no-manual-relay route; its
+account-trust decision and finite policy are described in `LINEAR_REMOTE_GATE.md`.
+The exact-entry regression does not establish remote-gate live acceptance.
+
+### 3. One harmless, explicitly approved scheduled task
+
+Proposed scope: create only `docs/subscription-pickup-smoke.md` containing exactly
+`Subscription pickup smoke test.` followed by one LF, in a fresh isolated checkout.
+No application changes, provider calls, package installation, publishing, merge
+or deployment. Proposed task limits: 90 seconds, 262144 output bytes and 4096 diff
+bytes; one job, 60-second polling cadence, and a 15-minute policy lifetime. These
+values are proposals, not grants, and the host must substantiate the complete
+execution plus stop/cleanup deadline before adoption.
+
+Use v2, target `codex-subscription`, `publish=false`, and a 600-second acknowledgment
+deadline. Pin the task to the actual approved mirror main SHA at admission, not a
+hard-coded historical base. Once the approved schedule is ready, post the exact
+request, fetch its authenticated server timestamp/UUID, compute the existing
+canonical binding, and supply the separate exact approval. Never fabricate a
+comment ID, timestamp, approval, expiry or request hash in advance. Posting and
+approval require their own authorized scope. Do not paste a fallback prompt into
+the interactive session after posting this task.
+
+If returning the reviewable patch automatically is part of acceptance, explicitly
+approve its one-file disclosure to the verified originating issue audience and
+configure the existing bounded artifact trial before admission. A sanitized final
+status alone is not proof of artifact delivery. No publisher credential, new
+artifact transport or automatic repository mutation is needed for this trial.
+
+### 4. Record observed evidence and leave the remaining gaps explicit
+
+Require the exact installed SHA, task/base identity, confirmed acknowledgment
+before execution, actual subscription executor/session evidence, bounded process
+completion and independent cleanup, exact one-file diff, and confirmed final
+Linear reply. Record model-reported usage separately from subscription allowance
+or dollar cost. If artifact disclosure was approved, require its matching durable
+delivery receipt and accessible artifact as well.
+
+Check that later polls during the approved trial do not create another execution
+or duplicate acknowledgment/result/artifact. With the proposed one-job cap, the
+host can return `quota_reached` before reading Linear again: that proves the quota
+stop, not live duplicate-delivery handling. A separately scoped eligible replay of
+the identical request, with no new model invocation authorized, is still needed
+for that acceptance item. Do not increase quota or install another admission mode
+merely to obtain it. Source-only replay tests are not live replay evidence either.
+
+Missing acknowledgment means investigate the known request and actual receipts;
+unknown delivery/execution/cleanup means hold. Never retry by changing job IDs,
+targets or databases. Preserve the evidence. Controlled interruption/restart and
+the final missing-ack observation/notification route remain separate acceptance
+items unless explicitly included and demonstrated. Finishing this subscription
+trial does not complete the Agents API target or authorize a permanent schedule.
