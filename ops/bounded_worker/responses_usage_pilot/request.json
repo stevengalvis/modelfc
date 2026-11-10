@@ -1,0 +1,14 @@
+{
+  "model": "gpt-6-luna",
+  "input": "Implement one small Python 3.12 utility for comparing model-reported API\ntoken usage. Return only the complete source of usage_summary.py, no Markdown.\nImplement summarize_usage(records). records must be a list of dictionaries.\nEach dictionary must have model (a non-blank string, preserved exactly),\ninput_tokens and output_tokens (nonnegative integers, excluding bool).\nReturn a dictionary keyed by model; each value contains calls, input_tokens,\noutput_tokens and total_tokens. Sum counts per model, calculate total_tokens\nfrom input plus output, ignore extra input fields, and never mutate inputs.\nReturn {} for an empty list. Raise ValueError for every invalid collection,\nrecord, missing field, model or token count. No imports, classes, decorators,\nfile access, commands, network, third-party packages or top-level work.\nDo not use type annotations, helper functions, decorators or underscore-prefixed\nnames. Use ordinary loops and dictionaries; call only ValueError, isinstance,\ntype, dict, list, str, int, bool, any, all, len, sum, or get/setdefault/strip/\nitems/values/keys/append/copy methods. Only define summarize_usage.\nThis summarizes reported tokens only; do not estimate money or billing.\nExamples: [{\"model\":\"luna\",\"input_tokens\":100,\"output_tokens\":20},\n{\"model\":\"luna\",\"input_tokens\":40,\"output_tokens\":5}] returns\n{\"luna\":{\"calls\":2,\"input_tokens\":140,\"output_tokens\":25,\"total_tokens\":165}}.\n",
+  "max_output_tokens": 4096,
+  "reasoning": {
+    "effort": "low"
+  },
+  "service_tier": "default",
+  "store": false,
+  "stream": false,
+  "tools": [],
+  "tool_choice": "none",
+  "truncation": "disabled"
+}
