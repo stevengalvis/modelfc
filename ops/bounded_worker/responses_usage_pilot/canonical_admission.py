@@ -16,6 +16,7 @@ import stat
 
 STORE = Path('/home/zeno-worker/responses-task-admission')
 VERSION = 2
+CANDIDATE_DERIVATION_POLICY = 'append-missing-final-lf-v1'
 SCHEMA = (
     'CREATE TABLE metadata (version INTEGER NOT NULL, directory TEXT NOT NULL)',
     'CREATE TABLE tasks (task_id TEXT PRIMARY KEY, identity TEXT UNIQUE NOT NULL, '
@@ -147,7 +148,7 @@ class Manifest:
 class Receipt:
     outcome: str  # pass, test_failure, unknown, blocked
     response_hash: str
-    candidate_hash: str
+    candidate_hash: str  # Exact tested bytes, possibly derived by the controller.
     container_id: str
     sandbox_name: str
     image_id: str
@@ -159,8 +160,26 @@ class Receipt:
     execution_receipt_hash: str
     cleanup_receipt_hash: str
     cleanup_verified: bool
+    candidate_derivation: dict | None = None  # Absent in historical receipts.
 
     def validate(self, manifest, sandbox):
+        if self.candidate_derivation is not None:
+            lineage = self.candidate_derivation
+            if (type(lineage) is not dict or set(lineage) != {
+                    'policy', 'applied', 'raw_hash', 'raw_bytes', 'derived_hash', 'derived_bytes'}
+                    or lineage['policy'] != CANDIDATE_DERIVATION_POLICY
+                    or type(lineage['applied']) is not bool):
+                raise ValueError('invalid_candidate_derivation')
+            for name in ('raw_hash', 'derived_hash'):
+                _hex(lineage[name])
+            for name in ('raw_bytes', 'derived_bytes'):
+                if type(lineage[name]) is not int or not 0 < lineage[name] <= manifest.max_source_bytes:
+                    raise ValueError('invalid_candidate_derivation')
+            if (lineage['derived_hash'] != self.candidate_hash
+                    or lineage['derived_bytes'] != self.candidate_bytes
+                    or lineage['derived_bytes'] != lineage['raw_bytes'] + int(lineage['applied'])
+                    or (lineage['raw_hash'] != lineage['derived_hash']) != lineage['applied']):
+                raise ValueError('invalid_candidate_derivation')
         if self.outcome not in ('pass', 'test_failure', 'unknown', 'blocked'):
             raise ValueError('invalid_outcome')
         for value in (self.response_hash, self.candidate_hash, self.container_id,

@@ -107,6 +107,26 @@ class FollowupTests(unittest.TestCase):
             l.execute('upgrade')
         self.assertEqual(self.events, [])
 
+    def test_missing_lf_reports_raw_and_tested_lineage(self):
+        self.upgrade()
+        expected = self.candidate
+        self.candidate = expected[:-1]
+        result = l.execute('run')
+        self.assertEqual(result['status'], 'pass', result)
+        self.assertEqual((l.RUN / 'candidate-source.bin').read_bytes(), self.candidate)
+        self.assertEqual(result['candidate_hash'], c.digest(self.candidate))
+        self.assertEqual(result['candidate_bytes'], len(self.candidate))
+        lineage = result['candidate_derivation']
+        self.assertTrue(lineage['applied'])
+        self.assertEqual(lineage['derived_hash'], c.digest(expected))
+        self.assertEqual(lineage['derived_bytes'], len(expected))
+        evidence = (l.RUN / 'evidence.json').read_bytes()
+        self.assertEqual(result['evidence_sha256'], c.digest(evidence))
+        self.assertEqual(json.loads(evidence)['candidate_derivation'], lineage)
+        self.assertEqual(json.loads((l.RUN / 'report.json').read_bytes()), result)
+        self.assertNotIn(expected.decode(), evidence.decode())
+        self.assertEqual((l.RUN / 'proposed.patch').read_bytes(), a.review_patch(self.m, *self.blobs, expected))
+
     def test_full_followup_uses_second_identity_and_preserves_unknown(self):
         self.upgrade()
         result = l.execute('run')
@@ -196,7 +216,7 @@ class FollowupTests(unittest.TestCase):
 
     def test_rejected_candidate_is_retained_and_never_retried(self):
         self.upgrade()
-        self.candidate = self.candidate.rstrip(b'\n')
+        self.candidate = self.candidate.replace(b'\n', b'\r\n')
         result = l.execute('run')
         self.assertEqual(result['status'], 'unknown')
         evidence = json.loads((l.RUN/'evidence.json').read_text())

@@ -58,6 +58,38 @@ subscription, and no purchased balance or billing setup shown. This limited
 observation is not a guarantee that purchased-credit fallback is impossible.
 No paid fallback or billing changes are authorized.
 
+## Prospective final-newline derivation (offline proposal)
+
+Prepared against `65c9fb241ca691ac0accadbedf1410367ada1734`. Before strict
+validation the controller retains the exact received source in the existing
+private `candidate-source.bin`. Policy `append-missing-final-lf-v1` accepts only
+nonempty, bounded bytes without CR and appends exactly one LF if missing. The
+derived bytes must independently fit `max_source_bytes`. No trimming, CRLF
+conversion, fence stripping, blank-line changes or code rewriting is permitted.
+The strict validator, including exact outer bytes and signature, is unchanged.
+The same derived bytes go to static validation, runtime, proposed diff and the
+receipt's tested-candidate hash and size. Static failure or retention failure
+cannot reach runtime or produce a success receipt or patch.
+
+In both launchers' reports and evidence, existing `candidate_hash` and
+`candidate_bytes` still describe received bytes. The additive
+`candidate_derivation` object explicitly records policy, boolean `applied`,
+`raw_hash`, `raw_bytes`, `derived_hash` and `derived_bytes`. It is included in
+bounded private `evidence.json` and bound by the report's `evidence_sha256`.
+Receipts keep their existing tested-byte `candidate_hash`/`candidate_bytes`
+meaning and also carry this lineage object; receipt validation checks its closed
+shape, policy, bounds, hashes and one-byte/no-op size relationship. These are
+trusted-controller observations, not cryptographic proof against same-UID
+forgery. Historical receipts may lack lineage; do not infer it retrospectively.
+Source bytes are never added to reports or receipts.
+
+This changes no store schema, request, task identity, instruction, budget or
+allowance. It cannot replenish spent calls or retroactively validate an earlier
+candidate. In particular the reported 888-byte saved candidate is not available
+in this local checkout: fixture results do not establish its validity, runtime
+behavior or patch. A future controller bundle must be independently reviewed and
+pinned; publication, staging, API calls and sandbox execution are separate gates.
+
 ## Combined future staging and run route
 
 Prepare ONE operator handoff only after publication/review, with an exact

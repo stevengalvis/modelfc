@@ -160,7 +160,7 @@ def execute(mode):
                           transport=result.get('transport'),
                           patch_sha256=c.digest(result['patch']) if result.get('patch') is not None else None)
             report.update({name: result[name] for name in (
-                'candidate_hash', 'candidate_bytes', 'candidate_retained', 'failure_reason') if name in result})
+                'candidate_hash', 'candidate_bytes', 'candidate_retained', 'candidate_derivation', 'failure_reason') if name in result})
             write('report.json', c.canonical(report).encode())
             return report
         finally:

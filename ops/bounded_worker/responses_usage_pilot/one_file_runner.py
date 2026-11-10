@@ -4,7 +4,7 @@ Trusted caller supplies explicit approved manifest/bytes and a transport factory
 only that factory may obtain credentials, after readiness and durable reservation.
 The injected boundaries are trusted controller code, never provider-selected.
 """
-from .canonical_admission import Receipt, canonical, digest
+from .canonical_admission import CANDIDATE_DERIVATION_POLICY, Receipt, canonical, digest
 from .one_file_adapter import prepare, bind_first_reservation, validate_candidate, review_patch
 from .one_file_transport import parse_response, transport_observation
 
@@ -25,6 +25,23 @@ def _candidate_failure(exc):
             and type(exc.args[0]) is str and exc.args[0] in CANDIDATE_FAILURES):
         return exc.args[0]
     return 'candidate_validation_failed'
+
+
+def derive_candidate(manifest, raw_candidate):
+    """Derive only a missing final LF; never repair other bytes or validate scope."""
+    if (type(raw_candidate) is not bytes
+            or not 0 < len(raw_candidate) <= manifest.max_source_bytes
+            or b'\r' in raw_candidate):
+        raise ValueError('candidate_bound')
+    applied = not raw_candidate.endswith(b'\n')
+    candidate = raw_candidate + b'\n' if applied else raw_candidate
+    if len(candidate) > manifest.max_source_bytes:
+        raise ValueError('candidate_bound')
+    return candidate, {
+        'policy': CANDIDATE_DERIVATION_POLICY, 'applied': applied,
+        'raw_hash': digest(raw_candidate), 'raw_bytes': len(raw_candidate),
+        'derived_hash': digest(candidate), 'derived_bytes': len(candidate),
+    }
 
 
 def run_once(manifest, source, tests, harness, *, gate, target, transport_factory,
@@ -64,8 +81,9 @@ def run_once(manifest, source, tests, harness, *, gate, target, transport_factor
                 raise ValueError('candidate_retention_failed')
             result['candidate_retained'] = True
         result['phase'] = 'candidate'
+        candidate, lineage = derive_candidate(manifest, candidate)
+        result['candidate_derivation'] = lineage
         candidate_hash = validate_candidate(manifest, source, tests, harness, candidate)
-        result['candidate_hash'] = candidate_hash
         result['phase'] = 'sandbox'
 
         def record_identity(container_id):
@@ -100,7 +118,7 @@ def run_once(manifest, source, tests, harness, *, gate, target, transport_factor
             bound_container, reservation['sandbox_name'], manifest.image_id,
             tuple((name, name not in failed) for name in manifest.test_names),
             usage['input_tokens'], usage['output_tokens'], len(raw), len(candidate),
-            digest(canonical(execution).encode()), digest(canonical(cleanup).encode()), True)
+            digest(canonical(execution).encode()), digest(canonical(cleanup).encode()), True, candidate_derivation=lineage)
         result['phase'] = 'receipt'
         gate.record(manifest, reservation['number'], receipt)
         result['status'] = receipt.outcome

@@ -318,7 +318,7 @@ def execute(mode):
                         provider_delivery=result.get('transport', {}).get('delivery', 'not_started'))
         evidence = {name: result[name] for name in (
             'reservation', 'wire_hash', 'manifest_identity', 'response_hash',
-            'candidate_hash', 'candidate_bytes', 'candidate_retained', 'failure_reason',
+            'candidate_hash', 'candidate_bytes', 'candidate_retained', 'candidate_derivation', 'failure_reason',
             'runtime', 'usage', 'transport', 'status', 'phase') if name in result}
         evidence_raw = c.canonical(evidence).encode()
         if len(evidence_raw) > 65536:
@@ -330,7 +330,7 @@ def execute(mode):
                   'evidence_sha256': c.digest(evidence_raw),
                   'patch_sha256': c.digest(patch) if patch is not None else None}
         report.update({name: result[name] for name in (
-            'candidate_hash', 'candidate_bytes', 'candidate_retained', 'failure_reason') if name in result})
+            'candidate_hash', 'candidate_bytes', 'candidate_retained', 'candidate_derivation', 'failure_reason') if name in result})
         # Only bounded candidate text is privately retained, never the raw envelope.
         # Runner still owns receipt/trusted result validation before patch output.
         if patch is not None and result['status'] == 'pass' and result['phase'] == 'complete':

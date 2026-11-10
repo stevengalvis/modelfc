@@ -92,6 +92,126 @@ class AdapterTests(unittest.TestCase):
         args.update(overrides)
         return run_once(self.m, *self.blobs, **args)
 
+    def test_final_lf_derivation_is_narrow_and_idempotent(self):
+        derived, lineage = runner.derive_candidate(self.m, self.candidate[:-1])
+        self.assertEqual(derived, self.candidate)
+        self.assertTrue(lineage['applied'])
+        self.assertEqual(lineage['policy'], c.CANDIDATE_DERIVATION_POLICY)
+        again, unchanged = runner.derive_candidate(self.m, derived)
+        self.assertIs(again, derived)
+        self.assertFalse(unchanged['applied'])
+        self.assertEqual(unchanged['raw_hash'], unchanged['derived_hash'])
+        self.assertEqual(a.review_patch(self.m, *self.blobs, derived),
+                         a.review_patch(self.m, *self.blobs, self.candidate))
+        with self.assertRaisesRegex(ValueError, '^candidate_bound$'):
+            a.validate_candidate(self.m, *self.blobs, self.candidate[:-1])
+
+    def test_derivation_bounds_and_invalid_input(self):
+        for raw in (b'', None, '', bytearray(b'x'), b'x\r', b'x\r\n'):
+            with self.subTest(raw=raw), self.assertRaisesRegex(ValueError, '^candidate_bound$'):
+                runner.derive_candidate(self.m, raw)
+        bound = replace(self.m, max_source_bytes=len(self.candidate))
+        self.assertEqual(runner.derive_candidate(bound, self.candidate[:-1])[0], self.candidate)
+        self.assertEqual(runner.derive_candidate(bound, self.candidate)[0], self.candidate)
+        with self.assertRaisesRegex(ValueError, '^candidate_bound$'):
+            runner.derive_candidate(bound, b'x' * len(self.candidate))
+        with self.assertRaisesRegex(ValueError, '^candidate_bound$'):
+            runner.derive_candidate(bound, self.candidate + b'\n')
+
+    def test_normalization_does_not_relax_strict_validation(self):
+        cases = (
+            (self.blobs[0][:-1], 'single_strip_required'),
+            (self.candidate.replace(b'import re', b'import os')[:-1], 'function_scope'),
+            (self.candidate.replace(b'def required_text(row:', b'def required_text( row:')[:-1], 'signature_bytes'),
+            (self.candidate.replace(b'return stripped', b'return row.clear()')[:-1], 'candidate_attribute'),
+            (self.candidate + b'\n', 'function_scope'),
+            (b'```python\n' + self.candidate + b'```', 'invalid_python'),
+            (self.candidate + b'\xff', 'invalid_python'),
+        )
+        for raw, reason in cases:
+            with self.subTest(reason=reason):
+                derived, _ = runner.derive_candidate(self.m, raw)
+                with self.assertRaisesRegex(ValueError, '^' + reason + '$'):
+                    a.validate_candidate(self.m, *self.blobs, derived)
+
+    def test_missing_lf_retains_raw_and_tests_diffs_receipts_derived(self):
+        expected = self.candidate
+        self.candidate = expected[:-1]
+        retained = []
+        def record(raw):
+            retained.append(raw)
+            return True
+        def runtime(*args, **kwargs):
+            self.assertEqual(args[4], expected)
+            self.assertEqual(retained, [self.candidate])
+            return self.runtime(*args, **kwargs)
+        with patch.object(runner, 'validate_candidate', wraps=a.validate_candidate) as validate, \
+                patch.object(runner, 'review_patch', wraps=a.review_patch) as diff:
+            result = self.run_task(candidate_recorder=record, runtime=runtime)
+        self.assertEqual(result['status'], 'pass', result)
+        self.assertEqual(validate.call_args.args[-1], expected)
+        self.assertEqual(diff.call_args.args[-1], expected)
+        self.assertEqual(result['patch'], a.review_patch(self.m, *self.blobs, expected))
+        self.assertEqual(result['candidate_hash'], c.digest(self.candidate))
+        self.assertEqual(result['candidate_bytes'], len(self.candidate))
+        lineage = result['candidate_derivation']
+        self.assertEqual(lineage['raw_hash'], c.digest(self.candidate))
+        self.assertEqual(lineage['derived_hash'], c.digest(expected))
+        self.assertEqual(lineage['raw_bytes'], len(self.candidate))
+        self.assertEqual(lineage['derived_bytes'], len(expected))
+        receipt = json.loads(self.gate.db.execute('SELECT receipt FROM calls').fetchone()[0])
+        self.assertEqual(receipt['candidate_hash'], c.digest(expected))
+        self.assertEqual(receipt['candidate_bytes'], len(expected))
+        self.assertEqual(receipt['candidate_derivation'], lineage)
+        receipt['test_results'] = tuple(tuple(row) for row in receipt['test_results'])
+        for change in ({'policy': 'other'}, {'applied': 1}, {'raw_hash': 'x'},
+                       {'derived_hash': 'f' * 64}, {'raw_bytes': True},
+                       {'raw_bytes': len(expected)}, {'derived_bytes': len(expected) + 1},
+                       {'raw_hash': c.digest(expected)}, {'extra': 'field'}):
+            altered = dict(lineage, **change)
+            with self.subTest(change=change), self.assertRaises(ValueError):
+                replace(c.Receipt(**receipt), candidate_derivation=altered).validate(
+                    self.m, receipt['sandbox_name'])
+
+    def test_append_over_bound_retains_raw_without_runtime_or_receipt(self):
+        self.candidate = b'x' * self.m.max_source_bytes
+        retained = []
+        def record(raw):
+            retained.append(raw)
+            return True
+        result = self.run_task(candidate_recorder=record)
+        self.assertEqual(retained, [self.candidate])
+        self.assertTrue(result['candidate_retained'])
+        self.assertEqual(result['candidate_bytes'], self.m.max_source_bytes)
+        self.assertEqual(result['failure_reason'], 'candidate_bound')
+        self.assertNotIn('candidate_derivation', result)
+        self.assertNotIn('runtime', self.events)
+        self.assertIsNone(result['patch'])
+        self.assertEqual(self.gate.db.execute('SELECT receipt FROM calls').fetchone(), (None,))
+
+    def test_normalized_receipt_failure_never_emits_patch_or_retries(self):
+        self.candidate = self.candidate[:-1]
+        with patch.object(self.gate, 'record', side_effect=ValueError('receipt-sentinel')), \
+                patch.object(runner, 'review_patch') as diff:
+            result = self.run_task()
+        diff.assert_not_called()
+        self.assertEqual(result['phase'], 'receipt')
+        self.assertEqual(result['status'], 'unknown')
+        self.assertIsNone(result['patch'])
+        self.assertNotIn('receipt-sentinel', repr(result))
+        self.assertEqual(self.gate.db.execute('SELECT receipt FROM calls').fetchone(), (None,))
+        self.assertEqual(self.run_task()['status'], 'blocked')
+        self.assertEqual(self.events.count('provider'), 1)
+
+    def test_normalized_static_failure_never_executes_or_records_success(self):
+        self.candidate = self.blobs[0][:-1]
+        result = self.run_task(candidate_recorder=lambda raw: True)
+        self.assertEqual(result['failure_reason'], 'single_strip_required')
+        self.assertTrue(result['candidate_derivation']['applied'])
+        self.assertNotIn('runtime', self.events)
+        self.assertIsNone(result['patch'])
+        self.assertEqual(self.gate.db.execute('SELECT receipt FROM calls').fetchone(), (None,))
+
     def test_exact_bundle_and_request(self):
         prepared = a.prepare(self.m, *self.blobs)
         self.assertEqual(prepared.wire_hash, c.digest(prepared.wire))
@@ -177,7 +297,7 @@ class AdapterTests(unittest.TestCase):
         self.assertEqual(self.events.count('provider'), 1)
 
     def test_candidate_rejection_retains_before_validation_without_runtime(self):
-        self.candidate = self.candidate.rstrip(b'\n')
+        self.candidate = self.candidate.replace(b'\n', b'\r\n')
         retained = []
         def record(candidate):
             self.events.append('retained')
@@ -222,9 +342,11 @@ class AdapterTests(unittest.TestCase):
     def test_retention_failure_blocks_validator_runtime_and_retry(self):
         def record(candidate):
             raise OSError('secret-path-sentinel')
-        with patch.object(runner, 'validate_candidate') as validator:
+        with patch.object(runner, 'validate_candidate') as validator, \
+                patch.object(runner, 'derive_candidate') as derive:
             result = self.run_task(candidate_recorder=record)
         validator.assert_not_called()
+        derive.assert_not_called()
         self.assertEqual(result['phase'], 'candidate_retention')
         self.assertEqual(result['failure_reason'], 'candidate_retention_failed')
         self.assertEqual(result['status'], 'unknown')
