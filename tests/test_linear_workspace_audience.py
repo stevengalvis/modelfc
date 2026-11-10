@@ -43,7 +43,7 @@ class WorkspaceAudienceTests(unittest.TestCase):
             calls.append(query)
             if query == transport.PUBLIC_QUERIES[transport.POLL]:
                 return dict(self.data, channel={'id': uid(3), 'comments': {
-                    'pageInfo': {'hasPreviousPage': False}, 'nodes': [self.data['comment']]}})
+                    'pageInfo': {'hasPreviousPage': False, 'startCursor': 'head'}, 'nodes': [self.data['comment']]}})
             if query == transport.POST:
                 return {'commentCreate': {'success': True, 'comment': {
                     'id': uid(8), 'body': self.report, 'user': {'id': uid(5)}, 'issue': {'id': uid(3)}}}}

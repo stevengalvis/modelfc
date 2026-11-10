@@ -86,7 +86,9 @@ class PickupTests(unittest.TestCase):
                 result = self.dispatch()
                 self.assertEqual(result['status'], 'completed')
                 self.assertEqual(events, ['acknowledged', 'run'])
-                self.assertTrue(intake._safe(self.db))
+                # API terminal claims now require the real adapter's private history.
+                # This bare fake exercises lifecycle only, not API result acceptance.
+                self.assertEqual(intake._safe(self.db), target != 'agents-api')
                 self.assertEqual(pickup.inspect_pickup(self.db, self.req, self.now)['status'], 'finished')
                 row = self.db.execute('SELECT * FROM linear_coding_jobs').fetchone()
                 report = runtime._report(row, self.db)
@@ -97,7 +99,7 @@ class PickupTests(unittest.TestCase):
                 self.assertEqual(value['execution_target'], pickup.EXECUTION_TARGETS[target])
                 self.assertEqual(value['acknowledged_at'], 100)
                 self.assertEqual(value['posted_at'], 90)
-                self.assertEqual(self.dispatch()['status'], 'duplicate')
+                self.assertEqual(self.dispatch()['status'], 'blocked' if target == 'agents-api' else 'duplicate')
                 self.assertEqual(events, ['acknowledged', 'run'])
 
     def test_missing_hook_or_migration_cannot_execute(self):
@@ -214,10 +216,12 @@ class PickupTests(unittest.TestCase):
         import hashlib
         self.assertEqual(gate._fingerprint(policy), hashlib.sha256(intake._canonical(old)).hexdigest())
 
-    def test_host_api_adapter_is_explicitly_unavailable(self):
+    def test_host_api_factory_requires_configuration_and_is_not_activated(self):
         approval = dataclasses.replace(self.approval, target='agents-api')
         with self.assertRaises(pickup.UnsupportedTarget): entry._executor({}, {}, approval)
-        self.assertFalse(pickup.capability('agents-api')['host_adapter_available'])
+        self.assertTrue(pickup.capability('agents-api')['host_adapter_available'])
+        self.assertTrue(pickup.capability('agents-api')['protected_configuration_required'])
+        self.assertFalse(pickup.capability('agents-api')['activated'])
         self.assertFalse(pickup.capability('codex-subscription')['interactive_resume'])
 
     def test_progress_and_result_allowlist_rejects_arbitrary_content(self):
@@ -313,12 +317,13 @@ class RemotePickupTests(unittest.TestCase):
                     outcome = gate.dispatch_remote(db, req, approval_comment, 'fixture', reader, executor,
                                                    lambda: 100, _pickup=pickup.Pickup(db, sink, lambda: 100))
                     self.assertEqual(outcome['status'], 'completed')
-                    self.assertEqual(runtime.deliver(db, 'one', sink), 'posted')
+                    self.assertEqual(runtime.deliver(db, 'one', sink), 'blocked' if target == 'agents-api' else 'posted')
                     self.assertEqual(gate.dispatch_remote(db, req, approval_comment, 'fixture', reader, executor,
-                                     lambda: 100, _pickup=pickup.Pickup(db, sink, lambda: 100))['status'], 'duplicate')
+                                     lambda: 100, _pickup=pickup.Pickup(db, sink, lambda: 100))['status'],
+                                     'blocked' if target == 'agents-api' else 'duplicate')
                 executor.run.assert_called_once()
-                self.assertEqual(sink.post.call_count, 2)
-                self.assertTrue(runtime.replies_safe(db, uid(3), uid(4)))
+                self.assertEqual(sink.post.call_count, 1 if target == 'agents-api' else 2)
+                self.assertEqual(runtime.replies_safe(db, uid(3), uid(4)), target != 'agents-api')
 
     def test_existing_host_scan_routes_subscription_ack_and_result(self):
         from tests import test_linear_remote_entry as fixture

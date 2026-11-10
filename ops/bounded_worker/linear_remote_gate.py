@@ -76,6 +76,165 @@ def initialize_remote(db):
     db.commit()
 
 
+
+TRANSITION_SCHEMA = ('slot INTEGER PRIMARY KEY CHECK(slot=1), record TEXT NOT NULL, next INTEGER NOT NULL')
+
+
+def _state(db):
+    """Canonical known-schema snapshot, for an explicit operator transition only."""
+    from .linear_receipt_inventory import SCHEMAS, GROUPS
+    size = db.execute('PRAGMA page_count').fetchone()[0] * db.execute('PRAGMA page_size').fetchone()[0]
+    if size > 16 * 1024 * 1024:
+        raise ValueError('transition_database_too_large')
+    schemas = SCHEMAS | {
+        'operations': 'attempt TEXT NOT NULL, operation TEXT NOT NULL, PRIMARY KEY (attempt, operation)',
+        'linear_agents_attempts': 'task TEXT PRIMARY KEY, attempt TEXT UNIQUE NOT NULL, task_hash TEXT NOT NULL, policy BLOB NOT NULL, phase TEXT NOT NULL, session TEXT, environment TEXT, turn TEXT, cloud TEXT, cleanup INTEGER NOT NULL, started INTEGER NOT NULL, submitted INTEGER, finished INTEGER, verification BLOB',
+        'linear_remote_transition': TRANSITION_SCHEMA,
+    }
+    names = set()
+    objects = db.execute('SELECT type,name,tbl_name,sql FROM sqlite_master LIMIT 101').fetchall()
+    if len(objects) > 100:
+        raise ValueError('transition_schema_too_large')
+    for kind, name, table, sql in objects:
+        if kind == 'index' and sql is None and table in schemas and name.startswith('sqlite_autoindex_' + table + '_'):
+            continue
+        if kind != 'table' or name != table or name not in schemas or sql != f'CREATE TABLE {name} ({schemas[name]})':
+            raise ValueError('unknown_transition_schema')
+        names.add(name)
+    required = set(GROUPS[0]) | set(GROUPS[1])
+    groups = (*GROUPS, ('operations', 'linear_agents_attempts'))
+    if not required <= names or any(set(g) & names and not set(g) <= names for g in groups):
+        raise ValueError('partial_transition_schema')
+    result = {}
+    total = 0
+    for name in sorted(names - {'linear_remote_transition'}):
+        rows = []
+        for row in db.execute(f'SELECT * FROM {name} LIMIT 1001'):
+            if len(rows) >= 1000 or any(type(x) in (str, bytes) and len(x) > 16384 for x in row):
+                raise ValueError('transition_history_too_large')
+            encoded = [{'hex': x.hex()} if type(x) is bytes else x for x in row]
+            total += len(_canonical(encoded))
+            if total > 1048576:
+                raise ValueError('transition_history_too_large')
+            rows.append(encoded)
+        result[name] = sorted(rows, key=_canonical)
+    return result
+
+
+def transition_state_sha256(db):
+    """Inspection is not permission; caller must hold the existing coding lock."""
+    return hashlib.sha256(_canonical(_state(db))).hexdigest()
+
+
+def transition_record(db):
+    """Validate the one-time record and retained identities for ALL intake modes."""
+    if not db.execute("SELECT 1 FROM sqlite_master WHERE name='linear_remote_transition'").fetchone():
+        return None
+    state = _state(db)
+    rows = db.execute('SELECT slot,record,next FROM linear_remote_transition').fetchall()
+    if len(rows) != 1 or rows[0][0] != 1 or type(rows[0][2]) is not int or rows[0][2] < 0:
+        raise ValueError('partial_transition')
+    raw = rows[0][1]
+    if type(raw) is not str or len(raw) > 1100000:
+        raise ValueError('transition_record_too_large')
+    record = json.loads(raw, object_pairs_hook=_pairs)
+    if (type(record) is not dict or set(record) != {'version', 'previous', 'state_sha256', 'bundle_sha256', 'policies', 'history', 'installed_at'}
+            or record['version'] != 1 or type(record['version']) is not int
+            or _canonical(record).decode() != raw or type(record['installed_at']) is not int or record['installed_at'] < 0
+            or any(type(record[k]) is not str or not re.fullmatch('[a-f0-9]{64}', record[k])
+                   for k in ('previous', 'state_sha256', 'bundle_sha256'))
+            or type(record['policies']) is not dict or set(record['policies']) != set(TARGETS)
+            or any(type(v) is not str or not re.fullmatch('[a-f0-9]{64}', v) for v in record['policies'].values())
+            or type(record['history']) is not dict
+            or hashlib.sha256(_canonical(record['history'])).hexdigest() != record['state_sha256']):
+        raise ValueError('invalid_transition')
+    history = record['history']
+    prior = history.get('linear_remote_policy')
+    if (not history or not set(history) <= set(state) or type(prior) is not list or len(prior) != 1
+            or type(prior[0]) is not list or len(prior[0]) != 3 or prior[0][:2] != [1, record['previous']]
+            or type(prior[0][2]) is not int or prior[0][2] < 0):
+        raise ValueError('invalid_transition_history')
+    for name, old in history.items():
+        current = state[name]
+        if name in ('linear_remote_policy', 'linear_remote_poll', 'linear_coding_poll'):
+            if (len(old) != 1 or len(current) != 1 or old[0][0] != 1 or current[0][0] != 1
+                    or type(current[0][2 if name == 'linear_remote_policy' else 1]) is not int
+                    or current[0][2 if name == 'linear_remote_policy' else 1] < old[0][2 if name == 'linear_remote_policy' else 1]
+                    or (name == 'linear_remote_policy' and current != old)):
+                raise ValueError('changed_transition_history')
+        elif any(row not in current for row in old):
+            raise ValueError('lost_transition_history')
+    if rows[0][2] < history['linear_remote_policy'][0][2]:
+        raise ValueError('reset_transition_cadence')
+    return record
+
+
+def policy_state(db, policy, *, bundle_sha256=None):
+    states = db.execute('SELECT slot,fingerprint,next FROM linear_remote_policy').fetchall()
+    record = transition_record(db)
+    fingerprint = _fingerprint(policy)
+    if record is not None:
+        if (record['policies'].get(policy.target) != fingerprint
+                or record['bundle_sha256'] != bundle_sha256):
+            raise ValueError('unapproved_transition_policy')
+        return [(1, fingerprint, db.execute('SELECT next FROM linear_remote_transition').fetchone()[0])]
+    elif bundle_sha256 is not None:
+        raise ValueError('transition_not_installed')
+    if states and (len(states) != 1 or states[0][0] != 1 or states[0][1] != fingerprint
+                   or type(states[0][2]) is not int or states[0][2] < 0):
+        raise ValueError('changed_remote_policy')
+    return states
+
+
+def install_transition(db, policies, bundle_sha256, approval, now):
+    """Explicit unwired one-time migration under coding.lock; never a renewal.
+
+    Approval is protected operator input with exact prior state and new bundle.
+    No receipts, policy fingerprint, poll cadence or consumption count is reset.
+    """
+    if db.in_transaction:
+        raise ValueError('caller_transaction')
+    fields = {'version', 'enabled', 'previous', 'state_sha256', 'bundle_sha256', 'expires'}
+    if (type(approval) is not dict or set(approval) != fields or type(approval['version']) is not int
+            or approval['version'] != 1 or approval['enabled'] is not True
+            or type(now) is not int or type(approval['expires']) is not int
+            or not now < approval['expires'] <= now + 3600
+            or approval['bundle_sha256'] != bundle_sha256
+            or type(policies) is not dict or set(policies) != set(TARGETS)):
+        raise ValueError('transition_not_approved')
+    first = policies[TARGETS[0]]
+    for target, policy in policies.items():
+        if (type(policy) is not ChannelPolicy or policy.target != target or policy.enabled is not True
+                or not now < policy.expires <= now + 86400
+                or policy.policy != first.policy or policy.paths != first.paths
+                or type(policy.max_jobs) is not int or not 1 <= policy.max_jobs <= 10
+                or type(policy.cadence) is not int or not 60 <= policy.cadence <= 3600
+                or policy.max_jobs != first.max_jobs or policy.cadence != first.cadence):
+            raise ValueError('incompatible_transition_grants')
+    try:
+        db.execute('BEGIN IMMEDIATE')
+        history = _state(db)
+        from .linear_coding_runtime import replies_safe
+        if (db.execute("SELECT 1 FROM sqlite_master WHERE name='linear_remote_transition'").fetchone()
+                or not _safe_remote(db) or not replies_safe(db, first.policy.issue, first.policy.actor)
+                or db.execute('SELECT 1 FROM linear_coding_jobs j LEFT JOIN linear_coding_replies r ON j.job=r.job WHERE r.job IS NULL').fetchone()):
+            raise ValueError('transition_held')
+        old = db.execute('SELECT slot,fingerprint,next FROM linear_remote_policy').fetchall()
+        digest = hashlib.sha256(_canonical(history)).hexdigest()
+        if (len(old) != 1 or old[0][0] != 1 or old[0][1] != approval['previous']
+                or digest != approval['state_sha256']):
+            raise ValueError('transition_state_changed')
+        record = dict(version=1, previous=approval['previous'], state_sha256=digest,
+                      bundle_sha256=bundle_sha256, policies={k: _fingerprint(v) for k, v in policies.items()},
+                      history=history, installed_at=now)
+        db.execute(f'CREATE TABLE linear_remote_transition ({TRANSITION_SCHEMA})')
+        db.execute('INSERT INTO linear_remote_transition VALUES (1,?,?)', (_canonical(record).decode(), old[0][2]))
+        transition_record(db)
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+
 def authorize(request, approval_comment, policy, now):
     if (type(policy) is not ChannelPolicy or policy.enabled is not True or type(now) is not int
             or not now < policy.expires <= now + 86400 or request.comment == approval_comment.comment):
@@ -118,7 +277,7 @@ def _safe_remote(db):
     return True
 
 
-def dispatch_remote(db, request, approval_comment, grant_path, reader, executor, clock, *, _pickup=None):
+def dispatch_remote(db, request, approval_comment, grant_path, reader, executor, clock, *, _pickup=None, _bundle_sha256=None):
     """Caller holds existing coding lock; consumes at most one exact approval.
 
     No network discovery, protected approval-file writing, reply sending or
@@ -143,10 +302,7 @@ def dispatch_remote(db, request, approval_comment, grant_path, reader, executor,
         from .linear_coding_runtime import replies_safe
         if not _safe_remote(db) or not replies_safe(db, policy.policy.issue, policy.policy.actor):
             db.rollback(); return {'status': 'blocked'}
-        states = db.execute('SELECT slot,fingerprint,next FROM linear_remote_policy').fetchall()
-        if states and (len(states) != 1 or states[0][0] != 1 or states[0][1] != fingerprint
-                       or type(states[0][2]) is not int or states[0][2] < 0):
-            db.rollback(); return {'status': 'blocked'}
+        states = policy_state(db, policy, bundle_sha256=_bundle_sha256)
         prior = db.execute('SELECT approval,request,digest,approval_digest,job FROM linear_remote_consumptions '
                            'WHERE approval=? OR request=? OR job=?', (approval_comment.comment, request.comment, job)).fetchall()
         record = (approval_comment.comment, request.comment, digest, approval_digest, job)
@@ -161,7 +317,12 @@ def dispatch_remote(db, request, approval_comment, grant_path, reader, executor,
         now = int(clock())
         if states and now < states[0][2]:
             db.rollback(); return {'status': 'backoff'}
-        db.execute('INSERT OR REPLACE INTO linear_remote_policy VALUES (1,?,?)', (fingerprint, now + policy.cadence))
+        if transition_record(db) is not None:
+            db.execute('UPDATE linear_remote_transition SET next=? WHERE slot=1', (now + policy.cadence,))
+        elif states:
+            db.execute('UPDATE linear_remote_policy SET next=? WHERE slot=1', (now + policy.cadence,))
+        else:
+            db.execute('INSERT INTO linear_remote_policy VALUES (1,?,?)', (fingerprint, now + policy.cadence))
         db.execute('INSERT INTO linear_remote_consumptions VALUES (?,?,?,?,?,?)', (*record, 'reserved'))
         db.commit()
 

@@ -122,6 +122,9 @@ def initialize(db):
 
 
 def _safe(db, *, remote_reservation=None):
+    from .linear_remote_gate import transition_record
+    transition_record(db)
+    api_required = False
     for job, comment, digest, raw, task_id, phase in db.execute(
             'SELECT job,comment,binding,request,task,phase FROM linear_coding_jobs'):
         if type(raw) is not bytes or len(raw) > 4096 or phase not in TERMINAL:
@@ -134,9 +137,14 @@ def _safe(db, *, remote_reservation=None):
         request = Request(value['body'].encode(), value['workspace'], value['team'],
                           value['issue'], value['actor'], value['comment'], None, value.get('created_at'))
         obj, task = _task(request)
+        api_required |= obj.get('target') == 'agents-api' and phase in ('completed', 'failed')
         if (snapshot(request) != raw or binding(request) != digest
                 or request.comment != comment or obj['job_id'] != job
                 or task.task_id != task_id):
+            return False
+    if api_required or db.execute("SELECT 1 FROM sqlite_master WHERE name IN ('operations','linear_agents_attempts')").fetchone():
+        from .agents_linear_adapter import receipts_safe as api_receipts_safe
+        if not api_receipts_safe(db):
             return False
     from .linear_pickup import receipts_safe
     if not receipts_safe(db):

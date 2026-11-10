@@ -13,13 +13,15 @@ Nothing in this change installs, schedules, enables, or starts a live agent.
   that target. This is not a mechanism to wake or resume an already-open
   interactive Codex conversation. Installed source, scheduler configuration and
   actual pickup on the host are not verified by this change.
-- **Agents API:** the common pickup contract is exercised with an injected fake
-  adapter, including the same approval, acknowledgment, timeout, result and
-  deduplication path. Current main has no integrated API Executor.run(Task)
-  adapter. Both protected host entrypoints return `unsupported_target`; there is
-  no subscription fallback. The separate unmerged API pilot's session controller
-  is not imported or invoked. Its create/start/submit/observe lifecycle does not
-  by itself implement this executor contract or independent task validation.
+- **Agents API:** the pickup-only draft used an injected fake executor. The
+  separate [offline adapter candidate](AGENTS_LINEAR_ADAPTER.md) now binds this
+  Task contract to the real API session controller from the unmerged pilot,
+  retaining fake external dependencies for tests. The concrete repository runtime,
+  independent verifier/oracle and [fixed host factory](AGENTS_LINEAR_WIRING.md) are
+  implemented offline for bounded Python function tasks. Both protected host
+  entries require explicit API settings; unconfigured API requests remain
+  `unsupported_target`. Nothing has been installed or activated and there is no
+  subscription fallback.
 - **Existing interactive sessions:** neither target has an implemented resume or
   wake adapter here. A Linear comment cannot itself wake a process. A separately
   installed and authorized recurring invocation of the existing remote entrypoint
@@ -140,7 +142,9 @@ Focused offline command:
 python -B -m unittest discover -q -s tests -p 'test_linear*.py'
 ```
 
-210 tests pass, including 27 new pickup tests. Coverage includes both target fakes
+The original pickup-only stage passed 210 tests, including 27 new pickup tests.
+That evidence is scoped to its original head, not the later API composition.
+Coverage includes both target fakes
 through existing dispatch and remote gate, real disk reopen and process exit during
 acknowledgment, existing concurrency/lock tests, cross-mode holds, changed target
 collisions, late acknowledgment, post-ack revocation/refetch, sanitized output and
@@ -154,8 +158,8 @@ Still required before claiming ZEN-86 complete:
 - Authorize source publication and verify final full CI, then separately authorize
   installation/schema migration and a finite recurring pickup schedule.
 - Confirm actual subscription authentication and executor capability on the host.
-- Implement/review the real API adapter using the same shared store and contracts;
-  do not adopt the separate unmerged pilot or start it implicitly.
+- Complete exact-head CI and installed acceptance of the concrete API runtime,
+  independent verifier and protected factory. Do not start the pilot implicitly.
 - Run one separately authorized low-risk Linear-to-acknowledgment-to-result task
   for each real target, recording the exact installed SHA and actual execution
   target. Proving one target never proves the other.

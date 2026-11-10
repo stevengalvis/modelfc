@@ -3,6 +3,7 @@
 Invoke only after host acceptance and authorization. Imports perform no I/O.
 """
 import argparse
+from contextlib import nullcontext
 import json
 from pathlib import Path
 import re
@@ -19,7 +20,7 @@ def _settings(path):
     required = {'version', 'enabled', 'runtime_settings', 'request_comment_id', 'mirror',
                 'username', 'executable', 'executable_sha256', 'token_file', 'members',
                 'audience', 'existing_roots'}
-    if (type(value) is not dict or set(value) not in (required, required | {'storage'})
+    if (type(value) is not dict or set(value) not in (required, required | {'storage'}, required | {'api_settings'})
             or type(value['version']) is not int or value['version'] != 1
             or value['enabled'] is not True or not _uuid(value['request_comment_id'])
             or any(type(value[k]) is not str or not value[k] for k in
@@ -36,7 +37,10 @@ def _settings(path):
         raise ValueError('invalid_entry_settings')
     runtime = load_settings(value['runtime_settings'])
     approval = load_approval(runtime['approval'])
-    _validate_host(value, runtime, path, (value['runtime_settings'], runtime['approval']))
+    if 'api_settings' in value and (approval.target != 'agents-api' or type(value['api_settings']) is not str):
+        raise ValueError('api_settings_target_mismatch')
+    _validate_host(value, runtime, path, (value['runtime_settings'], runtime['approval']) +
+                   ((value['api_settings'],) if 'api_settings' in value else ()))
     return value, runtime, approval
 
 
@@ -82,11 +86,15 @@ def _validate_host(value, runtime, path, control_files):
             disjoint(root, mount)
 
 
-def _executor(value, runtime, approval):
+def _executor(value, runtime, approval, *, db=None, guard=None, clock=time.time):
     from .linear_pickup import SubscriptionAdapter, UnsupportedTarget
+    if approval.target == 'agents-api':
+        if db is None or 'api_settings' not in value:
+            raise UnsupportedTarget('agents_api_not_configured')
+        from .agents_linear_wiring import FixedAPIExecutor
+        return FixedAPIExecutor(db, value['api_settings'], runtime, value['mirror'], guard=guard, clock=clock)
     if approval.target not in (None, 'codex-subscription'):
-        # No API constructor is integrated. Never fall back to subscription use.
-        raise UnsupportedTarget('agents_api_adapter_unavailable')
+        raise UnsupportedTarget('unknown_target')
     # Fixed trusted implementation, not a module/command named by the request.
     from .bridge_executor import Executor
     from .launcher import Configuration
@@ -108,7 +116,10 @@ def run(path, *, clock=time.time, _store=None):
             return {'status': 'blocked'}
         # One locally protected key and fixed personal-key authentication; no OAuth
         # provisioning, publisher credential or arbitrary transport endpoint.
-        executor = _executor(value, runtime, approval)
+        if approval.target == 'agents-api' and 'api_settings' not in value:
+            from .linear_pickup import UnsupportedTarget
+            raise UnsupportedTarget('agents_api_not_configured')
+        executor = None if approval.target == 'agents-api' else _executor(value, runtime, approval)
         token = protected_bytes(value['token_file'], 8192).decode().strip()
         destination = Destination(approval.policy, runtime['viewer'], tuple(value['members']),
                                   audience=value['audience'])
@@ -130,6 +141,15 @@ def run(path, *, clock=time.time, _store=None):
                 unchanged()
                 return super().post(issue, body)
 
+        if approval.target == 'agents-api':
+            if 'api_settings' not in value:
+                raise UnsupportedTarget('agents_api_not_configured')
+            from .linear_coding_runtime import receipt_store, replies_safe
+            with (receipt_store(runtime['state_root']) if _store is None else nullcontext(_store)) as db:
+                if not replies_safe(db, approval.policy.issue, runtime['viewer']): return {'status': 'blocked'}
+                executor = _executor(value, runtime, approval, db=db, guard=unchanged, clock=clock)
+                return run_once(value['runtime_settings'], value['request_comment_id'],
+                    CheckedReader(api, destination), executor, CheckedSink(api, destination), clock, _store=db)
         return run_once(value['runtime_settings'], value['request_comment_id'],
                         CheckedReader(api, destination), executor,
                         CheckedSink(api, destination), clock, _store=_store)

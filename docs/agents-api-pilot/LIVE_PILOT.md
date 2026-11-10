@@ -144,11 +144,40 @@ result = asyncio.run(run_live(
 ```
 
 There is no auto-executing command-line mode and no default key lookup. Required
-application dependencies are the source-verified official `openai==3.47.0`
+application dependencies are the official `openai==3.47.0`
 package and its dependencies plus the supported legacy `httpx` package. This
 module installs nothing. `OPENAI_CUSTOM_HEADERS` presence blocks startup because
 the SDK otherwise merges it. Explicit SDK options avoid ambient key/scope/base
 URL defaults, proxies, retries and redirects.
+
+The released 3.47.0 source is `561ef6b4753f961782f0afc795276e91d5ea8d1d`.
+The previously cited `a1175a35ba6aa2d6bf98d26088a572ab0c5f4453` is **three
+commits after that release**, despite retaining the same version string.
+Its typed `include_obfuscation` stream keyword was introduced after release
+in `c6fc264`. Both `SDKEvents` and `TaskSDKEvents` therefore use the released
+method's supported `extra_query={'include_obfuscation': False}`. The release
+forwards that option to request parameters and serializes `False` as `false`.
+The target, explicit no-obfuscation choice, identity encoding, pre-parser byte
+caps, timeouts and retry/redirect restrictions are unchanged.
+
+Strict synthetic signature tests cover the released constructor, stream,
+iterator and close calls for both wrappers. They are not installed-SDK
+acceptance. The genuine-SDK offline gate replaces only the lowest HTTP transport
+with synthetic response bytes, blocks socket/process use, and checks the actual
+request URL/headers, a typed release-schema SSE event, lifecycle and raw-byte caps:
+
+```bash
+PYTHONPATH=src python -B -m tests.test_agents_sdk_release --check-installed
+```
+
+Run this only in the separately approved, verified dependency environment.
+It makes no provider request and installs nothing. Missing/wrong SDK versions,
+missing transitive dependencies, failures or skips block this strict gate.
+Ordinary unittest discovery may explicitly skip these two tests when 3.47.0
+is absent; such a run is not SDK acceptance. The source references below prove
+the API contract, not an installed artifact's provenance. Retain separately the
+exact approved wheel/source artifact, hashes and complete dependency graph,
+installation evidence and this gate's result before live commissioning.
 
 The sequence is:
 
@@ -230,14 +259,17 @@ report privately; a crash before return can still lose those in-memory identitie
 
 ## Source and test evidence
 
-- Official SDK 3.47.0, immutable source:
-  https://github.com/openai/openai-python/tree/a1175a35ba6aa2d6bf98d26088a572ab0c5f4453
+- Official SDK v3.47.0 release, immutable source:
+  https://github.com/openai/openai-python/tree/561ef6b4753f961782f0afc795276e91d5ea8d1d
 - Stream method and 202 event submission contract:
-  https://github.com/openai/openai-python/blob/a1175a35ba6aa2d6bf98d26088a572ab0c5f4453/src/openai/resources/beta/agents/sessions/events.py
+  https://github.com/openai/openai-python/blob/561ef6b4753f961782f0afc795276e91d5ea8d1d/src/openai/resources/beta/agents/sessions/events.py
+- Extra query merging and boolean encoding:
+  https://github.com/openai/openai-python/blob/561ef6b4753f961782f0afc795276e91d5ea8d1d/src/openai/_base_client.py#L2179-L2203
+  https://github.com/openai/openai-python/blob/561ef6b4753f961782f0afc795276e91d5ea8d1d/src/openai/_qs.py#L119-L127
 - Explicit support for injected legacy httpx clients:
-  https://github.com/openai/openai-python/blob/a1175a35ba6aa2d6bf98d26088a572ab0c5f4453/httpx2.md
+  https://github.com/openai/openai-python/blob/561ef6b4753f961782f0afc795276e91d5ea8d1d/src/openai/_base_client.py#L1652-L1661
 - SDK ambient authentication/header handling:
-  https://github.com/openai/openai-python/blob/a1175a35ba6aa2d6bf98d26088a572ab0c5f4453/src/openai/lib/_client_auth.py
+  https://github.com/openai/openai-python/blob/561ef6b4753f961782f0afc795276e91d5ea8d1d/src/openai/lib/_client_auth.py
 - Codex selected release source, including remote registration and package layout:
   https://github.com/openai/codex/tree/fc01c073b9ea09c06347a234a1ca231a9ef65bf5
 - Official Linux sandbox prerequisites:

@@ -20,6 +20,9 @@ MAX_BYTES = 16 * 1024 * 1024
 # Only these existing source-defined schemas may be queried. Unknown schema
 # text/names and row contents never appear in a report.
 SCHEMAS = {
+    'linear_remote_transition': 'slot INTEGER PRIMARY KEY CHECK(slot=1), record TEXT NOT NULL, next INTEGER NOT NULL',
+    'operations': 'attempt TEXT NOT NULL, operation TEXT NOT NULL, PRIMARY KEY (attempt, operation)',
+    'linear_agents_attempts': 'task TEXT PRIMARY KEY, attempt TEXT UNIQUE NOT NULL, task_hash TEXT NOT NULL, policy BLOB NOT NULL, phase TEXT NOT NULL, session TEXT, environment TEXT, turn TEXT, cloud TEXT, cleanup INTEGER NOT NULL, started INTEGER NOT NULL, submitted INTEGER, finished INTEGER, verification BLOB',
     'linear_coding_jobs': 'job TEXT UNIQUE NOT NULL, comment TEXT UNIQUE NOT NULL, binding TEXT UNIQUE NOT NULL, request BLOB NOT NULL, task TEXT UNIQUE NOT NULL, phase TEXT NOT NULL',
     'linear_coding_replies': 'job TEXT PRIMARY KEY, body TEXT NOT NULL, issue TEXT NOT NULL, actor TEXT NOT NULL, phase TEXT NOT NULL, comment TEXT',
     'linear_coding_poll': 'slot INTEGER PRIMARY KEY CHECK(slot=1), next INTEGER NOT NULL, failures INTEGER NOT NULL, phase TEXT NOT NULL',
@@ -46,6 +49,7 @@ GROUPS = (
     ('linear_remote_policy', 'linear_remote_consumptions', 'linear_remote_poll'),
     ('linear_coding_pickups', 'linear_coding_acknowledgments'),
     ('linear_patch_trial', 'linear_patch_enrollments'),
+    ('operations', 'linear_agents_attempts'),
 )
 
 

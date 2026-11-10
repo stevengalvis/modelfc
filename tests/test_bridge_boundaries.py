@@ -18,6 +18,12 @@ class BoundaryTests(unittest.TestCase):
         self.assertNotIn('GITHUB_TOKEN', observed['env'])
         self.assertEqual(observed['env']['GIT_CONFIG_GLOBAL'], '/dev/null')
         self.assertIs(observed['stdin'], subprocess.DEVNULL)
+        self.assertEqual(observed['umask'], -1)  # Existing callers still inherit.
+
+    def test_only_explicit_git_children_receive_a_fixed_umask(self):
+        with patch('subprocess.run', return_value=subprocess.CompletedProcess([], 0, b'')) as run:
+            Executor._git('status', umask=0o022)
+        self.assertEqual(run.call_args.kwargs['umask'], 0o022)
 
     def test_credential_paths_cannot_overlap_worker_or_publisher_roots(self):
         for path in ('/private/work/token', '/private/evidence/key', '/private/publish/token'):

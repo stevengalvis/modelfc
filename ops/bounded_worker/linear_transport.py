@@ -5,6 +5,7 @@ The trusted caller supplies protected policy and credentials; no CLI or polling.
 import json
 from datetime import datetime
 import re
+import time
 from urllib.request import Request as HTTPRequest, build_opener
 
 from .bridge_transport import _NoRedirect, _deadline, _pairs, MAX_RESPONSE
@@ -29,8 +30,15 @@ COMMENT = '''id body archivedAt editedAt updatedAt createdAt
  issue { id }
 '''
 READ = 'query($issue:String!,$comment:String!){' + DESTINATION + 'comment(id:$comment){' + COMMENT + '}}'
-POLL = 'query($issue:String!){' + DESTINATION + '''
- channel:issue(id:$issue) { id comments(last:100) { pageInfo { hasPreviousPage } nodes {
+PAGE_SIZE = 100
+MAX_PAGES = 3
+MAX_CANDIDATES = PAGE_SIZE * MAX_PAGES
+# Three pages plus one moving-head verification, each with the API's 10s /
+# MAX_RESPONSE bound. No retry, including for failed read-only requests.
+MAX_SCAN_SECONDS = 40
+MAX_SCAN_BYTES = (MAX_PAGES + 1) * MAX_RESPONSE
+POLL = 'query($issue:String!,$before:String){' + DESTINATION + '''
+ channel:issue(id:$issue) { id comments(last:100,before:$before) { pageInfo { hasPreviousPage startCursor } nodes {
 ''' + COMMENT + '}}}}'
 CHECK = 'query($issue:String!){' + DESTINATION + '}'
 POST = '''mutation($issue:String!,$body:String!){
@@ -197,30 +205,72 @@ class LinearReader:
         return self._parse(data.get('comment'), comment)
 
     def candidates(self):
-        data = self.api.call(self.destination.query(POLL), {'issue': self.destination.policy.issue})
-        self.destination.check(data)
-        try:
-            channel = data['channel']
-            connection = channel['comments']
-            nodes = connection['nodes']
-            if (channel['id'] != self.destination.policy.issue
-                    or connection['pageInfo']['hasPreviousPage'] is not False
-                    or type(nodes) is not list or len(nodes) > 100):
-                raise ValueError('incomplete_channel')
-            result, seen = [], set()
-            for value in nodes:
-                ident = _id(value['id'])
+        """Complete bounded scan; never return a partial mailbox as complete."""
+        started = time.monotonic()
+        issue = self.destination.policy.issue
+        query = self.destination.query(POLL)
+
+        def check_time():
+            if time.monotonic() - started >= MAX_SCAN_SECONDS:
+                raise ValueError('channel_time_limit')
+
+        def page(before):
+            check_time()
+            data = self.api.call(query, {'issue': issue, 'before': before})
+            check_time()
+            self.destination.check(data)
+            try:
+                channel = data['channel']
+                connection = channel['comments']
+                nodes, info = connection['nodes'], connection['pageInfo']
+                previous, cursor = info['hasPreviousPage'], info['startCursor']
+                if (channel['id'] != issue or type(nodes) is not list
+                        or len(nodes) > PAGE_SIZE or type(previous) is not bool
+                        or (before is not None and not nodes)
+                        or (nodes and (type(cursor) is not str or not 1 <= len(cursor) <= 1024))
+                        or (nodes and any(ord(c) < 33 or ord(c) > 126 for c in cursor))
+                        or (not nodes and (previous or cursor is not None))):
+                    raise ValueError('invalid_channel_page')
+                return connection
+            except (KeyError, TypeError, AttributeError):
+                raise ValueError('invalid_channel') from None
+
+        pages, seen, cursors = [], set(), set()
+        before = None
+        for _ in range(MAX_PAGES):
+            connection = page(before)
+            for value in connection['nodes']:
+                try:
+                    ident = _id(value['id'])
+                except (KeyError, TypeError):
+                    raise ValueError('invalid_channel') from None
                 if ident in seen:
                     raise ValueError('duplicate_comment')
                 seen.add(ident)
+            pages.append(connection)
+            info = connection['pageInfo']
+            if info['startCursor'] in cursors:
+                raise ValueError('repeated_cursor')
+            if not info['hasPreviousPage']:
+                break
+            before = info['startCursor']
+            cursors.add(before)
+        else:
+            raise ValueError('channel_page_limit')
+        # Appends/deletions at the moving head invalidate this scan. Older edits
+        # are independently refetched and checked by once() before any action.
+        if len(pages) > 1 and page(None) != pages[0]:
+            raise ValueError('channel_changed')
+        result = []
+        for connection in reversed(pages):
+            for value in connection['nodes']:
                 try:
-                    result.append(self._parse(value, ident))
+                    result.append(self._parse(value, value['id']))
                 except ValueError:
                     # Ineligible authors/prose never authorize a diagnostic.
                     continue
-            return result
-        except (KeyError, TypeError, AttributeError):
-            raise ValueError('invalid_channel') from None
+        check_time()
+        return result
 
     def _parse(self, value, comment):
         policy = self.destination.policy
