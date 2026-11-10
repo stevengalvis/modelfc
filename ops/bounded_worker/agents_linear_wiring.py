@@ -25,6 +25,16 @@ from .bridge_checkout import Checkout
 from .bridge_security import disjoint, protected_dir, protected_json
 from .linear_pickup import UnsupportedTarget
 
+# Reserved outside Task.task_id's grammar. Provision this root-owned 0700 child
+# once; runtime validation never creates it or changes its permissions.
+API_CHECKOUT_DIRECTORY = '.agents-api-checkouts'
+
+
+def api_checkout_root(runtime):
+    workspace = protected_dir(runtime['workspace_root'], 0o711)
+    return protected_dir(workspace / API_CHECKOUT_DIRECTORY, 0o700)
+
+
 # Fixed trusted entry only. Values and source never appear in argv or logs.
 CREDENTIAL_BOOT = '''import json,os,sys
 sys.path.insert(0,sys.argv[1])
@@ -54,9 +64,12 @@ def load_api_settings(path, runtime, mirror):
     account = pwd.getpwnam(ACCOUNT)
     if (spec.uid, spec.gid) != (account.pw_uid, account.pw_gid) or spec.uid != UID:
         raise ValueError('existing_api_credential_identity_required')
-    roots = [protected_dir(mirror), protected_dir(runtime['workspace_root']),
+    roots = [protected_dir(mirror), protected_dir(runtime['workspace_root'], 0o711),
              protected_dir(runtime['evidence_root'], 0o700), protected_dir(runtime['state_root'], 0o700)]
     for index, root in enumerate(roots): disjoint(root, *roots[index+1:])
+    # The only intentional nesting is the API's private child of the common
+    # workspace. It cannot alias a mirror, control, state or evidence directory.
+    api_checkout_root(runtime)
     for name in ('api_approval', 'verification_plan', 'oracle_policy'):
         item = value[name]
         if type(item) is not str or not Path(item).is_absolute(): raise ValueError('api_control_path')
@@ -149,7 +162,7 @@ class FixedAPIExecutor:
                 raise ValueError('api_task_not_authorized')
             # Reject wrong source/install before any credential is read.
             verify_supervisor(self.spec); verify_installation(self.spec)
-            checked = CheckoutVerifier(self.db, Checkout(self.mirror, self.runtime['workspace_root']),
+            checked = CheckoutVerifier(self.db, Checkout(self.mirror, api_checkout_root(self.runtime)),
                                        self.runtime['evidence_root'], self.loaded['verification_plan'])
             app, env = read_existing_keys(self.spec)
             inner = RepositoryRuntime(self.spec, checked, self.loaded['oracle_policy'],

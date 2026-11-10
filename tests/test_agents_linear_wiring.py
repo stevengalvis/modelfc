@@ -131,7 +131,9 @@ class FixedRunTests(unittest.TestCase):
         self.stack.enter_context(patch.object(wiring,'protected_json',return_value=self.value))
         self.stack.enter_context(patch.object(wiring,'verify_supervisor'))
         self.stack.enter_context(patch.object(wiring,'verify_installation'))
-        self.stack.enter_context(patch.object(wiring,'Checkout'))
+        self.checkout=self.stack.enter_context(patch.object(wiring,'Checkout'))
+        self.stack.enter_context(patch.object(wiring,'api_checkout_root',
+            side_effect=lambda runtime:Path(runtime['workspace_root'])/wiring.API_CHECKOUT_DIRECTORY))
         self.stack.enter_context(patch.object(wiring,'CheckoutVerifier'))
         self.keys=self.stack.enter_context(patch.object(wiring,'read_existing_keys',return_value=('application-fake','environment-fake')))
         self.make=self.stack.enter_context(patch.object(wiring,'RepositoryRuntime',return_value=f.prepared))
@@ -150,6 +152,7 @@ class FixedRunTests(unittest.TestCase):
             self.assertEqual(runtime.deliver(db,'one',f.sink),'posted')
             self.assertEqual(self.dispatch(db)['status'],'duplicate')
         self.keys.assert_called_once_with(SPEC)
+        self.checkout.assert_called_once_with('/mirror',Path('/work')/wiring.API_CHECKOUT_DIRECTORY)
         f.fixture.connection.create_session.assert_called_once();f.fixture.connection.submit_task.assert_called_once()
 
     def test_direct_host_runs_fixed_factory_with_held_store_and_reuses_result(self):

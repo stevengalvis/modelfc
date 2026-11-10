@@ -12,7 +12,7 @@ import tempfile
 import time
 import types
 import unittest
-from unittest.mock import AsyncMock, MagicMock, Mock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, create_autospec, patch
 
 import httpx
 
@@ -21,6 +21,7 @@ from ops.bounded_worker.agents_session_controller import ExecutorBinding
 from ops.bounded_worker.agents_pilot import Plan
 from ops.bounded_worker.task import Task
 from tests import test_agents_session_controller as fixtures
+from tests import openai_release_contract as sdk_contract
 
 
 class Event:
@@ -496,9 +497,10 @@ class PodmanTests(unittest.TestCase):
 
 class SDKTransportTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
-        self.sdk = types.SimpleNamespace(AsyncOpenAI=Mock())
+        self.sdk = types.SimpleNamespace(
+            AsyncOpenAI=create_autospec(sdk_contract.client_constructor))
         self.client = self.sdk.AsyncOpenAI.return_value
-        self.client.close = AsyncMock()
+        self.client.close = create_autospec(sdk_contract.client_close)
         self.responses = []
         owner = self
         class Transport(httpx.AsyncBaseTransport):
@@ -520,6 +522,7 @@ class SDKTransportTests(unittest.IsolatedAsyncioTestCase):
         self.events.session_id = 'sess_test'
 
     async def test_sdk_configuration_has_no_retries_or_ambient_scope(self):
+        self.assertEqual(live.SDK_VERSION, '3.47.0')
         params = self.sdk.AsyncOpenAI.call_args.kwargs
         self.assertEqual(params['max_retries'], 0)
         self.assertEqual(params['base_url'], 'https://api.openai.com/v1')
@@ -547,17 +550,24 @@ class SDKTransportTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_sdk_stream_uses_exact_method_and_closes_once(self):
         self.events.session_id = None
-        stream = Mock()
-        stream.__aiter__ = Mock(return_value=iter(()))
-        stream.close = AsyncMock()
-        method = self.client.beta.agents.sessions.events.stream = AsyncMock(return_value=stream)
+        stream = types.SimpleNamespace()
+        stream.__aiter__ = create_autospec(sdk_contract.stream_iterator, return_value=iter(()))
+        stream.close = create_autospec(sdk_contract.stream_close)
+        method = self.client.beta.agents.sessions.events.stream = create_autospec(
+            sdk_contract.events_stream, return_value=stream)
         await self.events.open('sess_test')
-        method.assert_awaited_once_with('sess_test', include_obfuscation=False,
+        method.assert_awaited_once_with('sess_test', extra_query={'include_obfuscation': False},
                                        extra_headers={'Accept-Encoding': 'identity'})
+        stream.__aiter__.assert_called_once_with()
         await self.events.close()
         await self.events.close()
         stream.close.assert_awaited_once()
         self.client.close.assert_awaited_once()
+
+    async def test_release_signature_rejects_postrelease_keyword(self):
+        method = create_autospec(sdk_contract.events_stream)
+        with self.assertRaisesRegex(TypeError, 'include_obfuscation'):
+            await method('sess_test', include_obfuscation=False)
 
     async def test_ambient_custom_headers_and_wrong_sdk_block(self):
         with patch.dict(os.environ, {'OPENAI_CUSTOM_HEADERS': 'do-not-read'}):

@@ -79,6 +79,9 @@ jobs:
               raise SystemExit("cross-user ACL acceptance requires all six tests to pass without skips")
           ACL_PY
 
+      - name: Verify real two-target protected workspace layout
+        run: sudo -n env PYTHONPATH=src "$RUNNER_TEMP/modelfc-locked/bin/python" -B -m tests.test_linear_workspace_layout --check-root
+
       - name: Compile Python sources and tests
         run: '"$RUNNER_TEMP/modelfc-locked/bin/python" -m compileall -q src tests'
 

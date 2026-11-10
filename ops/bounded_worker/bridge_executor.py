@@ -17,13 +17,13 @@ class Executor:
         protected_tree(self.mirror)
 
     @staticmethod
-    def _git(*args, cwd=None, pass_fds=()):
+    def _git(*args, cwd=None, pass_fds=(), umask=-1):
         env = {'PATH': '/usr/bin:/bin', 'HOME': '/nonexistent', 'GIT_CONFIG_NOSYSTEM': '1',
                'GIT_CONFIG_GLOBAL': '/dev/null', 'GIT_TERMINAL_PROMPT': '0', 'LC_ALL': 'C'}
         result = subprocess.run(['/usr/bin/git', '-c', 'core.hooksPath=/dev/null', '-c',
                                  'core.fsmonitor=false', '-c', 'credential.helper=', *args],
                                 cwd=cwd, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                                stderr=subprocess.DEVNULL, timeout=60, check=False, pass_fds=pass_fds)
+                                stderr=subprocess.DEVNULL, timeout=60, check=False, pass_fds=pass_fds, umask=umask)
         if result.returncode or len(result.stdout) > 4096:
             raise ValueError('checkout_failed')
         return result.stdout

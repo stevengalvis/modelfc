@@ -79,8 +79,10 @@ or HTTP dependency is installed here. Ambient custom headers are rejected.
         if self.session_id is not None or not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', session_id):
             raise LiveFailure('stream_not_admitted')
         self.session_id = session_id
+        # Keep the released 3.47.0 signature and explicit false query value.
         self.stream = await self.client.beta.agents.sessions.events.stream(
-            session_id, include_obfuscation=False, extra_headers={'Accept-Encoding': 'identity'})
+            session_id, extra_query={'include_obfuscation': False},
+            extra_headers={'Accept-Encoding': 'identity'})
         return self.stream.__aiter__()
 
     async def close(self):

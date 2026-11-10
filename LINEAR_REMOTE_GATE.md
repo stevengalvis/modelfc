@@ -174,6 +174,11 @@ runtime roots/viewer, mirror, token path, membership, audience, and excluded
 roots. API settings are mandatory only for agents-api. Artifact publication is
 not supported in this commissioning bundle. Existing per-target executable,
 source, storage, API model/spend/key and verification gates remain in force.
+The common workspace is root-owned 0711 and contains the operator-provisioned
+root-owned 0700 `.agents-api-checkouts` child for API baselines. Subscription
+task directories are separate worker-owned 0700 siblings. See
+[the protected layout](AGENTS_LINEAR_WIRING.md#protected-configuration) before
+provisioning; scanning never creates or repairs the private API root.
 
 Before any scan, the bundle and both finite grants must match the installed
 transition. Both grants must remain enabled/unexpired. The selected target comes

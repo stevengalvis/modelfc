@@ -14,9 +14,16 @@ class Checkout:
             raise ValueError('overlapping_checkout_root')
 
     def prepare(self, task):
+        task.validate()
         dest = self.root / (task.task_id + '-' + secrets.token_hex(8))
         if Executor._git('--git-dir', str(self.mirror), 'rev-parse', 'refs/heads/main').strip().decode() != task.base_revision:
             raise ValueError('stale_base')
-        Executor._git('clone', '--no-local', '--no-checkout', '--', str(self.mirror), str(dest))
-        Executor._git('checkout', '--detach', task.base_revision, cwd=dest)
+        # Reserve each new checkout privately before Git writes any contents.
+        # The protected parent itself must already exist; never repair it here.
+        dest.mkdir(mode=0o700)
+        # The independent verifier expects Git's regular 0644 source mode even
+        # when the supervisor uses 0077. Only these children receive 0022; both
+        # containing directories stay 0700 and the supervisor mask is untouched.
+        Executor._git('clone', '--no-local', '--no-checkout', '--', str(self.mirror), str(dest), umask=0o022)
+        Executor._git('checkout', '--detach', task.base_revision, cwd=dest, umask=0o022)
         return dest

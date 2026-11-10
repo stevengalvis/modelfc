@@ -40,11 +40,36 @@ root-owned directories, with exactly these fields:
 - `verification_plan`: absolute path to the protected `VerificationPlan` file.
 - `oracle_policy`: absolute path to the protected `JSONCallPolicy` file.
 
-These control files must be outside the checkout, mirror, state, evidence, broker
-code and rootless runtime directories. The mirror, checkout, state and evidence
-roots must be distinct and protected. Broker UID/GID must match the existing fixed
+These control files must be outside the workspace, mirror, state, evidence, broker
+code and rootless runtime directories. The shared workspace, mirror, state and
+evidence roots must be distinct and protected. Broker UID/GID must match the existing fixed
 credential-owner account; there is no account creation or arbitrary credential
 path. Copying a sample hash or setting `enabled` does not produce acceptance.
+
+Both targets retain exactly the same `runtime.workspace_root`, evidence root,
+state root, mirror and held receipt-store lock. The workspace is root-owned mode
+0711. Before enabling either target bundle, the operator must provision its fixed
+`.agents-api-checkouts` child as root-owned mode 0700. API construction validates
+that child and every ancestor, without creating it, changing ownership/modes or
+accepting a symlink alias. The existing `Checkout` 0700 requirement is unchanged.
+An older API-only 0700 workspace does not satisfy this shared layout.
+
+Subscription task directories remain worker-owned 0700 immediate children of
+the workspace. Task IDs cannot contain a dot, so they cannot collide with the
+reserved API child. Each API baseline is a new root-owned 0700 directory beneath
+that private child; the subscription worker cannot traverse it. State and
+evidence stay in separate root-owned 0700 roots. Both adapters require the same
+protected local mirror's `refs/heads/main` to equal the approved base revision.
+The trusted API checkout's clone/checkout Git children use umask 0022 so regular
+source files meet the verifier's 0644 contract even under a 0077 supervisor.
+The supervisor's umask and every other Git caller's defaults are unchanged.
+No live directory or permission changes are performed by the source change.
+
+The dedicated CI `tests.test_linear_workspace_layout --check-root` gate uses
+only its own temporary filesystem/Git fixture and requires all real root,
+ownership, mode, alias and cross-user isolation checks to run without skips.
+Ordinary nonroot discovery skips these tests explicitly; mocked dispatch tests
+are not a substitute for this gate or installed-host acceptance.
 
 The approval must name the canonical exact Task digest, an explicit model,
 positive total spend limit in cents, the exact broker/runtime and worker
