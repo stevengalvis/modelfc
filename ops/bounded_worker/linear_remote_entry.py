@@ -17,7 +17,7 @@ def settings(path):
     value = protected_json(path)
     required = {'version', 'enabled', 'channel_policy', 'runtime', 'mirror', 'username',
                 'executable', 'executable_sha256', 'token_file', 'members', 'audience', 'existing_roots'}
-    if (type(value) is not dict or set(value) not in (required, required | {'storage'}, required | {'artifact_policy'}, required | {'storage','artifact_policy'})
+    if (type(value) is not dict or set(value) not in (required, required | {'storage'}, required | {'artifact_policy'}, required | {'storage','artifact_policy'}, required | {'api_settings'})
             or type(value['version']) is not int or value['version'] != 1 or value['enabled'] is not True
             or type(value['channel_policy']) is not str or type(value['runtime']) is not dict):
         raise ValueError('invalid_remote_settings')
@@ -29,7 +29,10 @@ def settings(path):
     policy = load_policy(value['channel_policy'])
     if runtime['viewer'] != policy.policy.actor:
         raise ValueError('wrong_remote_viewer')
+    if 'api_settings' in value and (policy.target != 'agents-api' or type(value['api_settings']) is not str):
+        raise ValueError('api_settings_target_mismatch')
     _validate_host(value, runtime, path, (value['channel_policy'],) +
+                   ((value['api_settings'],) if 'api_settings' in value else ()) +
                    ((value['artifact_policy'],) if 'artifact_policy' in value else ()))
     return value, runtime, policy
 
@@ -93,7 +96,9 @@ def run(path, *, clock=time.time):
         now = int(clock())
         if policy.enabled is not True or not now < policy.expires <= now + 86400:
             return {'status': 'blocked'}
-        if policy.target not in (None, 'codex-subscription'):
+        if policy.target == 'agents-api' and 'api_settings' not in value:
+            return {'status': 'unsupported_target'}
+        if policy.target not in (None, 'codex-subscription', 'agents-api'):
             return {'status': 'unsupported_target'}
         with receipt_store(runtime['state_root']) as db:
             # This guard also sees remote holds from prior crashed invocations.
@@ -158,7 +163,8 @@ def run(path, *, clock=time.time):
             db.commit()
             if pair is None:
                 return {'status': 'idle'}
-            executor = _executor(value, runtime, policy)
+            executor = (_executor(value, runtime, policy, db=db, guard=unchanged, clock=clock)
+                        if policy.target == 'agents-api' else _executor(value, runtime, policy))
             if 'artifact_policy' in value:
                 from .linear_patch_trial import enroll
                 enroll(db, pair[0], pair[1], value['artifact_policy'], policy, int(clock()))

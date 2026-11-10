@@ -26,10 +26,11 @@ class SubscriptionAdapter:
 
 
 def capability(target):
+    """Source capability only; protected configuration and host acceptance are separate."""
     if target not in TARGETS:
         raise ValueError('unknown_target')
     return {'target': target, 'execution_target': EXECUTION_TARGETS[target],
-            'host_adapter_available': target == 'codex-subscription',
+            'host_adapter_available': True, 'protected_configuration_required': True,
             'interactive_resume': False, 'activated': False}
 
 

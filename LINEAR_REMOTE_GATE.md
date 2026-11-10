@@ -144,6 +144,9 @@ establish host storage durability.
 ## Optional target-bound pickup
 
 See [LINEAR_PICKUP.md](LINEAR_PICKUP.md) for opt-in v2 target binding and durable
-acknowledgment using this same dispatcher/store. It is offline source only; the
-API host adapter and interactive-session wake remain unsupported. Legacy v1
+acknowledgment using this same dispatcher/store. It is offline source only.
+The API host adapter now has an opt-in protected factory (see
+[host wiring](AGENTS_LINEAR_WIRING.md)); it requires separate approved runtime
+configuration and is not installed or activated by this source change.
+Interactive-session wake remains unsupported. Legacy v1
 behavior is unchanged.
