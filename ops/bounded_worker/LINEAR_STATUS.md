@@ -347,14 +347,14 @@ side; do not build a public webhook receiver merely for this incremental check.
 VPS polling and dot notification are separate mechanisms with separate cadence
 and model costs. No webhook, automation, timer or grant was created here.
 
-Current intake remains one page of at most 100 comments, at most one new execution
-per poll, with durable 60-second cadence and backoff. It deliberately blocks on
-older history, so it is suitable only for a bounded pilot, not indefinite use.
+Current intake scans at most three pages of 100 comments, at most one new execution
+per poll, with durable 60-second cadence and backoff. History beyond 300 comments
+blocks the entire scan, so this remains a bounded pilot, not indefinite use.
 Uncertain execution/delivery or corrupt receipts still blocks the entire channel;
 at-most-once attempts trade availability for avoiding duplicate execution. A
 timeout must not trigger another model/diagnostic attempt. Keep this behavior for
-the next acceptance; cursor intake and per-job reconciliation are separate small
-follow-ups before sustained unattended service, not part of this health change.
+the next acceptance; sustained unattended intake and per-job reconciliation remain
+separate follow-ups, not implied by bounded pagination.
 
 Next: review and authorize deployment of this increment, explicitly bind the health
 grant/audience, verify one dot-authored request and result-return route, then approve
@@ -412,14 +412,26 @@ restart. Pending diagnostics, pending sends or malformed state block before HTTP
 The file lock prevents overlapping run() calls; poll_once also checks the durable
 poll reservation for fixture/direct-caller concurrency.
 
-One poll fetches at most the last 100 issue comments in one bounded response, then
-executes at most one new eligible request. It skips ineligible comments and exact
-duplicates/collisions without rerunning them; any new execution or uncertainty ends
-the poll. More historical comments (hasPreviousPage=true), duplicate IDs or an
-incomplete response block: no pagination loops, silent truncation or unbounded
-backfill. This intentionally small pilot channel has a finite capacity. Moving to
-another dedicated issue requires an operator policy update, never automatic scope
-expansion or comment deletion.
+One poll requires a complete scan of at most three pages of 100 issue comments
+(300 total), then executes at most one new eligible request. Backward cursors are
+validated and unique across the scan; duplicate comment IDs, empty continuation
+pages, malformed responses, or remaining history at the page cap block the entire
+scan. No older pages are skipped to admit newer requests. Results are returned
+oldest page first, preserving each request's authenticated identity, body and UTC
+creation timestamp. Every page rechecks the exact destination and audience.
+
+Multi-page scans reread the head once and require its complete comments connection
+to match. This is a separate consistency read, not a retry. At most four HTTP calls
+are made, each retaining the 262144-byte response cap and 10-second deadline
+(at most 1048576 accepted wire bytes). Elapsed scan time is checked before/after
+calls and before return; results at 40 seconds or later block. A call started below
+that limit still has its own 10-second deadline. No failure is retried.
+
+This is not a server-side snapshot: changes to older pages after observation or
+changes after the final head check cannot be excluded. Selected requests retain
+the existing exact refetch and identity checks before execution/delivery. The
+finite capacity does not authorize deleting history, silently truncating it, or
+changing issues. Another dedicated issue requires an operator policy update.
 
 The integrated path requires durable returned-comment evidence. Only a confirmed
 send and successful SQLite commit mark the job posted. If the send succeeded but

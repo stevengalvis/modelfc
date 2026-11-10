@@ -8,12 +8,12 @@ import time
 
 from .bridge_security import disjoint, protected_bytes, protected_dir, protected_json
 from .linear_status import Policy, Request, StatusGrant, initialize, once, receipt_rows
-from .linear_transport import Destination, LinearAPI, LinearReader, LinearSink
+from .linear_transport import Destination, LinearAPI, LinearReader, LinearSink, MAX_CANDIDATES
 from .service_status import ServiceStatus, ServiceHealth
 
 
 def poll_once(db, policy, reader, diagnostic, sink, grant, clock=time.time, *, operation="service-status"):
-    """At most one bounded page and one new diagnostic; durable poll reservation."""
+    """At most one bounded complete scan and one new diagnostic; durable poll reservation."""
     try:
         if type(grant) is not StatusGrant or grant.operation != operation:
             return 'blocked'
@@ -45,7 +45,7 @@ def poll_once(db, policy, reader, diagnostic, sink, grant, clock=time.time, *, o
         result = 'idle'
         try:
             candidates = reader.candidates()
-            if type(candidates) is not list or len(candidates) > 100:
+            if type(candidates) is not list or len(candidates) > MAX_CANDIDATES:
                 raise ValueError('invalid_page')
             for request in candidates:
                 result = once(db, request, policy, reader, diagnostic, sink, clock,

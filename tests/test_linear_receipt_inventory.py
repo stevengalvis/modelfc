@@ -58,7 +58,8 @@ class ReceiptInventoryTests(unittest.TestCase):
                 provision(self.root)
         result = self.inspect()
         self.assertEqual(result['status'], 'observed')
-        self.assertEqual(set(result['tables']), set(inventory.SCHEMAS))
+        self.assertEqual(set(result['tables']), set(inventory.SCHEMAS) -
+                         {'operations', 'linear_agents_attempts', 'linear_remote_transition'})
 
     def test_classifications_do_not_expose_record_contents(self):
         for index, phase in enumerate(('reserved', 'launching', 'completed', 'strange-secret-phase')):

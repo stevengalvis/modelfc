@@ -122,6 +122,8 @@ def initialize(db):
 
 
 def _safe(db, *, remote_reservation=None):
+    from .linear_remote_gate import transition_record
+    transition_record(db)
     api_required = False
     for job, comment, digest, raw, task_id, phase in db.execute(
             'SELECT job,comment,binding,request,task,phase FROM linear_coding_jobs'):

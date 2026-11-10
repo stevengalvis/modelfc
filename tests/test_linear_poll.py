@@ -52,7 +52,8 @@ class LinearPollTests(unittest.TestCase):
     def call(self, query, variables):
         if query == transport.POLL:
             return dict(self.data, channel={'id': uid(3), 'comments': {
-                'pageInfo': {'hasPreviousPage': self.has_previous}, 'nodes': self.nodes}})
+                'pageInfo': {'hasPreviousPage': self.has_previous,
+                             'startCursor': 'head' if self.nodes else None}, 'nodes': self.nodes}})
         if query == transport.POST:
             self.post_count += 1
             return {'commentCreate': {'success': True, 'comment': {
