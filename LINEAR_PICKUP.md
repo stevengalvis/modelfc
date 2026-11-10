@@ -264,3 +264,38 @@ targets or databases. Preserve the evidence. Controlled interruption/restart and
 the final missing-ack observation/notification route remain separate acceptance
 items unless explicitly included and demonstrated. Finishing this subscription
 trial does not complete the Agents API target or authorize a permanent schedule.
+
+### Read-only receipt inventory candidate
+
+`linear_receipt_inventory` is an explicit operator diagnostic, not an admission
+path. It is unwired: importing it, installing other entrypoints or running normal
+pickup never invokes it. Host staging and invocation require separately approved,
+verified source and operator context. Its only input is the already-known coding
+state root; it never discovers host paths or reads configuration or credentials.
+
+After confirming that all relevant installed admission paths use the existing
+`coding.lock`, an authorized operator may invoke the reviewed module with isolated
+source bootstrapping and bytecode disabled. Do not invoke ordinary `receipt_store`
+for this inventory: that helper opens SQLite read/write and may recover a journal.
+The inventory instead holds the existing nonblocking lock, opens existing protected
+files read-only/no-atime, rejects every journal/WAL/shared-memory sidecar (including
+empty files), and reads at most 16 MiB. It verifies file identity/metadata and
+absence of sidecars again before releasing the lock. SQLite sees only a bounded
+in-memory copy; it never opens the live database or writes a backup. Unsupported
+Python/SQLite facilities, unsafe metadata, unknown/partial schemas, corruption,
+concurrent changes or sidecars fail closed without repairs.
+
+The report contains a snapshot hash/size, known table names, counts and fixed phase
+buckets only. It does not expose IDs, raw phases, prompts, policies, patches,
+paths or logs. Current supported schemas are the subscription/Linear tables in
+PR270; future API or other tables produce `unsupported_schema` rather than being
+ignored. `observed` means an inventory was obtained, not that receipt bindings,
+requests, delivery, authorization or job results were semantically validated.
+Both record-integrity and admission verification remain explicitly false. The
+lock excludes only cooperating coding-store users, not unrelated processes or
+outstanding work. It is never evidence that the VPS is idle or safe to install.
+
+Do not remove sidecars, clear holds, renew grants or initialize another store to
+make this check pass. An unavailable or held inventory needs a separate exact
+reconciliation proposal. Follow the commissioning gates above before any upgrade,
+schedule or real task.
