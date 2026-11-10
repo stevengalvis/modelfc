@@ -39,10 +39,12 @@ tokens; request 4,096 bytes; response 65,536 bytes; source 8,192 bytes; provider
 with separate stop/cleanup bounds of 15/10 seconds. No retry even after known
 failure. Serialized input bytes additionally bound input conservatively; usage
 is checked separately. These limits are not an exact dollar ceiling. The user requires credits-only execution. Current non-secret account/org linkage,
-eligibility, unexpired available credit and adequate balance must be confirmed
-before the live run. Eligible credits being exhausted can fall through to
-purchased credits; do not accept that fallback or change billing settings.
-If credits-only exposure cannot be established, block the live call. Pricing
+eligibility and sufficient unexpired eligible credit must be observed before the
+live run, with no purchased balance or billing setup shown for this workflow.
+This is an observation, not a guarantee of later balance or billing behavior.
+Eligible credits being exhausted can fall through to purchased credits; no paid
+fallback or billing change is authorized. If the required credits-only
+observation cannot be established, block the live call. Pricing
 verification is supplied separately; no rates are assumed in this artifact.
 
 ## Evidence already available versus not established
@@ -205,16 +207,37 @@ Exact required fields (no others):
 - `approval_reference`: non-secret reference to the actual explicit authorization.
 - `new_store_provenance`: true only with verified genuinely new state, not mere
   filesystem absence. Required for provisioning, irrelevant to existing-store runs.
-- `credits_only_verified`: true only with current, verified eligible credit balance,
-  correct organization linkage and no purchased-credit exposure for this run.
-- `credits_checked_utc_epoch`: integer observation time, no older than five minutes
-  at run admission and again immediately before the post-reservation key read.
+- `credits_only_verified`: true only after observing sufficient unexpired eligible credit,
+  correct organization linkage and no purchased balance or billing setup shown
+  for this workflow. This attests the observation, not guaranteed billing behavior.
+- `credits_checked_utc_epoch`: integer actual observation time, no older than 30 minutes
+  (`MAX_CREDIT_AGE_SECONDS = 1800`, inclusive) at run entry, after launcher
+  readiness and immediately before the post-reservation key read. Future
+  observation times are rejected. Never replace this timestamp with handoff,
+  receipt or authorization-file creation time to renew an old observation.
 
 This file records trusted operator approval, not a cryptographic approval token
 or provider-enforced billing cap. Never auto-create it, infer it from “go”, or
 fill unknown account facts with true. If credits-only use cannot be established,
 leave run unauthorized. Expiry during a reserved call blocks the key read and
 spends the slot without a retry. Provider billing uncertainty remains explicit.
+
+The 30-minute observation window allows a bounded operator handoff; it does not
+reserve credits, guarantee the balance remains available, enforce a dollar cap,
+or prevent provider-side paid fallback. The roughly 0.31 US cent estimate is not
+a guaranteed spending cap. The separate authorization expiry remains future and
+within one hour at every check. Credits-only verification, no paid fallback and
+no billing changes remain required; if new facts invalidate that verification,
+stop even while the timestamp is within the window. An expired observation after
+durable reservation leaves the slot spent and the result unknown, with no key
+read, provider send or retry. Preserve all existing records and the fixed task
+identity; this change grants no new call or allowance.
+
+When staging is separately authorized, the manual uninterrupted operator command
+must use this same 1,800-second limit and actual observation timestamp rather
+than retaining an independent 300-second check. Recompute and review the changed
+helper bundle digest; an old digest is not approval of the new bytes. No staging,
+publication, credential access or live execution is authorized by this note.
 
 Before ANY bootstrap, independently verify a trusted exact staged file inventory,
 including no unexpected import surfaces, top-level Python modules, `ops/__init__.py`,

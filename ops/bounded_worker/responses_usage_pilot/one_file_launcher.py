@@ -30,6 +30,8 @@ LOCK = HOME / 'responses-required-text-live-001.lock'
 PROVISION = HOME / 'responses-required-text-live-001-provisioning.json'
 STORE = Path('/home/zeno-worker/responses-task-admission')
 UID = 1003
+# Bounded operator observation, not a provider-enforced balance or billing cap.
+MAX_CREDIT_AGE_SECONDS = 1800
 PLAN = Path('docs/agents-api-pilot/one-file-live-plan')
 MANIFEST_HASH = '94c87dcc9703e346523822b6ea186980b60eb967aeb03e086e49af4f30f930b7'
 IDENTITY = '63d219109f3b5bf120a07b2097827446e3e6f5a54bf44daf19114e99d28811ba'
@@ -142,7 +144,7 @@ def authorization(mode):
     if mode == 'provision' and value['new_store_provenance'] is not True:
         raise ValueError('new_store_unproven')
     if mode == 'run' and (value['credits_only_verified'] is not True
-                          or not 0 <= now - value['credits_checked_utc_epoch'] <= 300):
+                          or not 0 <= now - value['credits_checked_utc_epoch'] <= MAX_CREDIT_AGE_SECONDS):
         raise ValueError('credits_only_unverified')
     return value
 

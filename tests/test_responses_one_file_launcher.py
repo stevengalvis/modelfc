@@ -162,6 +162,127 @@ class LauncherTests(unittest.TestCase):
         self.assertFalse(self.store.exists())
         self.assertFalse(self.events)
 
+    def test_credit_observation_boundaries_and_actual_timestamp(self):
+        now = 2_000_000_000
+        self.assertEqual(l.MAX_CREDIT_AGE_SECONDS, 1800)
+        with patch.object(l.time, 'time', return_value=now) as clock:
+            for age in (0, 300, 301, 1799, 1800):
+                with self.subTest(age=age):
+                    self.auth(credits_checked_utc_epoch=now-age)
+                    before = l.AUTH.read_bytes()
+                    self.assertEqual(l.authorization('run')['credits_checked_utc_epoch'], now-age)
+                    self.assertEqual(l.AUTH.read_bytes(), before)
+            # Reading approval cannot renew the original observation.
+            clock.return_value = now + 0.001
+            with self.assertRaisesRegex(ValueError, '^credits_only_unverified$'):
+                l.authorization('run')
+        self.assertFalse(self.events)
+        self.assertFalse(self.store.exists())
+
+    def test_run_accepts_exact_credit_age_bound_at_all_three_checks(self):
+        now = 2_000_000_000
+        with patch.object(l.time, 'time', return_value=now):
+            self.auth(credits_checked_utc_epoch=now-1800)
+            self.provision()
+            before = l.AUTH.read_bytes()
+            with patch.object(l, 'authorization', wraps=l.authorization) as authorize:
+                result = l.execute('run')
+            self.assertEqual(result['status'], 'pass')
+            self.assertEqual(authorize.call_count, 3)
+            self.assertTrue(all(call.args == ('run',) for call in authorize.call_args_list))
+            self.assertEqual(self.events, ['ready', 'ready', 'key-after-durable-reservation',
+                                          'provider', 'runtime'])
+            self.assertEqual(l.AUTH.read_bytes(), before)
+
+    def test_invalid_credit_observation_blocks_before_state_or_key(self):
+        now = 2_000_000_000
+        cases = [(now-1801, 'credits_only_unverified'),
+                 (now+1, 'credits_only_unverified'), (-1, 'credits_only_unverified'),
+                 (0, 'credits_only_unverified'),
+                 (True, 'authorization_invalid'), (False, 'authorization_invalid'),
+                 (float(now), 'authorization_invalid'), (str(now), 'authorization_invalid'),
+                 (None, 'authorization_invalid'), ([], 'authorization_invalid'),
+                 ({}, 'authorization_invalid')]
+        with patch.object(l.time, 'time', return_value=now):
+            for observed, reason in cases:
+                with self.subTest(observed=observed):
+                    self.auth(credits_checked_utc_epoch=observed)
+                    before = set(self.home.iterdir())
+                    with patch.object(l, 'classify') as classify:
+                        with self.assertRaisesRegex(ValueError, '^' + reason + '$'):
+                            l.execute('run')
+                    classify.assert_not_called()
+                    self.assertEqual(set(self.home.iterdir()), before)
+        self.assertFalse(self.events)
+        self.assertFalse(self.store.exists())
+
+    def test_authorization_expiry_bounds_unchanged_with_fresh_credit(self):
+        now = 2_000_000_000
+        with patch.object(l.time, 'time', return_value=now):
+            for expiry in (now-1, now, now+3601, True, float(now+900)):
+                with self.subTest(expiry=expiry):
+                    self.auth(expires_utc_epoch=expiry)
+                    with self.assertRaisesRegex(ValueError, '^authorization_invalid$'):
+                        l.execute('run')
+            self.auth(expires_utc_epoch=now+3600)
+            l.authorization('run')
+        self.assertFalse(self.events)
+        self.assertFalse(self.store.exists())
+
+    def test_credit_expiry_after_launcher_readiness_blocks_before_admission(self):
+        now = 2_000_000_000
+        with patch.object(l.time, 'time', return_value=now) as clock:
+            self.auth(credits_checked_utc_epoch=now-1800)
+            self.provision()
+            before = (self.store / 'canonical.sqlite3').read_bytes()
+            auth_before = l.AUTH.read_bytes()
+            def ready(*args):
+                self.events.append('ready')
+                clock.return_value = now + 0.001
+                return True
+            with patch.object(l.sandbox, 'verify_readiness', side_effect=ready):
+                with patch.object(l, 'run_once') as runner:
+                    with self.assertRaisesRegex(ValueError, '^credits_only_unverified$'):
+                        l.execute('run')
+                runner.assert_not_called()
+            self.assertEqual(self.events, ['ready'])
+            self.assertEqual((self.store / 'canonical.sqlite3').read_bytes(), before)
+            self.assertEqual(l.AUTH.read_bytes(), auth_before)
+            self.assertEqual(l.classify(self.m), 'compatible')
+            self.assertTrue((l.RUN / 'started.json').exists())
+            # A genuinely new observation does not remove the terminal run marker.
+            self.auth()
+            with self.assertRaises(FileExistsError):
+                l.execute('run')
+
+    def test_credit_expiry_after_durable_reservation_blocks_key_and_spends_slot(self):
+        now = 2_000_000_000
+        with patch.object(l.time, 'time', return_value=now) as clock:
+            self.auth(credits_checked_utc_epoch=now-1800)
+            self.provision()
+            auth_before = l.AUTH.read_bytes()
+            original = c.CanonicalAdmission.reserve
+            def reserve(gate, *args):
+                reservation = original(gate, *args)
+                with sqlite3.connect(self.store / 'canonical.sqlite3') as db:
+                    self.assertEqual(db.execute('SELECT number FROM calls').fetchall(), [(1,)])
+                clock.return_value = now + 0.001
+                return reservation
+            with patch.object(c.CanonicalAdmission, 'reserve', reserve):
+                result = l.execute('run')
+            self.assertEqual(result['status'], 'unknown')
+            self.assertEqual(result['phase'], 'provider')
+            self.assertEqual(self.events, ['ready', 'ready'])
+            self.assertEqual(l.AUTH.read_bytes(), auth_before)
+            self.assertEqual(l.classify(self.m), 'spent')
+            self.assertEqual(l.OBSERVED['provider_delivery'], 'not_started')
+            self.assertFalse((l.RUN / 'proposed.patch').exists())
+            # Fresh credit evidence cannot create a second allowance.
+            self.auth()
+            with self.assertRaisesRegex(ValueError, '^admission_blocked$'):
+                l.execute('run')
+            self.assertEqual(self.events, ['ready', 'ready'])
+
     def test_inspection_absent_is_read_only(self):
         before = set(self.home.iterdir())
         self.assertEqual(l.execute('inspect'), {'status':'absent'})
