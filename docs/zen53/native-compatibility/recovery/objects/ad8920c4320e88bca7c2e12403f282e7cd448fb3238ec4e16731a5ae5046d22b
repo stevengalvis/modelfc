@@ -1,0 +1,396 @@
+"""PREPARED ONLY. Requires separate execution approval; no automatic retry.
+
+Root observer only examines the temporary unit's cgroup/processes. It does not
+trace syscalls, read environments, read FD contents or touch production controls.
+"""
+import os
+import sys
+import json
+import time
+import stat
+import fcntl
+import hashlib
+import pathlib
+import subprocess
+import datetime
+import pwd
+
+BASE = pathlib.Path(__file__).resolve().parent
+UNIT = "zen53-mincompat.service"
+USER = "zen53-mincompat"
+LOCKS = (("/var/lib/modelfc-deploy/deploy.lock", 543436, 1001, 1001, 0o644),
+         ("/var/lib/modelfc-validator/runs/validation.lock", 535594, 1000, 1000, 0o600))
+ENV = {"PATH": "/usr/sbin:/usr/bin:/sbin:/bin", "LANG": "C.UTF-8"}
+EVIDENCE = BASE / "evidence"
+events = []
+fds = []
+started = False
+result = {"status": "BLOCKED", "native_runtime": "UNTESTED", "transition": "UNTESTED",
+          "full_coding_isolation": "UNTESTED", "provider_model_requests": 0}
+
+
+def need(ok, code):
+    if not ok:
+        raise RuntimeError(code)
+
+
+def utc():
+    return datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+
+def digest(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as stream:
+        while data := stream.read(65536):
+            h.update(data)
+    return h.hexdigest()
+
+
+def command(args):
+    value = subprocess.run(args, env=ENV, stdin=subprocess.DEVNULL, capture_output=True,
+                           text=True, timeout=8, close_fds=True)
+    need(value.returncode == 0 and len(value.stdout) < 262144, "READ_QUERY_OR_COMMAND_FAILED")
+    return value.stdout
+
+
+def properties(unit, keys):
+    output = command(["systemctl", "show", unit, "--no-pager", *["-p" + key for key in keys]])
+    return dict(line.split("=", 1) for line in output.splitlines() if "=" in line)
+
+
+def idle():
+    jobs = json.loads(command(["busctl", "--json=short", "call", "org.freedesktop.systemd1",
+                              "/org/freedesktop/systemd1", "org.freedesktop.systemd1.Manager", "ListJobs"]))
+    need(jobs.get("type") == "a(usssoo)" and isinstance(jobs.get("data"), list)
+         and len(jobs["data"]) == 1 and isinstance(jobs["data"][0], list), "JOBS_SCHEMA")
+    need(not jobs["data"][0], "HOST_JOB_BUSY_NO_INTERFERENCE_ASSUMPTION")
+    for path in ("/var/lib/modelfc-deploy/service-pending.json",
+                 "/var/lib/modelfc-deploy/test-request.json", "/run/modelfc-acquisition/request.json"):
+        need(not os.path.lexists(path), "PENDING_REQUEST")
+    names = command(["systemctl", "list-units", "--all", "--type=service", "--plain",
+                     "--no-legend", "--no-pager"])
+    for line in names.splitlines():
+        name = line.split()[0]
+        if not name.startswith("modelfc-") or not any(word in name for word in
+                ("deploy", "postmerge", "acquisition", "depend", "suite", "validator", "handoff")):
+            continue
+        p = properties(name, ("MainPID", "ControlPID", "NFileDescriptorStore", "ControlGroup"))
+        need(p.get("MainPID") == p.get("ControlPID") == "0"
+             and p.get("NFileDescriptorStore", "0") == "0", "RELEVANT_WORKER_BUSY")
+        if p.get("ControlGroup"):
+            cgroup = pathlib.Path("/sys/fs/cgroup" + p["ControlGroup"])
+            for member in cgroup.rglob("cgroup.procs"):
+                need(not member.read_text().strip(), "WORKER_DESCENDANT_BUSY")
+    # Detect fixed installed controller entry points, including SSH-launched workers.
+    prefixes = (b"/opt/modelfc-deploy/", b"/opt/modelfc-validator/",
+                b"/usr/lib/modelfc-suite/", b"/usr/lib/modelfc-suite-diag600/")
+    for entry in pathlib.Path("/proc").iterdir():
+        if not entry.name.isdigit():
+            continue
+        try:
+            args = (entry / "cmdline").read_bytes().split(b"\0")
+        except FileNotFoundError:
+            continue
+        need(not any(arg.startswith(prefixes) and arg.endswith(b".py") for arg in args),
+             "CONTROLLER_ENTRY_POINT_BUSY")
+    # Do not start just before scheduled collection/forecast/refresh work.
+    timers = command(["systemctl", "list-units", "--type=timer", "--state=active", "--plain",
+                      "--no-legend", "--no-pager"])
+    for line in timers.splitlines():
+        name = line.split()[0]
+        if name.startswith("modelfc-"):
+            obj = json.loads(command(["busctl", "--json=short", "call", "org.freedesktop.systemd1",
+                                      "/org/freedesktop/systemd1", "org.freedesktop.systemd1.Manager",
+                                      "GetUnit", "s", name]))
+            need(obj.get("type") == "o" and len(obj.get("data", [])) == 1, "TIMER_OBJECT_SCHEMA")
+            observed = {}
+            for key, now in (("NextElapseUSecMonotonic", time.monotonic_ns() // 1000),
+                             ("NextElapseUSecRealtime", time.time_ns() // 1000)):
+                item = json.loads(command(["busctl", "--json=short", "get-property",
+                                           "org.freedesktop.systemd1", obj["data"][0],
+                                           "org.freedesktop.systemd1.Timer", key]))
+                need(item.get("type") == "t" and len(item.get("data", [])) == 1
+                     and type(item["data"][0]) is int, "TIMER_DEADLINE_SCHEMA")
+                value = item["data"][0]
+                observed[key] = value
+                need(value in (0, 2**64 - 1) or value - now > 90_000_000,
+                     "PRODUCTION_TIMER_WITHIN_DIAGNOSTIC_WINDOW")
+            events.append({"phase": "timer_observation", "unit": name, **observed})
+
+
+def lock_metadata(path):
+    value = os.lstat(path)
+    need(stat.S_ISREG(value.st_mode) and value.st_nlink == 1, "LOCK_FILE_TYPE")
+    return [value.st_dev, value.st_ino, value.st_uid, value.st_gid,
+            stat.S_IMODE(value.st_mode), value.st_size, value.st_mtime_ns, value.st_ctime_ns]
+
+
+def production():
+    paths = ["/usr/local/libexec/modelfc-prospective-launch.py",
+             "/opt/modelfc-deploy/deploy_main.py", "/etc/apparmor.d/bwrap-userns-restrict",
+             "/usr/bin/bwrap"]
+    files = {path: digest(path) for path in paths}
+    units = {}
+    for entry in pathlib.Path("/etc/systemd/system").rglob("*"):
+        if "modelfc" in str(entry) and entry.is_file() and not entry.is_symlink():
+            files[str(entry)] = digest(entry)
+    for name in ("modelfc-corner-api.service", "caddy.service"):
+        units[name] = properties(name, ("Id", "LoadState", "ActiveState", "MainPID", "InvocationID",
+                                        "ExecMainStartTimestampMonotonic", "RuntimeMaxUSec"))
+    controls = {name: pathlib.Path("/proc/sys/kernel/" + name).read_text().strip() for name in
+                ("unprivileged_userns_clone", "apparmor_restrict_unprivileged_userns")}
+    return {"files": files, "units": units, "controls": controls,
+            "loaded_profiles_sha256": digest("/sys/kernel/security/apparmor/profiles")}
+
+
+def effective_unit():
+    expected = {"DynamicUser": "yes", "User": USER, "RootDirectory": str(BASE / "rootfs"),
+                "PrivateNetwork": "yes", "PrivateDevices": "yes", "ProtectHome": "yes",
+                "ProtectSystem": "strict", "ProtectProc": "invisible", "ProcSubset": "all",
+                "ProtectKernelTunables": "yes", "ProtectKernelModules": "yes", "ProtectControlGroups": "yes",
+                "NoNewPrivileges": "yes", "CapabilityBoundingSet": "", "AmbientCapabilities": "",
+                "MemoryMax": "402653184", "MemorySwapMax": "0", "TasksMax": "32",
+                "CPUQuotaPerSecUSec": "500ms", "RuntimeMaxUSec": "1min", "TimeoutStopUSec": "3s",
+                "KillMode": "control-group", "DevicePolicy": "closed", "PrivateTmp": "yes",
+                "RestrictSUIDSGID": "yes", "Restart": "no"}
+    observed = properties(UNIT, tuple(expected) + ("RestrictAddressFamilies", "SystemCallFilter",
+                           "SystemCallArchitectures", "RestrictNamespaces", "PrivateUsers", "DeviceAllow",
+                           "ReadOnlyPaths", "BindReadOnlyPaths", "InaccessiblePaths"))
+    result["effective_unit"] = observed
+    need(all(observed.get(key) == value for key, value in expected.items()), "EFFECTIVE_UNIT_MISMATCH")
+    need(set(observed.get("RestrictAddressFamilies", "").split()) == {"AF_UNIX", "AF_NETLINK"},
+         "ADDRESS_FAMILY_MISMATCH")
+    # No extra syscall/namespace/AppArmor allowances are issued by this observer.
+
+
+def sample(group, phase):
+    cg = pathlib.Path("/sys/fs/cgroup" + group)
+    pids = set()
+    for file in cg.rglob("cgroup.procs") if cg.exists() else []:
+        pids.update(int(value) for value in file.read_text().split())
+    observations = []
+    for pid in sorted(pids):
+        proc = pathlib.Path("/proc") / str(pid)
+        try:
+            before = (proc / "stat").read_text()
+            identity = before.rsplit(") ", 1)[1].split()[19]
+            executable = os.readlink(proc / "exe")
+            label = (proc / "attr/current").read_text().strip()
+            membership = (proc / "cgroup").read_text().strip()
+            need(membership.endswith(group) or group + "/" in membership, "CGROUP_ATTRIBUTION")
+            record = {"pid": pid, "start_ticks": identity, "exe": executable, "label": label,
+                      "namespace": {n: os.readlink(proc / "ns" / n) for n in ("pid", "mnt", "net", "user")},
+                      "phase": phase, "utc": utc(), "monotonic_ns": time.monotonic_ns()}
+            if executable == "/usr/bin/bwrap":
+                # Read only the already pinned helper executable, never arbitrary contents.
+                record["exe_sha256"] = digest(proc / "exe")
+            if executable in ("/usr/bin/bwrap", "/usr/bin/python3.12", "/opt/codex/bin/codex"):
+                data = (proc / "mountinfo").read_text()
+                need(len(data) <= 131072, "OBSERVED_MOUNT_BOUND")
+                record["mountinfo"] = data
+            need((proc / "stat").read_text().rsplit(") ", 1)[1].split()[19] == identity,
+                 "PROCESS_IDENTITY_CHANGED")
+            observations.append(record)
+        except (FileNotFoundError, ProcessLookupError):
+            # Short-lived stages may be missed. Missing evidence cannot become PASS.
+            continue
+    return observations
+
+
+try:
+    need(len(sys.argv) == 2 and sys.argv[1] == "--approved-launch", "SEPARATE_LAUNCH_APPROVAL_REQUIRED")
+    need(os.geteuid() == 0, "ROOT_SUPERVISOR_REQUIRED")
+    need(not (EVIDENCE / "result.json").exists(), "NO_REUSE_OR_SECOND_ATTEMPT")
+    EVIDENCE.mkdir(mode=0o700, exist_ok=True)
+    result["start_utc"] = utc()
+    result["boot_id"] = pathlib.Path("/proc/sys/kernel/random/boot_id").read_text().strip()
+    manifest = json.loads((BASE / "ARTIFACT_SHA256.json").read_text())
+    for name, expected in manifest.items():
+        need(digest(BASE / name) == expected, "PACKAGE_DRIFT")
+    dependencies = json.loads((BASE / "DEPENDENCIES.json").read_text())
+    for alias, target in dependencies["symlinks"].items():
+        need(os.readlink(BASE / "rootfs" / alias.lstrip("/")) == target, "RUNTIME_LINK_DRIFT")
+    need(not (BASE / "rootfs/opt/codex/codex-resources/bwrap").exists(), "BUNDLED_FALLBACK_PRESENT")
+    for line in pathlib.Path("/proc/self/mountinfo").read_text().splitlines():
+        destination = line.split(" - ", 1)[0].split()[4].replace("\\040", " ")
+        need(not destination.startswith(str(BASE) + "/"), "RESIDUAL_STAGING_MOUNT")
+    actual = {"/" + str(path.relative_to(BASE / "rootfs"))
+              for path in (BASE / "rootfs").rglob("*") if path.is_file() and not path.is_symlink()}
+    need(actual == set(dependencies["dependencies"]) | {"/diagnostic/pins.json"}, "UNEXPECTED_ROOTFS_FILE")
+    memory = dict(line.split(":", 1) for line in pathlib.Path("/proc/meminfo").read_text().splitlines())
+    disk = os.statvfs(BASE)
+    need(int(memory["MemAvailable"].split()[0]) >= 1536 * 1024 and os.getloadavg()[0] < 1.5
+         and disk.f_bavail * disk.f_frsize >= 2 * 1024**3, "HEADROOM")
+    idle()
+    prior_locks = {}
+    for path, inode, uid, gid, mode in LOCKS:
+        for parent in pathlib.Path(path).parents:
+            info = os.lstat(parent)
+            need(stat.S_ISDIR(info.st_mode) and info.st_uid in (0, 1000, 1001)
+                 and not info.st_mode & 0o022, "LOCK_ANCESTOR_DRIFT")
+        prior_locks[path] = lock_metadata(path)
+        need(prior_locks[path][0] == 2049 and prior_locks[path][1:5] == [inode, uid, gid, mode], "LOCK_DRIFT")
+        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+        fds.append(descriptor)
+        need((os.fstat(descriptor).st_dev, os.fstat(descriptor).st_ino) == (2049, inode), "LOCK_OPEN_DRIFT")
+        fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    idle()
+    before = production()
+    result["before"] = before
+    need(before["units"]["modelfc-corner-api.service"]["ActiveState"] == "active", "API_NOT_ACTIVE")
+    api = before["units"]["modelfc-corner-api.service"]
+    need(api.get("RuntimeMaxUSec") == "30min" and int(api.get("MainPID", "0")) > 0
+         and bool(api.get("InvocationID")), "API_RUNTIME_IDENTITY")
+    age_us = time.monotonic_ns() // 1000 - int(api["ExecMainStartTimestampMonotonic"])
+    need(0 <= age_us < 1_800_000_000 - 90_000_000, "ORDINARY_API_ROTATION_TOO_NEAR")
+    need("bwrap (enforce)" in pathlib.Path("/sys/kernel/security/apparmor/profiles").read_text().splitlines()
+         and "unpriv_bwrap (enforce)" in pathlib.Path("/sys/kernel/security/apparmor/profiles").read_text().splitlines(),
+         "PROFILE_DRIFT")
+    need(before["files"]["/usr/bin/bwrap"] == "e318903862396f96de3df57264e0158682b952fd3fb53ac23d876413e7b30f71"
+         and before["files"]["/etc/apparmor.d/bwrap-userns-restrict"] ==
+         "11d39094f044f0cda0febb3ad517b830301da6b2ce929664af09ee9e4dd264f9", "PREREQUISITE_DRIFT")
+    service = []
+    in_service = False
+    for line in (BASE / "diagnostic.service").read_text().splitlines():
+        if line.startswith("["):
+            in_service = line == "[Service]"
+        elif in_service and line and not line.startswith("#"):
+            key, value = line.split("=", 1)
+            if key not in ("Type", "ExecStart"):
+                service.append("--property=" + key + "=" + value)
+    for name in ("stdout.log", "stderr.log"):
+        fd = os.open(EVIDENCE / name, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        os.close(fd)
+    need(properties(UNIT, ("LoadState",))["LoadState"] == "not-found", "UNIT_COLLISION")
+    try:
+        pwd.getpwnam(USER)
+        raise RuntimeError("IDENTITY_COLLISION")
+    except KeyError:
+        pass
+    started = True
+    command(["systemd-run", "--quiet", "--collect", "--unit=" + UNIT, "--service-type=exec", *service,
+             "/usr/bin/python3", "-I", "-S", "-B", "/diagnostic/launch.py"])
+    effective_unit()
+    end = time.monotonic() + 63
+    seen, count = set(), 0
+    while time.monotonic() < end:
+        props = properties(UNIT, ("ActiveState", "SubState", "ControlGroup", "MainPID", "Result",
+                                   "InvocationID", "MemoryPeak", "CPUUsageNSec", "TasksCurrent"))
+        raw = (EVIDENCE / "stdout.log").read_bytes()
+        need(len(raw) <= 65536, "CAPTURE_BOUND")
+        native = b'"phase":"native_start"' in raw
+        phase = "native" if native else "pre_native"
+        if props.get("ControlGroup"):
+            for record in sample(props["ControlGroup"], phase):
+                signature = (record["pid"], record["start_ticks"], record["exe"], record["label"], phase)
+                if signature not in seen:
+                    seen.add(signature)
+                    events.append(record)
+                    count += 1
+                    need(count <= 128, "OBSERVATION_BOUND")
+        result["last_unit_properties"] = props
+        if props.get("ActiveState") in ("inactive", "failed") or props.get("SubState") == "exited":
+            break
+        time.sleep(0.005)
+    else:
+        raise RuntimeError("SUPERVISOR_DEADLINE")
+    raw = (EVIDENCE / "stdout.log").read_text()
+    need('"phase":"launcher_complete"' in raw, "NATIVE_STARTUP_OR_REPORTER_FAILURE")
+    result["native_runtime"] = "PASS"
+    matching = [r for r in events if r.get("phase") == "native" and r.get("exe") == "/usr/bin/bwrap"
+                and r.get("exe_sha256") == before["files"]["/usr/bin/bwrap"]
+                and r.get("label") == "bwrap (enforce)"]
+    report_lines = []
+    for line in raw.splitlines():
+        try:
+            item = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if item.get("phase") == "native_finish":
+            report_lines = item["output"].splitlines()
+    labels = [line.split("=", 1)[1] for line in report_lines if line.startswith("apparmor=")]
+    values = dict(line.split("=", 1) for line in report_lines if "=" in line)
+    need(values.get("status.NoNewPrivs") == "1" and values.get("status.Seccomp") == "2"
+         and all(int(values.get("status." + key, "-1"), 16) == 0
+                 for key in ("CapInh", "CapPrm", "CapEff", "CapBnd", "CapAmb")), "REPORTED_PRIVILEGES")
+    outer = [json.loads(line) for line in raw.splitlines() if line.startswith("{")]
+    outer = [item for item in outer if item.get("phase") == "outer_admission"]
+    need(bool(outer) and all(values.get("namespace." + name) != outer[-1]["namespaces"][name]
+                             for name in ("pid", "mnt", "net", "user")), "FRESH_INNER_NAMESPACES_UNPROVEN")
+    need(len(labels) == 1 and labels[0] == "bwrap//&unpriv_bwrap (enforce)"
+         and matching, "SYSTEM_HELPER_TRANSITION_EVIDENCE_GAP")
+    result["transition"] = "PASS"
+    result["reporter"] = report_lines
+    result["status"] = "COMPATIBILITY_PASS_NOT_CODING_ACCEPTANCE"
+except BaseException as error:
+    result["failure"] = str(error)[:160] if isinstance(error, RuntimeError) else type(error).__name__
+finally:
+    if started:
+        try:
+            props = properties(UNIT, ("ActiveState", "ControlGroup"))
+            if props.get("ActiveState") not in ("inactive", "failed"):
+                # Cleanup ONLY this temporary unit, never a ModelFC unit.
+                command(["systemctl", "stop", UNIT])
+            props = properties(UNIT, ("ActiveState", "MainPID", "ControlPID", "ControlGroup"))
+            need(props.get("ActiveState") == "inactive" and props.get("MainPID") == "0"
+                 and props.get("ControlPID") == "0", "TEMPORARY_UNIT_CLEANUP")
+            need(not pathlib.Path("/sys/fs/cgroup/system.slice/" + UNIT).exists(), "CGROUP_REMAINS")
+            try:
+                pwd.getpwnam(USER)
+                raise RuntimeError("DYNAMIC_IDENTITY_REMAINS")
+            except KeyError:
+                pass
+            need(properties(UNIT, ("LoadState",))["LoadState"] == "not-found", "UNIT_REMAINS")
+            for parent in (pathlib.Path("/tmp"), pathlib.Path("/var/tmp")):
+                need(not list(parent.glob("systemd-private-*-" + UNIT + "-*")), "PRIVATE_TMP_REMAINS")
+            for line in pathlib.Path("/proc/self/mountinfo").read_text().splitlines():
+                destination = line.split(" - ", 1)[0].split()[4].replace("\\040", " ")
+                need(not destination.startswith(str(BASE) + "/"), "TEMPORARY_MOUNT_REMAINS")
+            result["cleanup"] = "PASS"
+        except BaseException as error:
+            result["cleanup"] = "BLOCKED:" + type(error).__name__
+            result["status"] = "BLOCKED"
+    try:
+        if "before" in locals():
+            result["after"] = production()
+            result["production_unchanged"] = result["after"] == before
+            if not result["production_unchanged"]:
+                result["status"] = "BLOCKED_PRODUCTION_CHANGE_REQUIRES_INVESTIGATION"
+        if "prior_locks" in locals():
+            result["lock_metadata_unchanged"] = all(lock_metadata(path) == value for path, value in prior_locks.items())
+            need(result["lock_metadata_unchanged"], "FINAL_LOCK_DRIFT")
+    except BaseException as error:
+        result["final_inspection_error"] = type(error).__name__
+        result["status"] = "BLOCKED"
+    finally:
+        retain = started and result.get("cleanup") != "PASS"
+        if not retain:
+            for descriptor in reversed(fds):
+                os.close(descriptor)
+    result["locks_released_by_close"] = 0 if retain else len(fds)
+    result["cleanup_blocker_retains_supervisor_locks"] = retain
+    if not retain and fds:
+        rows = []
+        for line in pathlib.Path("/proc/locks").read_text().splitlines():
+            fields = line.split()
+            if len(fields) >= 6 and fields[1] == "FLOCK" and fields[5] in ("08:01:543436", "08:01:535594"):
+                rows.append({"kind": fields[1], "mode": fields[3], "pid": fields[4], "identity": fields[5]})
+        result["original_lock_owners_after_close"] = rows
+    result["finish_utc"] = utc()
+    # Outside the payload root, bounded private output; no report overwrite/retry.
+    if EVIDENCE.is_dir() and not (EVIDENCE / "result.json").exists():
+        payload = json.dumps({"result": result, "events": events}, indent=2).encode()
+        if len(payload) > 2 * 1024**2:
+            result["status"] = "BLOCKED_EVIDENCE_BOUND"
+            payload = json.dumps({"result": result, "events_truncated": True}).encode()
+        fd = os.open(EVIDENCE / "result.json", os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "wb") as stream:
+            stream.write(payload)
+            stream.flush()
+            os.fsync(stream.fileno())
+    if retain:
+        # Do not reopen admission while temporary descendants are unverified.
+        # This is a dormant operator hold, not a retry or extended payload run.
+        # A separate recovery decision is required; inspect the retained result.
+        while True:
+            time.sleep(60)

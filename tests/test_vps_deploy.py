@@ -662,7 +662,8 @@ class FreshReleaseTest(unittest.TestCase):
         previous = os.readlink(self.current)
         request = self.control / "test-request.json"
         output = self.control / "reports/test-result.json"
-        diagnostics = {"failures":0,"errors":0,"test_ids":[],"truncated":False}
+        diagnostics = {"failures":0,"errors":0,"test_ids":[],"truncated":False,
+                       "classification":"TIMEOUT", "count_known":False, "last_test_id":None}
         def report(*args):
             value = json.loads(request.read_text())
             output.write_text(json.dumps(dict(sha=value["sha"], release_id=value["release_id"],
@@ -674,8 +675,21 @@ class FreshReleaseTest(unittest.TestCase):
         self.assertEqual((result["status"], result["reason"], result["promotion_status"]),
                          ("FAIL", "TESTS_FAILED", "NOT_ATTEMPTED"))
         self.assertEqual(os.readlink(self.current), previous)
+        self.assertEqual(result["failure_diagnostics"]["classification"], "TIMEOUT")
+        self.assertIsNone(result["failure_diagnostics"]["tests_run"])
         self.assertTrue((self.control / "last-test-failure.json").is_file())
         self.assertEqual(self.run_deploy(self.b)["promotion_status"], "PROMOTED")
+
+    def test_cleanup_failure_drops_optional_test_evidence_preserving_original_reason(self):
+        self.run_deploy(self.a)
+        info = dict(classification="TIMEOUT", count_known=False, tests_run=None,
+                    failures=None, errors=None, test_ids=[], truncated=False, last_test_id=None)
+        with patch.object(deploy, "tests", side_effect=deploy.Failure("TESTS_FAILED", 0, info)), \
+             patch.object(deploy.shutil, "rmtree", side_effect=OSError("private error")):
+            result = self.run_deploy(self.b)
+        self.assertEqual(result["reason"], "INTERNAL_ERROR")
+        self.assertNotIn("failure_diagnostics", result)
+        self.assertEqual(result["promotion_status"], "NOT_ATTEMPTED")
 
     def test_older_main_event_superseded_without_switching(self):
         self.run_deploy(self.b)
@@ -2135,6 +2149,30 @@ class TestFailureDiagnosticsTest(unittest.TestCase):
         text = "\n".join(f"{kind}: {name.rsplit('.', 1)[-1]} ({name})" for kind,name in zip(kinds,names))
         return deploy.test_diagnostics(text, "FAILED (failures=1, errors=1)", self.allowed, False)
 
+    def test_inherited_source_methods_keep_progress_observable_without_execution(self):
+        source = self.release / "tests/test_inherited.py"
+        source.write_text("raise RuntimeError('must not execute')\n"
+            "class Base:\n    def test_inherited(self): pass\n"
+            "class Child(Base): pass\nclass Grandchild(Child): pass\n"
+            "class Unknown(imported.Base): pass\n"
+            "class CycleA(CycleB): pass\nclass CycleB(CycleA): pass\n")
+        allowed = deploy.test_identifiers(self.release)
+        ids = ['test_inherited.Child.test_inherited', 'test_inherited.Grandchild.test_inherited']
+        self.assertTrue(set(ids) <= allowed)
+        self.assertFalse(any('.Unknown.' in name for name in allowed))
+        progress = deploy.TestProgress(allowed)
+        for index, name in enumerate(ids):
+            for offset, kind in enumerate(('start', 'finish')):
+                sequence = 2*index+offset+1
+                progress.feed((json.dumps([sequence, kind, name, sequence])+"\n").encode())
+        progress.feed((json.dumps([5, 'end', '', 5])+"\n").encode())
+        self.assertTrue(progress.snapshot()['complete'])
+        self.assertEqual(progress.snapshot()['observed_completed'], 2)
+        diagnostic = deploy.extended_diagnostics('FAIL: test_inherited ('+ids[0]+')',
+            None, allowed, False, 'TIMEOUT', False)
+        self.assertEqual(diagnostic['test_ids'], ids[:1])
+        self.assertTrue(deploy.valid_test_diagnostics(diagnostic, allowed))
+
     def test_failure_and_error_identifiers_and_summary_counts(self):
         for kind in ("FAIL", "ERROR"):
             with self.subTest(kind=kind):
@@ -2143,6 +2181,41 @@ class TestFailureDiagnosticsTest(unittest.TestCase):
                 self.assertEqual((value["failures"], value["errors"]), (1, 1))
                 self.assertFalse(value["truncated"])
                 self.assertTrue(deploy.valid_test_diagnostics(value, self.allowed))
+
+    def test_identifier_inventory_covers_growth_without_expanding_report(self):
+        source = self.release / "tests/test_growth.py"
+        source.write_text("class Growth:\n" + "".join(
+            f"    def test_case_{i}(self): pass\n" for i in range(2500)))
+        allowed = deploy.test_identifiers(self.release)
+        name = "test_growth.Growth.test_case_2499"
+        self.assertIn(name, allowed)
+        self.assertIn("tests." + name, allowed)
+        text = f"FAIL: test_case_2499 ({name})\n"
+        text += "ERROR: test_secret (test_growth.Growth.test_secret) token=secret\n"
+        result = deploy.test_diagnostics(text, "FAILED (failures=1, errors=1)", allowed, False)
+        self.assertEqual(result["test_ids"], [name])
+        self.assertTrue(result["truncated"])
+        self.assertNotIn("secret", json.dumps(result))
+        self.assertTrue(deploy.valid_test_diagnostics(result, allowed))
+        self.assertLess(len(json.dumps(result)), deploy.DIAGNOSTIC_LIMIT)
+        self.assertEqual(deploy.DIAGNOSTIC_IDS, 8)
+        self.assertEqual(deploy.DIAGNOSTIC_LIMIT, 4096)
+
+    def test_identifier_inventory_still_has_hard_bound_without_executing_source(self):
+        count = deploy.TEST_IDENTIFIER_LIMIT // 2
+        (self.release / "tests/test_a_growth.py").write_text(
+            "raise RuntimeError('must not execute source')\nclass Growth:\n" + "".join(
+                f"    def test_case_{i}(self): pass\n" for i in range(count + 1)))
+        allowed = deploy.test_identifiers(self.release)
+        self.assertEqual(len(allowed), deploy.TEST_IDENTIFIER_LIMIT)
+        self.assertIn(f"test_a_growth.Growth.test_case_{count-1}", allowed)
+        self.assertIn(f"tests.test_a_growth.Growth.test_case_{count-1}", allowed)
+        name = f"test_a_growth.Growth.test_case_{count}"
+        self.assertNotIn(name, allowed)
+        result = deploy.test_diagnostics(f"FAIL: test_case_{count} ({name})", None, allowed, False)
+        self.assertEqual(result["test_ids"], [])
+        self.assertTrue(result["truncated"])
+        self.assertTrue(deploy.valid_test_diagnostics(result, allowed))
 
     def test_real_phase5_diagnostic_identifies_all_four_test_context_failures(self):
         names = ["test_vps_deploy.RuntimeReleaseProvenanceTest." + name for name in (

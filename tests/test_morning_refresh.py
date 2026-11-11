@@ -13,6 +13,7 @@ from unittest.mock import patch
 from modelfc import corner_refresh as refresh, refresh_attempts as attempts, morning_refresh as morning
 from modelfc.corner_data import CornerDataConfig
 from tests import test_refresh_cadence as cadence_fixtures
+from tests.test_automatic_research_settlement import FixedRefreshDatetime
 
 
 class MorningTests(unittest.TestCase):
@@ -221,6 +222,10 @@ class MorningTests(unittest.TestCase):
         self.assertIsNone(shown['last_refresh_at'])
         self.assertIn('REFRESH_STATUS_UNAVAILABLE',{w['code'] for w in shown['warnings']})
 
+    @patch('modelfc.corner_refresh.datetime', FixedRefreshDatetime)
+    @patch('modelfc.refresh_attempts.datetime', FixedRefreshDatetime)
+    @patch('modelfc.refresh_result_evidence.datetime', FixedRefreshDatetime)
+    @patch('modelfc.research_settlement.datetime', FixedRefreshDatetime)
     def test_conflicting_final_score_blocks_settlement_but_missing_corners_do_not(self):
         original=self.f.immutable()
         conflicting=self.f.payload.replace(b',2,1,H,6,3',b',2,0,H,6,3')
@@ -234,9 +239,10 @@ class MorningTests(unittest.TestCase):
         with patch.object(refresh,'urlopen',return_value=Response()):
             result=morning.run(self.f.config,self.f.state,{**morning.POLICY,'enabled':True},retain_result_evidence=True)
         row=result['report']['results'][0]
+        self.assertFalse(row['stale'])
         self.assertEqual(row['settlement_eligibility'],'FINAL_SCORE_CONFLICT')
         self.assertEqual(row['result_availability'],'RESULTS_PENDING_AT_SOURCE')
-        self.assertTrue(refresh.format_report(result['report'],datetime.now(timezone.utc).date(),14)[1])
+        self.assertTrue(refresh.format_report(result['report'],self.now.date(),14)[1])
         self.assertEqual(self.f.run_settlement()['reason'],'REFRESH_CALENDAR_CONFLICT_OR_UNVERIFIED')
         self.assertEqual(self.f.immutable(),original)
         with patch.object(refresh,'download_csv',side_effect=AssertionError('no retry')):
@@ -246,7 +252,7 @@ class MorningTests(unittest.TestCase):
         self.target.unlink()  # Fresh synthetic publication, never remove real known counts.
         conflicting=self.f.payload.replace(b',6,3',b',,')
         with patch.object(attempts,'datetime') as clock,patch.object(refresh,'urlopen',return_value=Response()):
-            clock.now.return_value=datetime.now(timezone.utc)+timedelta(days=1)
+            clock.now.return_value=self.now+timedelta(days=1)
             result=morning.run(self.f.config,self.f.state,{**morning.POLICY,'enabled':True},retain_result_evidence=True)
         self.assertEqual(result['report']['results'][0]['settlement_eligibility'],'VERIFIED_FINAL_SCORES')
         self.assertEqual(result['report']['results'][0]['result_availability'],'RESULTS_PENDING_AT_SOURCE')

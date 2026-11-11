@@ -203,7 +203,8 @@ class _RequestBudgetGuard:
                               else frozenset(allowed_kinds))
         profile = (self.allowed_kinds, invocation_limit)
         if type(invocation_limit) is not int or profile not in ((self._PRODUCTION_KINDS, 8),
-                           (frozenset(("TOURNAMENT_ODDS",)), 1)):
+                           (frozenset(("TOURNAMENT_ODDS",)), 1),
+                           (frozenset(("FIXTURE_DISCOVERY", "MARKET_METADATA")), 2)):
             raise RunnerError("REQUEST_BUDGET")
         self.invocation_limit = invocation_limit
         self.reserved = self.tokens = 0
@@ -913,7 +914,11 @@ def main(argv=None):
     parser.add_argument("--fixture-date", type=date.fromisoformat)
     parser.add_argument("--fixture-id", action="append", default=[])
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--epl-schedule", type=Path,
+                        help="Separately authorized protected E0 recurring contract; default disabled")
     args = parser.parse_args(argv)
+    if args.epl_schedule and (args.command != 'run-once' or not args.require_calendar_budget or not args.calendar_gate):
+        parser.error('EPL schedule requires ordinary run-once with calendar and budget gates')
     if args.command != "collect-early" and (args.fixture_date or args.fixture_id or args.dry_run):
         parser.error("early scope/dry-run options require collect-early")
     if args.command == "collect-early":
@@ -954,6 +959,15 @@ def main(argv=None):
     else:
         report = run_once(state_dir=args.state_dir, data_config_path=args.data_config,
                           require_calendar_budget=args.require_calendar_budget, friday_review=args.friday_review, calendar_gate=args.calendar_gate)
+        if args.epl_schedule:
+            # Finish E1 including its receipt and release its lock before E0.
+            # A failed/busy E1 run never starts additional provider work.
+            if report['status']=='OK':
+                from modelfc.pl_scheduled_caller import tick
+                report['epl']=tick(schedule_path=args.epl_schedule,state_dir=args.state_dir,
+                                   data_config_path=args.data_config)
+            else:
+                report['epl']={'status':'E1_NOT_COMPLETE','provider_requests':0}
     print(json.dumps(report, sort_keys=True))
     return 0 if report["status"] in ("OK", "INITIALIZED", "ENROLLED") else 1
 

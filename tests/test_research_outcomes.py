@@ -196,7 +196,8 @@ sys.meta_path.insert(0,Block())
         row['participants']=[{'id':b['provider_team_id'],'name':b['provider_name'],'meta':{'location':side}} for b,side in ((home,'home'),(away,'away'))]
         row['scores']=[{'description':'CURRENT','participant_id':b['provider_team_id'],'score':{'goals':goals}} for b,goals in ((home,2),(away,1))]
         row['statistics']=[{'type_id':34,'participant_id':b['provider_team_id'],'location':side,'data':{'value':corners}} for b,side,corners in ((home,'home',6),(away,'away',3))]
-        payload=json.loads(value['payload']);match=next(r for r in payload['matches'] if r['homeTeam']['id']==home['provider_team_id'] and r['awayTeam']['id']==away['provider_team_id'])
+        payload=json.loads(value['payload'])
+        match=next(r for r in payload['matches'] if r['homeTeam']['id']==home['provider_team_id'] and r['awayTeam']['id']==away['provider_team_id'])
         match.update(status='FINISHED',score={'fullTime':{'home':2,'away':1}});payload['resultSet']['played']=2
         value.update(payload=json.dumps(payload),retrieved_at=self.retrieved)
         response=self.root/'saved-response.json';response.write_text(json.dumps({'data':[row],'pagination':{'has_more':False,'next_page':None}}))

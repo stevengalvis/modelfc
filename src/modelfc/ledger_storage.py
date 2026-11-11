@@ -201,7 +201,19 @@ def _grant_evidence_read(target: Path, state: Path, lock_descriptor: int | None,
                              and relative.parts[0] in public_ledgers
                              and target.suffix == ".json")
                             or is_research_record)
-        if not (is_btts or is_public_ledger):
+        is_epl_projection = (len(relative.parts) == 2 and relative.parts[0] == "epl-public-evidence"
+                             and re.fullmatch(r"[0-9a-f]{64}\.json", relative.parts[1]) is not None)
+        if is_epl_projection:
+            # Validate the exact unpublished inode, never a replaceable pathname.
+            from modelfc.pl_public_evidence import validate
+            info = os.fstat(temporary_descriptor)
+            if not 0 < info.st_size <= 65536:
+                raise ValueError("invalid EPL projection size")
+            from modelfc.providers.oddspapi_saved_response import _json
+            projection = validate(_json(os.pread(temporary_descriptor, 65537, 0)))
+            if projection['record_hash'] != target.stem:
+                raise ValueError("invalid EPL projection filename")
+        if not (is_btts or is_public_ledger or is_epl_projection):
             raise ValueError("invalid public evidence location")
         selected_lock = state / "btts-research" / ".lock" if is_btts else state / ".lock"
         uid = _api_reader_uid()

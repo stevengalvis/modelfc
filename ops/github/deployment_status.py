@@ -195,6 +195,48 @@ def merged_pr(api, sha):
     return matches[0] if matches else None
 
 
+def valid_public_failure(report):
+    value = report.get("failure_diagnostics")
+    if value is None:
+        return "failure_diagnostics" not in report
+    def number(n, limit):
+        return type(n) is int and 0 <= n <= limit
+    def name(n):
+        return (type(n) is str and len(n) <= 160 and re.fullmatch(
+            r"(?:tests\.)?test_[A-Za-z0-9_]+\.[A-Za-z_][A-Za-z0-9_]*\.test[A-Za-z0-9_]*", n) is not None)
+    fields = {"classification", "count_known", "tests_run", "failures", "errors",
+              "test_ids", "truncated", "last_test_id"}
+    if (report["status"] != "FAIL" or report["reason"] != "TESTS_FAILED"
+            or report["tests_status"] != "FAIL" or report["promotion_status"] != "NOT_ATTEMPTED"
+            or type(value) is not dict or set(value) not in (fields, fields | {"progress"})
+            or value["classification"] not in {"TIMEOUT", "CAPTURE_ERROR", "PROCESS_ERROR", "TEST_FAILURE", "MISSING_SUMMARY"}
+            or type(value["count_known"]) is not bool or type(value["truncated"]) is not bool
+            or any(n is not None and not number(n, 999999) for n in (value["failures"], value["errors"]))
+            or (value["last_test_id"] is not None and not name(value["last_test_id"]))
+            or type(value["test_ids"]) is not list or len(value["test_ids"]) > 4
+            or not all(name(n) for n in value["test_ids"])
+            or len(set(value["test_ids"])) != len(value["test_ids"])):
+        return False
+    if value["count_known"]:
+        if not number(value["tests_run"], 1000000) or value["tests_run"] != report["tests_run"]:
+            return False
+    elif value["tests_run"] is not None:
+        return False
+    if "progress" in value:
+        progress = value["progress"]
+        if (type(progress) is not dict or set(progress) != {
+                "observed_completed", "complete", "last_test_id", "last_progress_us", "slowest"}
+                or not number(progress["observed_completed"], 10000)
+                or type(progress["complete"]) is not bool
+                or not number(progress["last_progress_us"], 630000000)
+                or (progress["last_test_id"] is not None and not name(progress["last_test_id"]))
+                or type(progress["slowest"]) is not list or len(progress["slowest"]) > 4
+                or not all(type(item) is list and len(item) == 2 and name(item[0])
+                           and number(item[1], 630000000) for item in progress["slowest"])):
+            return False
+    return len(json.dumps(value).encode("ascii")) <= 3000
+
+
 def read_report(path, sha):
     """Only an exact sanitized report may supply evidence, never arbitrary artifact text."""
     try:
@@ -207,7 +249,7 @@ def read_report(path, sha):
         if len(raw) > MAX_REPORT:
             raise Rejected
         value = strict_json(raw)
-        if (type(value) is not dict or set(value) != FIELDS or value["requested_sha"] != sha
+        if (type(value) is not dict or set(value) not in (FIELDS, FIELDS | {"failure_diagnostics"}) or value["requested_sha"] != sha
                 or value["status"] not in {"PASS", "FAIL", "SUPERSEDED"}
                 or value["reason"] not in REASONS
                 or value["dependency_sync"] not in {"INSTALLED", "NOT_ATTEMPTED"}
@@ -255,6 +297,8 @@ def read_report(path, sha):
                 raise Rejected
         elif value["reason"] in {"OK", "ALREADY_CURRENT", "SUPERSEDED"}:
             raise Rejected
+        if not valid_public_failure(value):
+            raise Rejected
         return value
     except (OSError, ValueError, TypeError, KeyError, RecursionError, Rejected):
         return None
@@ -300,13 +344,16 @@ def deployment_evidence(run, jobs, report):
     elif report and report["status"] == "PASS" and report["reason"] == "ALREADY_CURRENT":
         # The early return checks physical HEAD but does not recheck the protected marker.
         result, stage = "UNVERIFIED", "ALREADY_CURRENT_NOT_REVERIFIED"
-    return {"status": result, "stage": stage,
+    evidence = {"status": result, "stage": stage,
             "repository_tests": {"backend": backend or "UNVERIFIED",
                                  "frontend": frontend or "UNVERIFIED"},
             "controller_job": deploy or "UNVERIFIED",
             "controller_selected_sha": None if verified == "UNVERIFIED" else verified,
             "serving_sha": None, "serving_health": "UNVERIFIED",
             "installed_components": "UNVERIFIED"}
+    if report and valid_public_failure(report) and "failure_diagnostics" in report:
+        evidence["failure_diagnostics"] = report["failure_diagnostics"]
+    return evidence
 
 
 def empty_result():
@@ -337,7 +384,7 @@ def summary(result):
     if source:
         lines.extend(["Requested SHA: `" + source["sha"] + "`",
                       "[Detailed workflow evidence](" + source["url"] + ")"])
-    return "\n\n".join(lines) + "\n"
+    return "\n\n".join(lines) + "\n" + diagnostic_summary(evidence.get("failure_diagnostics"))
 
 
 def save_result(result):
@@ -354,6 +401,36 @@ def save_result(result):
         temporary.replace(path)
     if os.environ.get("GITHUB_STEP_SUMMARY"):
         Path(os.environ["GITHUB_STEP_SUMMARY"]).write_text(body, encoding="utf-8")
+
+
+def failure_summary(report):
+    if not report or not valid_public_failure(report) or "failure_diagnostics" not in report:
+        return ""
+    return diagnostic_summary(report["failure_diagnostics"])
+
+
+def diagnostic_summary(value):
+    """Render only the validated structured evidence carried by the observer."""
+    if value is None:
+        return ""
+    lines = ["Test failure classification: " + value["classification"],
+             "Final test count: " + (str(value["tests_run"]) if value["count_known"] else "UNKNOWN"),
+             "Last verbose test-start observation (not a proven culprit): `" +
+             (value["last_test_id"] or "UNKNOWN") + "`",
+             "Bounded/truncated evidence: " + str(value["truncated"])]
+    if value["test_ids"]:
+        lines.append("Reported failure/error IDs: " + ", ".join("`" + n + "`" for n in value["test_ids"]))
+    if "progress" in value:
+        progress = value["progress"]
+        lines.extend(["Observed completed tests: " + str(progress["observed_completed"]) +
+                      "; stream complete: " + str(progress["complete"]),
+                      "Last progress observation: `" + (progress["last_test_id"] or "UNKNOWN") +
+                      "` at " + str(progress["last_progress_us"]) + " microseconds",
+                      "Slowest observed completed tests (microseconds): " +
+                      ", ".join("`" + n + "`: " + str(t) for n, t in progress["slowest"])])
+    else:
+        lines.append("Progress observations: UNAVAILABLE (not supplied); completed count and stream completeness UNKNOWN")
+    return "\n\n" + "\n\n".join(lines) + "\n"
 
 
 def render(run, number, jobs, report):
@@ -373,7 +450,7 @@ def render(run, number, jobs, report):
             f"* Frontend tests: {frontend.upper()}\n"
             f"* VPS activation: {'PASSED' if evidence['status'] == 'SUCCESS' else 'NOT VERIFIED SUCCESSFUL'}\n"
             "\nController evidence records release selection at deployment completion; "
-            "it does not verify physical API adoption or current health.\n")
+            "it does not verify physical API adoption or current health.\n" + failure_summary(report))
 
 
 def comment_records(api, number):

@@ -1,0 +1,29 @@
+**ZEN-53 minimal compatibility diagnostic — 1/5: PREPARATION COMPLETE; NOT LAUNCHED**
+
+2026-10-21 UTC. Read the [verified prerequisite installation](https://github.com/stevengalvis/modelfc/pull/191#issuecomment-6319804565). Prepared a new protected package at `/tmp/zen53-minimal-compat-o5j8utk6/`; existing work and production were untouched.
+
+**Complete review package** (each detailed comment read back byte-for-byte):
+- [2/5: full reporter, exact unit, permission policy and launcher](https://github.com/stevengalvis/modelfc/pull/191#issuecomment-6321085427).
+- [3/5: full trusted supervisor, exact entry points, mounts/environment, shared-lock/headroom admission, attribution and cleanup procedure](https://github.com/stevengalvis/modelfc/pull/191#issuecomment-6321087053).
+- [4/5: full data-only root constructor, all 41 runtime-file hashes, nine symlinks and ELF dependency closure](https://github.com/stevengalvis/modelfc/pull/191#issuecomment-6321088725).
+- [5/5: complete artifact/source hashes, static results and pinned source references](https://github.com/stevengalvis/modelfc/pull/191#issuecomment-6321090490).
+
+Reporter: `/usr/bin/python3 -I -S -B /diagnostic/report.py`, no arguments; only specified self-label/status/namespace observations, bounded output, nonzero on missing evidence. Python resolves to installed3.12.3, hash `e50d468e8b0adfb05733f5b87b3cff34829c4a8c1aea50c865aa8bdfe4bb150f`. Installed Codex0.162.1, system bwrap0.9.0-1ubuntu0.3 and profile bytes match their approved hashes. Loaded bwrap/unpriv_bwrap remain enforce; no profile/package operation occurred.
+
+| Check | Result |
+|---|---|
+| Four Python source syntax compiles; permission TOML; runtime hashes/copied pins/empty bind identities | **PASS**, static only |
+| Actual isolated startup, selected helper, AppArmor transition, inner mounts/namespaces/capabilities | **UNTESTED** |
+| Effective runtime limits and temporary-unit cleanup | **UNTESTED** |
+| Coding workspace quotas/full coding isolation | **UNTESTED; outside this diagnostic** |
+
+The proposed unit retains DynamicUser, private root/network/devices, process/kernel/home/cgroup protections, NoNewPrivileges and empty capabilities; AF_UNIX+AF_NETLINK; **0.5CPU/384MiB/no swap/32tasks/60s**,3s stop and whole-cgroup kill. HOME/CODEX_HOME, /tmp, /var/tmp, /run and shm use exact empty read-only binds, with actual mount/source-identity admission. No TemporaryFileSystem assumption, writable workspace, credentials, host sockets, old boundary workload or bundled-helper fallback. Native-created memory mounts may be observed; that does not establish storage quotas.
+
+**Concrete compatibility concern requiring review before a run:** pinned normal Codex [arg0 setup](https://github.com/openai/codex/blob/092d3acd6bec3e3a14bdc7e7a2810ab628ab759d/codex-rs/arg0/src/lib.rs#L326) attempts `$CODEX_HOME/tmp/arg0` creation and helper aliases. Empty read-only HOME rejects those writes. Upstream may warn and continue; the prepared launcher instead stops on that warning/access error. This is a source-proven attempted write, **not an observed runtime failure or proof that native startup strictly requires persisted state**. No writable-state workaround or bypass was added. Do not claim the reporter can be reached under these constraints without resolving this review concern.
+
+Attribution also fails closed: require a native-phase, cgroup/PID/start-bound `/usr/bin/bwrap` executable/hash with `bwrap (enforce)`, followed by the reporter's enforce-mode stacked label. Installed profiles/help alone do not pass. Read-only polling may miss a brief stage; that is an evidence gap, never permission to trace, relax or retry.
+
+Reporter SHA256: `e0e8953a537ab25509db0f74d7d813e8e8a6cc8f9f8bd7e41214e66f69ddd0c1`.
+Complete `ARTIFACT_SHA256.json` SHA256: **`7e58d98710b5ee0c78feba30e154a7bc7aa43f996162d0f5f32b1426a4bc719f`**.
+
+**Zero diagnostic/reporter/Bubblewrap/Codex executions, temporary units/mounts/namespaces or shared-lock acquisitions.** No credentials accessed, model/data-provider calls, package/profile/security changes, service operations, production writes, push or deployment. ZEN-36/Friday settings untouched; unrelated `.local/` work preserved. No execution approval inferred. Stop for review; this package does not establish safe authenticated coding.

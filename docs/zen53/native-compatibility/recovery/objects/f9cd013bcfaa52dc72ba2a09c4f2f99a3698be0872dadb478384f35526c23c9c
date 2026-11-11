@@ -1,0 +1,8 @@
+{
+  "observation_utc": "2026-10-21T18:07:27.600511+00:00",
+  "bwrap_sha256": "e318903862396f96de3df57264e0158682b952fd3fb53ac23d876413e7b30f71",
+  "profile_sha256": "11d39094f044f0cda0febb3ad517b830301da6b2ce929664af09ee9e4dd264f9",
+  "unprivileged_userns_clone": "1",
+  "apparmor_restrict_unprivileged_userns": "1",
+  "security_package_profile_operations": 0
+}

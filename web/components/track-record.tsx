@@ -26,12 +26,12 @@ export function PublishedTrackRecord() {
   const rows = data?.publications.filter(r => r.ranking_views.includes(view)) ?? [];
   return <section className="panel ledger-panel" aria-label={TRACK_RECORD_LABEL}>
     <h2>{TRACK_RECORD_LABEL}</h2><p>{TRACK_RECORD_SUBTITLE}</p>
-    <p>One frozen selection per match and market: each team’s corner total, or Championship BTTS Yes/No. Best Value selects the outcome; the best eligible bookmaker supplies its saved price. Higher Probability is the subset with at least 65% modeled win probability. Overlapping views count once.</p>
+    <p>One frozen selection per match and market: each team’s corner total, or qualified BTTS Yes/No. Best Value selects the outcome; the best eligible bookmaker supplies its saved price. Higher Probability is the subset with at least 65% modeled win probability. Overlapping views count once.</p>
     <label>Published market <select value={market} onChange={e => setMarket(e.target.value)}><option value="">All markets</option><option value="TEAM_TOTAL">Team corners</option><option value="BTTS">Both teams to score</option></select></label>
     <label>Published league <select value={competition} onChange={e => setCompetition(e.target.value)}><option value="">All recorded leagues</option><option value="E1">Championship</option><option value="E0">Premier League</option><option value="SP1">La Liga</option></select></label>
     <PublicationCutoff onApply={setAsOf} />
     {asOf ? <p>Recorded history as of {asOf}</p> : null}
-    {competition && competition !== "E1" ? <p>No {competition} production coverage is established by this filter. Missing records are not zero model performance.</p> : null}
+    {competition && competition !== "E1" && !rows.length ? <p>No {competition} production coverage is established by this filter. Missing records are not zero model performance.</p> : null}
     {error ? <div role="alert"><p>Published recommendations could not be loaded. No result is inferred.</p><button onClick={() => { setError(false); setAttempt(n => n+1); }}>Retry published record</button></div>
       : !data ? <p role="status">Loading published recommendations…</p> : null}
     {data && summary && <>

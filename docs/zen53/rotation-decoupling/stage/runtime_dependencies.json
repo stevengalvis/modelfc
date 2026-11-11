@@ -1,0 +1,604 @@
+{
+  "prepared_utc": "2026-10-21T18:03:09.025926+00:00",
+  "python": "3.12.3 (main, Aug 31 2026, 10:18:26) [GCC 13.3.0]",
+  "interpreter_sha256": "e50d468e8b0adfb05733f5b87b3cff34829c4a8c1aea50c865aa8bdfe4bb150f",
+  "dependencies": {
+    "/usr/lib/python3.12/collections/__init__.py": {
+      "source": "/usr/lib/python3.12/collections/__init__.py",
+      "resolved_source": "/usr/lib/python3.12/collections/__init__.py",
+      "sha256": "0af967cd58036507b3d0fbc33b7a996c61dbb52a94b0b738c8bef12cd4cc7dd4",
+      "source_uid": 0,
+      "source_gid": 0,
+      "source_mode": "0o644",
+      "mode": "0o444"
+    },
+    "/usr/lib/python3.12/copyreg.py": {
+      "source": "/usr/lib/python3.12/copyreg.py",
+      "resolved_source": "/usr/lib/python3.12/copyreg.py",
+      "sha256": "c8eda41f05c6bf95a4da4726a530409d2485ae060b8d019b3a8034389a15d3e9",
+      "source_uid": 0,
+      "source_gid": 0,
+      "source_mode": "0o644",
+      "mode": "0o444"
+    },
+    "/usr/lib/python3.12/encodings/__init__.py": {
+      "source": "/usr/lib/python3.12/encodings/__init__.py",
+      "resolved_source": "/usr/lib/python3.12/encodings/__init__.py",
+      "sha256": "78c4744d407690f321565488710b5aaf6486b5afa8d185637aa1e7633ab59cd8",
+      "source_uid": 0,
+      "source_gid": 0,
+      "source_mode": "0o644",
+      "mode": "0o444"
+    },
+    "/usr/lib/python3.12/encodings/aliases.py": {
+      "source": "/usr/lib/python3.12/encodings/aliases.py",
+      "resolved_source": "/usr/lib/python3.12/encodings/aliases.py",
+      "sha256": "6fdcc49ba23a0203ae6cf28e608f8e6297d7c4d77d52e651db3cb49b9564c6d2",
+      "source_uid": 0,
+      "source_gid": 0,
+      "source_mode": "0o644",
+      "mode": "0o444"
+    },
+    "/usr/lib/python3.12/encodings/ascii.py": {
+      "source": "/usr/lib/python3.12/encodings/ascii.py",
+      "resolved_source": "/usr/lib/python3.12/encodings/ascii.py",
+      "sha256": "578aa1173f7cc60dad2895071287fe6182bd14787b3fbf47a6c7983dfe3675e3",
+      "source_uid": 0,
+      "source_gid": 0,
+      "source_mode": "0o644",
+      "mode": "0o444"
+    },
+    "/usr/lib/python3.12/encodings/latin_1.py": {
+      "source": "/usr/lib/python3.12/encodings/latin_1.py",
+      "resolved_source": "/usr/lib/python3.12/encodings/latin_1.py",
+      "sha256": "b75503e532a27c636477396c855209ff5f3036536d2a4bede0a576c89382b60c",
+      "source_uid": 0,
+      "source_gid": 0,
+      "source_mode": "0o644",
+      "mode": "0o444"
+    },
+    "/usr/lib/python3.12/encodings/utf_8.py": {
+      "source": "/usr/lib/python3.12/encodings/utf_8.py",
+      "resolved_source": "/usr/lib/python3.12/encodings/utf_8.py",
+      "sha256": "ba0cac060269583523ca9506473a755203037c57d466a11aa89a30a5f6756f3d",
+      "source_uid": 0,
+      "source_gid": 0,
+      "source_mode": "0o644",
+      "mode": "0o444"
+    },
+    "/usr/lib/python3.12/enum.py": {
+      "source": "/usr/lib/python3.12/enum.py",
+      "resolved_source": "/usr/lib/python3.12/enum.py",
+      "sha256": "c8ead615c159598370295649eb296819ad4b40d50b200c4fec2d4269bf7af9ae",
+      "source_uid": 0,
+      "source_gid": 0,
+      "source_mode": "0o644",
+      "mode": "0o444"
+    },
+    "/usr/lib/python3.12/functools.py": {
+      "source": "/usr/lib/python3.12/functools.py",
+      "resolved_source": "/usr/lib/python3.12/functools.py",
+      "sha256": "cca971c456e1bec8b751aecdf41466f34dbf72321ee0840627280ba2ccf9d033",
+      "source_uid": 0,
+      "source_gid": 0,
+      "source_mode": "0o644",
+      "mode": "0o444"
+    },
+    "/usr/lib/python3.12/hashlib.py": {
+      "source": "/usr/lib/python3.12/hashlib.py",
+      "resolved_source": "/usr/lib/python3.12/hashlib.py",
+      "sha256": "6dbdebf270868b391080e21dc9687eddfaf321c965ad979f68d3f5c423c613ab",
+      "source_uid": 0,
+      "source_gid": 0,
+      "source_mode": "0o644",
+      "mode": "0o444"
+    },
+    "/usr/lib/python3.12/json/__init__.py": {
+      "source": "/usr/lib/python3.12/json/__init__.py",
+      "resolved_source": "/usr/lib/python3.12/json/__init__.py",
+      "sha256": "d5d41e2c29049515d295d81a6d40b4890fbec8d8482cfb401630f8ef2f77e4d5",
+      "source_uid": 0,
+      "source_gid": 0,
+      "source_mode": "0o644",
+      "mode": "0o444"
+    },
+    "/usr/lib/python3.12/json/decoder.py": {
+      "source": "/usr/lib/python3.12/json/decoder.py",
+      "resolved_source": "/usr/lib/python3.12/json/decoder.py",
+      "sha256": "9f02654649816145bc76f8c210a5fe3ba1de142d4d97a1c93105732e747c285b",
+      "source_uid": 0,
+      "source_gid": 0,
+      "source_mode": "0o644",
+      "mode": "0o444"
+    },
+    "/usr/lib/python3.12/json/encoder.py": {
+      "source": "/usr/lib/python3.12/json/encoder.py",
+      "resolved_source": "/usr/lib/python3.12/json/encoder.py",
+      "sha256": "af7bd40a0d0d0a3e726a9b4b3a2a543019f6ab97a340d0162a9c29ca9da97869",
+      "source_uid": 0,
+      "source_gid": 0,
+      "source_mode": "0o644",
+      "mode": "0o444"
+    },
+    "/usr/lib/python3.12/json/scanner.py": {
+      "source": "/usr/lib/python3.12/json/scanner.py",
+      "resolved_source": "/usr/lib/python3.12/json/scanner.py",
+      "sha256": "8604d9d03786d0d509abb49e9f069337278ea988c244069ae8ca2c89acc2cb08",
+      "source_uid": 0,
+      "source_gid": 0,
+      "source_mode": "0o644",
+      "mode": "0o444"
+    },
+    "/usr/lib/python3.12/keyword.py": {
+      "source": "/usr/lib/python3.12/keyword.py",
+      "resolved_source": "/usr/lib/python3.12/keyword.py",
+      "sha256": "18c2be738c04ad20ad375f6a71db34b3823c7f40b0340f5294d0e89f3c9b093b",
+      "source_uid": 0,
+      "source_gid": 0,
+      "source_mode": "0o644",
+      "mode": "0o444"
+    },
+    "/usr/lib/python3.12/lib-dynload/_hashlib.cpython-312-x86_64-linux-gnu.so": {
+      "source": "/usr/lib/python3.12/lib-dynload/_hashlib.cpython-312-x86_64-linux-gnu.so",
+      "resolved_source": "/usr/lib/python3.12/lib-dynload/_hashlib.cpython-312-x86_64-linux-gnu.so",
+      "sha256": "8dc6cda6dd9495b95a2bfb5b26e8cf06b72f36dc0213d958b9277a958287f0fe",
+      "source_uid": 0,
+      "source_gid": 0,
+      "source_mode": "0o644",
+      "mode": "0o444"
+    },
+    "/usr/lib/python3.12/lib-dynload/_json.cpython-312-x86_64-linux-gnu.so": {
+      "source": "/usr/lib/python3.12/lib-dynload/_json.cpython-312-x86_64-linux-gnu.so",
+      "resolved_source": "/usr/lib/python3.12/lib-dynload/_json.cpython-312-x86_64-linux-gnu.so",
+      "sha256": "ca8e35c58f7bc8e27258c4af43651c941413bc6318903621253485b0395758a3",
+      "source_uid": 0,
+      "source_gid": 0,
+      "source_mode": "0o644",
+      "mode": "0o444"
+    },
+    "/usr/lib/python3.12/operator.py": {
+      "source": "/usr/lib/python3.12/operator.py",
+      "resolved_source": "/usr/lib/python3.12/operator.py",
+      "sha256": "b2af20f67667203c1730e686cc5d0427becc94db4c97f1d3efe3ed2158473f6a",
+      "source_uid": 0,
+      "source_gid": 0,
+      "source_mode": "0o644",
+      "mode": "0o444"
+    },
+    "/usr/lib/python3.12/re/__init__.py": {
+      "source": "/usr/lib/python3.12/re/__init__.py",
+      "resolved_source": "/usr/lib/python3.12/re/__init__.py",
+      "sha256": "8ff3c37c63b917fcf8dc8d50993a502292a3dc159e41de4f4018c72a53d1c07b",
+      "source_uid": 0,
+      "source_gid": 0,
+      "source_mode": "0o644",
+      "mode": "0o444"
+    },
+    "/usr/lib/python3.12/re/_casefix.py": {
+      "source": "/usr/lib/python3.12/re/_casefix.py",
+      "resolved_source": "/usr/lib/python3.12/re/_casefix.py",
+      "sha256": "41572ac50cf96b04496e676d8a6708898bb8e752e06dad34ed4c50c5d8f1fe40",
+      "source_uid": 0,
+      "source_gid": 0,
+      "source_mode": "0o644",
+      "mode": "0o444"
+    },
+    "/usr/lib/python3.12/re/_compiler.py": {
+      "source": "/usr/lib/python3.12/re/_compiler.py",
+      "resolved_source": "/usr/lib/python3.12/re/_compiler.py",
+      "sha256": "c05067f8bfa4c13cbbf1eedc4d5cafc9b621bcb6ebc5771ba0518a18095af15a",
+      "source_uid": 0,
+      "source_gid": 0,
+      "source_mode": "0o644",
+      "mode": "0o444"
+    },
+    "/usr/lib/python3.12/re/_constants.py": {
+      "source": "/usr/lib/python3.12/re/_constants.py",
+      "resolved_source": "/usr/lib/python3.12/re/_constants.py",
+      "sha256": "fa4fdb200f238f9e7817b63892b0d69833d8165134801e775e10cc113348a375",
+      "source_uid": 0,
+      "source_gid": 0,
+      "source_mode": "0o644",
+      "mode": "0o444"
+    },
+    "/usr/lib/python3.12/re/_parser.py": {
+      "source": "/usr/lib/python3.12/re/_parser.py",
+      "resolved_source": "/usr/lib/python3.12/re/_parser.py",
+      "sha256": "a51a85b37cf3f44ba7ff25754da5f31306e4ccfa6eb3c017f9d37bdf4e770840",
+      "source_uid": 0,
+      "source_gid": 0,
+      "source_mode": "0o644",
+      "mode": "0o444"
+    },
+    "/usr/lib/python3.12/reprlib.py": {
+      "source": "/usr/lib/python3.12/reprlib.py",
+      "resolved_source": "/usr/lib/python3.12/reprlib.py",
+      "sha256": "8da31054076803065758311f54b18b8a616824941977d907dc3ee729228e9015",
+      "source_uid": 0,
+      "source_gid": 0,
+      "source_mode": "0o644",
+      "mode": "0o444"
+    },
+    "/usr/lib/python3.12/types.py": {
+      "source": "/usr/lib/python3.12/types.py",
+      "resolved_source": "/usr/lib/python3.12/types.py",
+      "sha256": "345474ef027a1273f353da9bdc1f7c18f65335e72e681bcc0376774cc51f2405",
+      "source_uid": 0,
+      "source_gid": 0,
+      "source_mode": "0o644",
+      "mode": "0o444"
+    },
+    "/usr/bin/python3.12": {
+      "source": "/usr/bin/python3.12",
+      "resolved_source": "/usr/bin/python3.12",
+      "sha256": "e50d468e8b0adfb05733f5b87b3cff34829c4a8c1aea50c865aa8bdfe4bb150f",
+      "source_uid": 0,
+      "source_gid": 0,
+      "source_mode": "0o755",
+      "mode": "0o555"
+    },
+    "/opt/codex/bin/codex": {
+      "source": "/root/.codex/packages/standalone/releases/0.162.1-x86_64-unknown-linux-musl/bin/codex",
+      "resolved_source": "/root/.codex/packages/standalone/releases/0.162.1-x86_64-unknown-linux-musl/bin/codex",
+      "sha256": "628e35487d888a28f0427fc37501da529dd3d81fcbad7a2c3421c1e8670d92e1",
+      "source_uid": 65534,
+      "source_gid": 65534,
+      "source_mode": "0o755",
+      "mode": "0o555"
+    },
+    "/opt/codex/codex-package.json": {
+      "source": "/root/.codex/packages/standalone/releases/0.162.1-x86_64-unknown-linux-musl/codex-package.json",
+      "resolved_source": "/root/.codex/packages/standalone/releases/0.162.1-x86_64-unknown-linux-musl/codex-package.json",
+      "sha256": "f05ebff6db98bd613dd5654461985090c6416b41ad67902243d83a53b305ac05",
+      "source_uid": 65534,
+      "source_gid": 65534,
+      "source_mode": "0o644",
+      "mode": "0o444"
+    },
+    "/usr/bin/bwrap": {
+      "source": "/usr/bin/bwrap",
+      "resolved_source": "/usr/bin/bwrap",
+      "sha256": "e318903862396f96de3df57264e0158682b952fd3fb53ac23d876413e7b30f71",
+      "source_uid": 0,
+      "source_gid": 0,
+      "source_mode": "0o755",
+      "mode": "0o755"
+    },
+    "/diagnostic/report.py": {
+      "source": "/tmp/zen53-recovery-check-review-95cIo2kT/bundle/objects/ec4c7e553178e61677a961ff1e0c0a88103ffe3d95cfef7dd43cef2acf38aa22",
+      "resolved_source": "/tmp/zen53-recovery-check-review-95cIo2kT/bundle/objects/ec4c7e553178e61677a961ff1e0c0a88103ffe3d95cfef7dd43cef2acf38aa22",
+      "sha256": "ec4c7e553178e61677a961ff1e0c0a88103ffe3d95cfef7dd43cef2acf38aa22",
+      "source_uid": 0,
+      "source_gid": 0,
+      "source_mode": "0o444",
+      "mode": "0o444"
+    },
+    "/diagnostic/launch.py": {
+      "source": "/tmp/zen53-empty-bind-amendment-review-LEWiROSH/candidate/launch.py",
+      "resolved_source": "/tmp/zen53-empty-bind-amendment-review-LEWiROSH/candidate/launch.py",
+      "sha256": "14a8ec5d0b1eb043566ef6c59d3186fe6f06090cc1515bc65a6c43b838d3e29c",
+      "source_uid": 0,
+      "source_gid": 0,
+      "source_mode": "0o444",
+      "mode": "0o444"
+    },
+    "/usr/bin/true": {
+      "source": "/usr/bin/true",
+      "resolved_source": "/usr/bin/true",
+      "sha256": "8a63c98320173f79e263115e10cefc170155e47d1fd4b5a70e4429d2699cae28",
+      "source_uid": 0,
+      "source_gid": 0,
+      "source_mode": "0o755",
+      "mode": "0o555"
+    },
+    "/usr/lib/x86_64-linux-gnu/libc.so.6": {
+      "source": "/usr/lib/x86_64-linux-gnu/libc.so.6",
+      "resolved_source": "/usr/lib/x86_64-linux-gnu/libc.so.6",
+      "sha256": "3a15d66867d83762c7f2f1e37359cb8f6c5743edb369c65285cb0b1c4f7498bf",
+      "source_uid": 0,
+      "source_gid": 0,
+      "source_mode": "0o755",
+      "mode": "0o555"
+    },
+    "/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2": {
+      "source": "/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2",
+      "resolved_source": "/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2",
+      "sha256": "c20a2dc8917c755f02b94049356320fe1f62ac7d9f8994731f807d9df39302da",
+      "source_uid": 0,
+      "source_gid": 0,
+      "source_mode": "0o755",
+      "mode": "0o555"
+    },
+    "/usr/lib/x86_64-linux-gnu/libselinux.so.1": {
+      "source": "/usr/lib/x86_64-linux-gnu/libselinux.so.1",
+      "resolved_source": "/usr/lib/x86_64-linux-gnu/libselinux.so.1",
+      "sha256": "0ec0843463f90e227b0e138e1f379774f50b5514bd7f5dbd4c8a87aca0aa6670",
+      "source_uid": 0,
+      "source_gid": 0,
+      "source_mode": "0o644",
+      "mode": "0o444"
+    },
+    "/usr/lib/x86_64-linux-gnu/libcap.so.2.66": {
+      "source": "/usr/lib/x86_64-linux-gnu/libcap.so.2.66",
+      "resolved_source": "/usr/lib/x86_64-linux-gnu/libcap.so.2.66",
+      "sha256": "6ac6abc86ac891c6e13486470e26f1d939f47fda9e6b5d5508a7f5ec881adc84",
+      "source_uid": 0,
+      "source_gid": 0,
+      "source_mode": "0o644",
+      "mode": "0o444"
+    },
+    "/usr/lib/x86_64-linux-gnu/libpcre2-8.so.0.11.2": {
+      "source": "/usr/lib/x86_64-linux-gnu/libpcre2-8.so.0.11.2",
+      "resolved_source": "/usr/lib/x86_64-linux-gnu/libpcre2-8.so.0.11.2",
+      "sha256": "e00576d71d81d3ba0cfa4903c835a44a8723aac96f72f79ff75200b4cff9071b",
+      "source_uid": 0,
+      "source_gid": 0,
+      "source_mode": "0o644",
+      "mode": "0o444"
+    },
+    "/usr/lib/x86_64-linux-gnu/libm.so.6": {
+      "source": "/usr/lib/x86_64-linux-gnu/libm.so.6",
+      "resolved_source": "/usr/lib/x86_64-linux-gnu/libm.so.6",
+      "sha256": "fce00b6f25f459cf4ae0b7fae4257909a1a8a86f9149e7c029a5d617baf1ccd0",
+      "source_uid": 0,
+      "source_gid": 0,
+      "source_mode": "0o644",
+      "mode": "0o444"
+    },
+    "/usr/lib/x86_64-linux-gnu/libz.so.1.3": {
+      "source": "/usr/lib/x86_64-linux-gnu/libz.so.1.3",
+      "resolved_source": "/usr/lib/x86_64-linux-gnu/libz.so.1.3",
+      "sha256": "f61677c7bdb7c2aa2a243ea781bfd16afcb361cede7b4ef76127a9d8eb9a5242",
+      "source_uid": 0,
+      "source_gid": 0,
+      "source_mode": "0o644",
+      "mode": "0o444"
+    },
+    "/usr/lib/x86_64-linux-gnu/libexpat.so.1.9.1": {
+      "source": "/usr/lib/x86_64-linux-gnu/libexpat.so.1.9.1",
+      "resolved_source": "/usr/lib/x86_64-linux-gnu/libexpat.so.1.9.1",
+      "sha256": "286682ecbc5e59a638963b1a4e6351e65eb32fcf4bdcb9cb7569b6a61fe06a8d",
+      "source_uid": 0,
+      "source_gid": 0,
+      "source_mode": "0o644",
+      "mode": "0o444"
+    },
+    "/usr/lib/x86_64-linux-gnu/libcrypto.so.3": {
+      "source": "/usr/lib/x86_64-linux-gnu/libcrypto.so.3",
+      "resolved_source": "/usr/lib/x86_64-linux-gnu/libcrypto.so.3",
+      "sha256": "6866ed711dab8927e1bf82bf1cd30e828bdfc34f3cc1e83b1c9eb01ce6c37d9a",
+      "source_uid": 0,
+      "source_gid": 0,
+      "source_mode": "0o644",
+      "mode": "0o444"
+    },
+    "/etc/codex/requirements.toml": {
+      "source": "/tmp/zen53-recovery-check-review-95cIo2kT/bundle/objects/2567e3290e66d17e3128f6741f64392dc6f90917bb95d0becec34db945fb12bb",
+      "resolved_source": "/tmp/zen53-recovery-check-review-95cIo2kT/bundle/objects/2567e3290e66d17e3128f6741f64392dc6f90917bb95d0becec34db945fb12bb",
+      "sha256": "2567e3290e66d17e3128f6741f64392dc6f90917bb95d0becec34db945fb12bb",
+      "source_uid": 0,
+      "source_gid": 0,
+      "source_mode": "0o444",
+      "mode": "0o444"
+    },
+    "/usr/lib/python3.12/os.py": {
+      "source": "/usr/lib/python3.12/os.py",
+      "resolved_source": "/usr/lib/python3.12/os.py",
+      "sha256": "316d1b7307fd851bded3423c9d437e0a383c725d993f0fcff2e8b749fe560b62",
+      "source_uid": 0,
+      "source_gid": 0,
+      "source_mode": "0o644",
+      "mode": "0o444"
+    },
+    "/usr/lib/python3.12/datetime.py": {
+      "source": "/usr/lib/python3.12/datetime.py",
+      "resolved_source": "/usr/lib/python3.12/datetime.py",
+      "sha256": "ef20dc6b3554cd585dddffdc573f1f9a7a54c522f2a3fb4576c44edbb1e14238",
+      "source_uid": 0,
+      "source_gid": 0,
+      "source_mode": "0o644",
+      "mode": "0o444",
+      "provenance": "PYTHON_CLOSURE_PROVENANCE.json",
+      "current_host_validation": "REQUIRED_NOT_OBSERVED"
+    },
+    "/usr/lib/python3.12/struct.py": {
+      "source": "/usr/lib/python3.12/struct.py",
+      "resolved_source": "/usr/lib/python3.12/struct.py",
+      "sha256": "9c231f9497caf513a22dee8f790b07f969b0e45854a0bdd6dd84b492e08c2856",
+      "source_uid": 0,
+      "source_gid": 0,
+      "source_mode": "0o644",
+      "mode": "0o444",
+      "provenance": "PYTHON_CLOSURE_PROVENANCE.json",
+      "current_host_validation": "REQUIRED_NOT_OBSERVED"
+    },
+    "/usr/lib/python3.12/signal.py": {
+      "source": "/usr/lib/python3.12/signal.py",
+      "resolved_source": "/usr/lib/python3.12/signal.py",
+      "sha256": "0363c964c90ac0b3e515de5749205e6e6454051a1211058375d84d91eab6071a",
+      "source_uid": 0,
+      "source_gid": 0,
+      "source_mode": "0o644",
+      "mode": "0o444",
+      "provenance": "PYTHON_CLOSURE_PROVENANCE.json",
+      "current_host_validation": "REQUIRED_NOT_OBSERVED"
+    },
+    "/usr/lib/python3.12/ctypes/__init__.py": {
+      "source": "/usr/lib/python3.12/ctypes/__init__.py",
+      "resolved_source": "/usr/lib/python3.12/ctypes/__init__.py",
+      "sha256": "0782592567ad71097198a3afe985ac3e2ea0b9b5e75452402c9460c89a86318a",
+      "source_uid": 0,
+      "source_gid": 0,
+      "source_mode": "0o644",
+      "mode": "0o444",
+      "provenance": "PYTHON_CLOSURE_PROVENANCE.json",
+      "current_host_validation": "REQUIRED_NOT_OBSERVED"
+    },
+    "/usr/lib/python3.12/ctypes/_endian.py": {
+      "source": "/usr/lib/python3.12/ctypes/_endian.py",
+      "resolved_source": "/usr/lib/python3.12/ctypes/_endian.py",
+      "sha256": "c5d692bdce10dfee242752620061bab684633bc72445a3def484961ef1bdbf3a",
+      "source_uid": 0,
+      "source_gid": 0,
+      "source_mode": "0o644",
+      "mode": "0o444",
+      "provenance": "PYTHON_CLOSURE_PROVENANCE.json",
+      "current_host_validation": "REQUIRED_NOT_OBSERVED"
+    },
+    "/usr/lib/python3.12/lib-dynload/_ctypes.cpython-312-x86_64-linux-gnu.so": {
+      "source": "/usr/lib/python3.12/lib-dynload/_ctypes.cpython-312-x86_64-linux-gnu.so",
+      "resolved_source": "/usr/lib/python3.12/lib-dynload/_ctypes.cpython-312-x86_64-linux-gnu.so",
+      "sha256": "aad3e24f186e6c0a1c7efa8f16004f951f527db86f6451d30118657384a456c1",
+      "source_uid": 0,
+      "source_gid": 0,
+      "source_mode": "0o644",
+      "mode": "0o444",
+      "provenance": "PYTHON_CLOSURE_PROVENANCE.json",
+      "current_host_validation": "REQUIRED_NOT_OBSERVED"
+    },
+    "/usr/lib/x86_64-linux-gnu/libffi.so.8.1.4": {
+      "source": "/usr/lib/x86_64-linux-gnu/libffi.so.8.1.4",
+      "resolved_source": "/usr/lib/x86_64-linux-gnu/libffi.so.8.1.4",
+      "sha256": "00f593fe192f2851b8ce23b25cec2488d769beb5a8f63e8c9e563071e1075153",
+      "source_uid": 0,
+      "source_gid": 0,
+      "source_mode": "0o644",
+      "mode": "0o444",
+      "provenance": "PYTHON_CLOSURE_PROVENANCE.json",
+      "current_host_validation": "REQUIRED_NOT_OBSERVED"
+    }
+  },
+  "symlinks": {
+    "/lib64": "usr/lib64",
+    "/lib": "usr/lib",
+    "/bin": "usr/bin",
+    "/usr/lib64/ld-linux-x86-64.so.2": "/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2",
+    "/usr/bin/python3": "python3.12",
+    "/usr/lib/x86_64-linux-gnu/libcap.so.2": "/usr/lib/x86_64-linux-gnu/libcap.so.2.66",
+    "/usr/lib/x86_64-linux-gnu/libz.so.1": "/usr/lib/x86_64-linux-gnu/libz.so.1.3",
+    "/usr/lib/x86_64-linux-gnu/libexpat.so.1": "/usr/lib/x86_64-linux-gnu/libexpat.so.1.9.1",
+    "/usr/lib/x86_64-linux-gnu/libpcre2-8.so.0": "/usr/lib/x86_64-linux-gnu/libpcre2-8.so.0.11.2",
+    "/usr/lib/x86_64-linux-gnu/libffi.so.8": "libffi.so.8.1.4"
+  },
+  "elf_closure": {
+    "/usr/bin/true": {
+      "needed": [
+        "libc.so.6"
+      ],
+      "interpreters": [
+        "/lib64/ld-linux-x86-64.so.2"
+      ]
+    },
+    "/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2": {
+      "needed": [],
+      "interpreters": []
+    },
+    "/usr/lib/x86_64-linux-gnu/libc.so.6": {
+      "needed": [
+        "ld-linux-x86-64.so.2"
+      ],
+      "interpreters": [
+        "/lib64/ld-linux-x86-64.so.2"
+      ]
+    },
+    "/usr/bin/bwrap": {
+      "needed": [
+        "libselinux.so.1",
+        "libcap.so.2",
+        "libc.so.6"
+      ],
+      "interpreters": [
+        "/lib64/ld-linux-x86-64.so.2"
+      ]
+    },
+    "/usr/lib/x86_64-linux-gnu/libcap.so.2.66": {
+      "needed": [
+        "libc.so.6"
+      ],
+      "interpreters": [
+        "/lib64/ld-linux-x86-64.so.2"
+      ]
+    },
+    "/usr/lib/x86_64-linux-gnu/libselinux.so.1": {
+      "needed": [
+        "libpcre2-8.so.0",
+        "libc.so.6",
+        "ld-linux-x86-64.so.2"
+      ],
+      "interpreters": []
+    },
+    "/usr/lib/x86_64-linux-gnu/libpcre2-8.so.0.11.2": {
+      "needed": [
+        "libc.so.6"
+      ],
+      "interpreters": []
+    },
+    "/opt/codex/bin/codex": {
+      "needed": [],
+      "interpreters": []
+    },
+    "/usr/bin/python3.12": {
+      "needed": [
+        "libm.so.6",
+        "libz.so.1",
+        "libexpat.so.1",
+        "libc.so.6"
+      ],
+      "interpreters": [
+        "/lib64/ld-linux-x86-64.so.2"
+      ]
+    },
+    "/usr/lib/x86_64-linux-gnu/libexpat.so.1.9.1": {
+      "needed": [
+        "libc.so.6"
+      ],
+      "interpreters": []
+    },
+    "/usr/lib/x86_64-linux-gnu/libz.so.1.3": {
+      "needed": [
+        "libc.so.6"
+      ],
+      "interpreters": []
+    },
+    "/usr/lib/x86_64-linux-gnu/libm.so.6": {
+      "needed": [
+        "libc.so.6",
+        "ld-linux-x86-64.so.2"
+      ],
+      "interpreters": []
+    },
+    "/usr/lib/python3.12/lib-dynload/_json.cpython-312-x86_64-linux-gnu.so": {
+      "needed": [],
+      "interpreters": []
+    },
+    "/usr/lib/python3.12/lib-dynload/_hashlib.cpython-312-x86_64-linux-gnu.so": {
+      "needed": [
+        "libcrypto.so.3",
+        "libc.so.6"
+      ],
+      "interpreters": []
+    },
+    "/usr/lib/x86_64-linux-gnu/libcrypto.so.3": {
+      "needed": [
+        "libc.so.6"
+      ],
+      "interpreters": []
+    },
+    "/usr/lib/python3.12/lib-dynload/_ctypes.cpython-312-x86_64-linux-gnu.so": {
+      "needed": [
+        "libffi.so.8",
+        "libc.so.6"
+      ],
+      "interpreters": []
+    },
+    "/usr/lib/x86_64-linux-gnu/libffi.so.8.1.4": {
+      "needed": [
+        "libc.so.6"
+      ],
+      "interpreters": []
+    }
+  },
+  "source_commit": "092d3acd6bec3e3a14bdc7e7a2810ab628ab759d",
+  "native_executions": 0,
+  "unit_or_mount_operations": 0
+}

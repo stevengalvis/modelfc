@@ -1,6 +1,7 @@
 """Adapter for Football-Data.co.uk Premier League CSV files."""
 
 import csv
+from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal
 import math
@@ -26,6 +27,40 @@ _RESULTS = {
 
 class FootballDataError(ValueError):
     """Raised when a Football-Data CSV cannot be normalized."""
+
+
+VALIDATION_SCOPES = {
+    'FULL': ('goals', 'corners', 'shots', 'shots_on_target', 'xg'),
+    'GOALS': ('goals',),
+    'GOALS_CORNERS': ('goals', 'corners'),
+}
+
+
+def unvalidated_statistics(scope):
+    if not isinstance(scope, str) or scope not in VALIDATION_SCOPES:
+        raise FootballDataError('unknown statistics validation scope')
+    return tuple(field for field in VALIDATION_SCOPES['FULL']
+                 if field not in VALIDATION_SCOPES[scope])
+
+
+@dataclass(frozen=True)
+class ScopedTeamMatchStats(TeamMatchStats):
+    """Explicit projection: out-of-scope None means NOT_ASSESSED, not missing.
+
+    Full-stat callers still receive the original TeamMatchStats contract.
+    Source bytes are never changed; only requested numeric fields are parsed.
+    """
+    validation_scope: str = 'GOALS'
+
+    def __post_init__(self):
+        super().__post_init__()
+        for field in unvalidated_statistics(self.validation_scope):
+            if any(getattr(self, field+'_'+side) is not None for side in ('for', 'against')):
+                raise ValueError('unvalidated statistics cannot carry normalized values')
+
+    @property
+    def unvalidated_statistics(self):
+        return unvalidated_statistics(self.validation_scope)
 
 
 def load_matches(path: str | Path) -> list[Match]:
@@ -197,6 +232,7 @@ def _normalize_corner_row(
 def load_team_match_stats(
     path: str | Path, *, competition: str | None = None,
     excluded_fixtures: Iterable[tuple[date, str, str]] = (),
+    validation_scope: str = 'FULL',
 ) -> list["TeamMatchStats"]:
     """Load completed European league rows, with optional team statistics.
 
@@ -204,11 +240,15 @@ def load_team_match_stats(
     Div is absent/blank, and must agree when both are provided. Season labels
     use the European July boundary from each match's date, not the filename.
     Missing optional columns/cells remain None independently for each team.
-    Malformed nonblank values and inconsistent shots fail with row context.
+    Full-stat validation is the default and rejects inconsistent shots. Explicit
+    GOALS / GOALS_CORNERS scopes retain all structural and score checks but
+    return labeled projections with other numeric fields NOT_ASSESSED.
+    Malformed nonblank values in the selected scope fail with row context.
     Explicit exclusions use exact date/home/away identities and must be found.
     """
     exclusions = _validate_fixture_exclusions(excluded_fixtures)
-    records, matched = _load_team_match_stats(path, competition, exclusions)
+    unvalidated_statistics(validation_scope)
+    records, matched = _load_team_match_stats(path, competition, exclusions, validation_scope)
     missing = exclusions - matched
     if missing:
         raise FootballDataError(
@@ -219,7 +259,7 @@ def load_team_match_stats(
 
 def _load_team_match_stats(
     path: str | Path, competition: str | None,
-    exclusions: set[tuple[date, str, str]],
+    exclusions: set[tuple[date, str, str]], validation_scope: str = 'FULL',
 ) -> tuple[list["TeamMatchStats"], set[tuple[date, str, str]]]:
     if competition is not None and (
         not isinstance(competition, str) or not competition.strip()
@@ -250,7 +290,7 @@ def _load_team_match_stats(
                             raise ValueError(f"duplicate excluded fixture: {identity}")
                         matched.add(identity)
                         continue
-                    pair = _normalize_team_stats(row, competition)
+                    pair = _normalize_team_stats(row, competition, validation_scope)
                     key = pair[0].fixture_key
                     if key in seen:
                         raise ValueError(f"duplicate fixture: {key}")
@@ -268,8 +308,10 @@ def _load_team_match_stats(
 def load_team_match_stats_history(
     paths: Iterable[str | Path], *, competition: str | None = None,
     excluded_fixtures: Iterable[tuple[date, str, str]] = (),
+    validation_scope: str = 'FULL',
 ) -> list["TeamMatchStats"]:
     """Combine non-overlapping files, validating every explicit exclusion."""
+    unvalidated_statistics(validation_scope)
     exclusions = _validate_fixture_exclusions(excluded_fixtures)
     records = []
     seen = set()
@@ -277,7 +319,7 @@ def load_team_match_stats_history(
     matched_exclusions = set()
     for path in paths:
         file_records, file_matches = _load_team_match_stats(
-            path, competition, exclusions,
+            path, competition, exclusions, validation_scope,
         )
         duplicate_exclusions = matched_exclusions & file_matches
         if duplicate_exclusions:
@@ -351,7 +393,7 @@ def _format_fixture_keys(values: Iterable[tuple[date, str, str]]) -> str:
 
 
 def _normalize_team_stats(
-    row: dict[str, str | None], competition: str | None,
+    row: dict[str, str | None], competition: str | None, validation_scope: str = 'FULL',
 ) -> tuple["TeamMatchStats", "TeamMatchStats"]:
     # Validate source score syntax before the legacy int() parser can accept
     # underscores, signs or Unicode digits. Preserve the old loader contract.
@@ -376,6 +418,8 @@ def _normalize_team_stats(
         ("corners", "HC", "AC"), ("shots", "HS", "AS"),
         ("shots_on_target", "HST", "AST"), ("xg", "HxG", "AxG"),
     ):
+        if stat not in VALIDATION_SCOPES[validation_scope]:
+            continue
         values = []
         for key in (home_key, away_key):
             raw = (row.get(key) or "").strip()
@@ -385,7 +429,10 @@ def _normalize_team_stats(
             values.append(value)
         home[f"{stat}_for"], home[f"{stat}_against"] = values
         away[f"{stat}_against"], away[f"{stat}_for"] = values
-    return TeamMatchStats(**common, **home), TeamMatchStats(**common, **away)
+    record_type = TeamMatchStats if validation_scope == 'FULL' else ScopedTeamMatchStats
+    if validation_scope != 'FULL':
+        common['validation_scope'] = validation_scope
+    return record_type(**common, **home), record_type(**common, **away)
 
 
 def _parse_xg(raw: str, field: str) -> float:

@@ -79,9 +79,10 @@ def _source_budget(state):
                     raise LedgerError("STRATEGY_EVIDENCE_CAPACITY_EXCEEDED")
 
 
-def publish_locked(state_dir, *, include_btts=True, diagnostics=None):
+def publish_locked(state_dir, *, include_btts=True, diagnostics=None, epl_approved_contracts=(), epl_only=False):
     from modelfc.published_recommendations import publish_locked as publish
-    return publish(state_dir, include_btts=include_btts, independent=True, diagnostics=diagnostics)
+    return publish(state_dir, include_btts=include_btts, independent=True, diagnostics=diagnostics,
+                   epl_approved_contracts=epl_approved_contracts, epl_only=epl_only)
 
 
 def read(state_dir, *, strategy="best_value", scope="current", market=None, competition=None, offset=0, limit=5, as_of=None):

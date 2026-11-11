@@ -503,7 +503,7 @@ class PublishedOfferResponse(RecommendationResponse):
 
 
 class PublishedBttsOfferResponse(StrictModel):
-    competition: Literal["E1"]
+    competition: Literal["E1", "E0"]
     provider: str
     provider_fixture_id: str
     home_team: str
@@ -529,6 +529,7 @@ class PublishedBttsOfferResponse(StrictModel):
 
 
 class PublishedPickResponse(StrictModel):
+    epl_evidence: dict[str, str] | None = None
     schema_version: Literal[1]
     policy_version: Literal["first-team-total-value-v1", "first-btts-value-v1"]
     publication_id: str

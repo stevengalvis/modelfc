@@ -1,0 +1,185 @@
+{
+  "snapshot": {
+    "version": 4,
+    "historical_context": "UNKNOWN",
+    "source_report": "https://github.com/stevengalvis/modelfc/pull/191#issuecomment-6384364441",
+    "evidence_sha256": "755197f0b2a367cbdde724947cc3781b104a73e1305ea15c6e5e401f51d78712",
+    "boot_id": "11111111-1111-1111-1111-111111111111",
+    "host_namespace": {
+      "user_ns": 111,
+      "mount_ns": 222,
+      "pid_ns": 555,
+      "pid1_user_ns": 111,
+      "pid1_mount_ns": 222,
+      "pid1_pid_ns": 555,
+      "uid_map": [
+        [
+          0,
+          0,
+          4294967295
+        ]
+      ],
+      "gid_map": [
+        [
+          0,
+          0,
+          4294967295
+        ]
+      ],
+      "overflow_uid": 65534,
+      "overflow_gid": 65534
+    },
+    "restricted_namespace": {
+      "user_ns": 333,
+      "mount_ns": 444,
+      "pid_ns": 666,
+      "pid1_user_ns": 333,
+      "pid1_mount_ns": 444,
+      "pid1_pid_ns": 666,
+      "uid_map": [
+        [
+          0,
+          0,
+          1
+        ]
+      ],
+      "gid_map": [
+        [
+          0,
+          0,
+          1
+        ]
+      ],
+      "overflow_uid": 65534,
+      "overflow_gid": 65534
+    },
+    "capture_control": {
+      "collector_sha256": "5ea2e4269204b72b4dab7d1fbda3a5d1a94e76f6db08756a5a15c77f00a8b604",
+      "control_record_sha256": "8a19acb08109a21b4e92038ce56df9c31f510a45b81c3b0eb2d99190ac27fab6",
+      "sender_ordering_record_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "host_exit_code": 0,
+      "restricted_exit_code": 0,
+      "held_source_descriptors": true,
+      "finish_acknowledged": true,
+      "finish_code": "FINISH_ACK",
+      "host_monotonic_ns": [
+        10,
+        20,
+        30
+      ]
+    },
+    "files": {
+      "/opt/codex/bin/codex": {
+        "source": "/root/.codex/packages/standalone/releases/0.162.1-x86_64-unknown-linux-musl/bin/codex",
+        "sha256": "628e35487d888a28f0427fc37501da529dd3d81fcbad7a2c3421c1e8670d92e1",
+        "size": 294415048,
+        "host": {
+          "uid": 1001,
+          "gid": 1001,
+          "mode": "0o755",
+          "size": 294415048,
+          "sha256": "628e35487d888a28f0427fc37501da529dd3d81fcbad7a2c3421c1e8670d92e1",
+          "device_inode": [
+            2049,
+            434465
+          ],
+          "named_device_inode": [
+            2049,
+            434465
+          ],
+          "mtime_ns": 101,
+          "ctime_ns": 201,
+          "nlink": 1,
+          "mount_id": 301,
+          "mount_unique_id": 701,
+          "idmapped": false,
+          "mount_read_only": false,
+          "mountpoint": "/",
+          "mount_root": "/",
+          "alias_count": 0
+        },
+        "restricted": {
+          "uid": 65534,
+          "gid": 65534,
+          "mode": "0o755",
+          "size": 294415048,
+          "sha256": "628e35487d888a28f0427fc37501da529dd3d81fcbad7a2c3421c1e8670d92e1",
+          "device_inode": [
+            2049,
+            434465
+          ],
+          "named_device_inode": [
+            2049,
+            434465
+          ],
+          "mtime_ns": 101,
+          "ctime_ns": 201,
+          "nlink": 1,
+          "mount_id": 401,
+          "mount_unique_id": 801,
+          "idmapped": false,
+          "mount_read_only": true,
+          "mountpoint": "/root/.codex/packages/standalone/releases/0.162.1-x86_64-unknown-linux-musl/bin/codex",
+          "mount_root": "/root/.codex/packages/standalone/releases/0.162.1-x86_64-unknown-linux-musl/bin/codex",
+          "alias_count": 0
+        }
+      },
+      "/opt/codex/codex-package.json": {
+        "source": "/root/.codex/packages/standalone/releases/0.162.1-x86_64-unknown-linux-musl/codex-package.json",
+        "sha256": "f05ebff6db98bd613dd5654461985090c6416b41ad67902243d83a53b305ac05",
+        "size": 205,
+        "host": {
+          "uid": 1001,
+          "gid": 1001,
+          "mode": "0o644",
+          "size": 205,
+          "sha256": "f05ebff6db98bd613dd5654461985090c6416b41ad67902243d83a53b305ac05",
+          "device_inode": [
+            2049,
+            434467
+          ],
+          "named_device_inode": [
+            2049,
+            434467
+          ],
+          "mtime_ns": 102,
+          "ctime_ns": 202,
+          "nlink": 1,
+          "mount_id": 301,
+          "mount_unique_id": 701,
+          "idmapped": false,
+          "mount_read_only": false,
+          "mountpoint": "/",
+          "mount_root": "/",
+          "alias_count": 0
+        },
+        "restricted": {
+          "uid": 65534,
+          "gid": 65534,
+          "mode": "0o644",
+          "size": 205,
+          "sha256": "f05ebff6db98bd613dd5654461985090c6416b41ad67902243d83a53b305ac05",
+          "device_inode": [
+            2049,
+            434467
+          ],
+          "named_device_inode": [
+            2049,
+            434467
+          ],
+          "mtime_ns": 102,
+          "ctime_ns": 202,
+          "nlink": 1,
+          "mount_id": 402,
+          "mount_unique_id": 802,
+          "idmapped": false,
+          "mount_read_only": true,
+          "mountpoint": "/root/.codex/packages/standalone/releases/0.162.1-x86_64-unknown-linux-musl/codex-package.json",
+          "mount_root": "/root/.codex/packages/standalone/releases/0.162.1-x86_64-unknown-linux-musl/codex-package.json",
+          "alias_count": 0
+        }
+      }
+    }
+  },
+  "reviewed_snapshot_sha256": "d3041ed328b71a68b83e378047ee410afb6a0b1082d904ba8c91b6d3c4971600"
+}

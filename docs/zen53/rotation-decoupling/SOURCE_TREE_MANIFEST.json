@@ -1,0 +1,45 @@
+{
+  "status": "OFFLINE_SUCCESSOR_NOT_INSTALLED_NOT_LIVE_ACCEPTED",
+  "predecessor_commit": "0a2b1771c1770193f95d917ace1bcdd4a944598f",
+  "stage_archive": {
+    "filename": "zen53-python-closure-stage-offline.tar.gz",
+    "bytes": 136717,
+    "sha256": "84b9783c68a6063bf68f9f698a0c09a7b52afdadda864cb849baa2ddb4d21203",
+    "inventory_sha256": "dbeb1e8411f646555596ec0e080b233ee11b8adfb20e0f85a43e81250e9468d8",
+    "member_count": 41
+  },
+  "operator_distribution": {
+    "filename": "zen53-python-closure-operator-source-offline.tar.gz",
+    "bytes": 79808,
+    "sha256": "e0fb76deffa4c6cfd01233fbca7c108e20068a4bba85f3876a4dc896ba4ed14e",
+    "groups": {
+      "zen53-api-rotation-operator-v4-offline": {
+        "inventory_sha256": "6c4ea7d62dce02abad828a5f045fffbcd1093db519d03f1132561eba7f3097f1",
+        "members": [
+          "INSTALL_CONFIG.json",
+          "INVENTORY.json",
+          "MAILBOX_STEP2_DESIGN.md",
+          "README.md",
+          "approved_binding.py",
+          "binding_store.py",
+          "launch_once.py",
+          "operator_once.py",
+          "root_operator.py",
+          "test_binding_store.py",
+          "test_operator_once.py",
+          "test_root_operator.py",
+          "zen53-preparation-preflight.py"
+        ]
+      },
+      "zen53-api-rotation-launch-tests-offline": {
+        "inventory_sha256": "c8baf8d0ae8e5b40b66951573d4a5ffcae0c06becc0d1286abd23053877e3174",
+        "members": [
+          "INVENTORY.json",
+          "README.md",
+          "launch_once.py",
+          "test_launch_once.py"
+        ]
+      }
+    }
+  }
+}

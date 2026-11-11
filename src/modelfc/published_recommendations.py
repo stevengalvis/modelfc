@@ -110,6 +110,8 @@ def _records(state, *, directory_name=DIRECTORY):
         try:
             independent = record.get("schema_version") == 2
             extra = {"strategy", "strategy_policy", "policy_effective_at_utc", "selection_id"} if independent else set()
+            if record.get("offer", {}).get("competition") == "E0":
+                extra.add("epl_evidence")
             payload = {k: v for k, v in record.items() if k != "record_hash"}
             offer = record["offer"]
             published = _time(record["published_at_utc"])
@@ -147,7 +149,7 @@ def _views(offer):
     return ["best_value"] + (["higher_probability"] if offer["model_probability"] >= .65 else [])
 
 
-def publish_locked(state_dir, *, include_btts=True, independent=False, diagnostics=None):
+def publish_locked(state_dir, *, include_btts=True, independent=False, diagnostics=None, epl_approved_contracts=(), epl_only=False):
     """Called only by the live writer under runner.lock, never by reads/replay.
 
     No caller-supplied time. Clock sampled after source validation and checked
@@ -167,15 +169,22 @@ def publish_locked(state_dir, *, include_btts=True, independent=False, diagnosti
         selection_time = _now()
         predictions = {p["prediction_id"]: p for p in inventory["predictions"]}
         chosen = {}
-        source = btts.records(state) if include_btts else ()
+        source = btts.records(state) if include_btts and not epl_only else ()
         for strategy in VIEWS if independent else ("best_value",):
-            candidates = {key: (value, predictions[value["prediction_id"]]["created_at_utc"])
+            candidates = {} if epl_only else {key: (value, predictions[value["prediction_id"]]["created_at_utc"])
                           for key, value in select(inventory, selection_time, strategy=strategy, diagnostics=diagnostics).items()}
-            if include_btts:
+            if include_btts and not epl_only:
                 candidates.update(btts.select(source, selection_time, strategy=strategy, diagnostics=diagnostics))
             for key, (value, forecast_at) in candidates.items():
                 identity = strategies.publication_identity(value, strategy) if independent else key
-                chosen[identity] = (value, forecast_at, strategy)
+                chosen[identity] = (value, forecast_at, strategy, None)
+            if epl_approved_contracts:
+                from modelfc.pl_product_source import select as select_epl
+                for key, (value, forecast_at, evidence) in select_epl(state, selection_time, approved_contracts=epl_approved_contracts, strategy=strategy).items():
+                    if strategy == "higher_probability" and value["model_probability"] < .65:
+                        continue
+                    identity = strategies.publication_identity(value, strategy) if independent else key
+                    chosen[identity] = (value, forecast_at, strategy, evidence)
         if independent and len(existing | set(chosen)) > 2000:
             raise LedgerError("PUBLICATION_CAPACITY_EXCEEDED")
         events = {e["opportunity_id"] for e in inventory["opportunities"]}
@@ -185,7 +194,7 @@ def publish_locked(state_dir, *, include_btts=True, independent=False, diagnosti
                 diagnostics.identity(offer, code, observed_at or selection_time,
                     market='BTTS' if offer['market_type'] == 'BTTS' else 'CORNER_TEAM_TOTAL',
                     strategy=strategy, reference_id=identity, evidence_hash=evidence_hash)
-        for identity, (offer, forecast_at, strategy) in chosen.items():
+        for identity, (offer, forecast_at, strategy, epl_evidence) in chosen.items():
             diagnostic(offer, 'PUBLICATION_SELECTED', strategy, identity)
             if identity in existing:
                 diagnostic(offer, "PUBLICATION_EXISTING", strategy, identity)
@@ -196,7 +205,7 @@ def publish_locked(state_dir, *, include_btts=True, independent=False, diagnosti
                 diagnostic(offer, "PUBLICATION_WINDOW_CLOSED", strategy, identity, observed_at=now)
                 continue
             if (independent and _time(effective) > now
-                    or offer["market_type"] != "BTTS" and offer["opportunity_id"] not in events
+                    or epl_evidence is None and offer["market_type"] != "BTTS" and offer["opportunity_id"] not in events
                     or _time(forecast_at) > now or _time(offer["retrieved_at_utc"]) > now
                     or _time(offer["availability_checked_at_utc"]) > now):
                 raise LedgerError("INVALID_PUBLICATION_CHRONOLOGY")
@@ -209,14 +218,26 @@ def publish_locked(state_dir, *, include_btts=True, independent=False, diagnosti
                 record.update(schema_version=2, strategy=strategy, strategy_policy=strategies.POLICY,
                               policy_effective_at_utc=effective, selection_id=strategies.selection_identity(offer),
                               ranking_views=[strategy])
+            if epl_evidence is not None:
+                record["epl_evidence"] = epl_evidence
             record["offer"]["observation_age_seconds"] = (now - _time(offer["retrieved_at_utc"])).total_seconds()
+            if epl_evidence is not None:
+                from modelfc.pl_product_source import validate_publication
+                validate_publication(state, record)
             record["record_hash"] = _canonical_hash(record)
             directory = _state_directory(state, directory_name)
             directory.mkdir(exist_ok=True)
 
             def before_publish():
-                if not now <= _now() < kickoff:
+                link_time = _now()
+                if not now <= link_time < kickoff:
                     raise LedgerError("PUBLICATION_WINDOW_CLOSED")
+                if epl_evidence is not None:
+                    from modelfc.pl_public_evidence import attest_publication
+                    from modelfc.pl_product_source import publication_window
+                    attest_publication(state, record, link_time, lock_fd)
+                    # Certificate writing/fsync must not consume the final window.
+                    publication_window(state, record, _now())
 
             write_new_record(directory / f"{identity}.json", record,
                              before_publish=before_publish,
@@ -271,10 +292,15 @@ def read(state_dir, *, directory_name=DIRECTORY, record_filter=None, as_of=None)
             events = {e["opportunity_id"]: e for e in inventory["opportunities"]}
             predictions = {p["prediction_id"]: p for p in inventory["predictions"]}
             targets = inventory["targets"]
-            btts_source = btts.records(state) if any(r["offer"]["market_type"] == "BTTS" for r in records) else ()
+            btts_source = btts.records(state) if any(r["offer"]["market_type"] == "BTTS" and r["offer"]["competition"] != "E0" for r in records) else ()
             btts_outcomes = btts.result_inventory(state, now) if btts_source else None
             for record in records:
                 offer = record["offer"]
+                if offer["competition"] == "E0":
+                    from modelfc.pl_public_evidence import read_result
+                    result, profit = read_result(state, record, now)
+                    rows.append({**record, "result": result, "profit_units": profit})
+                    continue
                 if offer["market_type"] == "BTTS":
                     if _time(record["published_at_utc"]) > current:
                         raise LedgerError("INVALID_PUBLISHED_RECOMMENDATION")

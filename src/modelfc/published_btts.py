@@ -70,6 +70,11 @@ def select(source, now, *, strategy="best_value", diagnostics=None):
                        'VALUE_QUALIFIED' if strategy_passes else 'STRATEGY_PROBABILITY_THRESHOLD', side)
             if qualifies and strategy_passes:
                 candidates.append((value, comparison.frozen_at_utc))
+    return rank_candidates(candidates)
+
+
+def rank_candidates(candidates):
+    """Shared deterministic BTTS ranking; league qualification precedes it."""
     best = {}
     for value, frozen in sorted(candidates, key=lambda item: (-item[0]["decimal_odds"],
             item[0]["bookmaker"], -timestamp(item[0]["retrieved_at_utc"]).timestamp(),

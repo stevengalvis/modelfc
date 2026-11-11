@@ -1,0 +1,42 @@
+{
+  "prepared_utc": "2026-10-21T18:06:15.402165+00:00",
+  "baseline_manifest_sha256": "7e58d98710b5ee0c78feba30e154a7bc7aa43f996162d0f5f32b1426a4bc719f",
+  "reviewed_patch_sha256": "542b2698e8dc346385ed3421d2e755b1c47df76ca702c325a372ca5872cc27c2",
+  "source_hashes": {
+    "launch.py": "704998046378e737ff7db16f19393dbdc47e2169e05e98db16c8fce1b952c753",
+    "supervisor.py": "ad8920c4320e88bca7c2e12403f282e7cd448fb3238ec4e16731a5ae5046d22b",
+    "report.py": "e0e8953a537ab25509db0f74d7d813e8e8a6cc8f9f8bd7e41214e66f69ddd0c1",
+    "requirements.toml": "2567e3290e66d17e3128f6741f64392dc6f90917bb95d0becec34db945fb12bb",
+    "prepare.py": "f822db8bdbcec62b332d02844fa97aca4a8a4a5116425f480de3220c76d47f4c"
+  },
+  "syntax_compilation": true,
+  "requirements_toml": true,
+  "unchanged_unit_settings_except_staging_paths": true,
+  "unchanged_native_argv_environment_admission": true,
+  "unchanged_reporter_and_policy": true,
+  "rootfs_file_count_excluding_pins": 42,
+  "rootfs_file_count_including_pins": 43,
+  "runtime_bytes_excluding_pins": 312824258,
+  "elf_objects": 15,
+  "symlinks": 9,
+  "rootfs_allowlist": true,
+  "all_source_and_copied_hashes": true,
+  "virtual_symlink_containment_and_elf_closure": true,
+  "all_runtime_pins_fresh": true,
+  "fresh_empty_bindings": true,
+  "empty_evidence_directory": true,
+  "true_provenance": "TRUE_PROVENANCE.json",
+  "offline_tests": "18 PASS; 0 failures/errors/skips",
+  "static_helper_feature_gate": [
+    "--as-pid-1",
+    "--perms",
+    "--argv0"
+  ],
+  "native_executions": 0,
+  "true_executions": 0,
+  "reporter_executions": 0,
+  "supervisor_executions": 0,
+  "unit_mount_namespace_lock_operations": 0,
+  "provider_model_requests": 0,
+  "runtime_acceptance": "UNTESTED; separate review/approval required"
+}

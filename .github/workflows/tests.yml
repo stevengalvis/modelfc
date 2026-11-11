@@ -18,6 +18,12 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Check Python lint
+        run: |
+          python3 -m venv "$RUNNER_TEMP/modelfc-lint"
+          "$RUNNER_TEMP/modelfc-lint/bin/python" -m pip install --require-hashes --only-binary=:all: -r requirements-lint.lock
+          "$RUNNER_TEMP/modelfc-lint/bin/python" -m ruff check .
+
       - name: Create fresh locked environment
         run: |
           python3 -m venv "$RUNNER_TEMP/modelfc-locked"
@@ -25,18 +31,56 @@ jobs:
           "$RUNNER_TEMP/modelfc-locked/bin/python" -m pip check
           "$RUNNER_TEMP/modelfc-locked/bin/python" -B tests/test_deployment_dependencies.py --check-installed
 
+      - name: Run focused release environment acceptance
+        run: |
+          mkdir -m 700 "$RUNNER_TEMP/release-acceptance-tmp"
+          TMPDIR="$RUNNER_TEMP/release-acceptance-tmp" PYTHONPATH=src "$RUNNER_TEMP/modelfc-locked/bin/python" -B -m ops.vps.deployment_acceptance
+
       - name: Install optional private MCP test graph
         run: |
           "$RUNNER_TEMP/modelfc-locked/bin/python" -m pip install --require-hashes --only-binary=:all: --no-cache-dir -r requirements-mcp.lock
           "$RUNNER_TEMP/modelfc-locked/bin/python" -m pip check
 
+      - name: Prepare authenticated ZEN53 offline Python fixture
+        run: |
+          mkdir -m 700 "$RUNNER_TEMP/zen53-test-tmp"
+          python3 docs/zen53/rotation-decoupling/packaging/prepare_python_fixture.py --download --cache "$RUNNER_TEMP/zen53-packages" --output "$RUNNER_TEMP/zen53-python"
+
       - name: Run test suite
+        env:
+          ZEN53_PYTHON_FIXTURE: ${{ runner.temp }}/zen53-python
+          ZEN53_CHROOT_TEST: "1"
+          TMPDIR: ${{ runner.temp }}/zen53-test-tmp
         run: PYTHONPATH=src "$RUNNER_TEMP/modelfc-locked/bin/python" -m unittest discover -v
 
-      - name: Verify real Linux cross-user history ACL publication
+      - name: Verify real Linux cross-user history and EPL projection ACL publication
         run: |
-          sudo -n env PYTHONPATH=src "$RUNNER_TEMP/modelfc-locked/bin/python" -c 'import ctypes.util, os; from tests.test_team_history_acl import cross_uid_available; assert os.geteuid() == 0 and ctypes.util.find_library("acl") and cross_uid_available(), "cross-user ACL test must not skip in CI"'
-          sudo -n env PYTHONPATH=src "$RUNNER_TEMP/modelfc-locked/bin/python" -m unittest tests.test_team_history_acl.PublicHistoryAclTests.test_real_atomic_replacement_cross_uid_isolation tests.test_corner_api_capabilities.RestrictedCapabilityTests.test_real_readonly_identity_gets_functional_content_without_private_access tests.test_settlement_review_access.ReviewCrossUserTests -v
+          sudo -n env PYTHONPATH=src "$RUNNER_TEMP/modelfc-locked/bin/python" - <<'ACL_PY'
+          import ctypes.util
+          import os
+          import unittest
+          from tests.test_team_history_acl import cross_uid_available
+
+          if not (os.geteuid() == 0 and ctypes.util.find_library("acl")
+                  and cross_uid_available() and os.access("/usr/bin/setfacl", os.X_OK)):
+              raise SystemExit("cross-user ACL prerequisites missing; acceptance must not skip")
+          names = [
+              "tests.test_team_history_acl.PublicHistoryAclTests.test_real_atomic_replacement_cross_uid_isolation",
+              "tests.test_corner_api_capabilities.RestrictedCapabilityTests.test_real_readonly_identity_gets_functional_content_without_private_access",
+              "tests.test_settlement_review_access.ReviewCrossUserTests",
+              "tests.test_pl_public_evidence.ProjectionCrossUserTests.test_public_api_and_corrections_without_raw_read_or_write_access",
+              "tests.test_pl_public_evidence.ProjectionCrossUserTests.test_actual_writer_acl_grants_projection_only",
+          ]
+          suite = unittest.defaultTestLoader.loadTestsFromNames(names)
+          if suite.countTestCases() != 6:
+              raise SystemExit("expected six cross-user ACL acceptance tests")
+          result = unittest.TextTestRunner(verbosity=2).run(suite)
+          if not result.wasSuccessful() or result.skipped or result.testsRun != 6:
+              raise SystemExit("cross-user ACL acceptance requires all six tests to pass without skips")
+          ACL_PY
+
+      - name: Verify real two-target protected workspace layout
+        run: sudo -n env PYTHONPATH=src "$RUNNER_TEMP/modelfc-locked/bin/python" -B -m tests.test_linear_workspace_layout --check-root
 
       - name: Compile Python sources and tests
         run: '"$RUNNER_TEMP/modelfc-locked/bin/python" -m compileall -q src tests'
@@ -59,6 +103,9 @@ jobs:
 
       - name: Install frontend dependencies
         run: npm ci
+
+      - name: Check frontend lint
+        run: npm run lint
 
       - name: Type check frontend
         run: npm run typecheck
@@ -153,6 +200,47 @@ jobs:
               return result
 
           raw_path, sha, stage, original_status = sys.argv[1:]
+          def valid_public_failure(report):
+              value = report.get("failure_diagnostics")
+              if value is None:
+                  return "failure_diagnostics" not in report
+              def number(n, limit):
+                  return type(n) is int and 0 <= n <= limit
+              def name(n):
+                  return (type(n) is str and len(n) <= 160 and re.fullmatch(
+                      r"(?:tests\.)?test_[A-Za-z0-9_]+\.[A-Za-z_][A-Za-z0-9_]*\.test[A-Za-z0-9_]*", n) is not None)
+              fields = {"classification", "count_known", "tests_run", "failures", "errors",
+                        "test_ids", "truncated", "last_test_id"}
+              if (report["status"] != "FAIL" or report["reason"] != "TESTS_FAILED"
+                      or report["tests_status"] != "FAIL" or report["promotion_status"] != "NOT_ATTEMPTED"
+                      or type(value) is not dict or set(value) not in (fields, fields | {"progress"})
+                      or value["classification"] not in {"TIMEOUT", "CAPTURE_ERROR", "PROCESS_ERROR", "TEST_FAILURE", "MISSING_SUMMARY"}
+                      or type(value["count_known"]) is not bool or type(value["truncated"]) is not bool
+                      or any(n is not None and not number(n, 999999) for n in (value["failures"], value["errors"]))
+                      or (value["last_test_id"] is not None and not name(value["last_test_id"]))
+                      or type(value["test_ids"]) is not list or len(value["test_ids"]) > 4
+                      or not all(name(n) for n in value["test_ids"])
+                      or len(set(value["test_ids"])) != len(value["test_ids"])):
+                  return False
+              if value["count_known"]:
+                  if not number(value["tests_run"], 1000000) or value["tests_run"] != report["tests_run"]:
+                      return False
+              elif value["tests_run"] is not None:
+                  return False
+              if "progress" in value:
+                  progress = value["progress"]
+                  if (type(progress) is not dict or set(progress) != {
+                          "observed_completed", "complete", "last_test_id", "last_progress_us", "slowest"}
+                          or not number(progress["observed_completed"], 10000)
+                          or type(progress["complete"]) is not bool
+                          or not number(progress["last_progress_us"], 630000000)
+                          or (progress["last_test_id"] is not None and not name(progress["last_test_id"]))
+                          or type(progress["slowest"]) is not list or len(progress["slowest"]) > 4
+                          or not all(type(item) is list and len(item) == 2 and name(item[0])
+                                     and number(item[1], 630000000) for item in progress["slowest"])):
+                      return False
+              return len(json.dumps(value).encode("ascii")) <= 3000
+
           original_status = int(original_status)
           reason = stage
           try:
@@ -173,7 +261,7 @@ jobs:
                          "FETCH_FAILED", "SHA_NOT_ON_MAIN", "ACTIVE_SHA_NOT_ON_MAIN",
                          "DEPENDENCY_SYNC_FAILED", "TESTS_FAILED", "FINAL_SHA_MISMATCH",
                          "PROMOTION_FAILED", "INTERNAL_ERROR", "STORAGE_LIMIT_FAILED"}
-              if (type(value) is not dict or set(value) != fields or value["status"] not in {"PASS", "FAIL", "SUPERSEDED"}
+              if (type(value) is not dict or set(value) not in (fields, fields | {"failure_diagnostics"}) or value["status"] not in {"PASS", "FAIL", "SUPERSEDED"}
                   or value["requested_sha"] != sys.argv[2] or value["reason"] not in reasons
                   or value["promotion_status"] not in {"NOT_ATTEMPTED", "PROMOTED",
                                                       "ALREADY_CURRENT", "SUPERSEDED"}
@@ -217,6 +305,8 @@ jobs:
               if (value["status"] == "PASS" and value["reason"] not in {"OK", "ALREADY_CURRENT"}
                   or value["status"] == "FAIL" and value["reason"] in {"OK", "ALREADY_CURRENT", "SUPERSEDED"}
                   or original_status and value["status"] != "FAIL"):
+                  raise ValueError
+              if not valid_public_failure(value):
                   raise ValueError
           except (OSError, ValueError, KeyError, TypeError, RecursionError):
               value = dict(status="FAIL", requested_sha=sha if re.fullmatch("[0-9a-f]{40}", sha) else None,

@@ -1,0 +1,30 @@
+{
+  "collector_export": "BYTE_IDENTICAL_ORIGINAL",
+  "control_export": "NEW_DERIVED_ALLOWLIST_NOT_VERBATIM",
+  "files": {
+    "CONTROL_LOG_SANITIZED.json": {
+      "bytes": 2702,
+      "sha256": "a1a50cdb4dedb628bbe3a2312e79a454c0d20fb69c3f1316ccc003c241e536d4"
+    },
+    "README.md": {
+      "bytes": 3092,
+      "sha256": "ca610462c2d56748399bd727b3ccbc1c395ce5f9288737224957dd1e6368aba5"
+    },
+    "capture_ownership_v2.py": {
+      "bytes": 12408,
+      "sha256": "a10c63987a7526331dde2eda7ca05a47ba182633d466d9167b1ad14f13c47902"
+    }
+  },
+  "format": "zen53-owner-control-export-v1",
+  "originals": {
+    "COMMANDS_AND_EXECUTION.json": {
+      "bytes": 1924,
+      "sha256": "d1699752090dde21dde5954ee3cccf2df0a93fbbbb428f5d8d09b3deecb531a6"
+    },
+    "capture_ownership_v2.py": {
+      "bytes": 12408,
+      "sha256": "a10c63987a7526331dde2eda7ca05a47ba182633d466d9167b1ad14f13c47902"
+    }
+  },
+  "scope": "Collector source code and relevant sanitized finish-control evidence only; no execution; historical failure remains unresolved."
+}

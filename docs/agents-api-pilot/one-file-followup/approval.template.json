@@ -1,0 +1,13 @@
+{
+  "manifest": "63d219109f3b5bf120a07b2097827446e3e6f5a54bf44daf19114e99d28811ba",
+  "bundle": null,
+  "original_record_hash": null,
+  "allowance": "required-text-followup-001",
+  "additional_calls": 1,
+  "expires_utc_epoch": null,
+  "approved_modes": ["upgrade", "run"],
+  "exclusive_operator_control": false,
+  "approval_reference": null,
+  "credits_only_verified": false,
+  "credits_checked_utc_epoch": null
+}

@@ -1,0 +1,29 @@
+{
+  "prepared_utc": "2026-10-21T16:30:14.671011+00:00",
+  "syntax": {
+    "report.py": true,
+    "launch.py": true,
+    "supervisor.py": true,
+    "prepare.py": true
+  },
+  "requirements_toml": true,
+  "reporter_imports": [
+    "os",
+    "sys"
+  ],
+  "native_executions": 0,
+  "reporter_executions": 0,
+  "unit_mount_namespace_operations": 0,
+  "model_provider_requests": 0,
+  "dependency_hashes": true,
+  "launch_pins_match": true,
+  "reporter_root_copy_matches": true,
+  "empty_bind_sources": true,
+  "known_compatibility_concern": "Pinned normal arg0 setup attempts writes under read-only CODEX_HOME; fail on its warning, no workaround",
+  "source_sha256": {
+    "report.py": "e0e8953a537ab25509db0f74d7d813e8e8a6cc8f9f8bd7e41214e66f69ddd0c1",
+    "launch.py": "d4915696b011bdfd5f4891367444716acf987bc79358e341fae73a82e7d4da61",
+    "supervisor.py": "4fc42d3dc06edf467496472d376bcaa438cf8d4b895d773284a754ba5f103d11",
+    "prepare.py": "bb2a5e7f99bddd55ccba0eaae983763376ab1d0eaf30f654abbe8d718201494c"
+  }
+}

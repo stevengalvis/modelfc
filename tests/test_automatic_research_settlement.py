@@ -19,6 +19,32 @@ from fastapi.testclient import TestClient
 from tests import test_research_outcomes as fixture
 
 
+class FixedRefreshDatetime(datetime):
+    """Clock for the fixed October 2026 saved-response fixture, never production."""
+    instant = datetime(2026, 10, 13, 6, tzinfo=timezone.utc)
+
+    @classmethod
+    def now(cls, tz=None):
+        return cls.instant.astimezone(tz) if tz else cls.instant.replace(tzinfo=None)
+
+
+# Invoke the real CLI main/parser with module-local clocks. Replacing Python's
+# global datetime class would also alter Pydantic's strict datetime schemas.
+FIXED_REFRESH_ENTRYPOINT = """
+import importlib, sys
+from datetime import datetime, timezone
+class Clock(datetime):
+    @classmethod
+    def now(cls, tz=None):
+        value = datetime(2026, 10, 13, 6, tzinfo=timezone.utc)
+        return value.astimezone(tz) if tz else value.replace(tzinfo=None)
+entrypoint = importlib.import_module(sys.argv.pop(1))
+for name in ('corner_refresh', 'refresh_attempts', 'refresh_result_evidence', 'research_settlement'):
+    importlib.import_module('modelfc.' + name).datetime = Clock
+sys.exit(entrypoint.main())
+"""
+
+
 class AutomaticSettlementTests(unittest.TestCase):
     def setUp(self):
         self.fixture = fixture.ResearchOutcomeTests(); self.fixture.setUp()
@@ -31,7 +57,7 @@ class AutomaticSettlementTests(unittest.TestCase):
         self.refresh_state = self.history / 'data/corner-refresh'
         self.payload = (self.fixture.content + 'E1,10/10/2026,15:00,Other,Another,0,0,D,4,4\n').encode()
 
-    def refresh(self, payload=None, *, enabled=True):
+    def refresh(self, payload=None, *, enabled=True, today=date(2026, 10, 13)):
         payload = self.payload if payload is None else payload
         class Response:
             status = 200
@@ -41,7 +67,7 @@ class AutomaticSettlementTests(unittest.TestCase):
             def read(self, limit): return payload
             def geturl(self): return 'https://football-data.co.uk/mmz4281/2627/E1.csv'
         with patch.object(refresh, 'urlopen', return_value=Response()) as request:
-            report = refresh.refresh_data(self.config, date(2026, 10, 13), retain_result_evidence=enabled)
+            report = refresh.refresh_data(self.config, today, retain_result_evidence=enabled)
         self.assertEqual(request.call_count, 1)
         return report
 
@@ -76,6 +102,27 @@ class AutomaticSettlementTests(unittest.TestCase):
         self.assertEqual(len(list((self.state/'research-settlement-runs').glob('*.json'))), 6)
         self.assertNotIn('X-Private', result['source']['headers'])
         self.assertEqual(result['source']['file_sha256'], hashlib.sha256(self.payload).hexdigest())
+
+    @patch('modelfc.corner_refresh.datetime', FixedRefreshDatetime)
+    @patch('modelfc.refresh_attempts.datetime', FixedRefreshDatetime)
+    @patch('modelfc.refresh_result_evidence.datetime', FixedRefreshDatetime)
+    @patch('modelfc.research_settlement.datetime', FixedRefreshDatetime)
+    def test_history_freshness_boundary_preserves_settlement_gate(self):
+        # A newly acquired response does not make old match history fresh.
+        for day, stale in ((24, False), (25, True)):
+            observed = datetime(2026, 10, day, 6, tzinfo=timezone.utc)
+            with self.subTest(age_days=day - 10), patch.object(FixedRefreshDatetime, 'instant', observed):
+                report = self.refresh(today=observed.date())
+                self.assertEqual(report['results'][0]['stale'], stale)
+                before = self.immutable()
+                result = self.run_settlement()
+                if stale:
+                    self.assertEqual(result['status'], 'REJECTED')
+                    self.assertEqual(result['reason'], 'REFRESH_NOT_SUCCESSFUL')
+                    self.assertEqual(self.immutable(), before)
+                else:
+                    self.assertEqual(result['status'], 'COMPLETE', result)
+                    self.assertEqual({row['status'] for row in result['markets']}, {'RECORDED'})
 
     def test_missing_corners_do_not_block_btts_and_later_counts_settle(self):
         self.refresh(self.payload.replace(b',6,3', b',,'))
@@ -210,6 +257,7 @@ sys.meta_path.insert(0,Block())
         self.assertEqual([(r['market'],r['status']) for r in self.run_settlement()['markets']], [('BTTS','REUSED')])
         self.assertEqual(self.immutable(), before)
 
+    @patch('modelfc.research_settlement.datetime', FixedRefreshDatetime)
     def test_partial_refresh_entrypoints_preserve_failure_and_settle_only_successful_e1(self):
         self.config_file.write_text(json.dumps({'data_directory': str(self.history), 'leagues': ['E1','SP1'], 'max_age_days':14}))
         payload_path = self.fixture.root/'synthetic-response.csv'; payload_path.write_bytes(self.payload)
@@ -230,7 +278,7 @@ def saved(url,**kwargs):
 urllib.request.build_opener=lambda *handlers: type('SavedOpener',(),{'open':staticmethod(saved)})()
 ''')
         env={**os.environ,'SYNTHETIC_CSV':str(payload_path), 'PYTHONPATH':os.pathsep.join((str(guard),str(Path('src').resolve())))}
-        refreshed=subprocess.run([sys.executable,'-m','modelfc.corner_refresh','--config',str(self.config_file),'--retain-result-evidence'],env=env,capture_output=True,text=True,timeout=30)
+        refreshed=subprocess.run([sys.executable,'-c',FIXED_REFRESH_ENTRYPOINT,'modelfc.corner_refresh','--config',str(self.config_file),'--retain-result-evidence'],env=env,capture_output=True,text=True,timeout=30)
         self.assertEqual(refreshed.returncode,1,refreshed.stdout+refreshed.stderr)
         self.assertIn('SP1: FAILED',refreshed.stdout)
         requests=Path(str(payload_path)+'.requests')
@@ -239,10 +287,12 @@ urllib.request.build_opener=lambda *handlers: type('SavedOpener',(),{'open':stat
             'https://www.football-data.co.uk/mmz4281/2627/SP1.csv'])
         self.assertIn('OnFailure=modelfc-research-settlement.service', Path('deploy/modelfc-corner-refresh.service.d/research-settlement.conf').read_text())
         report_path=self.refresh_state/'status.json'; saved_report=report_path.read_bytes()
+        self.assertFalse(json.loads(saved_report)['results'][0]['stale'])
+        self.assertEqual(json.loads(saved_report)['checked_at'], '2026-10-13T06:00:00+00:00')
         pin=json.loads(saved_report)['results'][0]['result_evidence']['sha256']
         acquisition=(self.refresh_state/'result-evidence'/f'{pin}.json').read_bytes()
         for expected in ('RECORDED','REUSED'):
-            process=subprocess.run([sys.executable,'-m','modelfc.research_settlement','--config',str(self.config_file),'--state-dir',str(self.state),'--enabled'],env=env,capture_output=True,text=True,timeout=30)
+            process=subprocess.run([sys.executable,'-c',FIXED_REFRESH_ENTRYPOINT,'modelfc.research_settlement','--config',str(self.config_file),'--state-dir',str(self.state),'--enabled'],env=env,capture_output=True,text=True,timeout=30)
             self.assertEqual(process.returncode,0,process.stdout+process.stderr)
             result=json.loads(process.stdout)
             receipt=json.loads((self.state/'research-settlement-runs'/f"{result['run_id']}.json").read_bytes())

@@ -20,7 +20,6 @@ export function StrategyPicks({ scope }: { scope: "current" | "history" }) {
     <label>Market <select value={market} onChange={e=>setMarket(e.target.value)}><option value="">All markets</option><option value="TEAM_TOTAL">Team corners</option><option value="BTTS">Both teams to score</option></select></label>
     <label>League <select value={competition} onChange={e=>setCompetition(e.target.value)}><option value="">All supported leagues</option><option value="E1">Championship</option><option value="E0">Premier League</option><option value="SP1">La Liga</option></select></label>
     {scope === "history" ? <PublicationCutoff onApply={setAsOf} /> : null}
-    {competition && competition !== "E1" ? <p>No {competition} production coverage is established by this filter. Missing records are not zero model performance.</p> : null}
     <StrategyRows key={`${scope}:${strategy}:${market}:${competition}:${asOf}`} scope={scope} strategy={strategy} market={market} competition={competition} asOf={asOf} />
   </section>;
 }
@@ -49,6 +48,7 @@ function StrategyRows({scope,strategy,market,competition,asOf}: {asOf:string; sc
   if(error)return <p role="alert">Strategy picks could not be loaded. No result is inferred. <button onClick={()=>setAttempt(n=>n+1)}>Retry strategy picks</button></p>;
   if(!data)return <p role="status">Loading strategy picks…</p>;
   return <>
+    {competition && competition !== "E1" && !data.total ? <p>No {competition} production coverage is established by this filter. Missing records are not zero model performance.</p> : null}
     {asOf ? <p>Recorded history as of {asOf}</p> : null}
     <p>{data.total} picks match these filters. Showing {data.publications.length}.</p>
     {scope === "history" && <>

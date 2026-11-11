@@ -12,7 +12,8 @@
     "start": "next start",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:integration": "vitest run --config vitest.integration.config.ts"
+    "test:integration": "vitest run --config vitest.integration.config.ts",
+    "lint": "eslint . --max-warnings=0"
   },
   "dependencies": {
     "next": "16.3.5",
@@ -20,12 +21,16 @@
     "react-dom": "19.3.0"
   },
   "devDependencies": {
+    "@next/eslint-plugin-next": "16.3.5",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.0",
     "@types/node": "^24.10.0",
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",
+    "@typescript-eslint/parser": "8.60.0",
     "@vitejs/plugin-react": "latest",
+    "eslint": "9.39.5",
+    "eslint-plugin-react-hooks": "7.0.1",
     "jsdom": "^27.2.0",
     "typescript": "^5.9.3",
     "vitest": "^5.0.1"

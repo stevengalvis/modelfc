@@ -1,0 +1,632 @@
+--- baseline/launch.py
++++ revised/launch.py
+@@ -115,6 +115,48 @@
+          mounts=mounts)
+ 
+ 
++# Exact pinned Rust io::Error display in the fixed C.UTF-8 Linux environment.
++# This is a source-derived expectation, NOT an observed runtime success.
++EXPECTED_ALIAS_WARNING = (b"WARNING: proceeding, even though we could not create PATH aliases: "
++                          b"Read-only file system (os error 30)\n")
++
++
++class NativeOutput:
++    """Bounded complete-line classification; only one exact line is exempted."""
++    def __init__(self):
++        self.total = 0
++        self.pending = b""
++        self.alias_warnings = 0
++
++    def feed(self, chunk):
++        self.total += len(chunk)
++        need(self.total <= 16384, "native_OUTPUT_BOUND")
++        self.pending += chunk
++        observed = False
++        while b"\n" in self.pending:
++            line, self.pending = self.pending.split(b"\n", 1)
++            line += b"\n"
++            if line == EXPECTED_ALIAS_WARNING:
++                need(self.alias_warnings == 0, "DUPLICATE_ALIAS_WARNING")
++                self.alias_warnings += 1
++                observed = True
++                continue  # Exempt ONLY this validated, complete line.
++            need(all(32 <= value <= 126 or value in (9, 10) for value in line),
++                 "NATIVE_OUTPUT_MALFORMED")
++            need(not line[:-1] or not EXPECTED_ALIAS_WARNING.lower().startswith(line[:-1].lower()),
++                 "MALFORMED_ALIAS_WARNING")
++            lower = line.lower()
++            need(not any(token in lower for token in
++                         (b"warn", b"error", b"denied", b"read-only", b"read only",
++                          b"not permitted", b"failed", b"failure", b"fatal", b"panic",
++                          b"could not")), "CODEX_STARTUP_ACCESS_OR_WRITE_FAILURE")
++        return observed
++
++    def finish(self):
++        # A partial expected warning is never exempted, even at EOF.
++        need(not self.pending, "NATIVE_OUTPUT_UNTERMINATED")
++
++
+ def fixed_command(argv, seconds, label):
+     emit(label + "_start", argv=argv)
+     read_fd, write_fd = os.pipe2(os.O_CLOEXEC)
+@@ -131,6 +173,7 @@
+     os.close(write_fd)
+     os.set_blocking(read_fd, False)
+     end, output, status, eof = time.monotonic() + seconds, bytearray(), None, False
++    native_output = NativeOutput() if label == "native" else None
+     while status is None or not eof:
+         # Any failure ends this launcher; whole-cgroup stop is the supervisor's duty.
+         need(time.monotonic() < end, label + "_TIMEOUT")
+@@ -141,12 +184,15 @@
+                 output.extend(chunk)
+                 need(len(output) <= 16384, label + "_OUTPUT_BOUND")
+                 if label == "native":
+-                    warning = b"WARNING: proceeding, even though we could not create PATH aliases:" in output
+-                    access = b"Read-only file system" in output or b"Permission denied" in output
+-                    if warning or access:
++                    try:
++                        observed = native_output.feed(chunk)
++                    except RuntimeError:
+                         emit("native_stop_evidence", output=bytes(output[-4096:]).decode("utf-8", "replace"))
+-                    need(not warning, "CODEX_STARTUP_WRITABLE_STATE_WARNING")
+-                    need(not access, "CODEX_STARTUP_ACCESS_OR_WRITE_FAILURE")
++                        raise
++                    if observed:
++                        emit("native_alias_warning_observation",
++                             result="OBSERVATION_NOT_PASS", count=1,
++                             warning=EXPECTED_ALIAS_WARNING.decode("ascii").rstrip("\n"))
+             else:
+                 eof = True
+         if status is None:
+@@ -154,6 +200,12 @@
+             if child:
+                 status = value
+     os.close(read_fd)
++    if native_output is not None:
++        try:
++            native_output.finish()
++        except RuntimeError:
++            emit("native_stop_evidence", output=bytes(output[-4096:]).decode("utf-8", "replace"))
++            raise
+     emit(label + "_finish", pid=pid, wait_status=status,
+          output=bytes(output).decode("utf-8", "replace"))
+     need(os.WIFEXITED(status) and os.WEXITSTATUS(status) == 0, label + "_NONZERO")
+@@ -163,7 +215,8 @@
+ try:
+     admission()
+     help_output = fixed_command(["/usr/bin/bwrap", "--help"], 5, "bwrap_help")
+-    need(b"--as-pid-1" in help_output and b"--perms" in help_output, "BWRAP_REQUIRED_FEATURES")
++    need(all(flag in help_output.split() for flag in (b"--as-pid-1", b"--perms", b"--argv0")),
++         "BWRAP_REQUIRED_FEATURES")
+     # Recheck actual mounts/hashes immediately before the one native invocation.
+     admission()
+     output = fixed_command(NATIVE, 35, "native")
+--- baseline/supervisor.py
++++ revised/supervisor.py
+@@ -312,7 +312,7 @@
+     values = dict(line.split("=", 1) for line in report_lines if "=" in line)
+     need(values.get("status.NoNewPrivs") == "1" and values.get("status.Seccomp") == "2"
+          and all(int(values.get("status." + key, "-1"), 16) == 0
+-                 for key in ("CapInh", "CapPrm", "CapEff", "CapAmb")), "REPORTED_PRIVILEGES")
++                 for key in ("CapInh", "CapPrm", "CapEff", "CapBnd", "CapAmb")), "REPORTED_PRIVILEGES")
+     outer = [json.loads(line) for line in raw.splitlines() if line.startswith("{")]
+     outer = [item for item in outer if item.get("phase") == "outer_admission"]
+     need(bool(outer) and all(values.get("namespace." + name) != outer[-1]["namespaces"][name]
+--- baseline/prepare.py
++++ revised/prepare.py
+@@ -73,6 +73,9 @@
+ dependencies["/usr/bin/bwrap"]["mode"] = "0o755"
+ for name in ("report.py", "launch.py"):
+     copy(BASE / name, "/diagnostic/" + name)
++
++# Native proc preflight uses this installed utility; copy only, never execute.
++copy("/usr/bin/true", "/usr/bin/true", True)
+ 
+ # Static ELF dependency closure. readelf parses files; never ldd or execute inputs.
+ queue = [path for path in dependencies if (ROOT / path.lstrip("/")).read_bytes()[:4] == b"\x7fELF"]
+@@ -168,7 +171,8 @@
+     if path.is_dir() and not path.is_symlink():
+         os.chmod(path, 0o555)
+ os.chmod(ROOT, 0o555)
+-source_dir = pathlib.Path("/tmp/zen53-readonly-audit-gh9lgs6f")
++source_dir = BASE / "source-input"
++(BASE / "source").mkdir(mode=0o700)
+ for name in ("source-launcher.rs", "source-bundled_bwrap.rs", "cli-debug.rs", "sandbox-bwrap.rs",
+              "source-linux_run_main.rs", "source-bwrap.rs", "sources.json"):
+     shutil.copyfile(source_dir / name, BASE / "source" / name)
+--- baseline/diagnostic.service
++++ revised/diagnostic.service
+@@ -6,7 +6,7 @@
+ RemainAfterExit=yes
+ DynamicUser=yes
+ User=zen53-mincompat
+-RootDirectory=/tmp/zen53-minimal-compat-o5j8utk6/rootfs
++RootDirectory=/tmp/zen53-revised-ca59ysva/rootfs
+ MountAPIVFS=yes
+ WorkingDirectory=/diagnostic
+ PrivateNetwork=yes
+@@ -44,10 +44,10 @@
+ LimitFSIZE=64K
+ UMask=0077
+ StandardInput=null
+-StandardOutput=append:/tmp/zen53-minimal-compat-o5j8utk6/evidence/stdout.log
+-StandardError=append:/tmp/zen53-minimal-compat-o5j8utk6/evidence/stderr.log
++StandardOutput=append:/tmp/zen53-revised-ca59ysva/evidence/stdout.log
++StandardError=append:/tmp/zen53-revised-ca59ysva/evidence/stderr.log
+ ReadOnlyPaths=/ /run /dev /dev/shm /tmp /var/tmp /empty-home
+ InaccessiblePaths=/dev/mqueue /dev/hugepages
+-BindReadOnlyPaths=/tmp/zen53-minimal-compat-o5j8utk6/empty-home:/empty-home /tmp/zen53-minimal-compat-o5j8utk6/empty-tmp:/tmp /tmp/zen53-minimal-compat-o5j8utk6/empty-vartmp:/var/tmp /tmp/zen53-minimal-compat-o5j8utk6/empty-run:/run /tmp/zen53-minimal-compat-o5j8utk6/empty-shm:/dev/shm /usr/bin/bwrap:/usr/bin/bwrap
++BindReadOnlyPaths=/tmp/zen53-revised-ca59ysva/empty-home:/empty-home /tmp/zen53-revised-ca59ysva/empty-tmp:/tmp /tmp/zen53-revised-ca59ysva/empty-vartmp:/var/tmp /tmp/zen53-revised-ca59ysva/empty-run:/run /tmp/zen53-revised-ca59ysva/empty-shm:/dev/shm /usr/bin/bwrap:/usr/bin/bwrap
+ Environment=PATH=/usr/bin:/bin HOME=/empty-home CODEX_HOME=/empty-home LANG=C.UTF-8 LC_ALL=C.UTF-8 TMPDIR=/tmp TERM=dumb NO_COLOR=1 RUST_LOG=off PYTHONDONTWRITEBYTECODE=1
+ ExecStart=/usr/bin/python3 -I -S -B /diagnostic/launch.py
+--- baseline/DEPENDENCIES.json
++++ revised/DEPENDENCIES.json
+@@ -1,5 +1,5 @@
+ {
+-  "prepared_utc": "2026-10-21T16:08:49.044676+00:00",
++  "prepared_utc": "2026-10-21T18:03:09.025926+00:00",
+   "python": "3.12.3 (main, Aug 31 2026, 10:18:26) [GCC 13.3.0]",
+   "interpreter_sha256": "e50d468e8b0adfb05733f5b87b3cff34829c4a8c1aea50c865aa8bdfe4bb150f",
+   "dependencies": {
+@@ -265,8 +265,8 @@
+       "mode": "0o755"
+     },
+     "/diagnostic/report.py": {
+-      "source": "/tmp/zen53-minimal-compat-o5j8utk6/report.py",
+-      "resolved_source": "/tmp/zen53-minimal-compat-o5j8utk6/report.py",
++      "source": "/tmp/zen53-revised-ca59ysva/report.py",
++      "resolved_source": "/tmp/zen53-revised-ca59ysva/report.py",
+       "sha256": "e0e8953a537ab25509db0f74d7d813e8e8a6cc8f9f8bd7e41214e66f69ddd0c1",
+       "source_uid": 0,
+       "source_gid": 0,
+@@ -274,13 +274,40 @@
+       "mode": "0o444"
+     },
+     "/diagnostic/launch.py": {
+-      "source": "/tmp/zen53-minimal-compat-o5j8utk6/launch.py",
+-      "resolved_source": "/tmp/zen53-minimal-compat-o5j8utk6/launch.py",
+-      "sha256": "d4915696b011bdfd5f4891367444716acf987bc79358e341fae73a82e7d4da61",
+-      "source_uid": 0,
+-      "source_gid": 0,
+-      "source_mode": "0o644",
+-      "mode": "0o444"
++      "source": "/tmp/zen53-revised-ca59ysva/launch.py",
++      "resolved_source": "/tmp/zen53-revised-ca59ysva/launch.py",
++      "sha256": "704998046378e737ff7db16f19393dbdc47e2169e05e98db16c8fce1b952c753",
++      "source_uid": 0,
++      "source_gid": 0,
++      "source_mode": "0o644",
++      "mode": "0o444"
++    },
++    "/usr/bin/true": {
++      "source": "/usr/bin/true",
++      "resolved_source": "/usr/bin/true",
++      "sha256": "8a63c98320173f79e263115e10cefc170155e47d1fd4b5a70e4429d2699cae28",
++      "source_uid": 0,
++      "source_gid": 0,
++      "source_mode": "0o755",
++      "mode": "0o555"
++    },
++    "/usr/lib/x86_64-linux-gnu/libc.so.6": {
++      "source": "/usr/lib/x86_64-linux-gnu/libc.so.6",
++      "resolved_source": "/usr/lib/x86_64-linux-gnu/libc.so.6",
++      "sha256": "3a15d66867d83762c7f2f1e37359cb8f6c5743edb369c65285cb0b1c4f7498bf",
++      "source_uid": 0,
++      "source_gid": 0,
++      "source_mode": "0o755",
++      "mode": "0o555"
++    },
++    "/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2": {
++      "source": "/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2",
++      "resolved_source": "/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2",
++      "sha256": "c20a2dc8917c755f02b94049356320fe1f62ac7d9f8994731f807d9df39302da",
++      "source_uid": 0,
++      "source_gid": 0,
++      "source_mode": "0o755",
++      "mode": "0o555"
+     },
+     "/usr/lib/x86_64-linux-gnu/libselinux.so.1": {
+       "source": "/usr/lib/x86_64-linux-gnu/libselinux.so.1",
+@@ -300,24 +327,6 @@
+       "source_mode": "0o644",
+       "mode": "0o444"
+     },
+-    "/usr/lib/x86_64-linux-gnu/libc.so.6": {
+-      "source": "/usr/lib/x86_64-linux-gnu/libc.so.6",
+-      "resolved_source": "/usr/lib/x86_64-linux-gnu/libc.so.6",
+-      "sha256": "3a15d66867d83762c7f2f1e37359cb8f6c5743edb369c65285cb0b1c4f7498bf",
+-      "source_uid": 0,
+-      "source_gid": 0,
+-      "source_mode": "0o755",
+-      "mode": "0o555"
+-    },
+-    "/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2": {
+-      "source": "/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2",
+-      "resolved_source": "/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2",
+-      "sha256": "c20a2dc8917c755f02b94049356320fe1f62ac7d9f8994731f807d9df39302da",
+-      "source_uid": 0,
+-      "source_gid": 0,
+-      "source_mode": "0o755",
+-      "mode": "0o555"
+-    },
+     "/usr/lib/x86_64-linux-gnu/libpcre2-8.so.0.11.2": {
+       "source": "/usr/lib/x86_64-linux-gnu/libpcre2-8.so.0.11.2",
+       "resolved_source": "/usr/lib/x86_64-linux-gnu/libpcre2-8.so.0.11.2",
+@@ -364,8 +373,8 @@
+       "mode": "0o444"
+     },
+     "/etc/codex/requirements.toml": {
+-      "source": "/tmp/zen53-minimal-compat-o5j8utk6/requirements.toml",
+-      "resolved_source": "/tmp/zen53-minimal-compat-o5j8utk6/requirements.toml",
++      "source": "/tmp/zen53-revised-ca59ysva/requirements.toml",
++      "resolved_source": "/tmp/zen53-revised-ca59ysva/requirements.toml",
+       "sha256": "2567e3290e66d17e3128f6741f64392dc6f90917bb95d0becec34db945fb12bb",
+       "source_uid": 0,
+       "source_gid": 0,
+@@ -385,10 +394,8 @@
+     "/usr/lib/x86_64-linux-gnu/libpcre2-8.so.0": "/usr/lib/x86_64-linux-gnu/libpcre2-8.so.0.11.2"
+   },
+   "elf_closure": {
+-    "/usr/bin/bwrap": {
+-      "needed": [
+-        "libselinux.so.1",
+-        "libcap.so.2",
++    "/usr/bin/true": {
++      "needed": [
+         "libc.so.6"
+       ],
+       "interpreters": [
+@@ -402,6 +409,16 @@
+     "/usr/lib/x86_64-linux-gnu/libc.so.6": {
+       "needed": [
+         "ld-linux-x86-64.so.2"
++      ],
++      "interpreters": [
++        "/lib64/ld-linux-x86-64.so.2"
++      ]
++    },
++    "/usr/bin/bwrap": {
++      "needed": [
++        "libselinux.so.1",
++        "libcap.so.2",
++        "libc.so.6"
+       ],
+       "interpreters": [
+         "/lib64/ld-linux-x86-64.so.2"
+--- baseline/RUNBOOK.md
++++ revised/RUNBOOK.md
+@@ -13,7 +13,7 @@
+ 
+ ## Complete local package and entry points
+ 
+-Protected staging: `/tmp/zen53-minimal-compat-o5j8utk6/` (root-owned0700).
++Protected staging: `/tmp/zen53-revised-ca59ysva/` (root-owned0700).
+ It contains report.py, launch.py, supervisor.py, prepare.py, diagnostic.service,
+ requirements.toml, DEPENDENCIES.json, STATIC_CHECKS.json, ARTIFACT_SHA256.json,
+ RUNBOOK.md, source/, rootfs/, five empty controller-owned0555 bind sources and
+@@ -64,11 +64,11 @@
+ 
+ ## Root, mounts, environment and restrictions
+ 
+-The root contains41 pinned regular runtime files plus pins.json, nine exact
+-symlinks and empty mount destinations. It is312,795,111 bytes of pinned files
++The root contains42 pinned regular runtime files plus pins.json, nine exact
++symlinks and empty mount destinations. It is312,824,258 bytes of pinned files
+ (mostly the unchanged Codex binary), not a mount of all /usr, a host home or an
+ installation directory. DEPENDENCIES.json lists each source/resolution/hash and
+-the14 ELF objects' static DT_NEEDED/interpreter closure. The reporter and launcher
++the15 ELF objects' static DT_NEEDED/interpreter closure. The reporter and launcher
+ share only the minimal union of their startup/stdlib dependencies. No virtualenv,
+ site-packages, credentials, SSH state, production files, host socket, git checkout,
+ shell, plugins, hooks or MCP configuration is copied. Site initialization and
+@@ -147,7 +147,7 @@
+ 5. Only with separate execution approval, run exactly once as the trusted operator:
+ 
+    ```
+-   /usr/bin/python3 -I -S -B /tmp/zen53-minimal-compat-o5j8utk6/supervisor.py --approved-launch
++   /usr/bin/python3 -I -S -B /tmp/zen53-revised-ca59ysva/supervisor.py --approved-launch
+    ```
+ 
+    It uses systemd-run to create only transient zen53-mincompat.service from the
+@@ -157,7 +157,7 @@
+    is stopped/collected. The payload's60second runtime is unchanged.
+ 6. Within that one unit, the launcher rechecks pinned runtime identity and actual
+    read-only mounts, runs `/usr/bin/bwrap --help` (5second bound), requires exit0,
+-   --as-pid-1 and --perms, then rechecks admission and calls exactly one fixed native
++   --as-pid-1, --perms and --argv0, then rechecks admission and calls exactly one fixed native
+    Codex sandbox argv (35second bound). Internal ordinary Codex helper probing is
+    not bypassed. Any startup/state-write/mount/profile error, timeout, missing
+    prerequisite or nonzero reporter exit ends the attempt. No adaptive permissions,
+@@ -229,25 +229,48 @@
+ not acquired. Static source compile, TOML parse and all dependency hashes PASS.
+ Runtime/helper/transition/inner mount/resource/cleanup execution: UNTESTED.
+ 
+-### Known pinned startup write attempt — review before any execution
+-
+-Additional source inspection found `codex-rs/arg0/src/lib.rs` at the exact same
+-commit. Normal arg0_dispatch calls prepare_path_entry_for_codex_aliases, which
+-attempts create_dir_all(CODEX_HOME/tmp/arg0), sets permissions, creates a temporary
+-directory/lock and helper symlinks. The empty read-only CODEX_HOME rejects those
+-writes. Source lines179–190 warn and allow normal CLI initialization to continue;
+-lines326–400 show the write attempt. `linux_sandbox_exe_path` can normally use the
+-current executable if aliases are unavailable. This is not proof that native
+-sandbox startup itself requires persisted state, and it is NOT a verified runtime
+-failure. However, this strict diagnostic may not silently overlook that warning.
+-The launcher therefore terminates on the exact startup alias-warning or access/
+-read-only-filesystem error. No writable directory, precreated alias, alternate
+-helper, compatibility flag or fallback is added. Under the pinned source's ordinary
+-path, that warning is expected before sandbox setup, so this package is **not
+-certified ready to reach the reporter under the requested no-write conditions**.
+-Review this concrete compatibility conflict before authorizing a run; do not send
+-it through a blind retry or grant writable state implicitly. The complete proposed
+-files are retained for review; no startup occurred and no attempt is consumed.
++### Reviewed source correction — preparation only, runtime still UNTESTED
++
++The exact reviewed patch 542b2698e8dc346385ed3421d2e755b1c47df76ca702c325a372ca5872cc27c2
++permits at most one complete, byte-exact LF-terminated source-derived alias
++warning for read-only CODEX_HOME, and records it only as OBSERVATION_NOT_PASS.
++No writable HOME, precreated alias or helper substitution is granted. Split
++lines are buffered within the unchanged 16,384-byte raw bound; duplicate,
++altered, malformed, unterminated or unrelated error output rejects. Finish-time
++rejection retains at most the existing 4,096-byte raw tail. The full raw output
++is retained unchanged. All reporter/exit/transition gates remain mandatory.
++The help gate additionally requires exact --argv0 support; it has NOT been run.
++The reporter CapBnd assertion now requires zero, alongside the unchanged caps.
++
++The existing /usr/bin/true (also /bin/true via the projected bin symlink) is
++included for Codex's native proc preflight. It was copied and statically parsed,
++never executed. TRUE_PROVENANCE.json records installed coreutils provenance and
++SHA256 8a63c98320173f79e263115e10cefc170155e47d1fd4b5a70e4429d2699cae28.
++Its sole DT_NEEDED libc.so.6 and /lib64/ld-linux-x86-64.so.2 interpreter were
++already in the original closure; no extra package or utility suite was added.
++
++The complete unchanged reviewed fixture ran against the exact patched operational
++source bytes using AST-extracted declarations and fake operations: 18 PASS, zero
++failures/errors/skips. Its source-only baseline intentionally remains 41 files,
++so its historical true-gap test documents the original omission. Generated
++42-file runtime contents, fresh pins and bindings are checked separately by
++finalize_review.py. No operational module was imported as a test shortcut.
++
++Actual system-helper selection, --argv0 eligibility, AppArmor transition, zero
++CapBnd at runtime, native namespace/proc/mount behavior, inner storage, resource
++enforcement and descendant cleanup are UNTESTED. The historical AppArmor-correlated
++RTM_NEWADDR/net_admin denial is not certified fixed. Static preparation does not
++authorize launch or prove coding-workspace safety. Obtain separate review and
++explicit execution approval; stop on any new failure, without adaptive relaxation.
++
++Reconstruction input: complete prepare.py plus report.py, patched launch.py,
++supervisor.py and source-input/ are retained. Reconstruct only into an empty NEW
++private directory; never rerun the constructor over this or the original package.
++Fresh device/inode pins are local runtime identities and cannot be copied to a
++different reconstruction. source/ lists the pinned source references, not another
++executable dependency. The complete manifests cover all staged files, including
++offline fixture snapshots and review documents. Historical snapshots containing
++old paths are evidence only; they are not operative unit, config or pin inputs.
+ 
+ Installed dependency versions observed: python3-minimal3.12.3-0ubuntu2.1;
+ python3.12-minimal/libpython3.12-minimal3.12.3-1ubuntu0.17;
+@@ -257,3 +280,7 @@
+ zlib1g 1:1.3.dfsg-3.1ubuntu2.2; bubblewrap0.9.0-1ubuntu0.3.
+ No package transaction occurred. Copies are temporary diagnostic projections,
+ not a new system runtime or package deployment.
++
++This revised preparation changed no production configuration, profiles, packages,
++permissions, services or credentials and acquired no shared locks. No unit,
++supervisor, reporter, true, bwrap, Codex, container or native workload was launched.
+--- baseline/STATIC_CHECKS.json
++++ revised/STATIC_CHECKS.json
+@@ -1,29 +1,42 @@
+ {
+-  "prepared_utc": "2026-10-21T16:30:14.671011+00:00",
+-  "syntax": {
+-    "report.py": true,
+-    "launch.py": true,
+-    "supervisor.py": true,
+-    "prepare.py": true
++  "prepared_utc": "2026-10-21T18:06:15.402165+00:00",
++  "baseline_manifest_sha256": "7e58d98710b5ee0c78feba30e154a7bc7aa43f996162d0f5f32b1426a4bc719f",
++  "reviewed_patch_sha256": "542b2698e8dc346385ed3421d2e755b1c47df76ca702c325a372ca5872cc27c2",
++  "source_hashes": {
++    "launch.py": "704998046378e737ff7db16f19393dbdc47e2169e05e98db16c8fce1b952c753",
++    "supervisor.py": "ad8920c4320e88bca7c2e12403f282e7cd448fb3238ec4e16731a5ae5046d22b",
++    "report.py": "e0e8953a537ab25509db0f74d7d813e8e8a6cc8f9f8bd7e41214e66f69ddd0c1",
++    "requirements.toml": "2567e3290e66d17e3128f6741f64392dc6f90917bb95d0becec34db945fb12bb",
++    "prepare.py": "f822db8bdbcec62b332d02844fa97aca4a8a4a5116425f480de3220c76d47f4c"
+   },
++  "syntax_compilation": true,
+   "requirements_toml": true,
+-  "reporter_imports": [
+-    "os",
+-    "sys"
++  "unchanged_unit_settings_except_staging_paths": true,
++  "unchanged_native_argv_environment_admission": true,
++  "unchanged_reporter_and_policy": true,
++  "rootfs_file_count_excluding_pins": 42,
++  "rootfs_file_count_including_pins": 43,
++  "runtime_bytes_excluding_pins": 312824258,
++  "elf_objects": 15,
++  "symlinks": 9,
++  "rootfs_allowlist": true,
++  "all_source_and_copied_hashes": true,
++  "virtual_symlink_containment_and_elf_closure": true,
++  "all_runtime_pins_fresh": true,
++  "fresh_empty_bindings": true,
++  "empty_evidence_directory": true,
++  "true_provenance": "TRUE_PROVENANCE.json",
++  "offline_tests": "18 PASS; 0 failures/errors/skips",
++  "static_helper_feature_gate": [
++    "--as-pid-1",
++    "--perms",
++    "--argv0"
+   ],
+   "native_executions": 0,
++  "true_executions": 0,
+   "reporter_executions": 0,
+-  "unit_mount_namespace_operations": 0,
+-  "model_provider_requests": 0,
+-  "dependency_hashes": true,
+-  "launch_pins_match": true,
+-  "reporter_root_copy_matches": true,
+-  "empty_bind_sources": true,
+-  "known_compatibility_concern": "Pinned normal arg0 setup attempts writes under read-only CODEX_HOME; fail on its warning, no workaround",
+-  "source_sha256": {
+-    "report.py": "e0e8953a537ab25509db0f74d7d813e8e8a6cc8f9f8bd7e41214e66f69ddd0c1",
+-    "launch.py": "d4915696b011bdfd5f4891367444716acf987bc79358e341fae73a82e7d4da61",
+-    "supervisor.py": "4fc42d3dc06edf467496472d376bcaa438cf8d4b895d773284a754ba5f103d11",
+-    "prepare.py": "bb2a5e7f99bddd55ccba0eaae983763376ab1d0eaf30f654abbe8d718201494c"
+-  }
++  "supervisor_executions": 0,
++  "unit_mount_namespace_lock_operations": 0,
++  "provider_model_requests": 0,
++  "runtime_acceptance": "UNTESTED; separate review/approval required"
+ }
+--- baseline/rootfs/diagnostic/pins.json
++++ revised/rootfs/diagnostic/pins.json
+@@ -29,11 +29,12 @@
+     "/opt/codex/bin/codex": "628e35487d888a28f0427fc37501da529dd3d81fcbad7a2c3421c1e8670d92e1",
+     "/opt/codex/codex-package.json": "f05ebff6db98bd613dd5654461985090c6416b41ad67902243d83a53b305ac05",
+     "/diagnostic/report.py": "e0e8953a537ab25509db0f74d7d813e8e8a6cc8f9f8bd7e41214e66f69ddd0c1",
+-    "/diagnostic/launch.py": "d4915696b011bdfd5f4891367444716acf987bc79358e341fae73a82e7d4da61",
++    "/diagnostic/launch.py": "704998046378e737ff7db16f19393dbdc47e2169e05e98db16c8fce1b952c753",
++    "/usr/bin/true": "8a63c98320173f79e263115e10cefc170155e47d1fd4b5a70e4429d2699cae28",
++    "/usr/lib/x86_64-linux-gnu/libc.so.6": "3a15d66867d83762c7f2f1e37359cb8f6c5743edb369c65285cb0b1c4f7498bf",
++    "/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2": "c20a2dc8917c755f02b94049356320fe1f62ac7d9f8994731f807d9df39302da",
+     "/usr/lib/x86_64-linux-gnu/libselinux.so.1": "0ec0843463f90e227b0e138e1f379774f50b5514bd7f5dbd4c8a87aca0aa6670",
+     "/usr/lib/x86_64-linux-gnu/libcap.so.2.66": "6ac6abc86ac891c6e13486470e26f1d939f47fda9e6b5d5508a7f5ec881adc84",
+-    "/usr/lib/x86_64-linux-gnu/libc.so.6": "3a15d66867d83762c7f2f1e37359cb8f6c5743edb369c65285cb0b1c4f7498bf",
+-    "/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2": "c20a2dc8917c755f02b94049356320fe1f62ac7d9f8994731f807d9df39302da",
+     "/usr/lib/x86_64-linux-gnu/libpcre2-8.so.0.11.2": "e00576d71d81d3ba0cfa4903c835a44a8723aac96f72f79ff75200b4cff9071b",
+     "/usr/lib/x86_64-linux-gnu/libm.so.6": "fce00b6f25f459cf4ae0b7fae4257909a1a8a86f9149e7c029a5d617baf1ccd0",
+     "/usr/lib/x86_64-linux-gnu/libz.so.1.3": "86200da370f20476a2507e9097a789b5ef97269b4ca8d5e164ad82dab9d99892",
+@@ -45,23 +46,23 @@
+   "empty_directories": {
+     "/empty-home": [
+       2049,
+-      36815
++      37098
+     ],
+     "/tmp": [
+       2049,
+-      36816
++      37099
+     ],
+     "/var/tmp": [
+       2049,
+-      36817
++      37100
+     ],
+     "/run": [
+       2049,
+-      36818
++      37101
+     ],
+     "/dev/shm": [
+       2049,
+-      36819
++      37102
+     ]
+   }
+ }
+--- baseline/rootfs/diagnostic/launch.py
++++ revised/rootfs/diagnostic/launch.py
+@@ -115,6 +115,48 @@
+          mounts=mounts)
+ 
+ 
++# Exact pinned Rust io::Error display in the fixed C.UTF-8 Linux environment.
++# This is a source-derived expectation, NOT an observed runtime success.
++EXPECTED_ALIAS_WARNING = (b"WARNING: proceeding, even though we could not create PATH aliases: "
++                          b"Read-only file system (os error 30)\n")
++
++
++class NativeOutput:
++    """Bounded complete-line classification; only one exact line is exempted."""
++    def __init__(self):
++        self.total = 0
++        self.pending = b""
++        self.alias_warnings = 0
++
++    def feed(self, chunk):
++        self.total += len(chunk)
++        need(self.total <= 16384, "native_OUTPUT_BOUND")
++        self.pending += chunk
++        observed = False
++        while b"\n" in self.pending:
++            line, self.pending = self.pending.split(b"\n", 1)
++            line += b"\n"
++            if line == EXPECTED_ALIAS_WARNING:
++                need(self.alias_warnings == 0, "DUPLICATE_ALIAS_WARNING")
++                self.alias_warnings += 1
++                observed = True
++                continue  # Exempt ONLY this validated, complete line.
++            need(all(32 <= value <= 126 or value in (9, 10) for value in line),
++                 "NATIVE_OUTPUT_MALFORMED")
++            need(not line[:-1] or not EXPECTED_ALIAS_WARNING.lower().startswith(line[:-1].lower()),
++                 "MALFORMED_ALIAS_WARNING")
++            lower = line.lower()
++            need(not any(token in lower for token in
++                         (b"warn", b"error", b"denied", b"read-only", b"read only",
++                          b"not permitted", b"failed", b"failure", b"fatal", b"panic",
++                          b"could not")), "CODEX_STARTUP_ACCESS_OR_WRITE_FAILURE")
++        return observed
++
++    def finish(self):
++        # A partial expected warning is never exempted, even at EOF.
++        need(not self.pending, "NATIVE_OUTPUT_UNTERMINATED")
++
++
+ def fixed_command(argv, seconds, label):
+     emit(label + "_start", argv=argv)
+     read_fd, write_fd = os.pipe2(os.O_CLOEXEC)
+@@ -131,6 +173,7 @@
+     os.close(write_fd)
+     os.set_blocking(read_fd, False)
+     end, output, status, eof = time.monotonic() + seconds, bytearray(), None, False
++    native_output = NativeOutput() if label == "native" else None
+     while status is None or not eof:
+         # Any failure ends this launcher; whole-cgroup stop is the supervisor's duty.
+         need(time.monotonic() < end, label + "_TIMEOUT")
+@@ -141,12 +184,15 @@
+                 output.extend(chunk)
+                 need(len(output) <= 16384, label + "_OUTPUT_BOUND")
+                 if label == "native":
+-                    warning = b"WARNING: proceeding, even though we could not create PATH aliases:" in output
+-                    access = b"Read-only file system" in output or b"Permission denied" in output
+-                    if warning or access:
++                    try:
++                        observed = native_output.feed(chunk)
++                    except RuntimeError:
+                         emit("native_stop_evidence", output=bytes(output[-4096:]).decode("utf-8", "replace"))
+-                    need(not warning, "CODEX_STARTUP_WRITABLE_STATE_WARNING")
+-                    need(not access, "CODEX_STARTUP_ACCESS_OR_WRITE_FAILURE")
++                        raise
++                    if observed:
++                        emit("native_alias_warning_observation",
++                             result="OBSERVATION_NOT_PASS", count=1,
++                             warning=EXPECTED_ALIAS_WARNING.decode("ascii").rstrip("\n"))
+             else:
+                 eof = True
+         if status is None:
+@@ -154,6 +200,12 @@
+             if child:
+                 status = value
+     os.close(read_fd)
++    if native_output is not None:
++        try:
++            native_output.finish()
++        except RuntimeError:
++            emit("native_stop_evidence", output=bytes(output[-4096:]).decode("utf-8", "replace"))
++            raise
+     emit(label + "_finish", pid=pid, wait_status=status,
+          output=bytes(output).decode("utf-8", "replace"))
+     need(os.WIFEXITED(status) and os.WEXITSTATUS(status) == 0, label + "_NONZERO")
+@@ -163,7 +215,8 @@
+ try:
+     admission()
+     help_output = fixed_command(["/usr/bin/bwrap", "--help"], 5, "bwrap_help")
+-    need(b"--as-pid-1" in help_output and b"--perms" in help_output, "BWRAP_REQUIRED_FEATURES")
++    need(all(flag in help_output.split() for flag in (b"--as-pid-1", b"--perms", b"--argv0")),
++         "BWRAP_REQUIRED_FEATURES")
+     # Recheck actual mounts/hashes immediately before the one native invocation.
+     admission()
+     output = fixed_command(NATIVE, 35, "native")
