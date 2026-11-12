@@ -1,0 +1,363 @@
+"""Disposable Ubuntu 24.04/systemd 255 acceptance. NEVER run on a VPS."""
+import argparse
+import fcntl
+import hashlib
+import importlib.util
+import json
+import os
+from pathlib import Path
+import shutil
+import signal
+import pwd
+import socket
+import subprocess
+import tempfile
+import time
+
+ROOT=Path('/usr/lib/modelfc-suite')
+STATE=Path('/var/lib/modelfc-suite')
+CONTROL=Path('/var/lib/modelfc-deploy')
+GUARD='modelfc-suite-guard.service'; WORKER='modelfc-suite-worker.service'
+API='modelfc-corner-api.service'
+WRONG_API='modelfc-api.service'
+UNITS=Path('/etc/systemd/system')
+CLAIM=Path('/run/modelfc-suite-ci-claim')
+DIAGNOSTIC=False
+RUN='run'
+ENV={'PATH':'/usr/sbin:/usr/bin:/sbin:/bin','LANG':'C','HOME':'/root'}
+
+
+def command(*args,check=True,timeout=780):
+    return subprocess.run(args,env=ENV,capture_output=True,text=True,check=check,timeout=timeout)
+
+
+def load(path):
+    spec=importlib.util.spec_from_file_location(path.stem,path)
+    value=importlib.util.module_from_spec(spec);spec.loader.exec_module(value);return value
+
+
+def wait_for(test,seconds=30):
+    until=time.monotonic()+seconds
+    while time.monotonic()<until:
+        if test(): return
+        time.sleep(.05)
+    raise AssertionError('bounded condition not reached')
+
+
+def active(unit):
+    return command('systemctl','show',unit,'-p','ActiveState','--value').stdout.strip()
+
+
+def lock_available():
+    with (CONTROL/'deploy.lock').open('rb') as stream:
+        try: fcntl.flock(stream,fcntl.LOCK_EX|fcntl.LOCK_NB)
+        except BlockingIOError: return False
+        return True
+
+
+def cleanup():
+    if not CLAIM.is_file(): return
+    if CLAIM.read_text()!='isolated-suite-ci-v1\n': raise AssertionError('claim mismatch')
+    fixture_units = tuple(dict.fromkeys((GUARD,WORKER,'modelfc-suite-guard.service','modelfc-suite-worker.service',API,WRONG_API,'modelfc-postmerge-tests.service')))
+    command('systemctl','stop',*fixture_units,check=False)
+    command('systemctl','clean','--what=fdstore',GUARD,'modelfc-suite-guard.service',check=False)
+    for unit in fixture_units:
+        (UNITS/unit).unlink(missing_ok=True)
+    command('systemctl','daemon-reload')
+    command('systemctl','reset-failed',*fixture_units,check=False)
+    for path in (ROOT,STATE,Path('/usr/lib/modelfc-suite'),Path('/var/lib/modelfc-suite'),CONTROL,Path('/srv/modelfc'),Path('/var/lib/modelfc'),Path('/etc/modelfc-validator'),Path('/etc/modelfc')):
+        if path.exists(): shutil.rmtree(path)
+    command('userdel','modelfc-deploy',check=False)
+    CLAIM.unlink()
+
+
+def prepare_host():
+    if os.geteuid()!=0 or os.environ.get('GITHUB_ACTIONS')!='true': raise AssertionError('disposable GitHub VM only')
+    if command('systemctl','--version').stdout.split()[1]!='255': raise AssertionError('requires actual systemd 255')
+    paths=[ROOT,STATE,CONTROL,Path('/srv/modelfc'),Path('/var/lib/modelfc'),Path('/etc/modelfc-validator'),Path('/etc/modelfc'),CLAIM]
+    paths += [Path('/usr/lib/modelfc-suite'),Path('/var/lib/modelfc-suite')]
+    paths += [UNITS/u for u in (GUARD,WORKER,'modelfc-suite-guard.service','modelfc-suite-worker.service',API,WRONG_API,'modelfc-postmerge-tests.service')]
+    if any(p.exists() or p.is_symlink() for p in paths): raise AssertionError('preexisting fixture paths')
+    try: pwd.getpwnam('modelfc-deploy')
+    except KeyError: pass
+    else: raise AssertionError('preexisting deployment account')
+    CLAIM.write_text('isolated-suite-ci-v1\n');CLAIM.chmod(0o600)
+    command('useradd','--system','--no-create-home','--shell','/usr/sbin/nologin','modelfc-deploy')
+    account=pwd.getpwnam('modelfc-deploy')
+    CONTROL.mkdir(mode=0o700)
+    os.chown(CONTROL,account.pw_uid,account.pw_gid)
+    (CONTROL/'deploy.lock').touch(mode=0o644)
+    (CONTROL/'deploy.lock').chmod(0o644)
+    os.chown(CONTROL/'deploy.lock',account.pw_uid,account.pw_gid)
+    (CONTROL/'last-test-failure.json').write_text('preserved failure evidence\n')
+    for parent in ('/var/lib/modelfc','/etc/modelfc-validator','/etc/modelfc'):
+        path=Path(parent);path.mkdir(mode=0o755)
+        (path/'canary').write_text('HOST_SECRET_CANARY\n');(path/'canary').chmod(0o644)
+    release=Path('/srv/modelfc/releases')/('d'*40+'-fixture')
+    release.mkdir(parents=True)
+    Path('/srv/modelfc/current').symlink_to(release)
+
+
+def case_source(directory,mode,source,port):
+    directory.mkdir()
+    command('git','init','--quiet',str(directory))
+    (directory/'requirements-deploy.lock').write_bytes((source/'requirements-deploy.lock').read_bytes())
+    (directory/'tests').mkdir()
+    cases='''import json, os, pwd, socket, subprocess, tempfile, time, unittest
+from pathlib import Path
+class Boundary(unittest.TestCase):
+ def test_a_boundary(self):
+  self.assertNotEqual(os.geteuid(),0)
+  self.assertEqual(socket.if_nameindex(),[(1,'lo')])
+  self.assertFalse(os.path.exists('/run/modelfc-suite-ci-claim'))
+  for path in ('/run/systemd/notify','/run/systemd/private','/run/dbus/system_bus_socket','/run/systemd/userdb/io.systemd.Multiplexer'):
+   self.assertFalse(os.path.exists(path))
+  self.assertEqual(pwd.getpwuid(os.getuid()).pw_name,'modelfc-suite-worker')
+  with tempfile.TemporaryDirectory() as directory:
+   subprocess.run(['/usr/bin/ssh-keygen','-q','-t','ed25519','-N','','-f',str(Path(directory)/'disposable')],capture_output=True,check=True)
+  with socket.socket(socket.AF_UNIX) as client:
+   client.settimeout(2);client.connect('/run/systemd/userdb/io.systemd.DynamicUser')
+   client.sendall(json.dumps(dict(method='io.systemd.ManagedOOM.SubscribeManagedOOMCGroups',parameters={},more=True)).encode()+bytes([0]))
+   raw=b''
+   while bytes([0]) not in raw:
+    chunk=client.recv(1024);self.assertTrue(chunk);raw+=chunk;self.assertLessEqual(len(raw),4096)
+   self.assertEqual(json.loads(raw.split(bytes([0]))[0])['error'],'org.varlink.service.PermissionDenied')
+  with socket.socket(socket.AF_UNIX) as client:
+   with self.assertRaises(OSError): client.connect('/run/dbus/system_bus_socket')
+  for path in ['/var/lib/modelfc/canary','/etc/modelfc-validator/canary','/etc/modelfc/canary','/var/lib/modelfc-deploy/last-test-failure.json','/srv/modelfc/current','/var/lib/modelfc-suite/results']:
+   with self.assertRaises(OSError): os.open(path,os.O_RDONLY)
+  with self.assertRaises(OSError): os.open(__file__,os.O_WRONLY)
+  with self.assertRaises(OSError): socket.create_connection(('127.0.0.1',PORT),timeout=.2)
+'''.replace('PORT',str(port))
+    if mode=='failure': cases+=' def test_b_failure(self): self.fail("DO_NOT_PUBLISH_RAW_CANARY")\n'
+    if mode in ('timeout','kill','stop','concurrent'):
+        cases+=''' def test_b_descendant(self):
+  subprocess.Popen(['/usr/bin/python3','-c','import signal,time;signal.signal(signal.SIGTERM,signal.SIG_IGN);time.sleep(1200)'],stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,start_new_session=True)
+  os.closerange(3,256)
+  time.sleep(1200)
+'''
+    if DIAGNOSTIC: cases=cases.replace("'modelfc-suite-worker'", "'modelfc-suite-diag600-worker'")
+    (directory/'tests/test_boundary.py').write_text(cases)
+    command('git','-C',str(directory),'add','.')
+    command('git','-C',str(directory),'-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-qm',mode)
+    return command('git','-C',str(directory),'rev-parse','HEAD').stdout.strip()
+
+
+def run(args):
+    source=Path(args.source).resolve()
+    builder=load(source/'ops/suite/bundle.py');installer=load(source/'ops/suite/install.py')
+    guard=load(source/'ops/suite/guard.py')
+    results=[]
+    cross_mode=[]
+    prepare_host()
+    before=(CONTROL/'last-test-failure.json').read_bytes()
+    # Exercise real manager/proc identity before creating the correctly named fixture.
+    api_unit='[Service]\nType=simple\nExecStart=/usr/bin/sleep infinity\nWorkingDirectory=/srv/modelfc/current\nRuntimeMaxSec=30min\n'
+    api_attestation={}
+    for case in ('missing', 'wrong_name'):
+        if case=='wrong_name':
+            (UNITS/WRONG_API).write_text(api_unit)
+            command('systemctl','daemon-reload');command('systemctl','start',WRONG_API)
+            assert active(WRONG_API)=='active'
+        try: guard.api_identity()
+        except guard.Rejected as error: assert str(error)=='API_NOT_RUNNING'
+        else: raise AssertionError('missing actual API unit accepted')
+        api_attestation[case]='REJECTED'
+    command('systemctl','stop',WRONG_API);(UNITS/WRONG_API).unlink()
+    (UNITS/API).write_text(api_unit)
+    command('systemctl','daemon-reload');command('systemctl','start',API)
+    identity=guard.api_identity()
+    assert identity['Id']==API and identity['LoadState']=='loaded' and identity['ActiveState']=='active'
+    assert identity['MainPID']==command('systemctl','show',API,'-p','MainPID','--value').stdout.strip()
+    assert identity['selected']==identity['process_cwd']==str(Path('/srv/modelfc/current').resolve())
+    api_attestation['actual_identity']=identity
+    print(json.dumps(dict(api_attestation=api_attestation,diagnostic_seconds=600 if DIAGNOSTIC else None,cross_mode=cross_mode)),flush=True)
+    with socket.socket() as listener, tempfile.TemporaryDirectory() as temporary:
+        listener.bind(('127.0.0.1',0));listener.listen()
+        port=listener.getsockname()[1]
+        tmp=Path(temporary)
+        default_guard=None
+        if DIAGNOSTIC:
+            # Install a real default runner alongside; exercise both lock directions.
+            fixture=tmp/'default-failure'
+            sha=case_source(fixture,'failure',source,port)
+            test=fixture/'tests/test_boundary.py'
+            test.write_text(test.read_text().replace('modelfc-suite-diag600-worker','modelfc-suite-worker'))
+            command('git','-C',str(fixture),'add','.')
+            command('git','-C',str(fixture),'-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-qm','default identity')
+            default_sha=command('git','-C',str(fixture),'rev-parse','HEAD').stdout.strip()
+            default_bundle=tmp/'default.tar.gz'
+            digest=builder.build(fixture,default_sha,args.runtime,default_bundle)
+            installer.install(default_bundle,digest,default_sha)
+            default_guard=load(Path('/usr/lib/modelfc-suite/guard.py'))
+        for mode in ('pass','full','failure','busy','pending','abandoned','override','override_bind','kill','stop','concurrent','queued','timeout'):
+            if ROOT.exists():
+                guard.recover()
+                for unit in (GUARD,WORKER): (UNITS/unit).unlink()
+                command('systemctl','daemon-reload')
+                shutil.rmtree(ROOT);shutil.rmtree(STATE)
+            if mode=='full':
+                bundle=Path(args.bundle);sha=args.candidate
+                digest=hashlib.sha256(bundle.read_bytes()).hexdigest()
+            else:
+                fixture=tmp/mode
+                sha=case_source(fixture,mode,source,port)
+                bundle=tmp/(mode+'.tar.gz')
+                digest=builder.build(fixture,sha,args.runtime,bundle,DIAGNOSTIC)
+            installer.install(bundle,digest,sha,DIAGNOSTIC)
+            guard=load(ROOT/'guard.py')
+            if DIAGNOSTIC and mode=='pass':
+                # The other mode retains its lock after an intentional failure.
+                command('/usr/bin/python3','-I','/usr/lib/modelfc-suite/guard.py','run',default_sha)
+                assert not lock_available()
+                saved={p:p.read_bytes() for p in Path('/var/lib/modelfc-suite/results').glob('*.json')}
+                command('/usr/bin/python3','-I',str(ROOT/'guard.py'),RUN,sha)
+                rejected=json.loads(next((STATE/'results').glob('*.json')).read_text())
+                assert rejected['reason']=='DEPLOYMENT_BUSY' and rejected['worker'] is None
+                guard.recover()
+                assert not lock_available() and default_guard.properties(default_guard.GUARD,'NFileDescriptorStore')['NFileDescriptorStore']=='1'
+                assert all(p.read_bytes()==raw for p,raw in saved.items())
+                default_guard.recover();assert lock_available()
+                cross_mode.append('default_lock_blocks_diagnostic_and_survives_diagnostic_recovery')
+                for p in (STATE/'results').glob('*.json'): p.unlink()  # claimed CI fixture only
+            wrong=command('/usr/bin/python3','-I',str(ROOT/'guard.py'),RUN,'0'*40,check=False)
+            assert wrong.returncode and not list((STATE/'results').iterdir())
+            started=time.monotonic()
+            if mode=='busy':
+                with (CONTROL/'deploy.lock').open('rb') as held:
+                    fcntl.flock(held,fcntl.LOCK_EX|fcntl.LOCK_NB)
+                    command('/usr/bin/python3','-I',str(ROOT/'guard.py'),RUN,sha)
+                    evidence=json.loads(next((STATE/'results').glob('*.json')).read_text())
+                    assert evidence['reason']=='DEPLOYMENT_BUSY' and evidence['worker'] is None
+            elif mode in ('pending','abandoned','override','override_bind'):
+                pending=CONTROL/'service-pending.json'
+                abandoned=UNITS/'modelfc-postmerge-tests.service'
+                if mode=='pending': pending.write_text('{"unfinished":true}\n')
+                if mode=='abandoned':
+                    abandoned.write_text('[Service]\nExecStart=/usr/bin/sleep infinity\n')
+                    command('systemctl','daemon-reload');command('systemctl','start',abandoned.name)
+                if mode in ('override','override_bind'):
+                    unit=UNITS/WORKER;original=unit.read_bytes()
+                    altered=original.replace(b'PrivateNetwork=yes',b'PrivateNetwork=no') if mode=='override' else original+b'BindReadOnlyPaths=/run:/run:norbind\n'
+                    unit.write_bytes(altered)
+                    api_unit=UNITS/API;api_original=api_unit.read_bytes()
+                    api_unit.write_bytes(b'[Unit]\nAfter='+WORKER.encode()+b'\n'+api_original)
+                    command('systemctl','daemon-reload')
+                    unit.write_bytes(original)  # disk is reviewed; effective manager state is unsafe
+                result=command('/usr/bin/python3','-I',str(ROOT/'guard.py'),RUN,sha,check=False)
+                if mode in ('override','override_bind'):
+                    assert result.returncode and guard.quiescent(WORKER),result.stdout
+                    expected_reason='WORKER_POLICY' if mode=='override' else 'EXECUTION_POLICY'
+                    assert json.loads(result.stdout)['reason']==expected_reason,result.stdout
+                    api_unit.write_bytes(api_original)
+                    command('systemctl','daemon-reload')
+                else:
+                    evidence=json.loads(next((STATE/'results').glob('*.json')).read_text())
+                    assert evidence['reason']=='DEPLOYMENT_RECOVERY_REQUIRED' and evidence['worker'] is None,evidence
+                assert lock_available()
+                if mode=='pending':
+                    assert pending.read_text()=='{"unfinished":true}\n';pending.unlink()
+                if mode=='abandoned':
+                    assert active(abandoned.name)=='active'
+                    command('systemctl','stop',abandoned.name);abandoned.unlink();command('systemctl','daemon-reload')
+            elif mode=='queued':
+                command('systemctl','start','--no-block',WORKER,check=False)
+                wait_for(lambda:active(GUARD)=='failed')
+                wait_for(lambda:guard.quiescent(WORKER))
+                assert lock_available()
+            elif mode in ('kill','stop','concurrent'):
+                command('systemctl','start',GUARD)
+                wait_for(lambda:active(WORKER)=='activating')
+                wait_for(lambda:int(guard.properties(GUARD,'NFileDescriptorStore')['NFileDescriptorStore'])==1)
+                time.sleep(1)
+                assert not lock_available()
+                if mode=='concurrent':
+                    other=command('/usr/bin/python3','-I',str(ROOT/'guard.py'),RUN,sha,check=False)
+                    assert other.returncode and active(WORKER)=='activating'
+                if mode=='stop': command('systemctl','stop','--no-block',GUARD)
+                else: command('systemctl','kill','--kill-whom=main','--signal=KILL',GUARD)
+                until=time.monotonic()+65
+                while not guard.quiescent(WORKER):
+                    assert not lock_available(),'deployment interlock released while candidate cgroup survives'
+                    assert time.monotonic()<until
+                    time.sleep(.01)
+                assert not lock_available(),'failed guard must retain PID1 descriptor'
+                guard.recover()
+                assert lock_available()
+            else:
+                command('/usr/bin/python3','-I',str(ROOT/'guard.py'),RUN,sha)
+                evidence=json.loads(next((STATE/'results').glob('*.json')).read_text())
+                assert evidence['candidate']==sha and evidence['cleanup']=='EMPTY_CGROUP',evidence
+                assert evidence['api_unchanged'] is True,evidence
+                if mode in ('pass','full'):
+                    assert evidence['status']==('DIAGNOSTIC_PASS' if DIAGNOSTIC else 'PASS') and lock_available(),evidence
+                    assert evidence['worker']['terminal']['tests']>0
+                    if mode=='full':
+                        assert evidence['worker']['terminal']['tests']==1748,evidence
+                        assert evidence['worker']['terminal']['skipped']==23,evidence
+                else:
+                    assert evidence['status']=='FAIL' and not lock_available(),evidence
+                    if mode=='timeout':
+                        assert evidence['worker']['classification']=='TIMEOUT',evidence
+                        assert evidence['worker']['terminal'] is None and evidence['worker']['observed_completed']>=1
+                        deadline=600 if DIAGNOSTIC else 300
+                        assert deadline<=evidence['worker']['elapsed_seconds']<deadline+10
+                    else: assert evidence['worker']['terminal']['failures']==1
+                    if DIAGNOSTIC and mode=='failure':
+                        retained=next((STATE/'results').glob('*.json')).read_bytes()
+                        command('/usr/bin/python3','-I','/usr/lib/modelfc-suite/guard.py','run',default_sha)
+                        default_guard.recover()
+                        assert not lock_available() and guard.properties(GUARD,'NFileDescriptorStore')['NFileDescriptorStore']=='1'
+                        assert next((STATE/'results').glob('*.json')).read_bytes()==retained
+                        cross_mode.append('diagnostic_lock_blocks_default_and_survives_default_recovery')
+                    preserved=next((STATE/'results').glob('*.json')).read_bytes()
+                    guard.recover()
+                    assert next((STATE/'results').glob('*.json')).read_bytes()==preserved
+                    assert lock_available()
+            if DIAGNOSTIC:
+                for report_path in (STATE/'results').glob('*.json'):
+                    report=json.loads(report_path.read_text())
+                    assert report['diagnostic_seconds']==600 and report['production_release_gate']=='NOT_SATISFIED'
+                    assert report['status']!='PASS'
+                    if report['worker'] is not None:
+                        assert report['worker']['diagnostic_seconds']==600 and report['worker']['production_release_gate']=='NOT_SATISFIED'
+            assert (CONTROL/'last-test-failure.json').read_bytes()==before
+            assert guard.api_identity()==identity
+            reports=[json.loads(p.read_text()) for p in sorted((STATE/'results').glob('*.json'))]
+            results.append(dict(case=mode,status='PASS',elapsed_seconds=round(time.monotonic()-started,3),reports=reports,
+                                worker_quiescent=guard.quiescent(WORKER),deployment_lock_available=lock_available(),
+                                api_unchanged=guard.api_identity()==identity,
+                                worker_lifecycle=guard.properties(WORKER,'InvocationID','Result','ExecMainCode','ExecMainStatus')))
+            Path(args.output).write_text(json.dumps(dict(status='IN_PROGRESS',cases=results))+'\n')
+            print(json.dumps(dict(case=mode,status='PASS',elapsed_seconds=results[-1]['elapsed_seconds'],
+                                  terminal=reports[-1]['worker']['terminal'] if mode=='full' else None)),flush=True)
+    return dict(status='PASS',cases=results,candidate=args.candidate,source_sha=args.source_sha,api_attestation=api_attestation,diagnostic_seconds=600 if DIAGNOSTIC else None,cross_mode=cross_mode)
+
+
+if __name__=='__main__':
+    parser=argparse.ArgumentParser()
+    parser.add_argument('--source');parser.add_argument('--runtime');parser.add_argument('--bundle')
+    parser.add_argument('--candidate');parser.add_argument('--source-sha');parser.add_argument('--output')
+    parser.add_argument('--cleanup',action='store_true')
+    parser.add_argument('--diagnostic-600',action='store_true')
+    args=parser.parse_args()
+    if args.diagnostic_600:
+        DIAGNOSTIC=True;RUN='diagnostic-run'
+        ROOT=Path('/usr/lib/modelfc-suite-diag600');STATE=Path('/var/lib/modelfc-suite-diag600')
+        GUARD='modelfc-suite-diag600-guard.service';WORKER='modelfc-suite-diag600-worker.service'
+    if args.cleanup: cleanup();raise SystemExit(0)
+    result=dict(status='FAIL',reason='ACCEPTANCE_ERROR')
+    try:
+        result=run(args)
+    finally:
+        output=Path(args.output)
+        if result['status']=='FAIL':
+            if output.exists(): result['completed_cases']=json.loads(output.read_text()).get('cases',[])
+            if (STATE/'results').exists(): result['last_reports']=[json.loads(p.read_text()) for p in (STATE/'results').glob('*.json')]
+        diagnostic=command('journalctl','--no-pager','-u',GUARD,'-u',WORKER,'-n','40',check=False).stdout
+        output.with_name('systemd-diagnostic.log').write_text(diagnostic)
+        if result['status']=='FAIL':
+            print(command('journalctl','--no-pager','-o','cat','-u',WORKER,'_PID=1','-n','12',check=False).stdout,flush=True)
+        try: cleanup();result['cleanup']='PASS'
+        except Exception: result['cleanup']='FAIL'
+        output=Path(args.output);output.write_text(json.dumps(result,sort_keys=True)+'\n');output.chmod(0o644)

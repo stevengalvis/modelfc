@@ -1,0 +1,39 @@
+[Unit]
+Description=Isolated full ModelFC suite (never deploys)
+BindsTo=modelfc-suite-guard.service
+After=modelfc-suite-guard.service
+
+[Service]
+Type=oneshot
+DynamicUser=yes
+WorkingDirectory=/usr/lib/modelfc-suite/source
+ExecStart=/usr/bin/python3 -I -B /usr/lib/modelfc-suite/worker.py
+TimeoutStartSec=330
+TimeoutStopSec=30
+KillMode=control-group
+SendSIGKILL=yes
+MemoryMax=2G
+TasksMax=64
+PrivateNetwork=yes
+PrivateTmp=yes
+PrivateDevices=yes
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+ProtectProc=invisible
+ReadOnlyPaths=/usr/lib/modelfc-suite
+InaccessiblePaths=-/srv -/var/lib/modelfc -/var/lib/modelfc-deploy -/var/lib/modelfc-suite -/etc/modelfc-validator -/etc/modelfc
+TemporaryFileSystem=/run:ro
+BindReadOnlyPaths=/run/systemd/userdb/io.systemd.DynamicUser:/run/systemd/userdb/io.systemd.DynamicUser:norbind
+EnvironmentFile=/var/lib/modelfc-suite/worker.env
+SyslogIdentifier=modelfc-suite-worker
+StandardInput=null
+StandardOutput=journal
+StandardError=null
