@@ -77,17 +77,20 @@ class DeployWorkflowTest(unittest.TestCase):
                 sys.exit(int(os.environ['TEST_SSH_STATUS']))
             '''))
             ssh.chmod(0o700)
-            mktemp = binary / "mktemp"
-            mktemp.write_text(f"#!{sys.executable}\n" + textwrap.dedent('''\
-                import os, pathlib, sys
-                counter = pathlib.Path(os.environ['TEST_MKTEMP_COUNT'])
-                count = int(counter.read_text()) + 1 if counter.exists() else 1
-                counter.write_text(str(count))
-                if count == int(os.environ['TEST_MKTEMP_FAIL']):
-                    sys.exit(1)
-                os.execv('/usr/bin/mktemp', ['mktemp'] + sys.argv[1:])
-            '''))
-            mktemp.chmod(0o700)
+            # Normal cases use real mktemp directly. Only allocation-failure
+            # cases need the counting wrapper (three Python startups per run).
+            if fail_mktemp:
+                mktemp = binary / "mktemp"
+                mktemp.write_text(f"#!{sys.executable}\n" + textwrap.dedent('''\
+                    import os, pathlib, sys
+                    counter = pathlib.Path(os.environ['TEST_MKTEMP_COUNT'])
+                    count = int(counter.read_text()) + 1 if counter.exists() else 1
+                    counter.write_text(str(count))
+                    if count == int(os.environ['TEST_MKTEMP_FAIL']):
+                        sys.exit(1)
+                    os.execv('/usr/bin/mktemp', ['mktemp'] + sys.argv[1:])
+                '''))
+                mktemp.chmod(0o700)
             source = self.script
             if accepted:
                 # Exercise the exact fingerprint gate with an ephemeral key, never the VPS key.
