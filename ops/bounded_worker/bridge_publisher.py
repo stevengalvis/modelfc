@@ -10,6 +10,7 @@ from pathlib import Path
 import sqlite3
 
 from .bridge_envelope import validate
+from .bridge_guard import safe
 from .bridge_patch import validate_and_apply
 
 
@@ -19,7 +20,7 @@ class Publisher:
         self.policy, self.reader, self.inspector = policy, reader, inspector
         self.checkout, self.github, self.clock = checkout, github, clock
 
-    def publish(self, job_id):
+    def publish(self, job_id=None):
         fd = os.open(self.state_dir / 'bridge.lock', os.O_RDWR | os.O_NOFOLLOW | os.O_CLOEXEC)
         try:
             try:
@@ -28,10 +29,19 @@ class Publisher:
                 return {'status': 'busy'}
             with sqlite3.connect(self.state_dir / 'receipts.sqlite') as db:
                 db.execute('PRAGMA synchronous=FULL')
+                if not safe(db):
+                    return {'status': 'blocked'}
                 db.execute('CREATE TABLE IF NOT EXISTS publications '
                            '(job TEXT PRIMARY KEY, phase TEXT NOT NULL, branch TEXT NOT NULL, '
                            'patch TEXT NOT NULL, commit_id TEXT, url TEXT)')
                 db.commit()
+                if job_id is None:
+                    row = db.execute("SELECT job FROM jobs WHERE status='completed' AND NOT EXISTS "
+                                     "(SELECT 1 FROM publications WHERE publications.job=jobs.job) "
+                                     'ORDER BY rowid LIMIT 1').fetchone()
+                    if row is None:
+                        return {'status': 'idle'}
+                    job_id = row[0]
                 return self._publish(db, job_id)
         except Exception:
             return {'status': 'blocked'}
@@ -64,18 +74,6 @@ class Publisher:
             # In-flight or ambiguous writes require operator investigation.
             if phase == 'published' and self.github.verify_draft(branch, task.base_revision, commit_id, url):
                 return {'status': 'published', 'job_id': job_id, 'patch_sha256': patch_digest, 'url': url}
-            if phase == 'pr_pending' and commit_id:
-                # Read-only reconciliation: independently reproduce and verify the
-                # commit and a single matching draft before marking it published.
-                patch = self.inspector.patch(task, patch_digest)
-                work = self.checkout.prepare(task)
-                contents = validate_and_apply(work, task, patch, patch_digest)
-                url = self.github.find_draft(branch)
-                if (url and self.github.verify_commit(branch, task.base_revision, commit_id, contents)
-                        and self.github.verify_draft(branch, task.base_revision, commit_id, url)):
-                    db.execute('UPDATE publications SET phase=?,url=? WHERE job=?', ('published', url, job_id))
-                    db.commit()
-                    return {'status': 'published', 'job_id': job_id, 'patch_sha256': patch_digest, 'url': url}
             return {'status': 'blocked'}
         if self.github.main_head() != task.base_revision:
             return {'status': 'blocked'}

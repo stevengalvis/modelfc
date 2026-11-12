@@ -203,6 +203,44 @@ class PLCalendarTests(unittest.TestCase):
                 with self.assertRaisesRegex(CalendarRejected, 'STATUS_UNSUPPORTED'):
                     self.parse().snapshot()
 
+    def test_active_scoreboards_are_preserved_but_never_final_goals(self):
+        row = self.payload['matches'][0]
+        row['utcDate'] = NOW.isoformat()
+        for status in ['IN_PLAY', 'PAUSED', 'SUSPENDED']:
+            row['status'] = status
+            for goals in [(None, None), (0, 0), (2, 1)]:
+                row['score']['fullTime'] = dict(zip(('home', 'away'), goals))
+                calendar = self.parse()
+                self.assertIsNone(calendar.matches[0].goals)
+                saved = json.loads(calendar.raw_payload)['matches'][0]
+                self.assertEqual(saved['score'], row['score'])
+                with self.assertRaisesRegex(CalendarRejected, 'STATUS_UNSUPPORTED'):
+                    calendar.snapshot()
+            for goals in [(1, None), (None, 1), (-1, 0), (True, 0), ('1', 0), (1.0, 0)]:
+                row['score']['fullTime'] = dict(zip(('home', 'away'), goals))
+                with self.subTest(status=status, goals=goals), self.assertRaises(CalendarRejected):
+                    self.parse()
+
+    def test_next_day_cutoff_is_london_observation_day_and_explicit(self):
+        # UTC is still Oct 16, but collection has entered Oct 17 in London.
+        observed = NOW.replace(day=16, hour=23, minute=30)
+        self.retrieved = observed.isoformat()
+        row = self.payload['matches'][0]
+        row.update(utcDate='2026-10-16T23:00:00Z', status='IN_PLAY')
+        row['score']['fullTime'] = {'home': 1, 'away': 0}
+        options = dict(selected_day=date(2026, 10, 18), as_of=observed)
+        self.assertEqual(self.report(**options)['prior_state'], 'UNRESOLVED')
+        report = self.report(**options, next_day=True)
+        self.assertEqual(report['history_before_exclusive'], '2026-10-17')
+        self.assertEqual(report['prior_state'], 'RESOLVED')
+        row['utcDate'] = '2026-10-16T22:59:59Z'
+        self.assertEqual(self.report(**options, next_day=True)['prior_state'], 'UNRESOLVED')
+        for bad in (None, 1, 'true'):
+            self.assertEqual(self.report(**options, next_day=bad)['validity'], 'INVALID_OR_UNSUPPORTED')
+        for day in (date(2026, 10, 17), date(2026, 10, 19)):
+            self.assertEqual(self.report(selected_day=day, as_of=observed, next_day=True)['validity'],
+                             'INVALID_OR_UNSUPPORTED')
+
     def test_active_status_retrieval_boundaries_and_cli_never_ready(self):
         for status in ['IN_PLAY', 'PAUSED', 'SUSPENDED']:
             for seconds in [-1, 0, 1]:

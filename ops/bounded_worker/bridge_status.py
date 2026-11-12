@@ -6,6 +6,15 @@ from pathlib import Path
 import re
 import sqlite3
 
+from .bridge_guard import safe
+
+# These codes derive only from the trusted terminal receipt, never model text.
+_FAILURES = {
+    'failed': ('worker_or_adapter_failed', 'Ask the operator to review retained attempt evidence before approving another task.'),
+    'timeout': ('time_limit', 'Ask the operator to review the deadline and retained evidence before approving another task.'),
+    'rejected': ('result_rejected', 'Ask the operator to review retained evidence for the rejection before approving another task.'),
+}
+
 
 def post_once(state_dir, thread, github):
     state_dir = Path(state_dir)
@@ -17,6 +26,8 @@ def post_once(state_dir, thread, github):
             return {'status': 'busy'}
         with sqlite3.connect(state_dir / 'receipts.sqlite') as db:
             db.execute('PRAGMA synchronous=FULL')
+            if not safe(db):
+                return {'status': 'blocked'}
             db.execute('CREATE TABLE IF NOT EXISTS status_posts (job TEXT, outcome TEXT, '
                        'phase TEXT NOT NULL, PRIMARY KEY(job,outcome))')
             db.commit()
@@ -45,6 +56,8 @@ def post_once(state_dir, thread, github):
                         or (url is not None and not re.fullmatch(r'https://github\.com/stevengalvis/modelfc/pull/[1-9][0-9]*', url))):
                     return {'status': 'blocked'}
                 status = {'job_id': job, 'outcome': outcome, 'base': obj['base'], 'request_sha256': digest}
+                if outcome in _FAILURES:
+                    status['reason_code'], status['next_step'] = _FAILURES[outcome]
                 if patch:
                     status['patch_sha256'] = patch
                     status['draft_url'] = url

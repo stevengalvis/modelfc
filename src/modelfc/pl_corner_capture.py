@@ -5,6 +5,7 @@ import fcntl
 import hashlib
 import json
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from modelfc.acquisition_planner import utc
 from modelfc.acquisition_storage import private_store, encoded, fingerprint
@@ -60,7 +61,8 @@ def prepare(raw, *, sources=(), enabled=False, **options):
         result['reason'] = 'CALENDAR_EVIDENCE_REJECTED'
         return result
     result.update(observed_at=options['as_of'].isoformat(),
-                  history_before_exclusive=options['selected_day'].isoformat(),
+                  history_before_exclusive=(options['as_of'].astimezone(ZoneInfo('Europe/London')).date()
+                                  if options.get('next_day') is True else options['selected_day']).isoformat(),
                   model=MODEL, implementation_sha256=_implementation(), source_revision=git_commit_sha())
     teams = {t['history_name']: t for t in report['teams']}
     for fixture in report['fixtures']:
@@ -80,7 +82,8 @@ def prepare(raw, *, sources=(), enabled=False, **options):
     if report['state'] != 'INPUTS_ELIGIBLE':
         result['reason'] = 'EMPTY_DAY' if report['state'] == 'EMPTY' else 'WHOLE_DAY_READINESS_BLOCKED'
         return result
-    day, year = options['selected_day'], options['season_year']
+    fixture_day, year = options['selected_day'], options['season_year']
+    day = date.fromisoformat(result['history_before_exclusive'])
     records, _ = validated_sources('E0', sources, before=day, observed_at=options['as_of'], enforce_seasons=True,
                                    validation_scope='GOALS_CORNERS')
     observations = [TeamCornerObservation(r.match_date, r.team, r.opponent, r.venue, r.corners_for, r.corners_against)
@@ -91,7 +94,7 @@ def prepare(raw, *, sources=(), enabled=False, **options):
     for fixture in report['fixtures']:
         try:
             prediction = predict_corner_fixture(observations,
-                UpcomingFixture(day, fixture['home'], fixture['away']), **MODEL)
+                UpcomingFixture(fixture_day, fixture['home'], fixture['away']), **MODEL)
         except (ValueError, ArithmeticError):
             result['skips'].append({'fixture': fixture, 'reasons': ['MODEL_INPUT_REQUIREMENTS_NOT_MET']})
             continue
@@ -106,6 +109,8 @@ def prepare(raw, *, sources=(), enabled=False, **options):
             'sources': report['sources'], 'implementation_sha256': result['implementation_sha256'],
             'model_input_sha256': result['model_input_sha256'],
             'prediction': _json_value(asdict(prediction))}
+        if options.get('next_day') is True:
+            frozen['date_contract'] = 'next-day-prior-observation-day-v1'
         frozen['forecast_sha256'] = fingerprint(encoded(frozen))
         result['forecasts'].append(frozen)
     result['state'] = 'CAPTURED' if not result['skips'] else 'MODEL_REJECTED'

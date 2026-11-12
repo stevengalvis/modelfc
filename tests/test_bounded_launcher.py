@@ -103,6 +103,18 @@ class LauncherTest(unittest.TestCase):
         self.assertEqual(baseline['status'], 'verified')
         self.assertEqual(set(baseline['directories']), {'.agents', '.aws', '.codex'})
 
+    def test_baseline_rejects_replaced_workspace_before_writes(self):
+        from ops.bounded_worker.task import _PreparedBaseline
+        info = self.checkout.stat()
+        baseline = _PreparedBaseline(self.checkout, info.st_uid, info.st_gid, (info.st_dev, info.st_ino + 1))
+        try:
+            with self.assertRaisesRegex(ValueError, 'baseline_workspace_changed'):
+                baseline.prepare()
+            for name in ('.agents', '.aws', '.codex'):
+                self.assertFalse((self.checkout / name).exists())
+        finally:
+            baseline.close()
+
     def test_concurrent_submission(self):
         Worker.gate = threading.Event()
         result = []
@@ -219,3 +231,68 @@ class LauncherTest(unittest.TestCase):
             launcher.submit(self.task, config, _worker_factory=Worker, _backend_factory=Backend)
         self.assertFalse((self.evidence / 'one').exists())
         self.assertEqual(Worker.calls, 0)
+
+
+class StorageLauncherTest(LauncherTest):
+    def test_storage_evidence_and_replacement_block(self):
+        from ops.bounded_worker.storage import StorageConfiguration
+        runtime = Path(self.tmp.name) / 'runtime'
+        runtime.mkdir()
+        storage = StorageConfiguration(self.tmp.name, '/safe/image', str(self.work), str(runtime),
+                                       1, 2, 3, 10000, 100, 100, 1,
+                                       '/home/worker/.codex/auth.json', '/home/worker/.codex/config.toml',
+                                       'synthetic-component')
+        config = replace(self.config, storage=storage)
+        dev = self.work.stat().st_dev
+        identity = {'mount_id': 1, 'device': f'{os.major(dev)}:{os.minor(dev)}', 'image_inode': 2}
+        current = [identity]
+        guard_path = Path(launcher.__file__).with_name('storage_guard.py')
+        real_lstat = Path.lstat
+        def lstat(path):
+            info = real_lstat(path)
+            if path == guard_path:
+                return SimpleNamespace(st_mode=info.st_mode, st_uid=0, st_nlink=1,
+                                       st_dev=info.st_dev, st_ino=info.st_ino,
+                                       st_size=info.st_size, st_mtime_ns=info.st_mtime_ns)
+            return info
+        def prepare(_config, task_id, uid, gid, device):
+            result = runtime / task_id
+            result.mkdir()
+            for name in ('codex', 'tmp', 'var-tmp'):
+                (result / name).mkdir()
+            return result
+        class StorageWorker(Worker):
+            def __init__(self, *_):
+                super().__init__()
+                self.account.pw_dir = '/home/worker'
+        class StorageBackend(Backend):
+            def configure_storage(self, **kwargs):
+                self.storage = kwargs
+            def launch(self):
+                self.storage['revalidate']()
+                return super().launch()
+            def verify_empty(self):
+                self.storage['revalidate']()
+                return True
+        with patch.object(launcher, 'admit', side_effect=lambda _, **kwargs: current[0]), \
+             patch.object(launcher, 'source_identity', return_value={'device': 4, 'inode': 5}), \
+             patch.object(launcher.LinuxStorageReader, 'protected_directory'), \
+             patch.object(launcher, 'prepare_runtime', side_effect=prepare), \
+             patch.object(Path, 'lstat', lstat):
+            launcher.record_storage_admission(self.task, config, self.evidence, identity)
+            result = launcher.submit(self.task, config, _worker_factory=StorageWorker,
+                                     _backend_factory=StorageBackend, _storage_identity=identity)
+            self.assertEqual(result['status'], 'completed')
+            self.assertTrue((self.evidence / 'one' / 'storage.json').is_file())
+            storage_record = self.evidence / 'one' / 'storage.json'
+            original = storage_record.read_text()
+            tampered = json.loads(original)
+            tampered['properties_sha256'] = '0' * 64
+            storage_record.write_text(json.dumps(tampered))
+            self.assertEqual(launcher.inspect('one', config, _worker_factory=StorageWorker)['status'], 'blocked')
+            storage_record.write_text(original)
+            with patch.object(launcher, 'admit', side_effect=[identity, {**identity, 'mount_id': 2}]):
+                self.assertEqual(launcher.inspect('one', config, _worker_factory=StorageWorker)['status'], 'blocked')
+            current[0] = {**identity, 'mount_id': 2}
+            self.assertEqual(launcher.inspect('one', config, _worker_factory=StorageWorker)['status'], 'blocked')
+            self.assertEqual(launcher.inspect('one', self.config, _worker_factory=StorageWorker)['status'], 'blocked')

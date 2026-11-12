@@ -68,7 +68,9 @@ root; neither the API nor `execute` provides caller authentication. The caller o
 provisioning and eventual cleanup; artifacts are written before it can clean up.
 
 The focused backend tests use fake systemd and cgroup responses and do not prove
-actual containment. Before activation, the opt-in
+actual containment or effective CPU enforcement. This source change does not
+bound runtime storage. Before activation, separately review the host's CPU
+controller and effective `cpu.max`; the opt-in
 `tests.test_bounded_systemd_acceptance` test must be separately authorized and run
 in an isolated environment to verify a descendant in a new session, termination,
 and empty-boundary readback. It is skipped by default. No host setup, permissions, deployment or service
@@ -86,7 +88,11 @@ attempt path passed to `execute` and a trusted dedicated non-root UID and GID.
 authority over the system manager, transient services and cgroup v2 readback;
 there is no privilege or process-group fallback. A random, backend-generated
 unit name is fsynced in `containment.json` within the durable reservation before
-launch. The system service runs `/usr/bin/env` and `/usr/bin/setpriv` inside its
+launch. The unit requests a fixed `CPUQuota=100%`, limiting aggregate CPU time
+for its cgroup to the equivalent of one CPU; task input cannot choose this value.
+This is a CPU rate limit, separate from the 180-second service runtime and any
+shorter task deadline. Parent cgroups may impose a lower effective limit. The
+system service runs `/usr/bin/env` and `/usr/bin/setpriv` inside its
 cgroup to clear the environment and supplementary groups and drop privileges
 before executing the adapter's command. It uses a 180-second maximum runtime,
 1 GiB memory, 64 tasks, a five-second stop timeout and control-group killing.
@@ -215,3 +221,9 @@ check or diagnostic publication fails. The summary survives lifecycle event
 truncation; no arguments, exception text, payloads, IDs or output are recorded.
 Diagnostic publication failure makes the worker outcome uncertain and containment
 cleanup still runs. These codes do not explain the historical docs-task failure.
+
+## Private diagnostic preparation
+
+See [LINEAR_STATUS.md](LINEAR_STATUS.md) for the separate offline Linear
+service-status prototype and its live adapter blockers. It does not invoke this
+coding worker or establish host acceptance.
