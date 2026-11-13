@@ -8,7 +8,7 @@ import unittest
 from modelfc.btts_model import history_from_bytes
 from modelfc.history_completeness import CalendarMatch, HistoryCalendar, verify_completeness
 from modelfc.supplemental_history import (augment_sources, make_result, publish_result,
-                                          load_results)
+                                          load_results, SupplementalCsvConflict)
 from modelfc.ledger_storage import LedgerError
 
 
@@ -83,13 +83,53 @@ class SupplementalHistoryTests(unittest.TestCase):
         exact = self.extra[0]
         raw = self.sources[0][1] + (f"E1,{exact.match_date:%d/%m/%Y},{exact.home_team},{exact.away_team},"
             f"{exact.home_goals},{exact.away_goals},D,99,{exact.away_corners}\n").encode()
-        with self.assertRaisesRegex(ValueError, "SUPPLEMENTAL_CSV_CONFLICT"):
+        with self.assertRaisesRegex(SupplementalCsvConflict, "^SUPPLEMENTAL_CSV_CONFLICT$"):
             augment_sources((("E1_2627.csv", raw),), self.extra, self.calendar)
         changed = HistoryCalendar("b"*64, "c"*64, NOW, 2026,
             self.calendar.matches[:-2] + (CalendarMatch(**{**self.calendar.matches[-2].__dict__,
                 "goals": (9, 9)}), self.calendar.matches[-1]))
-        with self.assertRaisesRegex(ValueError, "SUPPLEMENTAL_CALENDAR_CONFLICT"):
+        with self.assertRaisesRegex(ValueError, "^SUPPLEMENTAL_CALENDAR_CONFLICT$") as caught:
             augment_sources(self.sources, self.extra, changed)
+        self.assertNotIsInstance(caught.exception, SupplementalCsvConflict)
+
+    def test_corner_disagreement_with_matching_goals_preserves_original_evidence(self):
+        # Synthetic reproduction of the discrepancy, not historical execution evidence.
+        observed = datetime(2026, 10, 14, 12, tzinfo=timezone.utc)
+        match = CalendarMatch(12345, datetime(2026, 10, 13, 18, 45, tzinfo=timezone.utc),
+            date(2026, 10, 13), 10, "Millwall", "Swansea", "FINISHED", (0, 1))
+        calendar = HistoryCalendar("b" * 64, "c" * 64, observed, 2026, (match,))
+        record = make_result(competition="E1", provider="sportmonks",
+            provider_fixture_id=67890, provider_league_id=9, provider_season_id=27903,
+            kickoff_utc=match.kickoff.isoformat(), match_date=match.day,
+            home_provider_team_id=1, away_provider_team_id=2,
+            home_team=match.home, away_team=match.away, home_goals=0, away_goals=1,
+            home_corners=13, away_corners=2, retrieved_at_utc=observed.isoformat(),
+            response_sha256="a" * 64)
+        archive = self.state / "E1_2627.csv"
+        archive.write_bytes(b"Div,Date,HomeTeam,AwayTeam,FTHG,FTAG,HC,AC\n"
+                            b"E1,13/10/2026,Millwall,Swansea,0,1,13,1\n")
+        publish_result(self.state, record)
+        original = {path: path.read_bytes() for path in self.state.rglob("*") if path.is_file()}
+        hashes = {path: hashlib.sha256(content).hexdigest() for path, content in original.items()}
+        sources = ((archive.name, archive.read_bytes()),)
+        with self.assertRaisesRegex(SupplementalCsvConflict, "^SUPPLEMENTAL_CSV_CONFLICT$"):
+            augment_sources(sources, load_results(self.state), calendar)
+        self.assertEqual(sources, ((archive.name, original[archive]),))
+        self.assertEqual(load_results(self.state), (record,))
+        self.assertEqual(original, {path: path.read_bytes() for path in self.state.rglob("*")
+                                    if path.is_file()})
+        self.assertEqual(hashes, {path: hashlib.sha256(path.read_bytes()).hexdigest()
+                                 for path in original})
+
+    def test_matching_duplicate_preserves_augmented_bytes_and_source_hashes(self):
+        before = tuple((name, raw, hashlib.sha256(raw).hexdigest()) for name, raw in self.sources)
+        expected = augment_sources(self.sources, self.extra, self.calendar)
+        duplicate = result(self.calendar.matches[0])
+        actual = augment_sources(self.sources, (duplicate, *self.extra), self.calendar)
+        self.assertEqual(actual, expected)
+        self.assertEqual(augment_sources(self.sources, (duplicate,), self.calendar), self.sources)
+        self.assertEqual(before, tuple((name, raw, hashlib.sha256(raw).hexdigest())
+                                      for name, raw in self.sources))
 
     def test_immutable_publication_and_conflict(self):
         self.assertTrue(publish_result(self.state, self.extra[0]))

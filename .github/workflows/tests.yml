@@ -31,6 +31,11 @@ jobs:
           "$RUNNER_TEMP/modelfc-locked/bin/python" -m pip check
           "$RUNNER_TEMP/modelfc-locked/bin/python" -B tests/test_deployment_dependencies.py --check-installed
 
+      - name: Run focused release environment acceptance
+        run: |
+          mkdir -m 700 "$RUNNER_TEMP/release-acceptance-tmp"
+          TMPDIR="$RUNNER_TEMP/release-acceptance-tmp" PYTHONPATH=src "$RUNNER_TEMP/modelfc-locked/bin/python" -B -m ops.vps.deployment_acceptance
+
       - name: Install optional private MCP test graph
         run: |
           "$RUNNER_TEMP/modelfc-locked/bin/python" -m pip install --require-hashes --only-binary=:all: --no-cache-dir -r requirements-mcp.lock
@@ -73,6 +78,9 @@ jobs:
           if not result.wasSuccessful() or result.skipped or result.testsRun != 6:
               raise SystemExit("cross-user ACL acceptance requires all six tests to pass without skips")
           ACL_PY
+
+      - name: Verify real two-target protected workspace layout
+        run: sudo -n env PYTHONPATH=src "$RUNNER_TEMP/modelfc-locked/bin/python" -B -m tests.test_linear_workspace_layout --check-root
 
       - name: Compile Python sources and tests
         run: '"$RUNNER_TEMP/modelfc-locked/bin/python" -m compileall -q src tests'
@@ -192,6 +200,47 @@ jobs:
               return result
 
           raw_path, sha, stage, original_status = sys.argv[1:]
+          def valid_public_failure(report):
+              value = report.get("failure_diagnostics")
+              if value is None:
+                  return "failure_diagnostics" not in report
+              def number(n, limit):
+                  return type(n) is int and 0 <= n <= limit
+              def name(n):
+                  return (type(n) is str and len(n) <= 160 and re.fullmatch(
+                      r"(?:tests\.)?test_[A-Za-z0-9_]+\.[A-Za-z_][A-Za-z0-9_]*\.test[A-Za-z0-9_]*", n) is not None)
+              fields = {"classification", "count_known", "tests_run", "failures", "errors",
+                        "test_ids", "truncated", "last_test_id"}
+              if (report["status"] != "FAIL" or report["reason"] != "TESTS_FAILED"
+                      or report["tests_status"] != "FAIL" or report["promotion_status"] != "NOT_ATTEMPTED"
+                      or type(value) is not dict or set(value) not in (fields, fields | {"progress"})
+                      or value["classification"] not in {"TIMEOUT", "CAPTURE_ERROR", "PROCESS_ERROR", "TEST_FAILURE", "MISSING_SUMMARY"}
+                      or type(value["count_known"]) is not bool or type(value["truncated"]) is not bool
+                      or any(n is not None and not number(n, 999999) for n in (value["failures"], value["errors"]))
+                      or (value["last_test_id"] is not None and not name(value["last_test_id"]))
+                      or type(value["test_ids"]) is not list or len(value["test_ids"]) > 4
+                      or not all(name(n) for n in value["test_ids"])
+                      or len(set(value["test_ids"])) != len(value["test_ids"])):
+                  return False
+              if value["count_known"]:
+                  if not number(value["tests_run"], 1000000) or value["tests_run"] != report["tests_run"]:
+                      return False
+              elif value["tests_run"] is not None:
+                  return False
+              if "progress" in value:
+                  progress = value["progress"]
+                  if (type(progress) is not dict or set(progress) != {
+                          "observed_completed", "complete", "last_test_id", "last_progress_us", "slowest"}
+                          or not number(progress["observed_completed"], 10000)
+                          or type(progress["complete"]) is not bool
+                          or not number(progress["last_progress_us"], 630000000)
+                          or (progress["last_test_id"] is not None and not name(progress["last_test_id"]))
+                          or type(progress["slowest"]) is not list or len(progress["slowest"]) > 4
+                          or not all(type(item) is list and len(item) == 2 and name(item[0])
+                                     and number(item[1], 630000000) for item in progress["slowest"])):
+                      return False
+              return len(json.dumps(value).encode("ascii")) <= 3000
+
           original_status = int(original_status)
           reason = stage
           try:
@@ -212,7 +261,7 @@ jobs:
                          "FETCH_FAILED", "SHA_NOT_ON_MAIN", "ACTIVE_SHA_NOT_ON_MAIN",
                          "DEPENDENCY_SYNC_FAILED", "TESTS_FAILED", "FINAL_SHA_MISMATCH",
                          "PROMOTION_FAILED", "INTERNAL_ERROR", "STORAGE_LIMIT_FAILED"}
-              if (type(value) is not dict or set(value) != fields or value["status"] not in {"PASS", "FAIL", "SUPERSEDED"}
+              if (type(value) is not dict or set(value) not in (fields, fields | {"failure_diagnostics"}) or value["status"] not in {"PASS", "FAIL", "SUPERSEDED"}
                   or value["requested_sha"] != sys.argv[2] or value["reason"] not in reasons
                   or value["promotion_status"] not in {"NOT_ATTEMPTED", "PROMOTED",
                                                       "ALREADY_CURRENT", "SUPERSEDED"}
@@ -256,6 +305,8 @@ jobs:
               if (value["status"] == "PASS" and value["reason"] not in {"OK", "ALREADY_CURRENT"}
                   or value["status"] == "FAIL" and value["reason"] in {"OK", "ALREADY_CURRENT", "SUPERSEDED"}
                   or original_status and value["status"] != "FAIL"):
+                  raise ValueError
+              if not valid_public_failure(value):
                   raise ValueError
           except (OSError, ValueError, KeyError, TypeError, RecursionError):
               value = dict(status="FAIL", requested_sha=sha if re.fullmatch("[0-9a-f]{40}", sha) else None,

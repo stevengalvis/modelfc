@@ -78,8 +78,21 @@ credentials, input paths or provider exception text):
   London day or before the explicit observation instant are unresolved, including
   earlier kickoffs on the selected day. Postponed/cancelled are terminal for this
   calendar assessment only; no history/results completeness is asserted.
-  IN_PLAY/PAUSED/SUSPENDED require kickoff at or before recorded retrieval and
-  always remain unresolved, including at the exact kickoff/retrieval boundary.
+  By default IN_PLAY/PAUSED/SUSPENDED remain unresolved, including at the exact
+  kickoff/retrieval boundary. Explicit `next_day=True` readiness requires the
+  selected day to be tomorrow in London and checks unresolved fixtures strictly
+  before the observation's London day, matching the existing model history
+  cutoff. Collection-day fixtures need not finish: their results are excluded
+  from both history reconciliation and model inputs. The report exposes this
+  cutoff as `history_before_exclusive`. The CLI retains its same-day policy.
+  Active fixtures still require kickoff at or before recorded retrieval. Their
+  score may be two nulls or two nonnegative integers; live scores are preserved
+  in the original payload, never represented as final historical goals. Mixed
+  null/numeric or otherwise malformed scores remain rejected, as do unsupported
+  active-status snapshots. Only FINISHED fixtures supply final goals.
+
+This readiness correction does not change the acquisition window (21–27 hours),
+freshness, full-calendar coverage, history receipts, mappings or provider budgets.
 
 Exit zero means valid, fresh evidence with no unresolved prior fixtures. It does
 not mean picks, live authorization or history readiness. Missing/invalid/stale/

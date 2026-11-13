@@ -1,0 +1,42 @@
+[Unit]
+Description=One finite Model FC EPL identity and metadata preparation
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=modelfc-runtime
+Group=modelfc-runtime
+# Operator replaces this with the accepted physical release path.
+WorkingDirectory=/srv/modelfc/releases/REQUIRES_APPROVED_PHYSICAL_RELEASE
+ExecStart=/usr/bin/python3 -I -B /usr/local/libexec/modelfc-prospective-launch.py --epl-prepare
+LoadCredential=oddspapi.key:/etc/modelfc/credentials/oddspapi.key
+UMask=0077
+StandardInput=null
+UnsetEnvironment=GITHUB_TOKEN GH_TOKEN SSH_AUTH_SOCK PYTHONPATH PYTHONHOME LD_PRELOAD LD_LIBRARY_PATH LD_AUDIT ODDSPAPI_API_KEY
+TimeoutStartSec=180s
+Restart=no
+SendSIGKILL=yes
+TimeoutStopSec=30
+KillMode=control-group
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ReadOnlyPaths=/srv/modelfc /etc/modelfc /var/lib/modelfc/history
+ReadWritePaths=/var/lib/modelfc/state
+# The authoritative private store must already lie within this writable boundary.
+# Otherwise review an exact-path adjustment; never substitute a new store.
+InaccessiblePaths=-/var/lib/modelfc-deploy -/run/modelfc-acquisition
+InaccessiblePaths=-/etc/modelfc-validator -/var/lib/modelfc-validator
+InaccessiblePaths=-/opt/modelfc-deploy -/opt/modelfc-validator
+InaccessiblePaths=-/etc/modelfc/credentials
+InaccessiblePaths=-/root/modelfc-state -/root
+InaccessiblePaths=-/var/lib/modelfc/history/data/corner-refresh/backups
+InaccessiblePaths=-/var/lib/modelfc/history/data/corner-refresh/status.json
+InaccessiblePaths=-/var/lib/modelfc/history/data/corner-refresh/refresh-run.lock
+CapabilityBoundingSet=
+RestrictSUIDSGID=yes
+
+# No Install target or timer. Host installation and one start require authorization.

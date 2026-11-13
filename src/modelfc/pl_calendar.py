@@ -176,7 +176,10 @@ def parse_calendar(raw: bytes, *, contract_raw: bytes, reviewed_contract_sha256:
             if status == "FINISHED":
                 _require(kickoff < retrieved and all(type(n) is int and n >= 0 for n in goals))
             else:
-                _require(goals == (None, None))
+                # Active scoreboards are not final results. Keep the original
+                # score in raw_payload, but never expose it as historical goals.
+                _require(goals == (None, None) or (status in _ACTIVE and
+                         all(type(n) is int and n >= 0 for n in goals)))
                 goals = None
             ids.add(identity); pairs.add(pair)
             matches.append(CalendarMatch(identity, kickoff, day, matchday, *sides, status, goals))

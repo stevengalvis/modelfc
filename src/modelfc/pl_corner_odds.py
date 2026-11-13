@@ -1,6 +1,7 @@
 """Opt-in, pinned EPL corner replay. Team totals only; no publication or refit."""
 from dataclasses import asdict
 from datetime import date, timedelta
+from functools import lru_cache
 import json
 import math
 from pathlib import Path
@@ -32,7 +33,7 @@ def _forecast(raw, pin):
     Self-consistent hashes alone cannot authenticate supplied model evidence.
     """
     f = _pinned(raw, pin, 200_000)
-    require(isinstance(f, dict) and set(f) == {'identity', 'freeze_as_of',
+    require(isinstance(f, dict) and set(f) - {'date_contract'} == {'identity', 'freeze_as_of',
         'pre_kickoff_at_observation', 'model', 'history_before_exclusive', 'calendar',
         'sources', 'implementation_sha256', 'model_input_sha256', 'prediction', 'forecast_sha256'},
         'CORNER_ARTIFACT_REJECTED')
@@ -73,7 +74,12 @@ def _forecast(raw, pin):
         require(type(mean) in (int, float) and math.isfinite(mean) and mean >= 0,
                 'CORNER_RATE_REJECTED')
         names.append(name)
-    require(names[0] != names[1] and p['fixture']['match_date'] == cutoff.isoformat(),
+    fixture_day = cutoff
+    if 'date_contract' in f:
+        require(f['date_contract'] == 'next-day-prior-observation-day-v1', 'CORNER_DATE_CONTRACT_REJECTED')
+        fixture_day = cutoff + timedelta(days=1)
+        require(kickoff.astimezone(ZoneInfo('Europe/London')).date() == fixture_day, 'CORNER_FIXTURE_REJECTED')
+    require(names[0] != names[1] and p['fixture']['match_date'] == fixture_day.isoformat(),
             'CORNER_FIXTURE_REJECTED')
     size = p['dispersion_size']
     require(type(size) in (int, float) and math.isfinite(size) and size > 0, 'CORNER_DISPERSION_REJECTED')
@@ -87,6 +93,16 @@ def implementation_digest():
         'oddspapi_market_inventory.py', 'providers/oddspapi.py', 'corner_forecasts.py',
         'corners.py', 'corner_markets.py', 'btts_market_data.py', 'pl_corner_capture.py',
         'history_coverage.py', 'goal_totals.py', 'acquisition_storage.py', 'acquisition_planner.py')}))
+
+
+@lru_cache(maxsize=1)
+def _saved_snapshot(payload, metadata, retrieved):
+    """Reuse only immutable normalization of exact bounded bytes and UTC time.
+
+    Keep one successful snapshot, not forecasts, file reads, approval decisions or
+    time-sensitive consumption results. All those checks still run on every call.
+    """
+    return snapshot_from_bytes(payload, metadata, retrieved_at=retrieved)
 
 
 def consume(forecast_raw, saved, *, forecast_sha256, binding_raw, binding_sha256,
@@ -115,7 +131,7 @@ def consume(forecast_raw, saved, *, forecast_sha256, binding_raw, binding_sha256
                 and observed-retrieved <= timedelta(minutes=15), 'CORNER_QUOTE_CHRONOLOGY')
         require(fingerprint(saved.payload) == saved.payload_sha256
                 and fingerprint(saved.metadata) == saved.metadata_sha256, 'CORNER_QUOTE_PIN_REJECTED')
-        snapshot = snapshot_from_bytes(saved.payload, saved.metadata, retrieved_at=retrieved)
+        snapshot = _saved_snapshot(saved.payload, saved.metadata, retrieved)
         candidates = [v for v in snapshot.fixtures if v.identity.competition == 'E0'
             and v.identity.tournament_id == 17 and v.identity.fixture_id == binding['quote_fixture_id']
             and v.identity.kickoff_utc == kickoff and (v.home_team, v.away_team) == tuple(names)]

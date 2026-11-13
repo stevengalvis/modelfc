@@ -162,8 +162,8 @@ def refresh_league(config: CornerDataConfig, league: str, today: date, state: Pa
                    *, validator_read_user: str | None = None, public_history_read_user: str | None = None, retain_result_evidence: bool = False) -> dict:
     season = current_season(today)
     target = config.directory / f"{league}_{season}.csv"
-    # Publisher's England page links E1 on the bare HTTPS host (ZEN-38).
-    host = "football-data.co.uk" if league == "E1" else "www.football-data.co.uk"
+    # E1 published link (ZEN-38); E0 direct captures verified 2026-10-23 (ZEN-55).
+    host = "football-data.co.uk" if league in ("E1", "E0") else "www.football-data.co.uk"
     url = f"https://{host}/mmz4281/{season}/{league}.csv"
     acquisition = {} if retain_result_evidence and league == "E1" else None
     try:

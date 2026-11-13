@@ -195,3 +195,30 @@ Missing dated evidence and an empty report now also fail closed as UNKNOWN.
 The production reader accepts a null migrated attempt time as UNVERIFIED.
 This reporting change does not establish timer activation, source repair,
 E0 pipeline coverage or genuine post-merge production receipt verification.
+
+### E0 direct URL correction (ZEN-55, 2026-11-03)
+
+The E0 current-season URL uses `https://football-data.co.uk/mmz4281/<season>/E0.csv`,
+matching the direct bare-host E0 acquisitions recorded in
+[the October 23 retained-evidence report](https://github.com/stevengalvis/modelfc/pull/199#issuecomment-6368429367).
+That report records five HTTP 200 acquisitions, including 2627/E0.csv, without
+redirects. E1 keeps its existing bare-host URL; other leagues retain the existing
+`www` host. This is a source correction, not a general redirect policy change:
+redirects still fail after one GET, without retries or fallback URLs.
+
+The supplied November 2 installed-release audit reported an E0 HTTP 302 from the
+`www` URL. Its Location header is unavailable, so the redirect destination and
+cause are not established. The October 23 result does not prove today's endpoint
+availability. Offline regression tests use synthetic responses; installed recovery
+requires separately authorized observation of an ordinary successful refresh.
+
+Provenance is a separate gap: `--retain-result-evidence` remains E1-only, and
+`refresh_result_evidence.validate` accepts only E1 filenames/exact source pairs.
+E0 successful summaries include source URL and file hash, but do not retain the
+same immutable HTTP request/completion/status/header/original-byte receipt.
+Failure summaries record the HTTP error text, not its Location header. Daily
+attempt receipts, when enabled, establish attempt accounting, not equivalent E0
+acquisition provenance. Do not infer acquisition time from file mtime, manufacture
+new receipts for old files, or reuse October 23 receipts for later refreshes.
+Extending E0 provenance needs its own reviewed source contract and consumer wiring;
+this URL correction does not expand settlement or model qualification.
