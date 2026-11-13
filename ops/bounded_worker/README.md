@@ -123,6 +123,21 @@ and maximum task limits. Never put credentials in a task or publish private
 attempt records. The API returns only a status and, for a finished attempt, the
 patch digest; the patch and detailed results remain private evidence.
 
+### Supervised-use checklist
+
+- Confirm separate authorization, the reviewed revision, protected operator
+  configuration, containment acceptance and a quiescent dedicated account.
+- Prepare a fresh checkout at the exact base and a durable private evidence
+  path; submit one bounded task with an explicit file allowlist.
+- Independently verify containment cleanup before inspecting the result.
+  Preserve the checkout and evidence if cleanup or the outcome is uncertain;
+  do not retry automatically.
+- Review and independently revalidate any patch before publication.
+
+One real README trial passed; see [trial D evidence](https://github.com/stevengalvis/modelfc/pull/234#issuecomment-6566494718).
+Unattended intake, publication and crash recovery remain incomplete. This evidence
+does not establish autonomous operation.
+
 Before submission an operator must prepare an independent, clean standalone Git
 checkout at `<workspace_root>/<task_id>`, owned by the dedicated worker and mode
 0700. The workspace root must be supervisor-owned mode 0711, so the worker can
