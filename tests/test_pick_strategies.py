@@ -2,6 +2,8 @@
 from copy import deepcopy
 from datetime import timedelta
 import json
+import os
+import time
 import unittest
 from unittest.mock import patch
 
@@ -199,3 +201,70 @@ class BttsStrategyTests(unittest.TestCase):
         self.assertEqual(first['summary']['picks'],5); self.assertEqual(last['summary']['picks'],1)
         self.assertEqual(first['next_offset'],5); self.assertIsNone(last['next_offset'])
         self.assertFalse({r['publication_id'] for r in first['publications']} & {r['publication_id'] for r in last['publications']})
+
+    def test_growing_history_pages_cover_filtered_publications(self):
+        from fastapi.testclient import TestClient
+        from modelfc.corner_api import create_app
+        from modelfc.btts_market_data import utc
+        from modelfc.btts_model import freeze_btts_forecast
+        from modelfc.btts_research import record_btts_research
+        from tests.test_btts_research import history, observation
+
+        client = TestClient(create_app(state_dir=self.fx.state))
+        started = time.perf_counter()
+        for i in range(100):
+            fixture = self.fx.forecast.fixture.model_copy(update={
+                'provider_fixture_id': f'fixture-{i}',
+                'kickoff_utc': utc(published._time(self.fx.forecast.fixture.kickoff_utc)
+                                   + timedelta(days=i)),
+            })
+            forecast = freeze_btts_forecast(
+                fixture, history(), frozen_at=published._time(self.fx.forecast.frozen_at_utc))
+            original = observation()
+            observed = original.model_copy(update={'fixture': fixture, 'selections': tuple(
+                selection.model_copy(update={'provider_fixture_id': fixture.provider_fixture_id})
+                for selection in original.selections)})
+            record_btts_research(self.fx.state, forecast, observed)
+            size = i + 1
+            if size not in (10, 50, 100):
+                continue
+            with self.subTest(publications=size):
+                with _lock(self.fx.state):
+                    strategies.publish_locked(self.fx.state)
+                records = published._records(self.fx.state, directory_name=strategies.DIRECTORY)
+                expected = sorted((r for r in records if r['strategy'] == 'best_value'
+                                   and r['offer']['market_type'] == 'BTTS'),
+                                  key=lambda r: (published._time(r['published_at_utc']),
+                                                 r['publication_id']), reverse=True)
+                expected_ids = [r['publication_id'] for r in expected]
+                self.assertEqual(len(expected_ids), size)
+                before = {p: p.read_bytes() for p in self.fx.state.rglob('*') if p.is_file()}
+                all_ids = []
+                totals = None
+                limit = 5
+                for offset in range(0, size, limit):
+                    read_started = time.perf_counter()
+                    response = client.get('/api/v1/prospective/performance', params={
+                        'view': 'strategies', 'scope': 'history', 'market': 'BTTS',
+                        'limit': limit, 'offset': offset})
+                    read_seconds = time.perf_counter() - read_started
+                    self.assertEqual(response.status_code, 200, response.text)
+                    if os.environ.get('STRATEGY_HISTORY_MEASURE') == '1' and offset in (0, (size // (2 * limit)) * limit, size - limit):
+                        print(f'history size={size} offset={offset} bytes={len(response.content)} read_seconds={read_seconds:.6f}', flush=True)
+                    page = response.json()
+                    ids = [row['publication_id'] for row in page['publications']]
+                    self.assertLessEqual(len(ids), limit)
+                    self.assertEqual(ids, expected_ids[offset:offset + limit])
+                    self.assertEqual(page['total'], size)
+                    self.assertEqual(page['totals']['picks'], size)
+                    if totals is None:
+                        totals = (page['totals'], page['market_totals'], page['total_profit_dollars'])
+                    self.assertEqual((page['totals'], page['market_totals'],
+                                      page['total_profit_dollars']), totals)
+                    self.assertEqual(page['next_offset'], offset + limit if offset + limit < size else None)
+                    all_ids.extend(ids)
+                self.assertEqual(all_ids, expected_ids)
+                self.assertEqual(len(set(all_ids)), size)
+                self.assertEqual(before, {p: p.read_bytes() for p in self.fx.state.rglob('*') if p.is_file()})
+                if os.environ.get('STRATEGY_HISTORY_MEASURE') == '1':
+                    print(f'history size={size} cumulative_test_seconds={time.perf_counter() - started:.6f}', flush=True)
