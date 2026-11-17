@@ -11,6 +11,7 @@ import json
 from pathlib import Path
 import subprocess
 import tarfile
+import urllib.parse
 import urllib.request
 
 BASE = Path(__file__).resolve().parents[1]
@@ -24,7 +25,9 @@ def prepare(cache, output, download=False):
     for row in proof['packages']:
         package = cache/(row['name']+'.deb')
         if not package.exists() and download:
-            with urllib.request.urlopen(row['url'], timeout=60) as response:
+            path = urllib.parse.urlsplit(row['url']).path.removeprefix('/ubuntu/')
+            url = 'https://snapshot.ubuntu.com/ubuntu/20261030T000000Z/' + path
+            with urllib.request.urlopen(url, timeout=60) as response:
                 data = response.read(row['bytes']+1)
             if len(data) != row['bytes'] or hashlib.sha256(data).hexdigest() != row['sha256']:
                 raise ValueError('ARCHIVE_HASH')
