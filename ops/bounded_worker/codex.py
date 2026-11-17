@@ -37,9 +37,28 @@ def _tool_status(item):
 
 
 def _stderr_code(data):
-    # Classification is deliberately lossy and does not infer a helper identity.
-    data = data.lower()
-    if b'failed to spawn' in data and b'no such file or directory' in data:
+    """Classify untrusted stderr without retaining its contents.
+
+    A guard-shaped line is a *hint*, not proof of which process emitted it.
+    Only an entire, exact line qualifies; other stderr remains generic.
+    """
+    stages = {b'arguments', b'expectation', b'descriptors', b'mountinfo',
+              b'mounts', b'cwd', b'exec'}
+    if data.startswith(b'storage_guard:') and data.endswith(b'\n') and data.count(b'\n') == 1:
+        detail = data[len(b'storage_guard:'):-1]
+        stage = detail.split(b':', 1)[0]
+        if stage in stages and (detail == stage or
+                (stage == b'mounts' and detail[len(stage):] in {
+                    b':invalid_guard_expectation', b':unexpected_mount_topology',
+                    b':host_root_not_readonly', b':home_not_readonly',
+                    b':invalid_bounded_identity', b':duplicate_mount_destination',
+                    b':bounded_mount_mismatch', b':invalid_shared_memory_mount',
+                    b':invalid_source_identity', b':readonly_source_mismatch',
+                    b':device_mount_not_readonly', b':unprotected_device_directory',
+                    b':unexpected_nested_mount', b':unexpected_writable_mount'})):
+            return 'guard_hint_' + stage.decode('ascii')
+    lowered = data.lower()
+    if b'failed to spawn' in lowered and b'no such file or directory' in lowered:
         return 'spawn_failed'
     return 'stderr_observed'
 
