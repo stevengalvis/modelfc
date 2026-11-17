@@ -192,7 +192,10 @@ class _Boundary:
         allowed = {'turn_started', 'turn_completed', 'turn_failed', 'turn_unknown',
                    'tool_started', 'tool_completed',
                    'spawn_failed', 'stderr_observed', 'protocol_failed',
-                   'adapter_failed', 'deadline'}
+                   'adapter_failed', 'deadline',
+                   'guard_hint_arguments', 'guard_hint_expectation',
+                   'guard_hint_descriptors', 'guard_hint_mountinfo',
+                   'guard_hint_mounts', 'guard_hint_cwd', 'guard_hint_exec'}
         if event not in allowed:
             raise ValueError('invalid_diagnostic_event')
         entry = event
