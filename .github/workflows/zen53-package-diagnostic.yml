@@ -1,0 +1,34 @@
+name: ZEN53 package diagnostic
+on:
+  pull_request:
+    paths:
+      - .github/workflows/zen53-package-diagnostic.yml
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check pinned archives and historical snapshot
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, urllib.error, urllib.parse, urllib.request
+          from pathlib import Path
+          proof = json.loads(Path('docs/zen53/rotation-decoupling/stage/PYTHON_CLOSURE_PROVENANCE.json').read_text())
+          for row in proof['packages']:
+              path = urllib.parse.urlsplit(row['url']).path.removeprefix('/ubuntu/')
+              urls = [('original', row['url']), ('snapshot', 'https://snapshot.ubuntu.com/ubuntu/20261030T000000Z/' + path)]
+              for label, url in urls:
+                  try:
+                      with urllib.request.urlopen(url, timeout=20) as response:
+                          data = response.read(row['bytes'] + 1)
+                          print(row['name'], label, 'HTTP', response.status, 'bytes', len(data),
+                                'length_match', len(data) == row['bytes'],
+                                'sha256_match', hashlib.sha256(data).hexdigest() == row['sha256'], flush=True)
+                  except urllib.error.HTTPError as error:
+                      print(row['name'], label, 'HTTP', error.code, flush=True)
+                  except Exception as error:
+                      print(row['name'], label, type(error).__name__, flush=True)
+          PY
