@@ -88,7 +88,14 @@ class BoundedWorkerTest(unittest.TestCase):
         raw = b'failed to spawn secret-helper: no such file or directory TOKEN=private'
         self.assertEqual(_stderr_code(raw), 'spawn_failed')
         self.assertEqual(_stderr_code(b'unrelated private diagnostic'), 'stderr_observed')
-        self.assertEqual(_stderr_code(b'storage_guard:mounts:unexpected_writable_mount\n'), 'stderr_observed')
+        # A guard-shaped stderr line is still untrusted, never an authenticated cause.
+        self.assertEqual(_stderr_code(b'storage_guard:mounts:unexpected_writable_mount\\n'), 'guard_hint_mounts')
+        self.assertEqual(_stderr_code(b'storage_guard:cwd\\n'), 'guard_hint_cwd')
+        self.assertEqual(_stderr_code(b'storage_guard:descriptors\\n'), 'guard_hint_descriptors')
+        self.assertEqual(_stderr_code(b'storage_guard:mounts:PRIVATE_REASON\\n'), 'stderr_observed')
+        self.assertEqual(_stderr_code(b'prefix storage_guard:cwd\\n'), 'stderr_observed')
+        self.assertEqual(_stderr_code(b'storage_guard:cwd\\nPRIVATE_PAYLOAD'), 'stderr_observed')
+        self.assertEqual(_stderr_code(b'storage_guard:cwd'), 'stderr_observed')
         self.assertNotIn('secret', _stderr_code(raw))
 
     def test_directory_changes_are_out_of_scope(self):
