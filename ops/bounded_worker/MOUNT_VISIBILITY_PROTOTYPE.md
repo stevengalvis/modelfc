@@ -25,8 +25,7 @@ adds explicit recursive read-only self-binds for `/dev`, `/run`, `/sys`, and
 `/sys/fs/cgroup`, while retaining the existing explicit writable API and bounded
 storage exceptions. The explicit cgroup bind addresses the observed descendant;
 the guard must still check every effective descendant. Prior self-binds produced
-stacks under an older guard; the standalone guard candidate selects an effective mount,
-but the combined configuration has not been tested. Systemd can skip or fail
+stacked mounts under an older guard. The combined configuration remains untested. Systemd can skip or fail
 submount remounts, so a requested read-only bind is not evidence of an effective
 read-only tree. Read-only `/run` and API mounts can affect dependencies and do
 not themselves block UNIX socket or device I/O.
