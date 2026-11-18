@@ -16,8 +16,8 @@ no retries or fallback models. Results distinguish completed text, refusal,
 timeout and failure. Unsupported tool calls and nonterminal/malformed responses
 fail closed. Raw exception strings and reasoning are not returned.
 
-`ops/bounded_worker/responses_prototype.py` and
-`tests/test_responses_prototype.py` are new. The included task module and Ruff
+The historical `ops/bounded_worker/responses_prototype.py` and its dedicated
+test have been retired from the current tree. The included task module and Ruff
 configuration are unmodified copies from the base revision so offline tests can
 run without modifying the shared repository. `candidate.patch` contains only
 those two new source/test files, not the copied base files.

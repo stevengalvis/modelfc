@@ -9,8 +9,8 @@ not installation, activation, an API request or a general-purpose coding worker.
 `ops/bounded_worker/responses_usage_pilot/` preserves the reviewed private
 Responses pilot as repository source. Its one synthetic task asks Luna for a
 token-usage summary utility, then validates the generated source in the existing
-constrained sandbox. It does not replace `responses_prototype.py`, wire the
-supervisor, connect Linear dispatch, add arbitrary tasks or enable background
+constrained sandbox. It does not wire the supervisor, connect Linear dispatch,
+add arbitrary tasks or enable background
 work. The separate Agents API work remains separate.
 
 The original fresh Responses call returned HTTP 200 with model-reported usage of
