@@ -13,9 +13,12 @@ from .task import _durable_write
 class SubscriptionPodman:
     backend = 'podman-subscription-v1'
 
-    def __init__(self, evidence, uid, gid, image):
+    def __init__(self, evidence, uid, gid, image, timeout_seconds):
         if uid <= 0 or gid <= 0 or not re.fullmatch(r'sha256:[0-9a-f]{64}', image):
             raise ValueError('invalid_subscription_podman_configuration')
+        if type(timeout_seconds) is not int or timeout_seconds < 1:
+            raise ValueError('invalid_subscription_task_timeout')
+        self.timeout_seconds = timeout_seconds
         self.evidence = Path(evidence)
         self.uid, self.gid, self.image = uid, gid, image
         self.unit = 'modelfc-subscription-' + secrets.token_hex(16)
@@ -53,7 +56,7 @@ class SubscriptionPodman:
                 '--read-only', '--read-only-tmpfs=false', '--userns=keep-id',
                 '--user', f'{user}:{group}', '--cap-drop=all', '--security-opt=no-new-privileges',
                 '--network=slirp4netns:allow_host_loopback=false', '--memory=768m',
-                '--memory-swap=768m', '--cpus=0.5', '--pids-limit=64', '--timeout=180',
+                '--memory-swap=768m', '--cpus=0.5', '--pids-limit=64', f'--timeout={self.timeout_seconds + 30}',
                 '--restart=no', '--log-driver=none', '--image-volume=ignore', '--unsetenv-all',
                 '--http-proxy=false', '--no-healthcheck', '--workdir', str(work),
                 '--tmpfs', '/tmp:rw,nosuid,nodev,size=64m',

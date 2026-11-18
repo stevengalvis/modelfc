@@ -83,8 +83,10 @@ def _roots(config, worker):
             raise ValueError('bounded_subscription_workspace_required')
     if type(config.prepared_baseline) is not bool:
         raise ValueError('invalid_baseline_configuration')
-    for value, maximum, minimum in ((config.timeout_seconds, 180, 1),
-                                    (config.output_bytes, 262144, 1024),
+    if (type(config.timeout_seconds) is not int or config.timeout_seconds < 1
+            or (config.subscription_image is None and config.timeout_seconds > 180)):
+        raise ValueError('invalid_limits')
+    for value, maximum, minimum in ((config.output_bytes, 262144, 1024),
                                     (config.diff_bytes, 65536, 1)):
         if type(value) is not int or not minimum <= value <= maximum:
             raise ValueError('invalid_limits')
@@ -348,7 +350,7 @@ def submit(task, config, *, _worker_factory=Codex, _backend_factory=SystemdConta
         else:
             from .podman_subscription import SubscriptionPodman
             backend = SubscriptionPodman(attempt, worker.account.pw_uid, worker.account.pw_gid,
-                                         config.subscription_image)
+                                         config.subscription_image, task.timeout_seconds)
         expected_workspace = None
         if storage_identity is not None:
             expected_workspace = _configure_storage(backend, config, task, work, directory, worker, storage_identity)

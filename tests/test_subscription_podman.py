@@ -16,7 +16,7 @@ class SubscriptionPodmanTests(unittest.TestCase):
         self.uid = os.getuid() or 1000
         self.gid = os.getgid() or 1000
         with patch('pwd.getpwuid', return_value=Mock(pw_dir=str(self.root))):
-            self.backend = SubscriptionPodman(self.root, self.uid, self.gid, 'sha256:' + 'a' * 64)
+            self.backend = SubscriptionPodman(self.root, self.uid, self.gid, 'sha256:' + 'a' * 64, 1800)
 
     def test_launch_requires_bound_attempt_and_cannot_repeat(self):
         kwargs = dict(cwd=self.root, env={}, user=self.uid, group=self.gid, extra_groups=[],
@@ -70,6 +70,7 @@ class SubscriptionPodmanTests(unittest.TestCase):
                     extra_groups=[], stdin=-1, stdout=-1, stderr=-1, start_new_session=True, bufsize=0)
         self.assertIs(result, worker)
         args = backend._call.call_args_list[0].args
+        self.assertIn('--timeout=1830', args)
         self.assertIn('--pull=never', args)
         self.assertIn('--read-only', args)
         self.assertIn(backend.image, args)
@@ -79,4 +80,4 @@ class SubscriptionPodmanTests(unittest.TestCase):
     def test_root_or_mutable_image_ref_rejected(self):
         for uid, image in [(0, 'sha256:' + 'a' * 64), (1000, 'worker:latest')]:
             with self.assertRaises(ValueError):
-                SubscriptionPodman(self.root, uid, self.gid, image)
+                SubscriptionPodman(self.root, uid, self.gid, image, 1800)

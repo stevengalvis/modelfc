@@ -34,7 +34,7 @@ class Task:
                 or type(self.allowed_paths) is not tuple
                 or not 1 <= len(self.allowed_paths) <= 32
                 or len(set(self.allowed_paths)) != len(self.allowed_paths)
-                or type(self.timeout_seconds) is not int or not 1 <= self.timeout_seconds <= 180
+                or type(self.timeout_seconds) is not int or self.timeout_seconds < 1
                 or type(self.output_bytes) is not int or not 1024 <= self.output_bytes <= 262144
                 or type(self.diff_bytes) is not int or not 1 <= self.diff_bytes <= 65536):
             raise ValueError('invalid_task')
