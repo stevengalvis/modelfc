@@ -20,7 +20,9 @@ def settings(path):
     required = {'version', 'enabled', 'channel_policy', 'runtime', 'mirror', 'username',
                 'executable', 'executable_sha256', 'token_file', 'members', 'audience', 'existing_roots'}
     if (type(value) is not dict or set(value) not in (required, required | {'storage'}, required | {'artifact_policy'}, required | {'storage','artifact_policy'}, required | {'api_settings'},
-            required | {'subscription_image'}, required | {'subscription_image', 'artifact_policy'})
+            required | {'subscription_image'}, required | {'subscription_image', 'artifact_policy'},
+            required | {'subscription_image', 'subscription_store'},
+            required | {'subscription_image', 'subscription_store', 'artifact_policy'})
             or type(value['version']) is not int or value['version'] != 1 or value['enabled'] is not True
             or type(value['channel_policy']) is not str or type(value['runtime']) is not dict):
         raise ValueError('invalid_remote_settings')

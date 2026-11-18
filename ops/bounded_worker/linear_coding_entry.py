@@ -20,7 +20,7 @@ def _settings(path):
     required = {'version', 'enabled', 'runtime_settings', 'request_comment_id', 'mirror',
                 'username', 'executable', 'executable_sha256', 'token_file', 'members',
                 'audience', 'existing_roots'}
-    if (type(value) is not dict or set(value) not in (required, required | {'storage'}, required | {'api_settings'}, required | {'subscription_image'})
+    if (type(value) is not dict or set(value) not in (required, required | {'storage'}, required | {'api_settings'}, required | {'subscription_image'}, required | {'subscription_image', 'subscription_store'})
             or type(value['version']) is not int or value['version'] != 1
             or value['enabled'] is not True or not _uuid(value['request_comment_id'])
             or any(type(value[k]) is not str or not value[k] for k in
@@ -107,7 +107,8 @@ def _executor(value, runtime, approval, *, db=None, guard=None, clock=time.time)
                            executable_sha256=value['executable_sha256'],
                            timeout_seconds=approval.max_timeout, output_bytes=approval.max_output,
                            diff_bytes=approval.max_diff, prepared_baseline=True, storage=storage,
-                           subscription_image=value.get('subscription_image'))
+                           subscription_image=value.get('subscription_image'),
+                           subscription_store=value.get('subscription_store'))
     executor = Executor(config, value['mirror'])
     return executor if approval.target is None else SubscriptionAdapter(executor)
 

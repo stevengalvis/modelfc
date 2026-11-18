@@ -27,6 +27,7 @@ class Configuration:
     prepared_baseline: bool = False
     storage: StorageConfiguration | None = None
     subscription_image: str | None = None
+    subscription_store: str | None = None
 
 
 def _sync_dir(path):
@@ -70,6 +71,10 @@ def _roots(config, worker):
         if (str(work) != config.storage.workspace or evidence == mount
                 or evidence in mount.parents or mount in evidence.parents):
             raise ValueError('storage_evidence_or_workspace_mismatch')
+    if config.subscription_store is not None and (config.subscription_image is None
+            or not isinstance(config.subscription_store, str)
+            or not Path(config.subscription_store).is_absolute()):
+        raise ValueError('invalid_subscription_store')
     if config.subscription_image is not None:
         if (type(config.subscription_image) is not str
                 or not re.fullmatch('sha256:[0-9a-f]{64}', config.subscription_image)
@@ -350,7 +355,8 @@ def submit(task, config, *, _worker_factory=Codex, _backend_factory=SystemdConta
         else:
             from .podman_subscription import SubscriptionPodman
             backend = SubscriptionPodman(attempt, worker.account.pw_uid, worker.account.pw_gid,
-                                         config.subscription_image, task.timeout_seconds)
+                                         config.subscription_image, task.timeout_seconds,
+                                         store=config.subscription_store)
         expected_workspace = None
         if storage_identity is not None:
             expected_workspace = _configure_storage(backend, config, task, work, directory, worker, storage_identity)

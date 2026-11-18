@@ -13,11 +13,22 @@ from .task import _durable_write
 class SubscriptionPodman:
     backend = 'podman-subscription-v1'
 
-    def __init__(self, evidence, uid, gid, image, timeout_seconds):
+    def __init__(self, evidence, uid, gid, image, timeout_seconds, store=None):
         if uid <= 0 or gid <= 0 or not re.fullmatch(r'sha256:[0-9a-f]{64}', image):
             raise ValueError('invalid_subscription_podman_configuration')
         if type(timeout_seconds) is not int or timeout_seconds < 1:
             raise ValueError('invalid_subscription_task_timeout')
+        self.podman = ['/usr/bin/podman', '--remote=false']
+        if store is not None:
+            root = Path(store)
+            if not root.is_absolute() or root.resolve(strict=True) != root:
+                raise ValueError('invalid_subscription_store')
+            for name in ('graph', 'runroot', 'hooks'):
+                directory = root / name
+                if not directory.is_dir() or directory.resolve(strict=True) != directory:
+                    raise ValueError('invalid_subscription_store')
+            self.podman.extend(['--root', str(root / 'graph'), '--runroot', str(root / 'runroot'),
+                                '--storage-driver=vfs', '--hooks-dir', str(root / 'hooks')])
         self.timeout_seconds = timeout_seconds
         self.evidence = Path(evidence)
         self.uid, self.gid, self.image = uid, gid, image
@@ -35,7 +46,7 @@ class SubscriptionPodman:
         self.bound = True
 
     def _call(self, *args, check=True):
-        return subprocess.run(['/usr/bin/podman', '--remote=false', *args], **self.identity,
+        return subprocess.run([*self.podman, *args], **self.identity,
                               capture_output=True, text=True, timeout=15, check=check)
 
     def launch(self, cmd, *, cwd, env, user, group, extra_groups, stdin, stdout,
@@ -69,7 +80,7 @@ class SubscriptionPodman:
         if not re.fullmatch('[0-9a-f]{64}', created):
             raise ValueError('invalid_container_identity')
         self.container = created
-        self.process = subprocess.Popen(['/usr/bin/podman', '--remote=false', 'start', '--attach',
+        self.process = subprocess.Popen([*self.podman, 'start', '--attach',
                                          '--interactive', created], **self.identity, stdin=stdin,
                                         stdout=stdout, stderr=stderr, bufsize=bufsize,
                                         start_new_session=start_new_session)
