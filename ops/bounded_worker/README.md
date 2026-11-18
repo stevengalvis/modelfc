@@ -242,3 +242,11 @@ cleanup still runs. These codes do not explain the historical docs-task failure.
 See [LINEAR_STATUS.md](LINEAR_STATUS.md) for the separate offline Linear
 service-status prototype and its live adapter blockers. It does not invoke this
 coding worker or establish host acceptance.
+
+## Receiving a coding result in Linear
+
+A status reply confirms the worker outcome. When patch delivery is enabled for
+an approved job, the worker can also post its patch to the originating issue.
+Neither reply creates a GitHub branch or pull request. To publish the change,
+check the patch against the approved paths and base commit, open a draft pull
+request, and return its verified URL to the same issue.
