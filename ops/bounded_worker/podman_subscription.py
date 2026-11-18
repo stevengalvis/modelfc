@@ -71,7 +71,8 @@ class SubscriptionPodman:
                 '--restart=no', '--log-driver=none', '--image-volume=ignore', '--unsetenv-all',
                 '--http-proxy=false', '--no-healthcheck', '--workdir', str(work),
                 '--tmpfs', '/tmp:rw,nosuid,nodev,size=64m',
-                '--tmpfs', f'{home}/.codex:rw,nosuid,nodev,size=32m,uid={user},gid={group}',
+                '--mount', f'type=tmpfs,destination={home}/.codex,tmpfs-size=33554432,'
+                'tmpfs-mode=0700,chown=true,nosuid,nodev',
                 '--volume', f'{auth}:{auth}:ro', '--volume', f'{work}:{work}:rw',
                 '--volume', f'{cmd[0]}:{cmd[0]}:ro']
         for key, value in env.items():
