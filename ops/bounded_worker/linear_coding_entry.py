@@ -20,7 +20,7 @@ def _settings(path):
     required = {'version', 'enabled', 'runtime_settings', 'request_comment_id', 'mirror',
                 'username', 'executable', 'executable_sha256', 'token_file', 'members',
                 'audience', 'existing_roots'}
-    if (type(value) is not dict or set(value) not in (required, required | {'storage'}, required | {'api_settings'})
+    if (type(value) is not dict or set(value) not in (required, required | {'storage'}, required | {'api_settings'}, required | {'subscription_image'})
             or type(value['version']) is not int or value['version'] != 1
             or value['enabled'] is not True or not _uuid(value['request_comment_id'])
             or any(type(value[k]) is not str or not value[k] for k in
@@ -37,6 +37,8 @@ def _settings(path):
         raise ValueError('invalid_entry_settings')
     runtime = load_settings(value['runtime_settings'])
     approval = load_approval(runtime['approval'])
+    if 'subscription_image' in value and approval.target != 'codex-subscription':
+        raise ValueError('subscription_image_target_mismatch')
     if 'api_settings' in value and (approval.target != 'agents-api' or type(value['api_settings']) is not str):
         raise ValueError('api_settings_target_mismatch')
     _validate_host(value, runtime, path, (value['runtime_settings'], runtime['approval']) +
@@ -104,7 +106,8 @@ def _executor(value, runtime, approval, *, db=None, guard=None, clock=time.time)
                            username=value['username'], executable=value['executable'],
                            executable_sha256=value['executable_sha256'],
                            timeout_seconds=approval.max_timeout, output_bytes=approval.max_output,
-                           diff_bytes=approval.max_diff, prepared_baseline=True, storage=storage)
+                           diff_bytes=approval.max_diff, prepared_baseline=True, storage=storage,
+                           subscription_image=value.get('subscription_image'))
     executor = Executor(config, value['mirror'])
     return executor if approval.target is None else SubscriptionAdapter(executor)
 

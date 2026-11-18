@@ -26,6 +26,7 @@ class Configuration:
     diff_bytes: int = 65536
     prepared_baseline: bool = False
     storage: StorageConfiguration | None = None
+    subscription_image: str | None = None
 
 
 def _sync_dir(path):
@@ -69,6 +70,17 @@ def _roots(config, worker):
         if (str(work) != config.storage.workspace or evidence == mount
                 or evidence in mount.parents or mount in evidence.parents):
             raise ValueError('storage_evidence_or_workspace_mismatch')
+    if config.subscription_image is not None:
+        if (type(config.subscription_image) is not str
+                or not re.fullmatch('sha256:[0-9a-f]{64}', config.subscription_image)
+                or config.storage is not None):
+            raise ValueError('invalid_subscription_podman_configuration')
+        # Checkout writes start in bridge_executor before submit(). Require a
+        # dedicated, bounded workspace filesystem at the shared roots check.
+        fs = os.statvfs(work)
+        if (not os.path.ismount(work) or work.stat().st_dev == Path('/').stat().st_dev
+                or fs.f_blocks * fs.f_frsize > 2 * 1024**3):
+            raise ValueError('bounded_subscription_workspace_required')
     if type(config.prepared_baseline) is not bool:
         raise ValueError('invalid_baseline_configuration')
     for value, maximum, minimum in ((config.timeout_seconds, 180, 1),
@@ -161,8 +173,9 @@ def inspect(task_id, config, *, _worker_factory=Codex):
         result = _read(attempt / 'result.json')
         if (type(reservation) is not dict or reservation.get('task_id') != task_id
                 or type(unit) is not dict or set(unit) != {'unit', 'backend'}
-                or unit['backend'] != 'systemd-v1' or unit['unit'] != record['unit'] or not isinstance(unit['unit'], str)
-                or not re.fullmatch(r'modelfc-bounded-[0-9a-f]{32}\.service', unit['unit'])
+                or unit['backend'] != ('podman-subscription-v1' if config.subscription_image else 'systemd-v1') or unit['unit'] != record['unit'] or not isinstance(unit['unit'], str)
+                or not re.fullmatch(r'modelfc-subscription-[0-9a-f]{32}' if config.subscription_image
+                                    else r'modelfc-bounded-[0-9a-f]{32}\.service', unit['unit'])
                 or type(result) is not dict or result.get('task_id') != task_id
                 or reservation.get('repository') != record['repository'] or result.get('repository') != record['repository']
                 or reservation.get('base_revision') != record['base_revision'] or result.get('base_revision') != record['base_revision']
@@ -330,7 +343,12 @@ def submit(task, config, *, _worker_factory=Codex, _backend_factory=SystemdConta
         return _blocked(task.task_id)
     attempt = directory / 'attempt'
     try:
-        backend = _backend_factory(attempt, worker.account.pw_uid, worker.account.pw_gid)
+        if config.subscription_image is None:
+            backend = _backend_factory(attempt, worker.account.pw_uid, worker.account.pw_gid)
+        else:
+            from .podman_subscription import SubscriptionPodman
+            backend = SubscriptionPodman(attempt, worker.account.pw_uid, worker.account.pw_gid,
+                                         config.subscription_image)
         expected_workspace = None
         if storage_identity is not None:
             expected_workspace = _configure_storage(backend, config, task, work, directory, worker, storage_identity)

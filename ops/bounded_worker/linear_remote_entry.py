@@ -19,7 +19,8 @@ def settings(path):
     value = protected_json(path)
     required = {'version', 'enabled', 'channel_policy', 'runtime', 'mirror', 'username',
                 'executable', 'executable_sha256', 'token_file', 'members', 'audience', 'existing_roots'}
-    if (type(value) is not dict or set(value) not in (required, required | {'storage'}, required | {'artifact_policy'}, required | {'storage','artifact_policy'}, required | {'api_settings'})
+    if (type(value) is not dict or set(value) not in (required, required | {'storage'}, required | {'artifact_policy'}, required | {'storage','artifact_policy'}, required | {'api_settings'},
+            required | {'subscription_image'}, required | {'subscription_image', 'artifact_policy'})
             or type(value['version']) is not int or value['version'] != 1 or value['enabled'] is not True
             or type(value['channel_policy']) is not str or type(value['runtime']) is not dict):
         raise ValueError('invalid_remote_settings')
@@ -31,6 +32,8 @@ def settings(path):
     policy = load_policy(value['channel_policy'])
     if runtime['viewer'] != policy.policy.actor:
         raise ValueError('wrong_remote_viewer')
+    if 'subscription_image' in value and policy.target != 'codex-subscription':
+        raise ValueError('subscription_image_target_mismatch')
     if 'api_settings' in value and (policy.target != 'agents-api' or type(value['api_settings']) is not str):
         raise ValueError('api_settings_target_mismatch')
     _validate_host(value, runtime, path, (value['channel_policy'],) +
