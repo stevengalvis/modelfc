@@ -1,4 +1,4 @@
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 import math
 import unittest
 
@@ -18,7 +18,7 @@ from modelfc.forecasts import (
     rolling_poisson_decay_forecasts,
     rolling_poisson_forecasts,
 )
-from modelfc.matches import Match, MatchResult
+from modelfc.matches import Match, MatchResult, UpcomingFixture
 
 
 def make_match(day: int, result: MatchResult) -> Match:
@@ -36,6 +36,19 @@ def make_match(day: int, result: MatchResult) -> Match:
         away_goals=away_goals,
         result=result,
     )
+
+
+class FixtureDateValidationTests(unittest.TestCase):
+    def test_rejects_datetime_match_dates(self) -> None:
+        constructors = (
+            (UpcomingFixture, ("Home", "Away")),
+            (Match, ("Home", "Away", 1, 0, MatchResult.HOME_WIN)),
+        )
+        for constructor, args in constructors:
+            for tzinfo in (None, timezone.utc):
+                with self.subTest(constructor=constructor.__name__, tzinfo=tzinfo):
+                    with self.assertRaisesRegex(ValueError, r"\Amatch_date must be a datetime\.date\Z"):
+                        constructor(datetime(2025, 1, 1, 12, tzinfo=tzinfo), *args)
 
 
 class RollingLeagueFrequencyTests(unittest.TestCase):
