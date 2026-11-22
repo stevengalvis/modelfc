@@ -208,6 +208,8 @@ def rolling_corner_predictions(
     # Validate even when the selected model does not use smoothing, so the CLI
     # and Python API handle this option consistently.
     _validate_smoothing(smoothing_matches)
+    if isinstance(max_corners, bool) or not isinstance(max_corners, int) or max_corners < 0:
+        raise ValueError("max_corners must be a non-negative integer")
 
     ordered = sorted(observations, key=lambda item: item.match_date)
     league_total = 0
