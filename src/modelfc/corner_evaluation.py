@@ -2,6 +2,7 @@
 
 import argparse
 from dataclasses import dataclass
+import json
 import math
 from pathlib import Path
 
@@ -78,6 +79,10 @@ def format_corner_evaluation(
     return "\n".join(lines)
 
 
+def _json_metric(value: float | None) -> float | None:
+    return value if value is not None and math.isfinite(value) else None
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -111,6 +116,7 @@ def main() -> None:
         "--smoothing-matches", type=float, default=5.0,
         help="venue-rate pseudo-observations (default: 5.0)",
     )
+    parser.add_argument("--json", action="store_true", help="output evaluation metrics as JSON")
     args = parser.parse_args()
     try:
         if args.data_config:
@@ -133,13 +139,26 @@ def main() -> None:
     )
     if not predictions:
         parser.error("no predictions generated; use a lower --min-history or more data")
+    evaluation = evaluate_corner_predictions(predictions)
+    if args.json:
+        print(json.dumps({
+            "model": args.model,
+            "min_history": args.min_history,
+            "max_corners": args.max_corners,
+            "smoothing_matches": args.smoothing_matches,
+            "observation_count": evaluation.observation_count,
+            "mae": _json_metric(evaluation.mae),
+            "rmse": _json_metric(evaluation.rmse),
+            "average_negative_log_likelihood": _json_metric(
+                evaluation.average_negative_log_likelihood,
+            ),
+        }, allow_nan=False))
+        return
     distribution_name = (
         "Negative Binomial"
         if args.model == "venue-opponent-negative-binomial" else "Poisson"
     )
-    print(format_corner_evaluation(
-        evaluate_corner_predictions(predictions), distribution_name,
-    ))
+    print(format_corner_evaluation(evaluation, distribution_name))
 
 
 if __name__ == "__main__":

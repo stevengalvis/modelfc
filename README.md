@@ -373,6 +373,14 @@ Add `--min-history N` to change the warm-up. For the Poisson baseline,
 For any venue-and-opponent model, `--smoothing-matches N` changes the
 positive pseudo-match weight from its default of `5.0`.
 
+Add `--json` to emit one JSON object with the model, evaluation settings, and
+full-precision metrics. Unavailable or non-finite metrics are reported as `null`.
+
+```sh
+PYTHONPATH=src python3 -m modelfc.corner_evaluation \
+  E0_2223.csv E0.csv E0_2425.csv E0_2526.csv --model poisson --json
+```
+
 MAE is the average absolute difference between predicted and observed corners,
 in corners; lower is better. RMSE is the square root of the average squared
 error, also in corners, and penalizes large misses more heavily. Average

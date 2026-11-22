@@ -1,11 +1,18 @@
 from contextlib import redirect_stderr, redirect_stdout
+from datetime import date
 from io import StringIO
+import json
+import math
 from pathlib import Path
 import sys
 import unittest
 from unittest.mock import patch
 
-from modelfc.corner_evaluation import load_provider_observations, main
+from modelfc.corner_evaluation import (
+    evaluate_corner_predictions, load_provider_observations, main,
+)
+from modelfc.corners import rolling_corner_predictions
+from modelfc.matches import TeamCornerObservation, Venue
 
 
 class CornerProviderDispatchTests(unittest.TestCase):
@@ -118,14 +125,15 @@ class CornerEvaluationCliTests(unittest.TestCase):
         evaluate.return_value.observation_count = 1
         evaluate.return_value.mae = 0.0
         evaluate.return_value.rmse = 0.0
-        evaluate.return_value.average_negative_log_likelihood = None
+        evaluate.return_value.average_negative_log_likelihood = 1.23456789
 
+        stdout = StringIO()
         with patch.object(sys, "argv", [
             "corner_evaluation", "matches.csv", "statistics.csv",
             "--provider", "brasileirao",
             "--model", "venue-opponent-negative-binomial",
             "--min-history", "25",
-        ]), redirect_stdout(StringIO()):
+        ]), redirect_stdout(stdout):
             main()
 
         loader.assert_called_once_with(
@@ -135,6 +143,89 @@ class CornerEvaluationCliTests(unittest.TestCase):
             observations, "venue-opponent-negative-binomial", 25, 20, 5.0,
         )
         evaluate.assert_called_once_with(predictions)
+        self.assertEqual(
+            stdout.getvalue(),
+            "Team observations evaluated: 1\n"
+            "MAE: 0.000000\n"
+            "RMSE: 0.000000\n"
+            "Negative Binomial average negative log likelihood: 1.234568\n",
+        )
+
+    @patch("modelfc.corner_evaluation.load_provider_observations")
+    def test_json_metrics_match_shared_evaluation(self, loader) -> None:
+        observations = [
+            TeamCornerObservation(date(2025, 1, day), "A", "B", Venue.HOME, count, 0)
+            for day, count in enumerate((1, 2, 4, 5), start=1)
+        ]
+        loader.return_value = observations
+        for model in ("league-average", "poisson"):
+            with self.subTest(model=model):
+                stdout = StringIO()
+                with patch.object(sys, "argv", [
+                    "corner_evaluation", "matches.csv", "--json", "--model", model,
+                    "--min-history", "3", "--max-corners", "12",
+                    "--smoothing-matches", "2.75",
+                ]), redirect_stdout(stdout):
+                    main()
+
+                expected = evaluate_corner_predictions(
+                    rolling_corner_predictions(observations, model, 3, 12, 2.75),
+                )
+                output = stdout.getvalue()
+                self.assertEqual(output.count("\n"), 1)
+                self.assertTrue(output.endswith("\n"))
+                result = json.loads(output)
+                self.assertEqual(result, {
+                    "model": model,
+                    "min_history": 3,
+                    "max_corners": 12,
+                    "smoothing_matches": 2.75,
+                    "observation_count": expected.observation_count,
+                    "mae": expected.mae,
+                    "rmse": expected.rmse,
+                    "average_negative_log_likelihood": expected.average_negative_log_likelihood,
+                })
+                self.assertNotEqual(result["mae"], round(expected.mae, 6))
+                if model == "league-average":
+                    self.assertIsNone(result["average_negative_log_likelihood"])
+                else:
+                    self.assertTrue(math.isfinite(result["average_negative_log_likelihood"]))
+
+    @patch("modelfc.corner_evaluation.load_provider_observations")
+    def test_json_encodes_infinite_likelihood_as_null(self, loader) -> None:
+        loader.return_value = [
+            TeamCornerObservation(date(2025, 1, 1), "A", "B", Venue.HOME, 0, 0),
+            TeamCornerObservation(date(2025, 1, 2), "A", "B", Venue.HOME, 1, 0),
+        ]
+        with patch.object(sys, "argv", [
+            "corner_evaluation", "matches.csv", "--model", "poisson",
+            "--min-history", "1",
+        ]) as argv:
+            with redirect_stdout(StringIO()) as text_stdout:
+                main()
+            argv.append("--json")
+            with redirect_stdout(StringIO()) as json_stdout:
+                main()
+
+        self.assertIn("Poisson average negative log likelihood: inf\n", text_stdout.getvalue())
+        self.assertIsNone(json.loads(json_stdout.getvalue())["average_negative_log_likelihood"])
+
+    @patch("modelfc.corner_sources.load_corner_history", return_value=[])
+    def test_json_failures_leave_stdout_empty(self, loader) -> None:
+        for files, message in (
+            ([], "football-data requires at least one CSV file"),
+            (["matches.csv"], "no predictions generated"),
+        ):
+            stdout = StringIO()
+            stderr = StringIO()
+            with self.subTest(files=files), patch.object(sys, "argv", [
+                "corner_evaluation", "--json", *files,
+            ]), redirect_stdout(stdout), redirect_stderr(stderr), self.assertRaises(SystemExit) as raised:
+                main()
+
+            self.assertEqual(raised.exception.code, 2)
+            self.assertIn(message, stderr.getvalue())
+            self.assertEqual(stdout.getvalue(), "")
 
     def test_brasileirao_file_count_is_a_clear_cli_error(self) -> None:
         stderr = StringIO()
