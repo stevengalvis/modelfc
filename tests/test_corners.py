@@ -100,6 +100,39 @@ class FootballDataCornerTests(unittest.TestCase):
 
 
 class CornerBaselineTests(unittest.TestCase):
+    def test_rolling_predictions_reject_invalid_max_corners(self) -> None:
+        point_models = ("league-average", "team-average", "venue-opponent")
+        distribution_models = (
+            "poisson", "venue-opponent-poisson", "venue-opponent-negative-binomial",
+        )
+        items = [observation(1, "A", 2), observation(2, "A", 4)]
+        for models, inputs in (
+            (point_models, (items,)),
+            (distribution_models, ([], items[:1])),
+        ):
+            for model in models:
+                for observations in inputs:
+                    for limit in (-1, False, True, 2.5):
+                        with self.subTest(model=model, count=len(observations), limit=limit):
+                            with self.assertRaisesRegex(
+                                ValueError, r"\Amax_corners must be a non-negative integer\Z",
+                            ):
+                                rolling_corner_predictions(
+                                    observations, model, min_history=1, max_corners=limit,
+                                )
+
+    def test_rolling_predictions_accept_non_negative_integer_max_corners(self) -> None:
+        items = [observation(1, "A", 2), observation(2, "A", 4)]
+        for model in ("poisson", "venue-opponent-poisson", "venue-opponent-negative-binomial"):
+            for limit in (0, 3):
+                with self.subTest(model=model, limit=limit):
+                    prediction, = rolling_corner_predictions(
+                        items, model, min_history=1, max_corners=limit,
+                    )
+                    self.assertEqual(len(prediction.probabilities), limit + 1)
+                    if limit == 0:
+                        self.assertEqual(prediction.probabilities, (1.0,))
+
     def test_observation_rejects_datetime_match_dates(self) -> None:
         for tzinfo in (None, timezone.utc):
             with self.subTest(tzinfo=tzinfo):
