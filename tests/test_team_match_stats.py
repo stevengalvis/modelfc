@@ -1,6 +1,6 @@
 import csv
 from dataclasses import FrozenInstanceError, replace
-from datetime import date
+from datetime import date, datetime, timezone
 from pathlib import Path
 import tempfile
 import unittest
@@ -29,6 +29,22 @@ class TeamMatchStatsTests(unittest.TestCase):
             writer.writeheader()
             writer.writerows(rows)
         return path
+
+    def test_rejects_datetime_match_dates(self):
+        for tzinfo in (None, timezone.utc):
+            with self.subTest(tzinfo=tzinfo):
+                with self.assertRaisesRegex(ValueError, r"\Amatch_date must be a datetime\.date\Z"):
+                    TeamMatchStats(
+                        match_date=datetime(2026, 9, 14, 12, tzinfo=tzinfo),
+                        competition="SP1",
+                        season="2026/2027",
+                        team="A",
+                        opponent="B",
+                        venue=Venue.HOME,
+                        source="football-data",
+                        goals_for=2,
+                        goals_against=1,
+                    )
 
     def test_perspectives_identity_and_zero(self):
         home, away = load_team_match_stats(self.write())

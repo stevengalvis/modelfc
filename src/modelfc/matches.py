@@ -1,7 +1,7 @@
 """Provider-independent representations of football fixtures and results."""
 
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from enum import Enum
 
 
@@ -21,7 +21,7 @@ class Venue(str, Enum):
 
 
 def _validate_fixture(match_date: date, home_team: str, away_team: str) -> None:
-    if not isinstance(match_date, date):
+    if not isinstance(match_date, date) or isinstance(match_date, datetime):
         raise ValueError("match_date must be a datetime.date")
 
     for field_name, value in (("home_team", home_team), ("away_team", away_team)):
@@ -92,7 +92,7 @@ class TeamCornerObservation:
     corners_against: int
 
     def __post_init__(self) -> None:
-        if not isinstance(self.match_date, date):
+        if not isinstance(self.match_date, date) or isinstance(self.match_date, datetime):
             raise ValueError("match_date must be a datetime.date")
         for field_name in ("team", "opponent"):
             value = getattr(self, field_name)

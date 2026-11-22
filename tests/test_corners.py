@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime, timezone
 import math
 from pathlib import Path
 import tempfile
@@ -100,6 +100,15 @@ class FootballDataCornerTests(unittest.TestCase):
 
 
 class CornerBaselineTests(unittest.TestCase):
+    def test_observation_rejects_datetime_match_dates(self) -> None:
+        for tzinfo in (None, timezone.utc):
+            with self.subTest(tzinfo=tzinfo):
+                with self.assertRaisesRegex(ValueError, r"\Amatch_date must be a datetime\.date\Z"):
+                    TeamCornerObservation(
+                        datetime(2025, 1, 1, 12, tzinfo=tzinfo),
+                        "Home", "Away", Venue.HOME, 4, 2,
+                    )
+
     def test_league_average_uses_only_earlier_observations(self) -> None:
         predictions = rolling_corner_predictions(
             [observation(1, "A", 2), observation(1, "B", 6), observation(2, "C", 9)],
