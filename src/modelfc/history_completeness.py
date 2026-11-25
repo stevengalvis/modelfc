@@ -157,8 +157,12 @@ def parse_calendar(raw: bytes, *, as_of: datetime) -> HistoryCalendar:
             _require(len(members) == len(_NAMES)//2 and set(participants) == _NAMES
                      and len(participants) == len(set(participants)),
                      "HISTORY_CALENDAR_MATCHDAY_REJECTED")
-        _require(type(value["resultSet"]["played"]) is int and
-                 value["resultSet"]["played"] == sum(m.status == "FINISHED" for m in matches))
+        played = value["resultSet"]["played"]
+        finished_count = sum(m.status == "FINISHED" for m in matches)
+        # football-data.org's summary resultSet.played can undercount FINISHED rows
+        # while matches[] remains complete and individually validated above. Keep
+        # type, non-negative, and upper-bound (played <= finished_count) enforcement.
+        _require(type(played) is int and 0 <= played <= finished_count)
         return HistoryCalendar(hashlib.sha256(raw).hexdigest(), hashlib.sha256(source).hexdigest(),
                                retrieved, year, tuple(sorted(matches, key=lambda m: (m.day, m.fixture_id))))
     except CompletenessRejected:

@@ -160,6 +160,11 @@ class CompletenessTests(unittest.TestCase):
             lambda v:v['matches'][0]['competition'].update(id=17),
             lambda v:v['filters'].update(status='FINISHED'),
             lambda v:v['resultSet'].update(played=2),
+            lambda v:v['resultSet'].update(played=-1),
+            lambda v:v['resultSet'].update(played=True),
+            lambda v:v['resultSet'].update(played='1'),
+            lambda v:v['resultSet'].update(played=None),
+            lambda v:v['resultSet'].pop('played'),
             lambda v:v['matches'][0].update(status='AWARDED'),
             lambda v:v['matches'][0].update(stage='PLAYOFFS'),
             lambda v:v['matches'][0].update(matchday=0),
@@ -170,6 +175,18 @@ class CompletenessTests(unittest.TestCase):
         for key,val in [('source_team_id',1000),('source_name','Source Birmingham'),('history_name','Birmingham'),('history_name','Unverified')]:
             self.value=bundle();self.value['team_bindings'][-1][key]=val
             with self.assertRaises(CompletenessRejected): self.calendar()
+
+    def test_resultset_played_undercount_accepted_without_dropping_finished_matches(self):
+        self.mutate_response(lambda v: v['resultSet'].update(played=0))
+        calendar = self.calendar()
+        finished = [m for m in calendar.matches if m.status == 'FINISHED']
+        self.assertEqual(len(finished), 1)
+        proof = verify_completeness(calendar, histories(), cutoff=NOW.date(), as_of=NOW)
+        self.assertEqual(proof['completed_fixture_ids'], [finished[0].fixture_id])
+        # Missing that finished result from history must still fail closed.
+        with self.assertRaisesRegex(CompletenessRejected, 'HISTORY_RESULTS_MISSING_OR_CONFLICTING'):
+            verify_completeness(calendar, [('E1_2627.csv', b'Div,Date,HomeTeam,AwayTeam,FTHG,FTAG,HC,AC\n')],
+                                cutoff=NOW.date(), as_of=NOW)
 
     def test_same_date_future_results_not_required_or_used(self):
         extra='E1,08/10/2026,QPR,West Ham,8,8,9,9\nE1,09/10/2026,Birmingham,QPR,8,8,9,9\n'
