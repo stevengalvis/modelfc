@@ -564,6 +564,38 @@ class ForecastOnlyRunnerTests(unittest.TestCase):
         self.assertIn("OnCalendar=*-*-* *:35:00 UTC", timer)
         self.assertIn("Persistent=true", timer)
 
+    def test_calendar_fetch_rejected_preserves_sanitized_reason_code(self):
+        from modelfc.providers.football_data_calendar import CalendarFetchRejected
+        for code in ("CALENDAR_HTTP_403", "CALENDAR_HTTP_429", "CALENDAR_RESPONSE_REJECTED"):
+            with self.subTest(code=code):
+                state = self.root / f"cal-reject-{code}"
+                (state / "prospective").mkdir(parents=True)
+                (state / "prospective/runner.lock").touch(mode=0o600)
+                (state / "prospective/control.json").write_text("{}")
+
+                class FailingCalendar:
+                    def __init__(self, *_args, on_request, **_kwargs): self.on_request = on_request
+                    def fetch(self, *_args, **_kwargs):
+                        self.on_request()
+                        raise CalendarFetchRejected(code)
+
+                with patch("modelfc.forecast_only_runner.git_commit_sha", return_value="f" * 40), \
+                        patch("modelfc.forecast_only_runner.prepare_forecast") as prepare, \
+                        patch("modelfc.forecast_only_runner.publish_prediction") as publish:
+                    receipt = run_once(
+                        state_dir=state, data_config_path=self.config_path,
+                        configuration=self.configuration, sportmonks_token="results-token",
+                        football_data_token="calendar-token", clock=lambda: NOW,
+                        calendar_client_type=FailingCalendar,
+                        history_loader=lambda *_: histories(),
+                    )
+                self.assertEqual(receipt["status"], "REJECTED")
+                self.assertEqual(receipt["reason"], code)
+                self.assertEqual(receipt["calendar_retention"], {"status": "NOT_ATTEMPTED"})
+                self.assertEqual(receipt["provider_requests"], {"football_data_org": 1, "sportmonks": 0, "oddspapi": 0})
+                prepare.assert_not_called()
+                publish.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

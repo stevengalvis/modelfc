@@ -18,7 +18,7 @@ from modelfc.ledger_storage import (LedgerError, ensure_directory, git_commit_sh
                                     ledger_lock, read_json_record, write_new_record)
 from modelfc.odds_calendar import publish as publish_odds_calendar
 from modelfc.offline_forecasts import KnownFixture, load_history_bytes, prepare_forecast
-from modelfc.providers.football_data_calendar import FootballDataCalendarClient
+from modelfc.providers.football_data_calendar import CalendarFetchRejected, FootballDataCalendarClient
 from modelfc.providers.sportmonks_results import SportmonksRecentResultsClient, SportmonksRejected, validate_bindings
 from modelfc.research_predictions import publish as publish_prediction
 from modelfc.research_predictions import load_prepared
@@ -441,7 +441,7 @@ def run_once(*, state_dir, data_config_path, configuration, sportmonks_token,
     except SupplementalCsvConflict:
         # All augmentation boundaries fail closed; never serialize exception text.
         receipt["reason"] = "SUPPLEMENTAL_CSV_CONFLICT"
-    except (ForecastRunRejected, AcquisitionRejected) as error:
+    except (ForecastRunRejected, AcquisitionRejected, CalendarFetchRejected) as error:
         receipt["reason"] = str(error)
     except (OSError, ValueError, TypeError, KeyError, LedgerError):
         receipt["reason"] = "FORECAST_RUN_REJECTED"
