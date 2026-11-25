@@ -11,13 +11,56 @@ import json
 from pathlib import Path
 import subprocess
 import tarfile
+import time
+import urllib.error
 import urllib.parse
 import urllib.request
 
 BASE = Path(__file__).resolve().parents[1]
+SNAPSHOT_PREFIX = 'https://snapshot.ubuntu.com/ubuntu/20261030T000000Z/'
+RETRYABLE_HTTP_CODES = frozenset({429, 500, 502, 503, 504})
+MAX_ATTEMPTS_PER_URL = 4
+BACKOFF_SECONDS = (1.0, 2.0, 4.0)
 
 
-def prepare(cache, output, download=False):
+def candidate_urls(row):
+    """Official Ubuntu archive URL first, then pinned Ubuntu snapshot fallback."""
+    official = row['url']
+    path = urllib.parse.urlsplit(official).path.removeprefix('/ubuntu/')
+    snapshot = SNAPSHOT_PREFIX + path
+    return (official, snapshot) if official != snapshot else (snapshot,)
+
+
+def download_archive(row, *, opener=urllib.request.urlopen, sleep=time.sleep,
+                     max_attempts=MAX_ATTEMPTS_PER_URL):
+    last_error = None
+    for url in candidate_urls(row):
+        for attempt in range(max_attempts):
+            try:
+                with opener(url, timeout=60) as response:
+                    data = response.read(row['bytes'] + 1)
+            except urllib.error.HTTPError as error:
+                last_error = error
+                if error.code in RETRYABLE_HTTP_CODES and attempt + 1 < max_attempts:
+                    sleep(BACKOFF_SECONDS[min(attempt, len(BACKOFF_SECONDS) - 1)])
+                    continue
+                if error.code == 404 or error.code in RETRYABLE_HTTP_CODES:
+                    break
+                raise
+            except (urllib.error.URLError, TimeoutError, OSError) as error:
+                last_error = error
+                if attempt + 1 < max_attempts:
+                    sleep(BACKOFF_SECONDS[min(attempt, len(BACKOFF_SECONDS) - 1)])
+                    continue
+                break
+            if len(data) != row['bytes'] or hashlib.sha256(data).hexdigest() != row['sha256']:
+                raise ValueError('ARCHIVE_HASH')
+            return data
+    raise last_error
+
+
+def prepare(cache, output, download=False, *, opener=urllib.request.urlopen,
+            sleep=time.sleep):
     proof = json.loads((BASE/'stage/PYTHON_CLOSURE_PROVENANCE.json').read_bytes())
     deps = json.loads((BASE/'stage/runtime_dependencies.json').read_bytes())['dependencies']
     cache.mkdir(parents=True, exist_ok=True)
@@ -25,12 +68,7 @@ def prepare(cache, output, download=False):
     for row in proof['packages']:
         package = cache/(row['name']+'.deb')
         if not package.exists() and download:
-            path = urllib.parse.urlsplit(row['url']).path.removeprefix('/ubuntu/')
-            url = 'https://snapshot.ubuntu.com/ubuntu/20261030T000000Z/' + path
-            with urllib.request.urlopen(url, timeout=60) as response:
-                data = response.read(row['bytes']+1)
-            if len(data) != row['bytes'] or hashlib.sha256(data).hexdigest() != row['sha256']:
-                raise ValueError('ARCHIVE_HASH')
+            data = download_archive(row, opener=opener, sleep=sleep)
             with package.open('xb') as f:
                 f.write(data)
         data = package.read_bytes()
