@@ -284,6 +284,54 @@ class CornerDataConfigTests(unittest.TestCase):
         download.assert_not_called()
         self.assertIn("STALE", output.getvalue())
 
+    def test_e1_known_team_name_alias_correction_is_accepted_and_counted_without_relaxing_loss_guard(self):
+        self.path.write_text(json.dumps({"data_directory": ".", "leagues": ["E1"], "max_age_days": 14}))
+        config = load_data_config(self.path)
+        prev_csv = (
+            "Div,Date,HomeTeam,AwayTeam,FTHG,FTAG,FTR,HC,AC\n"
+            "E1,30/10/2026,Sheffield United,Wrexham,1,0,H,7,0\n"
+            "E1,03/11/2026,Preston,Sheffield Utd,2,3,A,3,3\n"
+        ).encode()
+        corrected_csv = (
+            "Div,Date,HomeTeam,AwayTeam,FTHG,FTAG,FTR,HC,AC\n"
+            "E1,30/10/2026,Sheffield United,Wrexham,1,0,H,7,0\n"
+            "E1,03/11/2026,Preston,Sheffield United,2,3,A,3,3\n"
+            "E1,07/11/2026,Bristol City,Norwich,1,1,D,5,4\n"
+        ).encode()
+        (self.root / "E1_2627.csv").write_bytes(prev_csv)
+
+        # Genuinely dropping the fixture must still be rejected.
+        dropped_csv = (
+            "Div,Date,HomeTeam,AwayTeam,FTHG,FTAG,FTR,HC,AC\n"
+            "E1,30/10/2026,Sheffield United,Wrexham,1,0,H,7,0\n"
+            "E1,07/11/2026,Bristol City,Norwich,1,1,D,5,4\n"
+        ).encode()
+        with patch.object(corner_refresh, "download_csv", return_value=dropped_csv):
+            with self.assertRaisesRegex(ValueError, "download would remove 1 existing corner fixtures"):
+                corner_refresh.refresh_league(config, "E1", date(2026, 11, 10), self.root / "state")
+
+        # Duplicate raw + canonical rows in the same CSV must be rejected.
+        dup_csv = (
+            "Div,Date,HomeTeam,AwayTeam,FTHG,FTAG,FTR,HC,AC\n"
+            "E1,03/11/2026,Preston,Sheffield Utd,2,3,A,3,3\n"
+            "E1,03/11/2026,Preston,Sheffield United,2,3,A,3,3\n"
+        ).encode()
+        with patch.object(corner_refresh, "download_csv", return_value=dup_csv):
+            with self.assertRaisesRegex(ValueError, "duplicate canonical fixture"):
+                corner_refresh.refresh_league(config, "E1", date(2026, 11, 10), self.root / "state")
+
+        # Genuine upstream spelling correction succeeds, preserves backup, and accounts for correction.
+        state = self.root / "state"
+        state.mkdir(exist_ok=True)
+        with patch.object(corner_refresh, "download_csv", return_value=corrected_csv):
+            result = corner_refresh.refresh_league(config, "E1", date(2026, 11, 10), state)
+        self.assertEqual(result["status"], "updated")
+        self.assertEqual(result["added"], 1)
+        self.assertEqual(result["corrected"], 1)
+        self.assertEqual(result["matches"], 3)
+        self.assertEqual((self.root / "E1_2627.csv").read_bytes(), corrected_csv)
+        self.assertEqual((state / "backups" / "E1_2627.csv").read_bytes(), prev_csv)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -158,6 +158,26 @@ def snapshot(path: Path, league: str, season: str, today: date) -> dict:
     return values
 
 
+E1_TEAM_NAME_ALIASES = {"Sheffield Utd": "Sheffield United"}
+
+
+def _canonical_snapshot(
+    values: dict[tuple[date, str, str], tuple[int, int]], league: str,
+) -> tuple[dict[tuple[date, str, str], tuple[int, int]], dict[tuple[date, str, str], tuple[date, str, str]]]:
+    if league != "E1":
+        return values, {key: key for key in values}
+    canonical: dict[tuple[date, str, str], tuple[int, int]] = {}
+    raw_keys: dict[tuple[date, str, str], tuple[date, str, str]] = {}
+    for key, corners in values.items():
+        match_date, home, away = key
+        norm = (match_date, E1_TEAM_NAME_ALIASES.get(home, home), E1_TEAM_NAME_ALIASES.get(away, away))
+        if norm in canonical:
+            raise ValueError(f"duplicate canonical fixture: {norm}")
+        canonical[norm] = corners
+        raw_keys[norm] = key
+    return canonical, raw_keys
+
+
 def refresh_league(config: CornerDataConfig, league: str, today: date, state: Path,
                    *, validator_read_user: str | None = None, public_history_read_user: str | None = None, retain_result_evidence: bool = False) -> dict:
     season = current_season(today)
@@ -178,7 +198,9 @@ def refresh_league(config: CornerDataConfig, league: str, today: date, state: Pa
         incoming = snapshot(Path(staging.name), league, season, today)
     old_bytes = target.read_bytes() if target.exists() else None
     previous = snapshot(target, league, season, today) if old_bytes is not None else {}
-    missing = previous.keys() - incoming.keys()
+    inc_canonical, inc_raw = _canonical_snapshot(incoming, league)
+    prev_canonical, prev_raw = _canonical_snapshot(previous, league)
+    missing = prev_canonical.keys() - inc_canonical.keys()
     if missing:
         raise ValueError(f"download would remove {len(missing)} existing corner fixtures; kept local file")
     changed = old_bytes is None or hashlib.sha256(old_bytes).digest() != hashlib.sha256(payload).digest()
@@ -219,8 +241,11 @@ def refresh_league(config: CornerDataConfig, league: str, today: date, state: Pa
         "league": league, "file": str(target), "source": url,
         "file_sha256": hashlib.sha256(payload).hexdigest(),
         "status": "updated" if changed else "unchanged",
-        "matches": len(incoming), "added": len(incoming.keys() - previous.keys()),
-        "corrected": sum(incoming[key] != previous[key] for key in incoming.keys() & previous.keys()),
+        "matches": len(incoming), "added": len(inc_canonical.keys() - prev_canonical.keys()),
+        "corrected": sum(
+            inc_canonical[key] != prev_canonical[key] or inc_raw[key] != prev_raw[key]
+            for key in inc_canonical.keys() & prev_canonical.keys()
+        ),
         "latest_match": latest.isoformat(),
         "stale": (today - latest).days > config.max_age_days,
     }
