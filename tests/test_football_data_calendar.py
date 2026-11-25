@@ -63,5 +63,21 @@ class FootballDataCalendarClientTests(unittest.TestCase):
             FootballDataCalendarClient("private-token", opener=opener,
                 clock=lambda: NOW).fetch(2026, team_bindings=value["team_bindings"])
 
+    def test_resultset_played_undercount_accepted_and_overcount_rejected(self):
+        value = fixture_bundle()
+        payload = json.loads(value["payload"])
+        payload["resultSet"]["played"] = 0
+        opener = Mock(); opener.open.return_value = Response(json.dumps(payload).encode())
+        fetched = FootballDataCalendarClient("private-token", opener=opener,
+            clock=lambda: NOW).fetch(2026, team_bindings=value["team_bindings"])
+        calendar = parse_calendar(fetched.raw, as_of=NOW)
+        self.assertEqual(sum(m.status == "FINISHED" for m in calendar.matches), 1)
+
+        payload["resultSet"]["played"] = 2
+        opener = Mock(); opener.open.return_value = Response(json.dumps(payload).encode())
+        with self.assertRaisesRegex(CalendarFetchRejected, "CALENDAR_RESPONSE_REJECTED"):
+            FootballDataCalendarClient("private-token", opener=opener,
+                clock=lambda: NOW).fetch(2026, team_bindings=value["team_bindings"])
+
 
 if __name__ == "__main__": unittest.main()
