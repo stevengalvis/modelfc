@@ -4,7 +4,7 @@ ModelFC is an experimental football forecasting project intended to compare
 statistical models, simulation techniques, and future AI-agent approaches to
 probabilistic forecasting.
 
-For the supervised coding worker and its inactive-by-default task bridge, see [bounded worker documentation](ops/bounded_worker/README.md) and [bridge setup and safety requirements](ops/bounded_worker/BRIDGE.md).
+The [worker library](ops/bounded_worker/README.md) exposes `execute(...)` to a trusted caller. The [one-shot bridge](ops/bounded_worker/BRIDGE.md) documents separate dispatch, publish and status commands for a GitHub PR thread. These are source interfaces; neither document establishes which dispatcher is installed on a host.
 
 The shared frontend/backend contract for the internal corner-analysis product
 is documented in [API_V1.md](API_V1.md).
