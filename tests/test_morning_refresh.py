@@ -1,11 +1,14 @@
 """Offline capped dispatch, real entrypoints and durable interrupted reservations."""
+from contextlib import redirect_stdout
 from datetime import datetime, timedelta, timezone
 from concurrent.futures import ThreadPoolExecutor
+from io import StringIO
 import json
 import os
 from pathlib import Path
 import subprocess
 import sys
+from tempfile import TemporaryDirectory
 import threading
 import unittest
 from unittest.mock import patch
@@ -14,6 +17,66 @@ from modelfc import corner_refresh as refresh, refresh_attempts as attempts, mor
 from modelfc.corner_data import CornerDataConfig
 from tests import test_refresh_cadence as cadence_fixtures
 from tests.test_automatic_research_settlement import FixedRefreshDatetime
+
+
+class MorningMainTests(unittest.TestCase):
+    now = datetime(2026, 11, 26, 6, tzinfo=timezone.utc)
+    healthy = {
+        'league': 'E1', 'status': 'updated', 'checked_at': now.isoformat(),
+        'latest_match': '2026-11-25', 'settlement_eligibility': 'VERIFIED_FINAL_SCORES',
+        'matches': 20, 'added': 1, 'corrected': 0,
+    }
+    unrelated = {'league': 'SP1', 'status': 'failed', 'error': 'retained failure'}
+
+    def assert_main(self, result, expected_exit, *, enabled=True):
+        expected_output = json.dumps(result, sort_keys=True)
+        with TemporaryDirectory(dir=Path.cwd()) as directory:
+            root = Path(directory)
+            policy = root / 'policy.json'
+            policy.write_text(json.dumps({**morning.POLICY, 'enabled': enabled}))
+            config = CornerDataConfig(root, ('E1', 'SP1'), 14)
+            output = StringIO()
+            with (patch.object(morning, 'load_data_config', return_value=config),
+                  patch.object(morning, 'run', return_value=result),
+                  patch.object(morning, 'datetime') as clock,
+                  redirect_stdout(output)):
+                clock.now.return_value = self.now
+                exit_code = morning.main(['--config', str(root / 'config.json'),
+                                          '--state-dir', str(root), '--policy', str(policy)])
+        self.assertEqual(exit_code, expected_exit)
+        self.assertEqual(output.getvalue(), expected_output + '\n')
+        self.assertEqual(json.dumps(result, sort_keys=True), expected_output)
+
+    def test_healthy_e1_ignores_retained_failure(self):
+        report = {'results': [self.unrelated, self.healthy]}
+        self.assertTrue(refresh.format_report(report, self.now.date(), 14)[1])
+        self.assert_main({'status': 'NEEDED', 'report': report}, 0)
+
+    def test_failed_stale_or_unhealthy_e1_returns_failure(self):
+        for changes in (
+                {'status': 'failed', 'error': 'delivery failed'},
+                {'latest_match': '2026-11-11'},
+                {'checked_at': '2026-11-11T06:00:00+00:00'},
+                {'settlement_eligibility': 'FINAL_SCORE_CONFLICT'}):
+            with self.subTest(changes=changes):
+                report = {'results': [{**self.healthy, **changes}]}
+                self.assertTrue(refresh.format_report(report, self.now.date(), 14)[1])
+                self.assert_main({'status': 'NEEDED', 'report': report}, 1)
+
+    def test_missing_or_invalid_e1_evidence_returns_failure(self):
+        for rows in (
+                [], [dict(self.healthy, league='SP1')],
+                [{'league': 'E1', 'status': 'updated'}],
+                [dict(self.healthy, checked_at='invalid')],
+                [self.healthy, self.healthy]):
+            with self.subTest(rows=rows):
+                self.assert_main({'status': 'NEEDED', 'report': {'results': rows}}, 1)
+
+    def test_noop_without_report_returns_success(self):
+        for status in ('DISABLED', 'OUTSIDE_SLOT'):
+            with self.subTest(status=status):
+                self.assert_main({'status': status, 'provider_requests': 0}, 0,
+                                 enabled=status != 'DISABLED')
 
 
 class MorningTests(unittest.TestCase):
@@ -393,8 +456,7 @@ urllib.request.build_opener=lambda *handlers: type('SavedOpener',(),{'open':stat
                 env=environ or env,capture_output=True,text=True,timeout=20)
         extra=['--state-dir',str(self.f.state),'--policy',str(policy)]
         first=command('modelfc.morning_refresh',extra)
-        # Other leagues UNKNOWN keeps global health nonzero, while E1 succeeded.
-        self.assertEqual(first.returncode,1,first.stderr+first.stdout)
+        self.assertEqual(first.returncode,0,first.stderr+first.stdout)
         self.assertEqual(json.loads(first.stdout)['report']['results'][0]['status'],'updated')
         self.assertEqual(command('modelfc.corner_refresh').returncode,0)
         self.assertEqual(command('modelfc.corner_refresh').returncode,0)

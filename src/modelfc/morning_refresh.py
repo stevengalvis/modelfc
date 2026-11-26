@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 import json
 from pathlib import Path
 
-from modelfc import corner_refresh
+from modelfc import corner_refresh, refresh_reporting
 from modelfc.corner_data import load_data_config
 from modelfc.history_completeness import parse_calendar
 from modelfc.ledger_storage import existing_read_lock
@@ -102,13 +102,17 @@ def main(argv=None):
     parser.add_argument('--retain-result-evidence', action='store_true')
     args = parser.parse_args(argv)
     try:
-        result = run(load_data_config(args.config), args.state_dir, json.loads(args.policy.read_text()),
+        config = load_data_config(args.config)
+        result = run(config, args.state_dir, json.loads(args.policy.read_text()),
             validator_read_user=args.validator_read_user, public_history_read_user=args.public_history_read_user,
             retain_result_evidence=args.retain_result_evidence)
         print(json.dumps(result, sort_keys=True))
-        if 'report' in result and corner_refresh.format_report(result['report'], datetime.now(timezone.utc).date(),
-                                                              load_data_config(args.config).max_age_days)[1]:
-            return 1
+        if 'report' in result:
+            e1_rows = [row for row in result['report']['results'] if row['league'] == 'E1']
+            today = datetime.now(timezone.utc).date()
+            if len(e1_rows) != 1 or refresh_reporting.dataset_health(
+                    e1_rows[0], today, config.max_age_days) != 'HEALTHY':
+                return 1
         return 0
     except (ValueError, OSError, KeyError, TypeError) as error:
         print(json.dumps({'status': 'REJECTED', 'reason': str(error)}))
