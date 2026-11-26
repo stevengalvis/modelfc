@@ -66,13 +66,13 @@ class ForecastOnlyRunnerTests(unittest.TestCase):
             "football_data_team_bindings": value["team_bindings"],
         }
 
-    def execute(self, when=NOW):
+    def execute(self, when=NOW, *, history_loader=None):
         return run_once(
             state_dir=self.state, data_config_path=self.config_path,
             configuration=self.configuration, sportmonks_token="results-token",
             football_data_token="calendar-token", clock=lambda: when,
             calendar_client_type=_CalendarClient, results_client_type=_NoResultsClient,
-            history_loader=lambda *_: histories(),
+            history_loader=history_loader or (lambda *_: histories()),
         )
 
     def state_bytes(self):
@@ -401,11 +401,17 @@ class ForecastOnlyRunnerTests(unittest.TestCase):
         self.assertEqual(before, self.state_bytes())
 
     def test_selected_season_csv_conflict_is_precise_and_preserves_evidence(self):
-        publish_result(self.state, self.supplemental(away_corners=3))
+        publish_result(self.state, self.supplemental())
+        goal_conflict_archive = (
+            histories()[0],
+            ('E1_2627.csv',
+             b'Div,Date,HomeTeam,AwayTeam,FTHG,FTAG,HC,AC\n'
+             b'E1,20/09/2026,Birmingham,Blackburn,3,1,5,4\n'),
+        )
         before = self.state_bytes()
         with patch('modelfc.forecast_only_runner.prepare_forecast') as prepare, \
                 patch('modelfc.forecast_only_runner.publish_prediction') as publish:
-            receipt = self.execute()
+            receipt = self.execute(history_loader=lambda *_: goal_conflict_archive)
         prepare.assert_not_called()
         publish.assert_not_called()
         self.assert_diagnostic_rejection(receipt, 'SUPPLEMENTAL_CSV_CONFLICT')
@@ -413,6 +419,19 @@ class ForecastOnlyRunnerTests(unittest.TestCase):
         for path, original in before.items():
             self.assertEqual(after[path], original)
         self.assertFalse((self.state / 'supplemental-history-attempts').exists())
+
+    def test_archived_csv_corner_disagreement_uses_csv_corners_and_preserves_evidence(self):
+        first = self.execute()
+        publish_result(self.state, self.supplemental(away_corners=3))
+        before = self.state_bytes()
+        second = self.execute(NOW + timedelta(seconds=1))
+        self.assertEqual(second['status'], 'RECORDED', second)
+        self.assertEqual(second['provider_requests']['sportmonks'], 0)
+        self.assertEqual(second['forecasts_prepared'], 0)
+        self.assertEqual(second['forecasts_reused'], first['forecasts_prepared'])
+        after = self.state_bytes()
+        for path, original in before.items():
+            self.assertEqual(after[path], original)
 
     def test_matching_supplement_keeps_forecast_and_source_hashes_unchanged(self):
         first = self.execute()
@@ -427,7 +446,7 @@ class ForecastOnlyRunnerTests(unittest.TestCase):
             self.assertEqual(after[path], original)
 
     def test_other_selected_season_filters_an_actual_csv_conflict(self):
-        publish_result(self.state, self.supplemental(season=998, away_corners=3))
+        publish_result(self.state, self.supplemental(season=998, away_corners=3, home_goals=3))
         before = self.state_bytes()
         receipt = self.execute()
         self.assertEqual(receipt['status'], 'RECORDED', receipt)
@@ -452,9 +471,10 @@ class ForecastOnlyRunnerTests(unittest.TestCase):
         content = raw(value)
         home = installed['homeTeam']['name'].removeprefix('Source ')
         away = installed['awayTeam']['name'].removeprefix('Source ')
+        csv_home_goals = 3 if fetched_conflict else 2
         archive = (histories()[0], ('E1_2627.csv',
             ('Div,Date,HomeTeam,AwayTeam,FTHG,FTAG,HC,AC\n'
-             f'E1,21/09/2026,{home},{away},2,1,5,4\n').encode()))
+             f'E1,21/09/2026,{home},{away},{csv_home_goals},1,5,4\n').encode()))
         records = (self.supplemental(),)
         if fetched_conflict:
             bindings = {row['history_name']: row['provider_team_id']
@@ -464,7 +484,7 @@ class ForecastOnlyRunnerTests(unittest.TestCase):
                 kickoff_utc='2026-09-21T14:00:00+00:00', match_date=date(2026, 9, 21),
                 home_provider_team_id=bindings[home], away_provider_team_id=bindings[away],
                 home_team=home, away_team=away, home_goals=2, away_goals=1,
-                home_corners=5, away_corners=3, retrieved_at_utc=NOW.isoformat(),
+                home_corners=5, away_corners=4, retrieved_at_utc=NOW.isoformat(),
                 response_sha256='9' * 64),)
 
         class Calendar:

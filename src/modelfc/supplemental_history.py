@@ -202,6 +202,7 @@ def augment_sources(sources: tuple[tuple[str, bytes], ...],
         if key in installed:
             raise ValueError("SUPPLEMENTAL_HISTORY_REJECTED")
         installed[key] = values
+    archived_keys = set(installed)
     calendar_by_kickoff = {(match.kickoff, match.home, match.away): match
                            for match in calendar.matches}
     added = []
@@ -216,7 +217,9 @@ def augment_sources(sources: tuple[tuple[str, bytes], ...],
                 or match.goals != values[:2]):
             raise ValueError("SUPPLEMENTAL_CALENDAR_CONFLICT")
         if record.key in installed:
-            if installed[record.key] != values:
+            # Archived CSV rows take precedence for corners when goals agree.
+            comparison = slice(2) if record.key in archived_keys else slice(None)
+            if installed[record.key][comparison] != values[comparison]:
                 raise SupplementalCsvConflict()
             continue
         row = {name: "" for name in fields}
